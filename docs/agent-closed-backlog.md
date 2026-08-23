@@ -2950,6 +2950,74 @@ run of the same regex logic before landing, not just reasoned about).
   `docs/agent-lessons-learned.md`'s "CodeRabbit review requires a manual trigger on every PR"
   entry, not left implied only by this now-closed item.
 
+### Item 61 (closed 2026-08-23)
+
+- **The remaining Item 52/61 "Revised item scope" question -- is a SAME-LINE, self-contained
+  `(`/`)` pair nested inside a real `if`/`for` block safe, the same way a top-level one is --
+  is answered: NO, at any nesting depth, with or without a `>>` redirection prefix.** Confirmed
+  via real `cmd.exe`, not reasoning alone, closing the item's own long-standing caveat that static
+  reasoning about this exact hazard class had already been wrong three times before.
+
+  **How the answer was obtained.** The maintainer approved building a dedicated,
+  `workflow_dispatch`-only probe workflow (`.github/workflows/batch-paren-hazard-probe.yml` +
+  `tools/probe_paren_hazard.ps1`, PR #461) rather than burning the full 8-lane matrix on a narrow
+  parsing question. The probe generates a same-line fixture matrix (nesting depth 1-4, with/
+  without a `>>` redirection prefix) plus a positive control reproducing the already-confirmed
+  cross-line PR #408/#445 corruption, and reports which fixtures "survive" (print their own
+  trailing marker) on a real Windows runner. Dispatching it hit a second, narrower blocker: the
+  acting session's own GitHub integration returned `403 Resource not accessible by integration`
+  on the `workflow_dispatch` API (confirmed against both repo-name casings) -- so the maintainer
+  ran it manually from the Actions UI and pasted the result back.
+
+  **Result: every same-line fixture corrupted, including the shallowest case tested** --
+  `depth1_plain` (one level of `if 1==1 (...)` nesting, no redirection, the simplest possible
+  same-line pair) failed identically to `depth2`-`depth4` and to both `_redir` variants, all with
+  the same `"marker_after was unexpected at this time."` signature as the known-broken positive
+  control. The control itself failed too (as expected), which per the harness's own built-in
+  self-check confirms the tool was measuring real cmd.exe behavior, not an artifact. Nesting depth
+  and the `>>` redirection prefix -- the two candidate distinguishing factors this item's own text
+  left unresolved -- both turned out to be irrelevant: the only thing that matters is whether the
+  pair is nested inside a real open bracket AT ALL. This subsumes and generalizes the earlier
+  PR #445 finding (which only tested depth 4 with redirection).
+
+  **Fix**: `check_delimiters.py`'s `pop()` no longer exempts a same-line close
+  (`line == last.line`) from the prose-paren hazard check -- ANY `(` opened on an echo/rem line
+  already nested inside a real open bracket is now flagged, whether it closes on the same line or
+  a later one. A second, related gap found while verifying the fix against a real regression
+  fixture: the echo-line detector (`is_bat_echo_line`) only matched a bare `echo` at the start of
+  the line, so a redirected form like `>> "%LOG%" echo ...` -- the EXACT shape that broke in
+  PR #445 -- was never recognized as an echo line at all, and its own paren pair went untracked
+  regardless of the same-line fix. New `ECHO_LINE_RE` matches an optional leading redirection
+  clause (`>`/`>>`, an optional file-descriptor digit, a quoted or bare target) before `echo`,
+  closing that gap too. Both fixes are covered by updated/new tests in
+  `tests/test_check_delimiters_import.py`: the old `test_paren_pair_on_same_echo_line_is_not_
+  flagged` and `test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negative`
+  (the latter explicitly said "if this assertion ever starts failing, it means Item 61's checker
+  extension has landed -- update accordingly") are now `test_paren_pair_on_same_echo_line_nested_
+  is_flagged` and `test_paren_pair_on_redirected_echo_line_deeply_nested_is_flagged`, both flipped
+  to assert flagging; a new `test_paren_pair_on_same_echo_line_at_top_level_is_not_flagged`
+  preserves the one shape that remains genuinely safe -- a plain top-level echo/rem with no
+  enclosing block at all, where cmd.exe never needs to search for a block terminator at all.
+
+  **Running the fixed checker against the real `run_setup.bat` surfaced 63 genuine, previously-
+  invisible findings** -- more than double the earlier 26-cross-line audit, confirming the
+  same-line gap was real and not just a theoretical corner case. All 63 were individually read in
+  context and reworded to remove the literal parens (` -- ` or `,` in their place, matching the
+  established template from the cross-line audit), in batches within one session, following this
+  repo's "EXTREME CAUTION, one slice at a time" convention for a change touching this many call
+  sites. `git diff` confirms every changed line across all 63 fixes is a `rem` or `echo` line --
+  no executable code or functional log-message content changed (one user-facing echo line,
+  "Dependencies were auto-detected (pipreqs)", was reworded to "...auto-detected via pipreqs";
+  everything else was internal comment prose). `python tools/check_delimiters.py run_setup.bat`
+  now reports zero findings; full `tools/run_sanity_sweep.sh` clean, 561 tests passing.
+
+  **Closed, nothing left to implement.** `docs/open-questions.md` item 5 removed -- the question
+  it registered (how to get real cmd.exe verification cheaply, and what the answer would be) is
+  now fully answered and acted on. `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside
+  `echo` text..." entry updated with the confirmed, final rule, replacing its own earlier
+  "revised rule" language (which was the correct prediction, now evidence-backed rather than
+  reasoned).
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

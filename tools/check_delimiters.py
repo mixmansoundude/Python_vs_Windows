@@ -28,6 +28,16 @@ TARGET_SUFFIXES = {
 # apart -- do not inline a second, differently-spelled check.
 REM_LINE_RE = re.compile(r"rem(?:[ \t]|$)", re.IGNORECASE)
 
+# derived requirement (CLAUDE.md Item 61, found while fixing the same-line-paren gap
+# below): a line like `>> "%LOG%" echo unexpected internal error (exit 3); ...` -- the
+# EXACT real shape that broke real cmd.exe parsing in PR #445 -- does not start with
+# "echo" after lstrip(), so the plain `echo\b` match below never recognized it as an
+# echo line, meaning its own paren pair was never tracked as prose at all. Matches an
+# optional leading redirection clause (`>`/`>>`, an optional file descriptor digit, a
+# quoted or bare target) before "echo", so a redirected echo statement is detected the
+# same way a plain one already is.
+ECHO_LINE_RE = re.compile(r'(?:\d*>>?\s*(?:"[^"]*"|\S+)\s+)?echo\b', re.IGNORECASE)
+
 
 @dataclass
 class Issue:
@@ -167,29 +177,33 @@ class DelimiterChecker:
                 f"Mismatched '{actual}' (expected to close '{last.char}' from line {last.line}, column {last.column})",
             )
             return
-        if last.char == "(" and last.prose_kind and line != last.line:
+        if last.char == "(" and last.prose_kind:
             # derived requirement: cmd.exe's parenthesized-block parser counts '(' / ')'
-            # characters inside plain "echo" text too -- it has no concept of "this paren
-            # is just prose." A '(' opened on one echo line and closed on a LATER echo line
-            # is syntactically balanced from a pure count-matching perspective (which is why
-            # this specific case needs its own check, separate from the generic unclosed/
-            # mismatched checks above), but if that echo line sits inside a real
-            # if(...)/for(...) block, the stray pair can still corrupt cmd.exe's own block-
-            # closing search. See docs/agent-lessons-learned.md's "A literal (/) inside echo
-            # text is NOT invisible..." entry for the real regression this closes (PR #408,
-            # commit fd52a3f: "failed was unexpected at this time.", 6 CI lanes broken) and
-            # its "rem" comment sibling (PR #445, Item 52 -- rem lines were fully skipped by
-            # this checker and hit the identical hazard undetected until real Windows CI).
+            # characters inside plain "echo"/"rem" text too -- it has no concept of "this
+            # paren is just prose." Originally this check only fired for a CROSS-line split
+            # (line != last.line) on the theory that a SAME-line, individually-balanced pair
+            # was safe -- CLAUDE.md Item 61's own dedicated cmd.exe probe
+            # (tools/probe_paren_hazard.ps1, dispatched on a real Windows runner via
+            # .github/workflows/batch-paren-hazard-probe.yml, 2026-08-23) disproved that:
+            # EVERY same-line matrix fixture corrupted ("X was unexpected at this time."),
+            # including the shallowest case tested -- a plain, non-redirected pair nested
+            # just ONE level inside a single if(...) block, with no ">>" redirection
+            # involved. Nesting depth and redirection do not matter; only whether the pair
+            # is nested inside a real open bracket at all does. See docs/agent-lessons-
+            # learned.md's "A literal (/) inside echo text is NOT invisible..." entry for
+            # the full incident history (PR #408, PR #445) and the probe's own confirmation.
+            same_line = line == last.line
+            where = "on this same line" if same_line else f"does not close until line {line}"
             self.add_issue(
                 last.line,
                 last.column,
-                f"Batch: '(' opened on this '{last.prose_kind}' line does not close until "
-                f"line {line}; cmd.exe's parenthesized-block parser counts parens in "
-                f"{last.prose_kind} text too, so a cross-line split can corrupt an enclosing "
-                "if/for block's structure even though the pair is individually balanced. "
-                "Keep the pair on one line, avoid literal parens in wrapped prose (prefer "
-                "' -- ' or ','), or escape both as '^(' / '^)' if they are structurally "
-                "necessary.",
+                f"Batch: '(' opened on this '{last.prose_kind}' line {where}; cmd.exe's "
+                f"parenthesized-block parser counts parens in {last.prose_kind} text too, "
+                "so a pair nested inside an enclosing if/for block can corrupt that block's "
+                "structure -- confirmed on real cmd.exe even for a same-line, individually-"
+                "balanced pair nested only one level deep. Keep parens like this OUTSIDE "
+                "any if/for block, avoid literal parens in wrapped prose (prefer ' -- ' or "
+                "','), or escape both as '^(' / '^)' if they are structurally necessary.",
             )
 
     def check(self) -> List[Issue]:
@@ -272,9 +286,10 @@ class DelimiterChecker:
                     # scope.
                     is_bat_rem_line = True
                 else:
-                    # derived requirement: matches "echo", "echo.", "echo(", "echo message" --
-                    # anything cmd.exe itself treats as the echo command -- but not "echofoo".
-                    is_bat_echo_line = re.match(r"echo\b", stripped, re.IGNORECASE) is not None
+                    # derived requirement: matches "echo", "echo.", "echo(", "echo message",
+                    # and a redirected form like '>> "%LOG%" echo ...' -- anything cmd.exe
+                    # itself treats as the echo command -- but not "echofoo".
+                    is_bat_echo_line = ECHO_LINE_RE.match(stripped) is not None
 
             while True:
                 ch = cursor.current()

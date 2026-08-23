@@ -103,33 +103,3 @@ Without an answer, Item 35's own soak-then-promote slices can get PREPARED (impl
 several green runs) but never actually CLOSED -- the last step structurally can't happen without
 this.
 
-## 5. CLAUDE.md Active Backlog Item 61: the probe workflow is built and merged, but this session's GitHub integration cannot dispatch it -- need it run manually (or the integration re-permissioned)
-
-**Original question (which unblocking mechanism) is answered and done**: the maintainer approved
-building a dedicated `workflow_dispatch`-only probe workflow (2026-08-23), which shipped and
-merged as PR #461 -- `.github/workflows/batch-paren-hazard-probe.yml` (a new, separate file, not
-wired to `push`/`pull_request`, matching the existing `workflow-lint.yml` precedent) plus
-`tools/probe_paren_hazard.ps1` (generates a same-line paren-nesting fixture matrix -- depth 1-4,
-with/without a `>>` redirection prefix -- plus a positive control using the already-confirmed
--broken cross-line shape from PR #408/#445, executes each via real `cmd.exe`, reports which
-fixtures "survived"). Both are now on `main`.
-
-**New, narrower blocker found while trying to actually fire it**: this session's own GitHub
-integration/token cannot call the `workflow_dispatch` API --
-`POST .../actions/workflows/batch-paren-hazard-probe.yml/dispatches` returns
-`403 Resource not accessible by integration`, confirmed against both `python_vs_windows` and
-`Python_vs_Windows` casing (ruling out a naming issue). The same session CAN read check runs,
-read/merge PRs, and push commits -- so this is specifically a missing Actions-write permission on
-whatever GitHub App/token backs this integration, not a broader access problem.
-
-**Needs one of**:
-- The maintainer manually runs the workflow from the GitHub UI (repo -> Actions tab -> "Batch
-  paren-nesting hazard probe" -> "Run workflow" -> branch `main`) and shares the resulting job's
-  step summary/log with the agent, or
-- The integration is granted whatever Actions permission (`actions: write`, or the GitHub App's
-  equivalent "Actions" repository permission) is needed for `workflow_dispatch`, so a future agent
-  session can just call it directly.
-
-Once either happens, folding cmd.exe's real answer into CLAUDE.md's Item 61 entry and closing this
-question out is a small, mechanical follow-up -- the hard part (building a trustworthy, cheap
-probe) is already done.
