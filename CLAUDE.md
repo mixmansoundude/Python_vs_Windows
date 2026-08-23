@@ -1249,11 +1249,17 @@ way (no live Windows execution available here), that is noted explicitly rather 
   has now been wrong multiple times in this repo's history, per `docs/agent-lessons-learned.md`'s
   "`:log` echoes UNQUOTED" entry's own general warning).
 
-  **Blocked on how to get that live `cmd.exe` verification cheaply -- registered as
-  `docs/open-questions.md` item 5** (this sandbox has no Windows access at all; the only real
-  cmd.exe reachable is a GitHub Actions Windows runner, and the two existing ways to reach one both
-  run the full, expensive 8-lane matrix for what should be a few-seconds narrow parsing question).
-  Not actionable until the maintainer picks a path there.
+  **Probe workflow built and merged (PR #461, `.github/workflows/batch-paren-hazard-probe.yml` +
+  `tools/probe_paren_hazard.ps1`), per the maintainer's approval -- but dispatching it hit a
+  SECOND, narrower blocker: this session's own GitHub integration cannot call the
+  `workflow_dispatch` API (`403 Resource not accessible by integration`), confirmed against both
+  repo-name casings, so an agent in this session cannot fire the probe itself even though the tool
+  now exists on `main`.** Registered as `docs/open-questions.md` item 5 (updated to reflect this
+  narrower blocker, not the original "which unblocking mechanism" question, which the maintainer
+  already answered). Not actionable until either the maintainer manually runs the workflow from
+  the Actions UI (Actions tab -> "Batch paren-nesting hazard probe" -> "Run workflow" on `main`)
+  and shares the result, or the integration is granted the Actions write permission needed for
+  `workflow_dispatch` and a future agent retries the API call.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
