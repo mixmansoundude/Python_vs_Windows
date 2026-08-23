@@ -819,15 +819,23 @@ but several represent real gaps worth closing before calling the path fully rele
   (the `--add-data` advice text, the filename it names, and a genuine `_MEI<digits>` path segment
   actually present in the captured log) rather than the full line verbatim.
 
+  **Real bug this new scenario caught on its first real CI run, fixed same PR: the extraction
+  suffix is NOT always decimal digits.** The regex shipped as `_MEI[0-9]+` (digits only), matching
+  the one reference capture then available (`_MEI41642`, all-decimal). The `mei_genuine` scenario's
+  own first real run captured `_MEI00001a4c2` and `_MEI00001ee42` -- both containing hex letters --
+  so `[0-9]+` never matched, and the fix wrongly gave the CWD-relative advice for a genuine
+  extraction path (the exact failure mode this whole fix exists to prevent, just inverted). Widened
+  to `_MEI[^\\/]+` (any nonempty run of non-separator characters): the structural bounding (a real
+  path separator immediately before AND after `_MEI<suffix>`) is what actually distinguishes a
+  genuine extraction-directory component from a coincidental substring or a no-suffix folder name,
+  not the exact character class of the suffix -- verified via a standalone `pwsh` script against
+  all prior cases plus both newly-captured hex examples before landing.
+
   **Still open, NOT part of this fix**: the CWD-mismatch verdict-flip itself (options a/b above)
   remains undecided, and the coverage gap this item originally named -- no test asserts what run 2
   reports for a CWD-sensitive app, since `selfapps_exedata_fail.ps1` invokes `run_setup.bat`
   exactly once -- is still open. Add a second-run assertion for the same app once the CWD question
   itself is resolved.
-
-  **Coverage gap to close in the same slice**: no test asserts what run 2 reports for a
-  CWD-sensitive app. `selfapps_exedata_fail.ps1` invokes `run_setup.bat` exactly once. Add a
-  second-run assertion for the same app.
 
 - **Item 39: the EXE fast path's freshness check is mtime-only, so timestamp-preserving delivery
   (a ZIP, an xcopy) can silently run stale code with no signal to the user.** Confirmed

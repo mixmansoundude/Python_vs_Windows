@@ -4988,10 +4988,18 @@ rem derived requirement (CodeRabbit review, PR #458): a plain findstr substring 
 rem false-positives on a coincidental filename (config_MEI.json) or a user-named folder with no
 rem digits (C:\work\_MEI\data.txt) -- neither is a genuine PyInstaller extraction directory.
 rem Matched via PowerShell instead, anchored to the real _MEIxxxxxx path-component shape
-rem (a path separator, then _MEI, then digits, then a path separator) so a bare substring
-rem never matches; the value is read from the environment at PowerShell runtime, never
-rem substituted into the -Command text, so no cmd.exe metacharacter risk either.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "exit [int](-not ($env:HP_HINT_FILE_NAME -match '(?i)[\\/]_MEI[0-9]+[\\/]'))"
+rem (a path separator, then _MEI, then a nonempty suffix, then a path separator) so a bare
+rem substring never matches; the value is read from the environment at PowerShell runtime,
+rem never substituted into the -Command text, so no cmd.exe metacharacter risk either.
+rem derived requirement (real CI failure, PR #458's own mei_genuine test): the suffix is NOT
+rem always decimal digits -- a genuine capture from this same PR's CI run showed
+rem _MEI00001a4c2 (hex characters), not just _MEI41642 (decimal) from the earlier reference
+rem capture. [0-9]+ missed the hex case and wrongly gave the CWD-relative advice for a
+rem genuine extraction path. Widened to [^\\/]+ (any nonempty non-separator run) -- the
+rem structural bounding (a real path separator immediately before AND after) is what
+rem actually distinguishes a genuine extraction-directory component from a coincidental
+rem substring or a no-suffix folder name, not the exact character class of the suffix.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "exit [int](-not ($env:HP_HINT_FILE_NAME -match '(?i)[\\/]_MEI[^\\/]+[\\/]'))"
 if errorlevel 1 (
   call :log "[HINT][DATA_FILE] --add-data will not fix this: it bundles into a temp extraction folder, not the current directory. Place a copy of '%HP_HINT_FILE_NAME%' next to the built .exe instead, or read the file via a path relative to your own script file, not the working directory."
 ) else (
