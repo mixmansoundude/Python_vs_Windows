@@ -102,3 +102,44 @@ Two sub-questions:
 Without an answer, Item 35's own soak-then-promote slices can get PREPARED (implemented, tested,
 several green runs) but never actually CLOSED -- the last step structurally can't happen without
 this.
+
+## 5. CLAUDE.md Active Backlog Item 61: how should the agent get genuine cmd.exe verification for the remaining same-line-paren question, and is it worth a new CI surface to get it cheaply?
+
+Item 61's own "Revised item scope" note says the remaining question -- whether a SAME-LINE,
+self-contained `(`/`)` pair nested inside a real open `if`/`for` block is safe, the same way a
+top-level one is -- "likely requiring live `cmd.exe` verification per this repo's own established
+practice for this hazard class, not static reasoning alone." That practice exists for a reason:
+static reasoning about cmd.exe's own paren/quote parsing has been wrong THREE separate times in
+this exact hazard class already (see `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside
+`echo` text..." entry) -- reasoning alone is not trusted evidence here, only a real cmd.exe run is.
+
+**The actual hang-up: this sandbox has no Windows/cmd.exe access at all** (Linux-only environment)
+-- the only place real cmd.exe exists for this repo is a GitHub Actions Windows runner, reached
+today only via `batch-check.yml`'s existing triggers (`push: branches: ['**']` or
+`workflow_dispatch`, confirmed by reading the file directly). Both existing triggers run the FULL
+8-lane matrix (conda/uv installs, PyInstaller builds, the whole self-test suite) -- historically
+50-90+ minutes wall-clock -- to answer one narrow batch-parsing question that needs maybe a few
+seconds of real cmd.exe time. A throwaway branch with no PR (pushing triggers the matrix via the
+`push` wildcard, no PR needed) WOULD get real cmd.exe verification, but at the cost of a full,
+expensive matrix run per iteration -- clumsy for something likely needing a few rounds to nail
+down exactly which factor (nesting depth vs. the `>>`-redirection prefix, per Item 61's own
+still-unresolved "which factor actually matters was not isolated" note) is the real trigger.
+
+**Recommended alternative, not yet built or agreed to**: a new, SEPARATE workflow file,
+`workflow_dispatch`-only (matching this repo's own `workflow-lint.yml` precedent -- a workflow
+that exists but is not wired to `push`/`pull_request`), whose one job runs on a Windows runner and
+does nothing but execute a handful of crafted `.bat` fixtures (varying nesting depth, with/without
+the `>>` redirection prefix) and report cmd.exe's actual parsing behavior for each. This would be
+much cheaper per iteration (no conda/PyInstaller/pytest involved, likely under a minute) and
+reusable for any future instance of this same hazard class, not just Item 61 -- but it is still a
+new CI surface addition, which this repo's own coding guideline flags as something to be careful
+with ("Do not change workflow triggers, permissions, or retention settings" on the EXISTING
+`batch-check.yml` -- a new, separate file sidesteps that specific guideline, but adding any new
+workflow file is still a CI/CD change worth the maintainer's awareness before it's built).
+
+**Needs the maintainer's call**: build the dedicated `workflow_dispatch`-only probe workflow
+(reusable, cheap, but a new file in `.github/workflows/`), or use a throwaway branch against the
+existing full matrix (no new file, but ~1hr+ per iteration and likely needs a few iterations), or
+something else (e.g. asking the maintainer to test a small script by hand on a real Windows
+machine, if one is available to them)? Once picked, Item 61's own remaining scope becomes
+actionable without further discussion.
