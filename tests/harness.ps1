@@ -405,6 +405,18 @@ $depMsgPos  = $AllText.IndexOf('[INFO] Installing dependencies')
 $depCallPos = $AllText.IndexOf('[TRACE] heuristic augmentation: ~prep_requirements.py')
 $depInstallProgress = ($depMsgPos -ge 0) -and ($depCallPos -ge 0) -and ($depMsgPos -lt $depCallPos)
 Write-Result 'batch.progress.dep_install' "Progress message before dependency install phase: user sees 'Installing dependencies' before the slow pip/conda/uv install step" $depInstallProgress @{ msgIdx = $depMsgPos; opIdx = $depCallPos; ordered = $depInstallProgress }
+# derived requirement (CLAUDE.md Active Backlog Item 39): the EXE fast path's freshness
+# check switched from mtime-only to a content-hash comparison; the hash must be (re)written
+# after a genuine fresh build (:success, gated on HP_FASTPATH_USED being UNSET so the
+# already-fast reuse case never pays a redundant re-hash pass) via a dedicated subroutine
+# (not inlined, to avoid the parenthesized-block set-then-read hazard). Static wiring guard
+# only -- runtime proof is tests/test_fast_check.py (the embedded script itself, via real
+# pwsh) plus whatever selfapps coverage exercises :try_fast_exe end-to-end.
+$hasWriteFastHashLabel = $AllText -match '(?m)^:write_fast_hash\s*$'
+$hasWriteFastHashCall  = $AllText -match 'if not defined HP_FASTPATH_USED call :write_fast_hash'
+$hasWriteModeArg       = $AllText -match '"%HP_FAST_CHECK_PS%"\s+"dist\\%ENVNAME%\.exe"\s+write'
+$hasFastHashWiring = $hasWriteFastHashLabel -and $hasWriteFastHashCall -and $hasWriteModeArg
+Write-Result 'batch.fastpath.hash_write' 'EXE fast path freshness check: :write_fast_hash subroutine exists, is called from :success gated on HP_FASTPATH_USED, and invokes the payload in write mode' $hasFastHashWiring @{ hasLabel = $hasWriteFastHashLabel; hasCall = $hasWriteFastHashCall; hasWriteModeArg = $hasWriteModeArg }
 # derived requirement: pre-build --collect-submodules double-gate (REQ-005.x) must stay wired.
 # Static guard against silent deletion; runtime proof is self.collect.submodules (selfapps_collect.ps1).
 $collectCall    = $AllText -match 'call :compute_collect_flags'

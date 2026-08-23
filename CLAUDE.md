@@ -865,6 +865,39 @@ but several represent real gaps worth closing before calling the path fully rele
   **Coverage gap to close in the same slice**: no scenario backdates a source file's mtime below
   the EXE's to test this. Add one.
 
+  **Implemented: freshness is now a content-hash comparison, closing both exposures at once.**
+  `HP_FAST_CHECK` (canonical source `tools/fast_check.ps1`, previously inline-only with no
+  `tools/` file) now hashes the SAME `*.py` file set already scanned (unchanged filter), extended
+  to include `requirements.txt`/`pyproject.toml`/`runtime.txt` when present -- a combined SHA256
+  over each file's own `relpath|filehash` line, sorted by path for determinism. This structurally
+  cannot be fooled by a preserved/backdated mtime (exposure a) and now sees dependency-file
+  changes regardless of mtime (exposure b), closing both suggested fix directions at once rather
+  than picking one. Two modes via a second positional arg: `check` (default, called from
+  `:try_fast_exe`, unchanged call site) prints `fresh` iff a stored `~fast_check.hash.txt` exists
+  and matches; a missing stored hash (first run under this fix, or an EXE built by an older
+  `run_setup.bat`) is a safe, one-time-cost "not fresh" default, never a false "fresh." `write`
+  (new subroutine `:write_fast_hash`, called from `:success`) unconditionally (re)writes the
+  hash after a genuine fresh build attempt -- gated on `HP_FASTPATH_USED` being unset so the
+  already-fast reuse case never pays a redundant second hash pass (the `:try_fast_exe` check
+  already computed it once; nothing changed, so the stored value is already correct). Uses
+  `[System.Security.Cryptography.SHA256]` directly, not `Get-FileHash`, per this repo's own
+  "Prefer raw .NET types over Utility-module cmdlets" lesson (Utility-module auto-load is not
+  guaranteed in the `-File` invocation shape embedded helpers run under on real Windows
+  PowerShell 5.1, invisible to local `pwsh`/Linux testing).
+
+  **Coverage gap closed**: `tests/selfapps_fastpath_hash.ps1` (uv lane, non-gating for first
+  landing) is the literal scenario this item asked for -- run 1 builds the EXE printing a V1
+  token; entry.py is rewritten to print V2 and its mtime backdated to 2001-09-09 (well before
+  the EXE's own mtime) before run 2; asserts run 2's captured EXE stdout shows V2 (not V1) and
+  the "Fast path: reusing" line is absent, proving a genuine rebuild happened rather than the
+  old mtime-only check wrongly reusing the stale EXE. `tests/test_fast_check.py` unit-tests the
+  isolated script directly via real `pwsh` (6 scenarios: no stored hash, write-then-fresh,
+  backdated-mtime content change, dependency-file-only change, rewrite-after-change, missing
+  EXE) plus a `PayloadSync` byte-equality check against `tools/fast_check.ps1`.
+  `tests/harness.ps1`'s `batch.fastpath.hash_write` statically guards the `:write_fast_hash`
+  wiring (label exists, called from `:success` with the `HP_FASTPATH_USED` gate, invokes the
+  payload in `write` mode). See `docs/agent-ndjson.md` for the full row registry entry.
+
 - **Item 42: console output is verbose across all log levels, and every fresh build ends with two
   unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience
   (beginners with no setup experience).** Confirmed reasoned-from-source and CI capture. New; not

@@ -627,6 +627,21 @@ jobs:
         run: |
           & tests\selfapps_warnfix_venv_repair.ps1
 
+      # CLAUDE.md Active Backlog Item 39: the EXE fast path's freshness check switched from
+      # mtime-only to a content-hash comparison, so a genuinely changed source file whose
+      # mtime is backdated (the ZIP/xcopy/robocopy delivery scenario) is no longer silently
+      # treated as fresh. uv lane only (non-gating for first landing -- the isolated
+      # tools/fast_check.ps1 script is already verified locally via real pwsh, but this is
+      # the first time the full :try_fast_exe -> :run_entry_smoke -> :success ->
+      # :write_fast_hash cycle runs end-to-end on real Windows CI). See
+      # selfapps_fastpath_hash.ps1's own header comment for the full mechanism.
+      - name: "Self-test: EXE fast path detects a backdated-mtime content change (uv lane only)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_fastpath_hash.ps1
+
       # REQ-005.11: PEP 723 header write-back (uv add --script). v1-scoped to HP_ENV_MODE=uv,
       # so wired to the dedicated uv lane only (non-gating) for this first CI pass rather than
       # the gating real lane -- lets these brand-new scenarios prove out in real Windows CI

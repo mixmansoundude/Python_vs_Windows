@@ -1184,6 +1184,26 @@ individual test file pins it locally -- see the "Accepted gap" entry in
 path is completely provider-independent. The test correctly validates the EXE fast path, not
 the env-state or uv venv fast path.
 
+**`HP_FAST_CHECK`'s own freshness signal (CLAUDE.md Active Backlog Item 39): content-hash, not
+mtime -- read side and write side are two separate call sites, must stay paired.** `:try_fast_exe`
+(read/`check` mode, unchanged call site) compares a stored `~fast_check.hash.txt` against a
+composite SHA256 over the same non-infra `*.py` files already scanned, extended to
+`requirements.txt`/`pyproject.toml`/`runtime.txt` when present. **The write side is a SEPARATE
+subroutine, `:write_fast_hash`, called from `:success`** (not inlined there -- a set-then-read of
+the same var inside one parenthesized block would hit the classic parse-time-`%VAR%`-expansion
+trap, see `docs/agent-lessons-learned.md`), gated on `if not defined HP_FASTPATH_USED` so the
+already-fast reuse case never pays a redundant second hash pass -- `:try_fast_exe`'s own `check`
+call already computed the same hash once this run; if it matched (fast path taken), the stored
+value is already correct and rewriting it would be pure waste. **Any future change to either the
+scanned file set or the hash algorithm must update BOTH `:try_fast_exe`'s check invocation and
+`:write_fast_hash`'s write invocation identically** -- they share the single `tools/fast_check.ps1`
+script (mode-dispatched via a second positional arg), so a change to the shared script's file
+enumeration or hashing logic automatically stays in sync between the two call sites; only a
+change to the CALL SITES themselves (e.g. adding a new mode, or passing different exe/cwd context)
+risks the two drifting apart. A missing stored hash (first run after upgrading to this fix, or an
+EXE built by an older `run_setup.bat` with no hash file at all) is a safe "not fresh" default --
+forces exactly one rebuild, never a false "fresh."
+
 ### ~dependency_installed.txt: pip freeze output and its consumers
 
 `~dependency_installed.txt` is written after install via `pip freeze` (run_setup.bat lines 1122-1134):
