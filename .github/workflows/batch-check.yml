@@ -1908,6 +1908,14 @@ jobs:
             tests\~selftest_exefastpath\~exefastpath_run2.log
             tests/~selftest_exefastpath/~setup.log
             tests\~selftest_exefastpath\~setup.log
+            tests/~selftest_fastpath_hash/~fastpath_hash_run1.log
+            tests\~selftest_fastpath_hash\~fastpath_hash_run1.log
+            tests/~selftest_fastpath_hash/~fastpath_hash_run2.log
+            tests\~selftest_fastpath_hash\~fastpath_hash_run2.log
+            tests/~selftest_fastpath_hash/~setup.log
+            tests\~selftest_fastpath_hash\~setup.log
+            tests/~selftest_fastpath_hash/~run.out.txt
+            tests\~selftest_fastpath_hash\~run.out.txt
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~pipgap/~pipgap.log

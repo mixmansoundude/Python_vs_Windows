@@ -877,26 +877,54 @@ but several represent real gaps worth closing before calling the path fully rele
   and matches; a missing stored hash (first run under this fix, or an EXE built by an older
   `run_setup.bat`) is a safe, one-time-cost "not fresh" default, never a false "fresh." `write`
   (new subroutine `:write_fast_hash`, called from `:success`) unconditionally (re)writes the
-  hash after a genuine fresh build attempt -- gated on `HP_FASTPATH_USED` being unset so the
-  already-fast reuse case never pays a redundant second hash pass (the `:try_fast_exe` check
-  already computed it once; nothing changed, so the stored value is already correct). Uses
-  `[System.Security.Cryptography.SHA256]` directly, not `Get-FileHash`, per this repo's own
-  "Prefer raw .NET types over Utility-module cmdlets" lesson (Utility-module auto-load is not
-  guaranteed in the `-File` invocation shape embedded helpers run under on real Windows
-  PowerShell 5.1, invisible to local `pwsh`/Linux testing).
+  hash after a genuine fresh build attempt. Uses `[System.Security.Cryptography.SHA256]`
+  directly, not `Get-FileHash`, per this repo's own "Prefer raw .NET types over Utility-module
+  cmdlets" lesson (Utility-module auto-load is not guaranteed in the `-File` invocation shape
+  embedded helpers run under on real Windows PowerShell 5.1, invisible to local `pwsh`/Linux
+  testing).
+
+  **A real bug in the first-shipped `write` gate, found by CodeRabbit's review of this same
+  PR (#460) before landing.** The original gate was `if not defined HP_FASTPATH_USED call
+  :write_fast_hash` -- but `HP_FASTPATH_USED` being unset does not prove a build actually
+  SUCCEEDED this run; a skipped or FAILED rebuild also leaves it unset, and if a stale
+  `dist\<env>.exe` from an EARLIER successful run was still sitting there untouched, this gate
+  would write the CURRENT (changed) sources' hash paired against that OLD binary -- the next
+  run would then wrongly trust the stale EXE as "fresh," silently reintroducing the exact class
+  of bug this item exists to fix, just relocated one layer down. Fixed with a new, more precise
+  flag, `HP_FRESH_BUILD_OK` -- reset once per fresh build attempt (alongside
+  `HP_NUITKA_FALLBACK_USED` in `:run_entry_smoke`'s own init block) and set ONLY in the 4
+  genuine build-success branches (PyInstaller producing `dist\%ENVNAME%.exe` cleanly, or Tier
+  A/Nuitka succeeding after PyInstaller didn't, across all 3 of its own failure sub-branches) --
+  never on any `:warn_build_incomplete` path. `HP_FRESH_BUILD_OK` being set already implies the
+  fast path was not taken (a build can only be attempted after the fast path declines to fire),
+  so this is a strictly more precise REPLACEMENT for the old `HP_FASTPATH_USED` check, not an
+  additional condition alongside it -- `:success` now gates on `if defined HP_FRESH_BUILD_OK`
+  alone. A later repair-loop rebuild (`:hidden_import_recover`/`:dll_bundle_recover`) failing
+  after the initial build already succeeded does NOT unset the flag -- reasoned as correct,
+  since those loops fix BUNDLING issues, not SOURCE CONTENT, so the already-built EXE from the
+  same run still genuinely reflects the current sources even if a later repair attempt fails;
+  `:write_fast_hash`'s own pre-existing `if not exist "dist\%ENVNAME%.exe" exit /b 0` guard
+  remains the correct backstop for the rarer case where a repair-loop failure actually removes
+  the file.
 
   **Coverage gap closed**: `tests/selfapps_fastpath_hash.ps1` (uv lane, non-gating for first
   landing) is the literal scenario this item asked for -- run 1 builds the EXE printing a V1
-  token; entry.py is rewritten to print V2 and its mtime backdated to 2001-09-09 (well before
-  the EXE's own mtime) before run 2; asserts run 2's captured EXE stdout shows V2 (not V1) and
-  the "Fast path: reusing" line is absent, proving a genuine rebuild happened rather than the
-  old mtime-only check wrongly reusing the stale EXE. `tests/test_fast_check.py` unit-tests the
+  token, and asserts `~fast_check.hash.txt` was genuinely written before proceeding (a
+  CodeRabbit-review addition: without this, a completely broken write side would be
+  indistinguishable from a working one, since a missing hash file also safely forces a rebuild);
+  entry.py is rewritten to print V2 and its mtime backdated to 2001-09-09 (well before the EXE's
+  own mtime) before run 2; asserts run 2's captured EXE stdout shows V2 (not V1) and the "Fast
+  path: reusing" line is absent, proving a genuine rebuild happened rather than the old
+  mtime-only check wrongly reusing the stale EXE. `tests/test_fast_check.py` unit-tests the
   isolated script directly via real `pwsh` (6 scenarios: no stored hash, write-then-fresh,
   backdated-mtime content change, dependency-file-only change, rewrite-after-change, missing
   EXE) plus a `PayloadSync` byte-equality check against `tools/fast_check.ps1`.
   `tests/harness.ps1`'s `batch.fastpath.hash_write` statically guards the `:write_fast_hash`
-  wiring (label exists, called from `:success` with the `HP_FASTPATH_USED` gate, invokes the
-  payload in `write` mode). See `docs/agent-ndjson.md` for the full row registry entry.
+  wiring -- label exists, called from `:success` with the `HP_FRESH_BUILD_OK` gate, invokes the
+  payload in `write` mode -- via SCOPED body extraction (bounded by each subroutine's own next
+  label, another CodeRabbit-review fix: the original check used whole-file `-match`, which could
+  pass even if the call or the write invocation were removed, as long as matching text happened
+  to exist anywhere else in the file). See `docs/agent-ndjson.md` for the full row registry entry.
 
 - **Item 42: console output is verbose across all log levels, and every fresh build ends with two
   unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience

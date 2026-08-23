@@ -2186,10 +2186,16 @@ if not defined HP_FASTPATH_USED (
   rem other console output.
   call :print_fastpath_ambiguous_note
 )
-rem CLAUDE.md Active Backlog Item 39: only after a genuine fresh build attempt this run
-rem (HP_FASTPATH_USED unset) -- the fast-reuse case already means the stored hash matches
-rem current sources, so writing again here would be a pure, wasted redundant re-hash.
-if not defined HP_FASTPATH_USED call :write_fast_hash
+rem CLAUDE.md Active Backlog Item 39: gated on HP_FRESH_BUILD_OK, not merely "HP_FASTPATH_USED
+rem unset" (CodeRabbit review, PR #460, caught a real bug in the original gate: a skipped or
+rem failed rebuild also leaves HP_FASTPATH_USED unset, but a stale dist\%ENVNAME%.exe left over
+rem from an earlier successful run would still be sitting there -- writing the CURRENT sources'
+rem hash against that OLD binary would make the next run wrongly trust it as "fresh"). Set ONLY
+rem in :run_entry_smoke's own genuine build-success branches -- see the reset/set sites there.
+rem HP_FRESH_BUILD_OK being set already implies the fast path was not taken (a build can only be
+rem attempted after the fast path declined to fire), so this alone is a strictly more precise
+rem replacement for the old HP_FASTPATH_USED check, not an additional condition alongside it.
+if defined HP_FRESH_BUILD_OK call :write_fast_hash
 call :release_lock
 rem REQ-016: retain terminal window on success so user can read the output.
 if not defined HP_CI_LANE (
@@ -3577,12 +3583,14 @@ if not "%HP_SMOKE_RC%"=="0" if not defined HP_PROBE_EXCEEDED (
 )
 exit /b 0
 :write_fast_hash
-rem derived requirement (CLAUDE.md Active Backlog Item 39): after a genuine fresh build
-rem attempt (never after a fast-path reuse -- see the :success call site's own
-rem HP_FASTPATH_USED gate, which means sources already match the stored hash and a
-rem rewrite would be a redundant, wasted re-hash pass), (re)write the composite
-rem source-content hash the EXE fast path's freshness check compares against on the next
-rem run. A dedicated subroutine, not inlined at :success, specifically so no line here
+rem derived requirement (CLAUDE.md Active Backlog Item 39): called only when the caller's own
+rem HP_FRESH_BUILD_OK gate confirms a genuine build succeeded THIS run (see :run_entry_smoke's
+rem reset + 4 success-branch sets) -- never for a fast-path reuse (nothing changed, stored hash
+rem already correct) and never for a skipped/failed rebuild (would pair the CURRENT sources'
+rem hash with a stale leftover EXE from an earlier run -- a real bug CodeRabbit's review caught
+rem on PR #460 in an earlier, less precise HP_FASTPATH_USED-only gate). (Re)writes the
+rem composite source-content hash the EXE fast path's freshness check compares against on the
+rem next run. A dedicated subroutine, not inlined at :success, specifically so no line here
 rem sits inside a parenthesized block -- see docs/agent-lessons-learned.md's "Parse-time
 rem vs. runtime variable expansion" entry for why a set-then-read-in-the-same-block
 rem pattern is unsafe, and this repo's own house preference for goto/call-based dispatch
@@ -3752,6 +3760,17 @@ if not defined HP_BUILD_OK (
     rem before this check -- warnfix can still fire and even rebuild over the Nuitka-built EXE, see
     rem the HP_NUITKA_FALLBACK_USED clear a few dozen lines below for how that case is handled.
     set "HP_NUITKA_FALLBACK_USED="
+    rem CLAUDE.md Active Backlog Item 39 (CodeRabbit review, PR #460): a real correctness bug --
+    rem gating :write_fast_hash on "HP_FASTPATH_USED unset" alone does not prove a build actually
+    rem SUCCEEDED this run; a stale dist\%ENVNAME%.exe left over from an EARLIER successful run
+    rem would still be sitting there if THIS run's rebuild is skipped/fails, and the freshness
+    rem hash would get (re)written for the CURRENT (changed) sources paired with that OLD binary
+    rem -- the next run would then wrongly trust the stale EXE as "fresh." HP_FRESH_BUILD_OK is
+    rem set ONLY in the genuine-success branches below -- PyInstaller producing
+    rem dist\%ENVNAME%.exe, or Tier A/Nuitka succeeding after it didn't -- never on a
+    rem warn_build_incomplete path.
+    rem Reset once per fresh build attempt, same reasoning as HP_NUITKA_FALLBACK_USED above.
+    set "HP_FRESH_BUILD_OK="
     rem REQ-009/REQ-005.10 (cascade-vs-postexec fix): reset the "this provider's dependencies
     rem look incomplete" flag at the start of every fresh build attempt, not just when warnfix
     rem happens to run again -- a provider that needs no warnfix repair at all must not inherit
@@ -3801,6 +3820,7 @@ if not defined HP_BUILD_OK (
         call :warn_build_incomplete "[WARN] PyInstaller execution failed; will verify your code directly via Python instead. reason=test_forced_fail"
       ) else (
         set "HP_NUITKA_FALLBACK_USED=1"
+        set "HP_FRESH_BUILD_OK=1"
       )
     ) else (
       "%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
@@ -3816,6 +3836,7 @@ if not defined HP_BUILD_OK (
           call :warn_build_incomplete "[WARN] PyInstaller execution failed; will verify your code directly via Python instead. reason=build_error"
         ) else (
           set "HP_NUITKA_FALLBACK_USED=1"
+          set "HP_FRESH_BUILD_OK=1"
         )
       ) else (
         if defined HP_TEST_FORCE_OUTPUT_VANISH if exist "dist\%ENVNAME%.exe" (
@@ -3830,9 +3851,11 @@ if not defined HP_BUILD_OK (
             call :warn_build_incomplete "[WARN] PyInstaller did not produce dist\%ENVNAME%.exe; will verify your code directly via Python instead. reason=missing_output"
           ) else (
             set "HP_NUITKA_FALLBACK_USED=1"
+            set "HP_FRESH_BUILD_OK=1"
           )
         ) else (
           call :log "[INFO] PyInstaller produced dist\%ENVNAME%.exe"
+          set "HP_FRESH_BUILD_OK=1"
         )
       )
     )

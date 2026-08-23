@@ -95,6 +95,14 @@ try {
     # Run 1: fresh build, entry.py prints V1.
     $run1Exit = Invoke-Bootstrap '~fastpath_hash_run1.log'
 
+    # derived requirement (CodeRabbit review, PR #460): without this, a completely broken
+    # :write_fast_hash (e.g. HP_FRESH_BUILD_OK never getting set) would be indistinguishable
+    # from a working one -- a MISSING hash file also forces run 2 to rebuild (the safe
+    # default), so every assertion below would still pass even if the write side never fired
+    # at all. Assert the write side was genuinely exercised, not just coincidentally masked.
+    $hashFileAfterRun1 = Join-Path $workDir '~fast_check.hash.txt'
+    $hashWrittenAfterRun1 = Test-Path -LiteralPath $hashFileAfterRun1
+
     # Rewrite entry.py to print V2, then backdate its mtime well before dist\<env>.exe's own
     # mtime -- simulating a ZIP/xcopy/robocopy delivery that preserves the original
     # authored timestamp instead of stamping "now" on extraction.
@@ -129,9 +137,10 @@ $tokenV2Seen  = $runOutText -match 'FASTPATH_TOKEN_V2'
 $tokenV1Seen  = $runOutText -match 'FASTPATH_TOKEN_V1'
 $fastPathReusedRun2 = $run2Combined -match [regex]::Escape('Fast path: reusing')
 
-# Genuine rebuild detected: run 2 shows the NEW token, not the old one, and did not take
-# the "reusing" fast path.
-$pass = ($run1Exit -eq 0) -and ($run2Exit -eq 0) -and $tokenV2Seen -and (-not $tokenV1Seen) -and (-not $fastPathReusedRun2)
+# Genuine rebuild detected: run 2 shows the NEW token, not the old one, did not take the
+# "reusing" fast path, AND run 1 genuinely exercised the write side (not just coincidentally
+# masked by the missing-hash-file safe default).
+$pass = ($run1Exit -eq 0) -and ($run2Exit -eq 0) -and $hashWrittenAfterRun1 -and $tokenV2Seen -and (-not $tokenV1Seen) -and (-not $fastPathReusedRun2)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.fastpath.hash.backdated_mtime'
@@ -141,6 +150,7 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{
         run1Exit            = $run1Exit
         run2Exit            = $run2Exit
+        hashWrittenAfterRun1 = $hashWrittenAfterRun1
         tokenV2Seen         = $tokenV2Seen
         tokenV1Seen         = $tokenV1Seen
         fastPathReusedRun2  = $fastPathReusedRun2
