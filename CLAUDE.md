@@ -809,6 +809,16 @@ but several represent real gaps worth closing before calling the path fully rele
   scenario (`config.json`), both asserting the honest wording fires and the corresponding
   unconditional `--add-data` suggestion does not.
 
+  **Third scenario added same PR, closing a coverage gap CodeRabbit's review separately flagged:
+  neither scenario above ever exercises the OTHER branch (a genuine `_MEIxxxxxx` path, where
+  `--add-data` remains the correct, unchanged advice) -- nothing in the suite did, before this.**
+  `EXEDATA_SCENARIO=mei_genuine`'s stub app reads a file joined from `sys._MEIPASS` (PyInstaller's
+  own real, randomly-named onefile extraction directory at runtime), never bundled via
+  `--add-data`, so the failure genuinely surfaces a path rooted under a real `_MEIxxxxxx` folder.
+  Since the exact directory name is random per run, the test asserts the stable parts instead
+  (the `--add-data` advice text, the filename it names, and a genuine `_MEI<digits>` path segment
+  actually present in the captured log) rather than the full line verbatim.
+
   **Still open, NOT part of this fix**: the CWD-mismatch verdict-flip itself (options a/b above)
   remains undecided, and the coverage gap this item originally named -- no test asserts what run 2
   reports for a CWD-sensitive app, since `selfapps_exedata_fail.ps1` invokes `run_setup.bat`
