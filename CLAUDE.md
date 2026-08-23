@@ -760,8 +760,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
   **Realistic scenario**: `report.py` does `open("config.json")`, with `config.json` sitting next
   to the script. Run 1: CWD = `dist\`, the file isn't there, EXE exits non-zero,
-  `:exe_smokerun_hints` fires `[HINT][DATA_FILE] Consider adding: --add-data config.json;.`, panel
-  reads "SETUP COMPLETE -- WITH A CAVEAT". Run 2: same binary, CWD = app root, file IS found, exit
+  `:exe_smokerun_hints` fires. Run 2: same binary, CWD = app root, file IS found, exit
   0, panel reads clean "SETUP COMPLETE". The user's natural conclusion -- "it fixed itself" -- is
   suspect: per Microsoft's own `ShellExecute`/`CreateProcess` documentation, a launch with no
   explicit working directory supplied defaults to the target EXE's own containing folder as CWD
@@ -770,19 +769,37 @@ but several represent real gaps worth closing before calling the path fully rele
   handed an explicit working directory (e.g. a shortcut's own "Start in" field), which would
   override the default -- and no CI lane launches via an actual double-click or shortcut either
   way, so the real-launch consequence described here is reasoned from documented Windows
-  behavior, not confirmed against a genuine double-click. The hint compounds the problem for the
-  common (no-override) case regardless:
-  `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does not
-  satisfy a CWD-relative `open()` at all -- the one actionable instruction the tool gives doesn't
-  fix the actual problem.
+  behavior, not confirmed against a genuine double-click.
 
-  **Fix options to weigh in this item's own loop** (not pre-decided): (a) unify both verification
-  points to the same CWD (which one is "more correct" needs its own thought -- `dist\` matches a
-  real double-clicked EXE's default CWD, so verifying from the app root may be the actually-wrong
-  choice, not `dist\`); (b) if unification isn't safe (re-verify `selfapps_exedata_fail.ps1`'s own
-  xfail check, which is explicitly load-bearing on the current `pushd dist` behavior per the
-  interconnect doc's own note), at minimum fix `:exe_smokerun_hints`' `--add-data` suggestion to
-  be honest about onefile CWD semantics instead of recommending something that won't work.
+  **Fix options to weigh for the CWD mismatch itself** (still not pre-decided): (a) unify both
+  verification points to the same CWD (which one is "more correct" needs its own thought --
+  `dist\` matches a real double-clicked EXE's default CWD, so verifying from the app root may be
+  the actually-wrong choice, not `dist\`); (b) leave the two CWDs as-is (re-verify
+  `selfapps_exedata_fail.ps1`'s own xfail check, which is explicitly load-bearing on the current
+  `pushd dist` behavior per the interconnect doc's own note, before ever changing this).
+
+  **The hint-honesty half of option (b) is CLOSED 2026-08-23, independently of the CWD-mismatch
+  design decision above.** The hint previously compounded the problem for the common (no-override)
+  case: `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does
+  not satisfy a CWD-relative `open()` at all, yet the hint unconditionally suggested it regardless
+  of which kind of missing-file path was detected. Fixed by branching on whether the captured
+  missing-file path itself is already under a `_MEIxxxxxx` folder (PyInstaller's own onefile
+  extraction-dir naming, checked via `findstr /i "_MEI"`, quoted per the established "quote a
+  variable before piping into findstr" rule): when it is, `--add-data` genuinely is the fix and the
+  original advice is unchanged; when it is a bare/CWD-relative path (the `report.py`/`config.json`
+  scenario above), the hint now says `--add-data` will not fix it and suggests placing a copy next
+  to the built `.exe` instead, or reading it via a path relative to the script's own file. This is
+  independent of, and does not presuppose an answer to, the (a)-vs-(b) CWD-unification question
+  above -- the advice is honest either way that question is eventually resolved. Regression
+  coverage: `tests/selfapps_exedata_fail.ps1` (`self.exe.smokerun.exedata.xfail`, real/conda-full
+  lanes) extended to assert the honest wording fires and the old unconditional `--add-data
+  config.json` suggestion does not, for its own bare-relative-path stub app.
+
+  **Still open, NOT part of this fix**: the CWD-mismatch verdict-flip itself (options a/b above)
+  remains undecided, and the coverage gap this item originally named -- no test asserts what run 2
+  reports for a CWD-sensitive app, since `selfapps_exedata_fail.ps1` invokes `run_setup.bat`
+  exactly once -- is still open. Add a second-run assertion for the same app once the CWD question
+  itself is resolved.
 
   **Coverage gap to close in the same slice**: no test asserts what run 2 reports for a
   CWD-sensitive app. `selfapps_exedata_fail.ps1` invokes `run_setup.bat` exactly once. Add a

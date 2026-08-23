@@ -4978,7 +4978,18 @@ goto :hint_check_mod
 :hint_data_file
 for /f "usebackq delims=" %%F in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No such file or directory: ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<file>'}"`) do set "HP_HINT_FILE_NAME=%%F"
 call :log "[HINT][DATA_FILE] Missing data file detected: %HP_HINT_FILE_NAME%"
-call :log "[HINT][DATA_FILE] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+rem derived requirement (CLAUDE.md Active Backlog Item 38): --add-data bundles a file into the
+rem onefile extraction folder (_MEIxxxxxx under TEMP), never the current working directory --
+rem correct advice only when the missing path itself is already under a _MEIxxxxxx folder (the
+rem code reads it via a bundled-resource-style path). For a bare/CWD-relative path, --add-data
+rem would NOT fix the failure at all; give honest advice for that far more common beginner case
+rem instead of a suggestion that cannot work.
+echo "%HP_HINT_FILE_NAME%"| findstr /i "_MEI" >nul 2>&1
+if errorlevel 1 (
+  call :log "[HINT][DATA_FILE] --add-data will not fix this: it bundles into a temp extraction folder, not the current directory. Place a copy of '%HP_HINT_FILE_NAME%' next to the built .exe instead, or read the file via a path relative to your own script file, not the working directory."
+) else (
+  call :log "[HINT][DATA_FILE] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+)
 if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='DATA_FILE';file=$env:HP_HINT_FILE_NAME}|ConvertTo-Json -Compress)"
 :hint_check_mod
 findstr /i /c:"ModuleNotFoundError" /c:"No module named" "%HP_HINT_FILE%" >nul 2>&1

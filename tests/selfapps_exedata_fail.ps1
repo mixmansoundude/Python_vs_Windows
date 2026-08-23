@@ -96,20 +96,32 @@ $smokerunPassPhrase  = 'EXE smokerun: exited 0 (ok)'
 $smokerunFired  = $combined -match [regex]::Escape($smokerunFiredPhrase)
 $smokerunPassed = $combined -match [regex]::Escape($smokerunPassPhrase)
 
-# xfailPass: smokerun fired AND did NOT report exit 0
-$xfailPass = $smokerunFired -and (-not $smokerunPassed)
+# derived requirement (CLAUDE.md Active Backlog Item 38): entry.py's open("config.json") is a
+# bare, CWD-relative path -- no _MEIxxxxxx marker -- so :exe_smokerun_hints must give the
+# honest "place it next to the .exe" advice, not the misleading unconditional --add-data
+# suggestion (which bundles into a temp extraction folder, never the working directory, so it
+# would not actually fix this failure mode).
+$honestHintFired      = $combined -match [regex]::Escape('will not fix this')
+$misleadingHintAbsent = -not ($combined -match [regex]::Escape('Consider adding: --add-data config.json'))
+$hintCorrect = $honestHintFired -and $misleadingHintAbsent
+
+# xfailPass: smokerun fired AND did NOT report exit 0 AND the hint text is honest for this case
+$xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $hintCorrect
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.smokerun.exedata.xfail'
     req     = 'REQ-003'
     pass    = $xfailPass
-    desc    = 'EXE smokerun XFAIL: missing data file causes non-zero exit (expected failure)'
+    desc    = 'EXE smokerun XFAIL: missing data file causes non-zero exit (expected failure); hint text is honest about --add-data not fixing a CWD-relative access'
     details = [ordered]@{
-        bootstrapExit  = $runExit
-        smokerunFired  = $smokerunFired
-        smokerunPassed = $smokerunPassed
-        xfailPass      = $xfailPass
-        log            = $bootstrapLog
+        bootstrapExit         = $runExit
+        smokerunFired         = $smokerunFired
+        smokerunPassed        = $smokerunPassed
+        honestHintFired       = $honestHintFired
+        misleadingHintAbsent  = $misleadingHintAbsent
+        hintCorrect           = $hintCorrect
+        xfailPass             = $xfailPass
+        log                   = $bootstrapLog
     }
 })
 
