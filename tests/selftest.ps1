@@ -1596,8 +1596,12 @@ try {
   $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnly4
   $env:HP_CI_LANE = $prevCILane4
 }
-$retryLogPath = Join-Path $retryDir $retryLogName
-$retryLines = if (Test-Path $retryLogPath) { Get-Content -LiteralPath $retryLogPath -Encoding ASCII } else { @() }
+# derived requirement (CLAUDE.md Item 42, lever 1): the "[INSTALL] conda bulk: transient failure
+# detected" line is suppressed from the live console by default, so the redirected $retryLogName
+# capture no longer carries it -- read the always-complete ~setup.log instead (:log writes it
+# unconditionally regardless of console tiering).
+$retrySetupLogPath = Join-Path $retryDir '~setup.log'
+$retryLines = if (Test-Path $retrySetupLogPath) { Get-Content -LiteralPath $retrySetupLogPath -Encoding ASCII } else { @() }
 $retryMsgFound = ($retryLines | Where-Object { $_ -like '*conda bulk: transient failure detected*' }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.stub.conda_retry'
@@ -1689,8 +1693,12 @@ try {
   $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnly5
   $env:HP_CI_LANE = $prevCILane5
 }
-$perpkgLogPath = Join-Path $perpkgDir $perpkgLogName
-$perpkgLines = if (Test-Path $perpkgLogPath) { Get-Content -LiteralPath $perpkgLogPath -Encoding ASCII } else { @() }
+# derived requirement (CLAUDE.md Item 42, lever 1): the "[INSTALL] conda per-pkg fallback" line
+# is suppressed from the live console by default, so the redirected $perpkgLogName capture no
+# longer carries it -- read the always-complete ~setup.log instead (:log writes it unconditionally
+# regardless of console tiering).
+$perpkgSetupLogPath = Join-Path $perpkgDir '~setup.log'
+$perpkgLines = if (Test-Path $perpkgSetupLogPath) { Get-Content -LiteralPath $perpkgSetupLogPath -Encoding ASCII } else { @() }
 # NOTE: -like treats [INSTALL] as a character-class wildcard, so match the bracket-free
 # phrase (unique to this log line) instead of the literal "[INSTALL] ..." prefix.
 $perpkgMsgFound = ($perpkgLines | Where-Object { $_ -like '*conda per-pkg fallback*' }).Count -gt 0

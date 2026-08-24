@@ -220,7 +220,16 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     if (Test-Path -LiteralPath $wsRunOut) {
         $wsRunText = Get-Content -LiteralPath $wsRunOut -Raw -Encoding Ascii
     }
-    $wsDebugLogFound = ($wsLogText -match [regex]::Escape('[DEBUG] Using super-user override for PVW_WORKSPACE:'))
+    # derived requirement (CLAUDE.md Item 42, lever 1): [DEBUG]-tagged lines are suppressed from
+    # the live console by default, so ~ws_bootstrap.log (a redirected capture of that same console
+    # stream) no longer carries this line -- read the always-complete ~setup.log instead, which
+    # :log writes unconditionally regardless of console tiering.
+    $wsSetupLogPath = Join-Path $wsAppDir '~setup.log'
+    $wsSetupLogText = ''
+    if (Test-Path -LiteralPath $wsSetupLogPath) {
+        $wsSetupLogText = Get-Content -LiteralPath $wsSetupLogPath -Raw -Encoding Ascii
+    }
+    $wsDebugLogFound = ($wsSetupLogText -match [regex]::Escape('[DEBUG] Using super-user override for PVW_WORKSPACE:'))
     $customPyExists = Test-Path -LiteralPath (Join-Path $customWorkspace 'Scripts\python.exe')
     $defaultEnvAbsent = -not (Test-Path -LiteralPath (Join-Path $wsAppDir '.uv_env\Scripts\python.exe'))
     $wsAppRan = ($wsRunText -match [regex]::Escape('workspace-relocate-ok'))
@@ -358,7 +367,14 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     if (Test-Path -LiteralPath $wsInvalidLogPath) {
         $wsInvalidLogText = Get-Content -LiteralPath $wsInvalidLogPath -Raw -Encoding Ascii
     }
-    $wsInvalidDebugLogFound = ($wsInvalidLogText -match [regex]::Escape('[DEBUG] Using super-user override for PVW_WORKSPACE:'))
+    # derived requirement (CLAUDE.md Item 42, lever 1): same reasoning as the valid-value scenario
+    # above -- [DEBUG] is suppressed from the console capture by default, so read ~setup.log for it.
+    $wsInvalidSetupLogPath = Join-Path $wsInvalidAppDir '~setup.log'
+    $wsInvalidSetupLogText = ''
+    if (Test-Path -LiteralPath $wsInvalidSetupLogPath) {
+        $wsInvalidSetupLogText = Get-Content -LiteralPath $wsInvalidSetupLogPath -Raw -Encoding Ascii
+    }
+    $wsInvalidDebugLogFound = ($wsInvalidSetupLogText -match [regex]::Escape('[DEBUG] Using super-user override for PVW_WORKSPACE:'))
     $cascadeReached = ($wsInvalidLogText -match [regex]::Escape('falling back to conda create'))
     $wsInvalidCompletedGracefully = ($null -ne $wsInvalidExit) -and (Test-Path -LiteralPath $wsInvalidLogPath)
     $workspaceInvalidPass = $wsInvalidDebugLogFound -and $cascadeReached -and $wsInvalidCompletedGracefully
