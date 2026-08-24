@@ -995,7 +995,7 @@ self.exe.warnfix.venv_repair
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
-CLAUDE.md Active Backlog Item 39: the EXE fast path's freshness check (`HP_FAST_CHECK`,
+CLAUDE.md's former Active Backlog Item 39 (closed): the EXE fast path's freshness check (`HP_FAST_CHECK`,
 `tools/fast_check.ps1`) switched from mtime-only over `*.py` files to a content-hash
 comparison over the same file set, extended to `requirements.txt`/`pyproject.toml`/
 `runtime.txt`. Closes two exposures: (a) a timestamp-preserving delivery method (a ZIP,

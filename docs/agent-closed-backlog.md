@@ -2913,6 +2913,125 @@ run of the same regex logic before landing, not just reasoned about).
   invalid UTF-8 byte and no BOM) proves the fix: `ERROR:` marker, file byte-identical to the
   original. All 18 tests in the suite pass, full local sanity sweep clean.
 
+### Item 39 (closed 2026-08-23; archived here 2026-08-24)
+
+- **The EXE fast path's freshness check was mtime-only, so timestamp-preserving delivery (a ZIP,
+  an xcopy) could silently run stale code with no signal to the user.** Confirmed
+  reasoned-from-source.
+
+  **Mechanism**: `:try_fast_exe`'s freshness test (`HP_FAST_CHECK` payload, `~fast_check.ps1`) was
+  `if ($exeTime -ge $latest) { 'fresh' }` over `*.py` mtimes only. A `fresh` verdict short-circuits
+  the ENTIRE run straight to `:success` -- no dependency resolution, no rebuild, no
+  re-verification. Two exposures: (a) ZIP extraction, `xcopy`, and `robocopy` all commonly
+  preserve the archive's original mtime, so an updated script whose authored timestamp predates
+  the last build is classified `fresh` and the OLD EXE runs; (b) non-`.py` inputs aren't consulted
+  at all -- `requirements.txt`, `pyproject.toml`, `runtime.txt` are outside the scan, so a
+  dependency or Python-version change with no `.py` edit is invisible to the freshness check.
+
+  **Realistic scenario**: a colleague emails a fixed `analysis.py` inside a ZIP built last
+  Tuesday. The user extracts it over the existing folder (mtime = last Tuesday), double-clicks,
+  sees "Fast path: skipping PyInstaller rebuild", and the program runs with the OLD logic --
+  nothing in the console indicates a stale artifact was preferred over their new file. README
+  documents the mechanism accurately but not this failure mode; the "delete `dist\<env>.exe`"
+  escape hatch only appears in the ambiguous-note panel, not the normal success panel.
+
+  **Implemented: freshness is now a content-hash comparison, closing both exposures at once.**
+  `HP_FAST_CHECK` (canonical source `tools/fast_check.ps1`, previously inline-only with no
+  `tools/` file) now hashes the SAME `*.py` file set already scanned (unchanged filter), extended
+  to include `requirements.txt`/`pyproject.toml`/`runtime.txt` when present -- a combined SHA256
+  over each file's own `relpath|filehash` line, sorted by path for determinism. This structurally
+  cannot be fooled by a preserved/backdated mtime (exposure a) and now sees dependency-file
+  changes regardless of mtime (exposure b), closing both suggested fix directions at once rather
+  than picking one. Two modes via a second positional arg: `check` (default, called from
+  `:try_fast_exe`, unchanged call site) prints `fresh` iff a stored `~fast_check.hash.txt` exists
+  and matches; a missing stored hash (first run under this fix, or an EXE built by an older
+  `run_setup.bat`) is a safe, one-time-cost "not fresh" default, never a false "fresh." `write`
+  (new subroutine `:write_fast_hash`, called from `:success`) unconditionally (re)writes the
+  hash after a genuine fresh build attempt. Uses `[System.Security.Cryptography.SHA256]`
+  directly, not `Get-FileHash`, per this repo's own "Prefer raw .NET types over Utility-module
+  cmdlets" lesson (Utility-module auto-load is not guaranteed in the `-File` invocation shape
+  embedded helpers run under on real Windows PowerShell 5.1, invisible to local `pwsh`/Linux
+  testing).
+
+  **A real bug in the first-shipped `write` gate, found by CodeRabbit's review of this same
+  PR (#460) before landing.** The original gate was `if not defined HP_FASTPATH_USED call
+  :write_fast_hash` -- but `HP_FASTPATH_USED` being unset does not prove a build actually
+  SUCCEEDED this run; a skipped or FAILED rebuild also leaves it unset, and if a stale
+  `dist\<env>.exe` from an EARLIER successful run was still sitting there untouched, this gate
+  would write the CURRENT (changed) sources' hash paired against that OLD binary -- the next
+  run would then wrongly trust the stale EXE as "fresh," silently reintroducing the exact class
+  of bug this item exists to fix, just relocated one layer down. Fixed with a new, more precise
+  flag, `HP_FRESH_BUILD_OK` -- reset once per fresh build attempt (alongside
+  `HP_NUITKA_FALLBACK_USED` in `:run_entry_smoke`'s own init block) and set ONLY in the 4
+  genuine build-success branches (PyInstaller producing `dist\%ENVNAME%.exe` cleanly, or Tier
+  A/Nuitka succeeding after PyInstaller didn't, across all 3 of its own failure sub-branches) --
+  never on any `:warn_build_incomplete` path. `HP_FRESH_BUILD_OK` being set already implies the
+  fast path was not taken (a build can only be attempted after the fast path declines to fire),
+  so this is a strictly more precise REPLACEMENT for the old `HP_FASTPATH_USED` check, not an
+  additional condition alongside it -- `:success` now gates on `if defined HP_FRESH_BUILD_OK`
+  alone. A later repair-loop rebuild (`:hidden_import_recover`/`:dll_bundle_recover`) failing
+  after the initial build already succeeded does NOT unset the flag -- reasoned as correct,
+  since those loops fix BUNDLING issues, not SOURCE CONTENT, so the already-built EXE from the
+  same run still genuinely reflects the current sources even if a later repair attempt fails;
+  `:write_fast_hash`'s own pre-existing `if not exist "dist\%ENVNAME%.exe" exit /b 0` guard
+  remains the correct backstop for the rarer case where a repair-loop failure actually removes
+  the file.
+
+  **Coverage gap closed**: `tests/selfapps_fastpath_hash.ps1` (uv lane, non-gating for first
+  landing) is the literal scenario this item asked for -- run 1 builds the EXE printing a V1
+  token, and asserts `~fast_check.hash.txt` was genuinely written before proceeding (a
+  CodeRabbit-review addition: without this, a completely broken write side would be
+  indistinguishable from a working one, since a missing hash file also safely forces a rebuild);
+  entry.py is rewritten to print V2 and its mtime backdated to 2001-09-09 (well before the EXE's
+  own mtime) before run 2; asserts run 2's captured EXE stdout shows V2 (not V1) and the "Fast
+  path: reusing" line is absent, proving a genuine rebuild happened rather than the old
+  mtime-only check wrongly reusing the stale EXE. `tests/test_fast_check.py` unit-tests the
+  isolated script directly via real `pwsh` (6 scenarios: no stored hash, write-then-fresh,
+  backdated-mtime content change, dependency-file-only change, rewrite-after-change, missing
+  EXE) plus a `PayloadSync` byte-equality check against `tools/fast_check.ps1`.
+  `tests/harness.ps1`'s `batch.fastpath.hash_write` statically guards the `:write_fast_hash`
+  wiring -- label exists, called from `:success` with the `HP_FRESH_BUILD_OK` gate, invokes the
+  payload in `write` mode -- via SCOPED body extraction (bounded by each subroutine's own next
+  label, another CodeRabbit-review fix: the original check used whole-file `-match`, which could
+  pass even if the call or the write invocation were removed, as long as matching text happened
+  to exist anywhere else in the file). See `docs/agent-ndjson.md` for the full row registry entry.
+
+  **A second CodeRabbit review round on the same PR caught four more findings, all fixed before
+  landing.** (1) A defensive `set "HP_FRESH_BUILD_OK="` was added at the very top of the file
+  (alongside the pre-existing `HP_FASTPATH_USED=` reset, before the first `:try_fast_exe` call of
+  the whole run) -- `:run_entry_smoke`'s own per-build-attempt reset sits past a preflight-failure
+  early-return (`HP_PREFLIGHT_FAILED`), so a provider-cascade re-entry hitting that early return
+  would skip the in-subroutine reset; no concrete exploit was confirmed against the current
+  single-invocation call graph (every write site pairs a genuinely fresh build with unchanged
+  sources even across this path), but the fix is a zero-cost, unconditional close of the whole
+  class of risk regardless. (2) `:write_fast_hash` now captures the PowerShell write call's own
+  exit code and logs `[WARN] Fast-path hash write failed; the next run will rebuild.` on a nonzero
+  result, instead of silently deleting the helper and returning success either way -- matches this
+  repo's own "Bootstrap must fail fast and explicitly -- no silent fallbacks unless explicitly
+  logged" principle; still safe either way (a failed write leaves no stored hash, forcing exactly
+  one more rebuild), just no longer silent. (3) `tests/selfapps_fastpath_hash.ps1`'s
+  `hashWrittenAfterRun1` check was `Test-Path`-only (existence, not content) -- a truncated or
+  malformed write would pass the same way a working one would, since a broken file is just as
+  "not fresh" as a missing one to the read side. Now reads the file and validates it matches
+  `tools/fast_check.ps1`'s own canonical format (a 64-char lowercase hex SHA256 digest, no
+  trailing newline) via `hashContentValid`, folded into `$pass`. (4) The same test never confirmed
+  its own core precondition -- that `entry.py`'s backdated mtime assignment actually took, and is
+  genuinely older than the built EXE's own mtime -- before trusting run 2's outcome as evidence the
+  NEW hash-based path (not the OLD mtime-only path, coincidentally rebuilding for an unrelated
+  reason) did the detecting. Added `mtimePreconditionHolds` (compares `entry.py`'s and the built
+  EXE's `LastWriteTimeUtc`), also folded into `$pass`. `.github/workflows/batch-check.yml`'s
+  "Upload test logs" step gained both path-style variants for `~fast_check.hash.txt` under
+  `tests/~selftest_fastpath_hash/` (a new observable artifact this PR introduced, per this repo's
+  own coding guideline that every new artifact needs both slash-style upload paths) -- previously
+  only the run logs/`~setup.log`/`~run.out.txt` were wired.
+
+  **Closed, nothing left to implement** -- was left in CLAUDE.md's Active Backlog past its actual
+  completion date; archived here as pure housekeeping (no new information), per this repo's own
+  house rule that an item with nothing left to implement does not belong in the always-loaded
+  file. Non-gating status for `tests/selfapps_fastpath_hash.ps1`'s first landing is a standing,
+  repo-wide convention (see "CI lane gating maturity" periodic check), not open work specific to
+  this item.
+
 ### Item 59 (closed 2026-08-23)
 
 - **CodeRabbit's automated review did not run on PR #435, and needed a manual trigger --
