@@ -59,9 +59,19 @@ class StackItem:
     char: str
     line: int
     column: int
-    # None = not opened on an echo/rem prose line; "echo" / "rem" = which command's
-    # text it was opened on (see the cross-line-close check in pop() below).
+    # None = not a hazardous echo/rem prose paren; "echo" / "rem" = which command's
+    # text it was opened on AND a genuine structural bracket was already open at that
+    # point (see the cross-line-close check in pop() below). Distinct from is_prose
+    # below -- prose_kind is the "should this be flagged" verdict, is_prose is the
+    # raw "was this opened on echo/rem prose text at all" fact used to compute it.
     prose_kind: Optional[str] = None
+    # derived requirement (CodeRabbit review, PR #464): purely line-based -- True
+    # whenever this bracket was opened on an echo/rem line, regardless of what else
+    # is on the stack. Needed because prose_kind=None is otherwise ambiguous between
+    # "this is a genuine structural if/for bracket" and "this is a top-level prose
+    # paren judged not hazardous" -- see the push-site comment for why that ambiguity
+    # produced a real false positive.
+    is_prose: bool = False
 
 
 class LineCursor:
@@ -166,8 +176,15 @@ class DelimiterChecker:
     def add_issue(self, line: int, column: int, message: str) -> None:
         self.issues.append(Issue(self.path, line, column, message))
 
-    def push(self, char: str, line: int, column: int, prose_kind: Optional[str] = None) -> None:
-        self.stack.append(StackItem(char, line, column, prose_kind))
+    def push(
+        self,
+        char: str,
+        line: int,
+        column: int,
+        prose_kind: Optional[str] = None,
+        is_prose: bool = False,
+    ) -> None:
+        self.stack.append(StackItem(char, line, column, prose_kind, is_prose))
 
     def pop(self, expected: str, line: int, column: int, actual: str) -> None:
         if not self.stack:
@@ -403,13 +420,24 @@ class DelimiterChecker:
                     # cmd.exe to misparse) is harmless, confirmed against real instances in
                     # this file (:print_fastpath_ambiguous_note for echo; a top-level rem
                     # header block for rem) that would otherwise false-flag.
+                    #
+                    # derived requirement (CodeRabbit review, PR #464, real bug -- confirmed
+                    # via `echo outer (inner (detail))` at genuine top level): the ORIGINAL
+                    # "already nested" test was `bool(self.stack)` -- true the moment ANY
+                    # bracket is already open, including a PRIOR prose paren from this exact
+                    # same echo/rem line's own text. That misclassified the line's own SECOND
+                    # paren as hazardous even with no real enclosing if/for block anywhere.
+                    # "Already nested inside a real block" must mean a genuine STRUCTURAL
+                    # bracket (one not itself opened on echo/rem prose) is on the stack --
+                    # not merely that the stack is non-empty. is_prose is a pure per-line
+                    # fact (independent of stack state); a bracket is hazardous prose only
+                    # when some ALREADY-OPEN stack item has is_prose=False.
+                    is_prose = ch == "(" and (is_bat_echo_line or is_bat_rem_line)
+                    nested_in_structural = any(not item.is_prose for item in self.stack)
                     prose_kind: Optional[str] = None
-                    if ch == "(" and bool(self.stack):
-                        if is_bat_echo_line:
-                            prose_kind = "echo"
-                        elif is_bat_rem_line:
-                            prose_kind = "rem"
-                    self.push(ch, line_no, cursor.column(), prose_kind=prose_kind)
+                    if is_prose and nested_in_structural:
+                        prose_kind = "echo" if is_bat_echo_line else "rem"
+                    self.push(ch, line_no, cursor.column(), prose_kind=prose_kind, is_prose=is_prose)
                     cursor.advance()
                     continue
 

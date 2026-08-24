@@ -193,6 +193,30 @@ def test_paren_pair_on_same_echo_line_at_top_level_is_not_flagged(tmp_path, caps
     assert "No delimiter issues found." in captured.out
 
 
+def test_paren_pair_nested_inside_another_prose_paren_at_top_level_is_not_flagged(tmp_path, capsys):
+    # Regression fixture for a real bug found via CodeRabbit's review of PR #464:
+    # the original "already nested" check was `bool(self.stack)`, true the moment
+    # ANY bracket is open -- including a PRIOR prose paren from this exact same
+    # echo/rem line's own text, not just a genuine enclosing if/for block. For
+    # "echo outer (inner (detail))" at true top level (no enclosing block at all),
+    # this wrongly classified the line's own SECOND paren as hazardous once the
+    # FIRST paren was already on the stack. Fixed by basing the hazard check on
+    # whether a genuine STRUCTURAL (non-prose) bracket is already open, not merely
+    # on stack non-emptiness -- see StackItem.is_prose.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "echo outer (inner (detail))\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
 def test_paren_pair_on_redirected_echo_line_deeply_nested_is_flagged(tmp_path, capsys):
     # Regression fixture for CLAUDE.md Item 61 / PR #445's second real CI incident:
     # a same-line, self-contained "(exit 3)" pair inside a ">> file echo ..."

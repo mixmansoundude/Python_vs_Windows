@@ -3018,6 +3018,24 @@ run of the same regex logic before landing, not just reasoned about).
   "revised rule" language (which was the correct prediction, now evidence-backed rather than
   reasoned).
 
+  **Follow-up fix, same PR: a real false-positive bug in the checker itself, found by a second
+  CodeRabbit review round.** The "already nested" test that gates whether an echo/rem paren gets
+  flagged was `bool(self.stack)` -- true the instant ANY bracket is already open, including a
+  PRIOR prose paren from the SAME echo/rem line's own text, not just a genuine enclosing if/for
+  block. Reproduced directly: `echo outer (inner (detail))` at genuine top level (no enclosing
+  block anywhere) wrongly flagged its own second `(`, since the first `(` from the same line was
+  already sitting on the stack by the time the second one was reached. Fixed by giving each
+  `StackItem` a new `is_prose: bool` field (a pure per-line fact -- was this bracket opened on an
+  echo/rem line at all, independent of stack state) and basing the hazard verdict on whether a
+  genuine STRUCTURAL (non-prose) bracket is already open (`any(not item.is_prose for item in
+  self.stack)`), not on stack non-emptiness. Verified against all three shapes: the reported false
+  positive (now clean), the two already-established true positives (same-line and cross-line pairs
+  genuinely nested inside a real `if(...)` block -- both still correctly flagged). New regression
+  test `test_paren_pair_nested_inside_another_prose_paren_at_top_level_is_not_flagged`. No real
+  instance of this shape existed in `run_setup.bat` itself (confirmed clean before and after the
+  fix), so this closes a latent false-positive risk for future edits, not a live bug in the
+  shipped file.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
