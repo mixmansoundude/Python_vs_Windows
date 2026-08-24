@@ -519,9 +519,10 @@ list; the recurring traps that have actually bitten us:
   Item 61 entry for the full fix trace and the 5 new regression tests. Running the fixed checker
   against `run_setup.bat` surfaced 26 genuine, previously-invisible cross-line `rem` pairs already
   in the file -- audited and fixed (reworded to remove the parens, ` -- `/`,` in their place)
-  individually in a later slice, closing `check_delimiters.py run_setup.bat` clean; see CLAUDE.md's
-  Item 61 entry for that closure. A separate, still-open question -- whether a SAME-line paren pair
-  nested inside a real block needs the identical treatment -- remains tracked there too.
+  individually in a later slice, closing `check_delimiters.py run_setup.bat` clean; see
+  `docs/agent-closed-backlog.md`'s Item 61 entry for that closure. A separate question -- whether a
+  SAME-line paren pair nested inside a real block needs the identical treatment -- was open at the
+  time; see below for how it was answered.
 
   **The rem-comment fix above did NOT fully resolve the regression -- a SECOND, independent paren
   hazard in the SAME code block was found only via a second round of live CI evidence, after the
@@ -550,6 +551,26 @@ list; the recurring traps that have actually bitten us:
   rem-comment cross-line pair, and this echo same-line pair) shipped in the SAME original commit
   and had to be found and fixed in two separate rounds, each confirmed only by live Windows CI
   evidence -- local tooling (`check_delimiters.py`, the full sanity sweep) caught NEITHER one.
+
+  **CONFIRMED and GENERALIZED via a dedicated real-cmd.exe probe (CLAUDE.md Item 61, closed
+  2026-08-23) -- the "revised rule" above was the correct prediction, and neither nesting depth nor
+  the `>>` redirection prefix turned out to matter at all.** A `workflow_dispatch`-only probe
+  workflow (`tools/probe_paren_hazard.ps1` + `.github/workflows/batch-paren-hazard-probe.yml`, PR
+  #461) generated a same-line fixture matrix -- nesting depth 1-4, with/without a `>>` prefix --
+  plus a positive control reproducing the known-broken cross-line shape, and ran each via real
+  `cmd.exe` on a Windows runner (dispatched manually by the maintainer after the acting session's
+  own GitHub integration hit a `403 Resource not accessible by integration` trying to call the
+  `workflow_dispatch` API itself). Every same-line fixture corrupted, INCLUDING `depth1_plain` --
+  one level of `if 1==1 (...)` nesting, no redirection, the simplest possible same-line pair --
+  with the identical `"X was unexpected at this time."` signature as the confirmed-broken control.
+  **Final rule, no longer just "revised": a same-line, self-contained `(`/`)` pair inside echo/rem
+  text is safe ONLY when not nested inside any real open bracket at all -- the moment it is nested,
+  even one level deep, with no redirection, it is unsafe, full stop.** `check_delimiters.py` now
+  enforces this directly (the `line != last.line` exemption was removed from its cross-line check
+  entirely -- same-line and cross-line nested pairs are flagged identically), and running the fixed
+  checker against `run_setup.bat` surfaced 63 further genuine findings, all fixed the same way as
+  the original 26 (parens reworded out, no functional change) -- see
+  `docs/agent-closed-backlog.md`'s Item 61 entry for the full trace.
 - **Avoid `EnableDelayedExpansion`; if unavoidable, wrap it tightly.** `!` becomes special
   under delayed expansion, and a parent shell launched with `/V:ON` causes `!`-collisions.
   `tests/harness.ps1` `batch.bang.scan` enforces "no `!` in live batch code lines."

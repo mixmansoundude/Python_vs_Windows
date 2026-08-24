@@ -1029,11 +1029,67 @@ but several represent real gaps worth closing before calling the path fully rele
   `batch.progress.conda_create`/`batch.progress.pyi_build` precedent exactly. New harness assertion
   `batch.progress.dep_install` (`tests/harness.ps1`) proves the message precedes the first real
   install-phase work, same ordering-check shape as its two siblings.
-  **Still open, NOT part of this fix**: `[INSTALL]` remains a real, distinct tag lever 1's own
-  "INFO/BOOT/WARN/ERROR" wording never accounts for, and `[STATUS]`/`[REPAIR]`/`[HINT]` are still
-  unaddressed by that wording too -- explicitly classifying all 10 tags as visible-by-default or
-  suppressed-by-default (the rest of this precondition) is unchanged and still needed before lever
-  1 itself can be implemented.
+  **Tag classification: CLOSED 2026-08-23.** Lever 1's own wording only ever named 4 of the 10
+  tags (`INFO`/`BOOT`/`WARN`/`ERROR` = visible); `[STATUS]`/`[REPAIR]`/`[HINT]`/`[INSTALL]` were
+  the remaining 4 left unclassified (`[DEBUG]`/`[TRACE]` were already implied suppressed by the
+  "suppressing DEBUG/TRACE" line above). Read every real call site for each (re-counted from
+  source 2026-08-23: `[INFO]` 216, `[WARN]` 151, `[ERROR]` 57, `[STATUS]` 16, `[DEBUG]` 9,
+  `[TRACE]` 9, `[REPAIR]` 8, `[BOOT]` 7, `[HINT]` 6, `[INSTALL]` 5 -- counts drift upward release
+  over release as features land; re-count before trusting these for a future slice) and classified
+  by what each tag is actually FOR, not just its name:
+  - **`[STATUS]`** -- the `Run Status: SUCCESS/FAILED/TIMED OUT` readout (`:smokerun_ndjson` and
+    its two siblings) is arguably the single most important line in the whole run for a beginner
+    user -- did MY code work. **Visible.**
+  - **`[REPAIR]`** -- warnfix/DLL-bundling/hidden-import auto-recovery activity
+    (`[REPAIR] missing modules detected; installing and rebuilding.`,
+    `[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: ...`, etc.) explains why a build is
+    taking longer than expected and that the bootstrapper is actively fixing something, not stuck.
+    **Visible.**
+  - **`[HINT]`** -- the post-failure `:exe_smokerun_hints` guidance (`Missing data file
+    detected: ...`, `Consider adding: --hidden-import=...`) is the most directly actionable text
+    in the entire file for a user staring at a failure. **Visible.**
+  - **`[INSTALL]`** -- terse routing breadcrumbs for WHICH install path was taken (`conda bulk
+    from ~reqs_conda.txt`, `conda per-pkg fallback`, `pip gap fill from requirements.txt`) sit
+    strictly BENEATH the `[INFO] Installing dependencies -- this may take a few minutes...` line
+    the dependency-install-progress-line fix above already made visible -- that INFO line is
+    already the "something is happening" signal for this phase, so `[INSTALL]`'s own mechanism
+    detail is redundant for a live user and reads like `[TRACE]`'s own shape
+    (`run_setup.bat`'s own header comment at the `[INFO] Installing dependencies` call site
+    already anticipated this: "only `[TRACE]`/`[INSTALL]` lines, which a future console-tiering
+    change (lever 1) could suppress by default"). **Suppressed** (same tier as `DEBUG`/`TRACE`).
+
+  Final tier: **visible by default** -- `INFO`, `BOOT`, `WARN`, `ERROR`, `STATUS`, `REPAIR`,
+  `HINT` (7 tags). **Suppressed by default** -- `DEBUG`, `TRACE`, `INSTALL` (3 tags), restorable
+  via an opt-in verbose flag per lever 1's own original design.
+
+  **Real blast-radius finding from this audit, for whoever implements lever 1 next**: grepped
+  every test for a `[DEBUG]`/`[TRACE]`/`[INSTALL]` assertion to check what actually depends on
+  today's unconditional console echo (as opposed to the untouched-by-tiering `~setup.log`, or a
+  STATIC source-text scan like `tests/harness.ps1`'s `batch.progress.dep_install`, neither of
+  which tiering affects). Two real hits, one false alarm:
+  - `tests/selfapps_pipgap.ps1` reads `[INSTALL]` lines from `~setup.log` specifically (its own
+    header comment says so) -- unaffected by suppressing `[INSTALL]` from the LIVE console, since
+    the full log is untouched by design. Not a blocker.
+  - `tests/selfapps_pvw_overrides.ps1`'s `$wsDebugLogFound` (`self.pvw.workspace.valid`) DOES read
+    `[DEBUG] Using super-user override for PVW_WORKSPACE:` from `~ws_bootstrap.log` -- the
+    CONSOLE-redirected capture (`cmd /c "run_setup.bat > ~ws_bootstrap.log 2>&1"`), not
+    `~setup.log`. Suppressing `[DEBUG]` from console echo would silently break this assertion.
+    **Must be updated (read `~setup.log` instead, or in addition) in the same change that
+    implements lever 1's console suppression**, or this test goes red the moment tiering ships.
+  - No other test file references `[DEBUG]`/`[TRACE]`/`[INSTALL]` at all (confirmed via a
+    repo-wide grep across `tests/`) -- so this one test is the ENTIRE known blast radius, not an
+    example of a larger pattern still to be found. Re-grep before implementing, since new tests
+    land between this audit and whenever lever 1 is actually built.
+
+  **Still open, NOT part of this fix**: the actual `:log` tiering MECHANISM itself (how the
+  opt-in verbose flag is spelled, whether tiering applies per-call-site or via a single
+  suppress-list check inside `:log`, and fixing `selfapps_pvw_overrides.ps1` above) is still
+  unbuilt -- this closes only the classification precondition, deliberately kept as its own slice
+  given `:log`'s 425-call-site blast radius (counted via `grep -c 'call :log' run_setup.bat`) and
+  this file's own established "EXTREME CAUTION, one
+  slice at a time" precedent for changes to widely-shared core subroutines (see the DLL-bundling
+  and hidden-import repair loops elsewhere in this backlog for the shape that discipline takes).
+  Lever 2 (the two Y/N prompts) is fully separate and untouched by this slice.
 
 Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
 external AI reviews plus direct verification against current source by the acting agent) chasing a
@@ -1143,123 +1199,6 @@ way (no live Windows execution available here), that is noted explicitly rather 
   DLL-bundling/hidden-import repair loops
   elsewhere in this backlog -- one incremental slice at a time (slice 1 above is the second proof
   this works, after Bucket B), not a single sweeping change across every remaining site.
-
-- **Item 61 (checker fix landed; the 26-finding audit is now closed; a separate same-line-pair
-  question remains open, see "Revised item scope" below): `check_delimiters.py` now catches a
-  cross-line `(`/`)` pair inside `rem` comment text, not just `echo` text -- turning that on
-  originally surfaced 26 genuine, previously-invisible findings in `run_setup.bat`.**
-  `docs/agent-lessons-learned.md`'s "A literal `(`/`)` inside `echo` text..." entry documents the
-  original 2026-07 echo-text incident and its `rem`-text sibling (PR #445, Item 52) that motivated
-  this fix -- read that entry for the full mechanism and incident trace.
-
-  **Fix shipped**: `check_delimiters.py`'s `.bat`/`.cmd` handling no longer treats a `rem` line as
-  fully opaque -- it now routes through the same character scan and `prose_kind`-tracked bracket
-  stack `echo` lines already used (the field was generalized from a bool `is_echo_open` to a
-  `Optional[str] prose_kind`, so the same cross-line-close check flags either kind and the error
-  message names which one). Scoped identically to the echo case: a paren opened on a rem/echo line
-  is only flagged if it was ALREADY nested inside a real open bracket when pushed, so a harmless
-  top-level rem header block with no enclosing `if`/`for` does not false-positive.
-
-  **Two additional, necessary correctness fixes found only by running the extended checker against
-  the real `run_setup.bat` -- neither was anticipated by the original fix description above, and
-  either one alone made the rem-line extension actively counterproductive (68+ and later 82 mostly-
-  bogus findings on first attempt, cascading from a handful of root causes) rather than useful:**
-  1. **cmd.exe's own `^` escape character was not recognized at all.** `^(` / `^)` is this file's
-     own established, already-documented convention for defusing this exact hazard (see the error
-     message's own suggested fix) -- `run_setup.bat`'s file-header rem block (the `LINE-ENDING
-     SELF-CHECK` block) uses it
-     extensively ("Windows ^(CRLF^)", etc.). Without recognizing it, the checker flagged the very
-     construct that fixes the hazard, and every mistracked bracket corrupted the stack for
-     everything scanned afterward. Fixed: a bracket character on any `.bat`/`.cmd` line preceded by
-     an ODD count of `^` (via the pre-existing `count_preceding` helper, mirroring how string-escape
-     already used it) is now treated as a literal, non-special character.
-  2. **A bare apostrophe (`'`) was treated as a string-quote delimiter on `.bat`/`.cmd` lines, and a
-     standalone `"` in rem/echo PROSE could open a persistent, incorrectly cross-line "string."**
-     cmd.exe has no single-quote-string concept at all, and rem/echo text (unlike real code) has no
-     "quoted argument" concept either -- an ordinary contraction/possessive ("doesn't", "user's",
-     "cmd.exe's") or a standalone `"` describing the quote character itself (`'...a literal " would
-     close the quote.'`, a real line in `run_setup.bat`) would silently swallow every later
-     character -- including real parens on subsequent lines -- as fake "string content" until some
-     unrelated, later quote happened to "close" it. Fixed: `'` is now always inert on `.bat`/`.cmd`
-     lines; `"` is inert specifically on rem/echo prose lines (still fully meaningful on a real,
-     non-prose `.bat`/`.cmd` code line, e.g. `set "VAR=..."`).
-
-  Both fixes are general (not `rem`-specific) and apply equally to `echo` lines, closing the
-  identical latent gap there too -- it just never manifested for `echo` because this codebase's own
-  echo output text is comparatively sparse and formal (rarely uses contractions or `^`-escaping)
-  compared to the much higher volume of informal, dev-facing `rem` prose.
-
-  **Coverage added**: `tests/test_check_delimiters_import.py` gained 5 new tests -- the positive
-  (`rem` cross-line pair nested inside a real block, flagged) and negative (top-level `rem` header,
-  not flagged) cases originally scoped for this item, two regression tests for the two correctness
-  fixes above (a `^`-escaped rem-line pair is not flagged; an apostrophe/standalone-quote rem line,
-  nested inside a real block with a genuine cross-line pair immediately after, still gets the pair
-  flagged -- proving normal scanning resumes, not just that the quote characters themselves don't
-  crash it), plus one more from a CodeRabbit review round on this same PR (a tab-delimited `rem`
-  line is recognized identically to a space-delimited one). All 14 tests in that file, and the
-  full pytest suite, pass.
-
-  **26-finding audit: CLOSED 2026-08-22.** All 26 cross-line `(`/`)` pairs inside `rem` prose,
-  each nested inside a real `if`/`for` block, were individually read in context and reworded to
-  remove the literal parens entirely (` -- ` or `,` in place of the pair, matching the template
-  fix shape from the `(^, &, or |)` reordering earlier in this same item), never merged onto one
-  line and left as a same-line pair -- per the "Revised item scope" note below, a same-line pair
-  nested inside a real block is not unconditionally trusted either, so removing the parens outright
-  was the conservative choice throughout, not just for the cross-line cases. Done in small batches
-  within one session (not "all 26 in one blind sweep") specifically by reading each finding's
-  surrounding block before rewording it, in keeping with this repo's "EXTREME CAUTION, one slice at
-  a time" convention -- `python tools/check_delimiters.py run_setup.bat` now reports zero findings.
-  `git diff` confirms every changed line across all 26 fixes is a `rem` comment line -- no
-  executable code, log message, or behavior changed. Live-cmd.exe verification of a representative
-  sample was NOT performed for this batch (no Windows host available); the fix pattern itself
-  (remove the parens, verified via the checker's own reasoning about cmd.exe's block-parsing
-  behavior) is the same one already confirmed correct by the `(^, &, or |)` precedent and by every
-  other paren-hazard fix in this repo's history. If a regression ever surfaces from one of these 26
-  specific rewordings, that would be the first real-CI signal this pattern needs live verification
-  after all -- none has, as of this writing.
-
-  **Scope WIDENED, same PR (#445), via a second real CI incident on the SAME code block: a
-  SAME-LINE, self-contained, balanced `(`/`)` pair -- not just cross-line pairs -- can ALSO corrupt
-  parsing when nested deep enough inside real `if (...)` blocks, contradicting this checker's own
-  (and this repo's own documented) assumption that same-line pairs are unconditionally safe.**
-  After the rem-comment fix above was pushed, CI still failed identically; root-caused via a
-  downloaded diagnostics artifact's real `~envsmoke_bootstrap.log` showing the exact same
-  corruption signature as the original PR #408 incident (`falling was unexpected at this time.`),
-  traced to a NEW `>> "%LOG%" echo ... (exit 3); falling back ...` line whose `(exit 3)` pair opens
-  and closes on the SAME line -- yet still corrupted parsing, nested FOUR levels deep. This is a
-  DIFFERENT shape from `:print_fastpath_ambiguous_note`'s own precedent (a plain top-level `echo`
-  with no enclosing block, confirmed safe) -- whether the redirection prefix (`>>` before `echo`)
-  or the nesting depth (4, one deeper than any previously-confirmed case) is the actual
-  distinguishing condition was NOT isolated; the fix (remove the parens) resolved it regardless.
-  See `docs/agent-lessons-learned.md`'s corresponding entry and `docs/agent-closed-backlog.md`'s
-  Item 52 entry for the full trace, and `tests/test_check_delimiters_import.py`'s
-  `test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negative` for a
-  regression fixture documenting the checker's current false-negative on this exact shape.
-
-  **Revised item scope, still open**: the cross-line fix above was necessary but is NOT sufficient
-  on its own -- it still only catches CROSS-line pairs. Whoever picks up this item next should ALSO
-  investigate whether extending the same-line-pair
-  "always safe" assumption is correct at all once genuinely nested (vs. top-level), and if not,
-  design a check for that case too (e.g. flag ANY `(`/`)` pair -- same-line or cross-line -- found
-  inside `echo`/`rem` text that is already nested inside a real open bracket, not just cross-line
-  ones) -- balanced against the real risk of false-positiving on the MANY existing, presumably-safe
-  same-line nested echo statements already in `run_setup.bat` (not audited; needs its own careful
-  pass, likely requiring live `cmd.exe` verification per this repo's own established practice for
-  this hazard class, not static reasoning alone -- static reasoning about this exact hazard class
-  has now been wrong multiple times in this repo's history, per `docs/agent-lessons-learned.md`'s
-  "`:log` echoes UNQUOTED" entry's own general warning).
-
-  **Probe workflow built and merged (PR #461, `.github/workflows/batch-paren-hazard-probe.yml` +
-  `tools/probe_paren_hazard.ps1`), per the maintainer's approval -- but dispatching it hit a
-  SECOND, narrower blocker: this session's own GitHub integration cannot call the
-  `workflow_dispatch` API (`403 Resource not accessible by integration`), confirmed against both
-  repo-name casings, so an agent in this session cannot fire the probe itself even though the tool
-  now exists on `main`.** Registered as `docs/open-questions.md` item 5 (updated to reflect this
-  narrower blocker, not the original "which unblocking mechanism" question, which the maintainer
-  already answered). Not actionable until either the maintainer manually runs the workflow from
-  the Actions UI (Actions tab -> "Batch paren-nesting hazard probe" -> "Run workflow" on `main`)
-  and shares the result, or the integration is granted the Actions write permission needed for
-  `workflow_dispatch` and a future agent retries the API call.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

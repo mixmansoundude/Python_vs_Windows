@@ -123,20 +123,15 @@ def test_paren_split_across_echo_lines_at_top_level_is_not_flagged(tmp_path, cap
     assert "No delimiter issues found." in captured.out
 
 
-def test_paren_pair_on_same_echo_line_is_not_flagged(tmp_path, capsys):
-    # A balanced pair on a single plain "echo" line (common, e.g. a parenthetical
-    # aside), one level of block nesting deep, is not flagged by check_delimiters.py
-    # today -- this is the checker's CURRENT behavior, not a proven-safe claim for
-    # every shape. CORRECTION (CLAUDE.md Item 61, PR #445): an earlier version of
-    # this comment claimed same-line pairs are "always safe regardless of block
-    # nesting" -- real Windows CI in PR #445 disproved that for a DIFFERENT (but
-    # related) shape: a redirected ">> file echo ..." statement with a same-line
-    # pair, nested FOUR levels deep, corrupted cmd.exe's parsing ("falling was
-    # unexpected at this time."). See test_paren_pair_on_redirected_echo_line_deeply_
-    # nested_is_a_known_false_negative below, which documents that proven-unsafe
-    # shape explicitly. This test's own fixture (plain echo, one level deep) has
-    # NOT itself been proven unsafe or safe on real cmd.exe -- it only documents
-    # what the checker currently does, pending Item 61's broader fix.
+def test_paren_pair_on_same_echo_line_nested_is_flagged(tmp_path, capsys):
+    # A balanced pair on a single plain "echo" line (a parenthetical aside), one
+    # level of block nesting deep, IS flagged -- confirmed unsafe via CLAUDE.md
+    # Item 61's dedicated cmd.exe probe (tools/probe_paren_hazard.ps1, dispatched
+    # 2026-08-23 on a real Windows runner): every same-line matrix fixture
+    # corrupted, including the shallowest case (plain, non-redirected, one level
+    # of nesting) -- the exact shape this fixture reproduces. See
+    # test_paren_pair_on_same_echo_line_at_top_level_is_not_flagged below for the
+    # one shape that remains genuinely safe (no enclosing block at all).
     bat = tmp_path / "sample.bat"
     bat.write_text(
         "@echo off\r\n"
@@ -149,22 +144,89 @@ def test_paren_pair_on_same_echo_line_is_not_flagged(tmp_path, capsys):
     result = check_delimiters.main([str(bat)])
     captured = capsys.readouterr()
 
+    assert result == 1
+    assert "on this same line" in captured.out
+    assert "counts parens in echo text too" in captured.out
+
+
+def test_paren_pair_on_at_echo_line_nested_is_flagged(tmp_path, capsys):
+    # CodeRabbit review finding on PR #464: ECHO_LINE_RE originally missed "@echo" --
+    # command-echo suppressed, cmd.exe's own well-documented convention and this file's
+    # own top-of-file line -- so a same-line paren pair on an "@echo" line, nested
+    # inside a real block, went untracked the same way the redirected-echo gap did
+    # before it was fixed. Same fixture shape as the plain-echo test above, "@echo"
+    # in place of "echo".
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "if defined FOO (\r\n"
+        "  @echo *** see the docs (specifically the README) for details ***\r\n"
+        "  exit /b 0\r\n"
+        ")\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "on this same line" in captured.out
+    assert "counts parens in echo text too" in captured.out
+
+
+def test_paren_pair_on_same_echo_line_at_top_level_is_not_flagged(tmp_path, capsys):
+    # Same textual pattern as the test above, but with no enclosing if/for block --
+    # a plain top-level echo statement never needs cmd.exe to search for a block
+    # terminator at all, so a same-line pair here is genuinely safe. A real
+    # instance of this shape exists in run_setup.bat
+    # (:print_fastpath_ambiguous_note) and must not false-positive.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "echo *** see the docs (specifically the README) for details ***\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
     assert result == 0
     assert "No delimiter issues found." in captured.out
 
 
-def test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negative(tmp_path, capsys):
+def test_paren_pair_nested_inside_another_prose_paren_at_top_level_is_not_flagged(tmp_path, capsys):
+    # Regression fixture for a real bug found via CodeRabbit's review of PR #464:
+    # the original "already nested" check was `bool(self.stack)`, true the moment
+    # ANY bracket is open -- including a PRIOR prose paren from this exact same
+    # echo/rem line's own text, not just a genuine enclosing if/for block. For
+    # "echo outer (inner (detail))" at true top level (no enclosing block at all),
+    # this wrongly classified the line's own SECOND paren as hazardous once the
+    # FIRST paren was already on the stack. Fixed by basing the hazard check on
+    # whether a genuine STRUCTURAL (non-prose) bracket is already open, not merely
+    # on stack non-emptiness -- see StackItem.is_prose.
+    bat = tmp_path / "sample.bat"
+    bat.write_text(
+        "@echo off\r\n"
+        "echo outer (inner (detail))\r\n"
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(bat)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_paren_pair_on_redirected_echo_line_deeply_nested_is_flagged(tmp_path, capsys):
     # Regression fixture for CLAUDE.md Item 61 / PR #445's second real CI incident:
     # a same-line, self-contained "(exit 3)" pair inside a ">> file echo ..."
     # redirected statement, nested FOUR levels deep inside real if(...) blocks,
-    # corrupted cmd.exe's block-closing parser on real Windows CI -- confirmed via
-    # a downloaded diagnostics artifact showing the identical corruption signature
-    # as the original PR #408 echo-hazard incident ("falling was unexpected at
-    # this time."). check_delimiters.py does NOT currently flag this shape (same
-    # as any same-line pair) -- this test documents that as a KNOWN FALSE NEGATIVE,
-    # not a safe pattern to imitate. Extending the checker to catch this class
-    # (same-line pairs nested inside a real open block, not just cross-line ones)
-    # is part of Item 61's scope, not yet implemented.
+    # corrupted cmd.exe's block-closing parser on real Windows CI ("falling was
+    # unexpected at this time."). Previously a KNOWN FALSE NEGATIVE (the checker
+    # did not catch same-line pairs at all); now flagged since the probe confirmed
+    # nesting depth and the ">>" redirection prefix are both irrelevant -- any
+    # nested same-line pair corrupts, so the fix removed the same-line exemption
+    # entirely rather than special-casing depth or redirection.
     bat = tmp_path / "sample.bat"
     bat.write_text(
         "@echo off\r\n"
@@ -182,13 +244,9 @@ def test_paren_pair_on_redirected_echo_line_deeply_nested_is_a_known_false_negat
     result = check_delimiters.main([str(bat)])
     captured = capsys.readouterr()
 
-    # KNOWN GAP: the checker currently reports this fixture clean even though the
-    # identical shape corrupted real cmd.exe parsing in production. If this
-    # assertion ever starts failing (result == 1), it means Item 61's checker
-    # extension has landed -- update this test to assert the new flagged behavior
-    # instead of loosening it.
-    assert result == 0
-    assert "No delimiter issues found." in captured.out
+    assert result == 1
+    assert "on this same line" in captured.out
+    assert "counts parens in echo text too" in captured.out
 
 
 # derived requirement: these tests close the cross-line half of CLAUDE.md Item 61 --

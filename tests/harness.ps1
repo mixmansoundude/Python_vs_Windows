@@ -371,7 +371,7 @@ Write-Result -Id 'batch.script_root.trailing_backslash' -Desc 'HP_SCRIPT_ROOT tr
     hasScriptRootFixedForm = $hasScriptRootFixedForm
     hasScriptRootBuggyForm = $hasScriptRootBuggyForm
 }
-$warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected (pipreqs)', 'pipreqs augmenting')
+$warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected via pipreqs', 'pipreqs augmenting')
 $hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}
 # derived requirement: the Miniconda URL probe must be deferred to after uv detection
@@ -428,6 +428,21 @@ $hasWriteModeArg = $writeFastHashMatch.Success -and (
 )
 $hasFastHashWiring = $hasWriteFastHashLabel -and $hasWriteFastHashCall -and $hasWriteModeArg
 Write-Result 'batch.fastpath.hash_write' 'EXE fast path freshness check: :write_fast_hash subroutine exists, is called from :success gated on HP_FRESH_BUILD_OK, and invokes the payload in write mode' $hasFastHashWiring @{ hasLabel = $hasWriteFastHashLabel; hasCall = $hasWriteFastHashCall; hasWriteModeArg = $hasWriteModeArg }
+# derived requirement (CodeRabbit review, PR #464): a failed warnfix rebuild previously left
+# HP_FRESH_BUILD_OK set from the ORIGINAL build, so :write_fast_hash would pair the CURRENT
+# sources with a stale, warnfix-incomplete dist\ EXE -- the next run's fast path would then
+# wrongly trust it as fresh and skip retrying the repair. Both warnfix-rebuild-failure
+# branches must clear the flag immediately after setting HP_BOOTSTRAP_STATE=error. Scoped to
+# :run_entry_smoke's own body (bounded by the next label) so this cannot pass on unrelated
+# text elsewhere, mirroring the $successMatch/$writeFastHashMatch scoped-extraction precedent
+# above. Static wiring guard only.
+$runEntrySmokeMatch = [regex]::Match($AllText, '(?ms)^:run_entry_smoke\r?\n(?<body>.*?)(?=^:preflight_compile)')
+$warnfixExecFailBody = if ($runEntrySmokeMatch.Success) { [regex]::Match($runEntrySmokeMatch.Groups['body'].Value, '(?s)PyInstaller execution failed during warnfix rebuild.*?\)') } else { $null }
+$warnfixExecFailClearsFlag = $warnfixExecFailBody -and $warnfixExecFailBody.Success -and ($warnfixExecFailBody.Value -match [regex]::Escape('set "HP_FRESH_BUILD_OK="'))
+$warnfixMissingOutputBody = if ($runEntrySmokeMatch.Success) { [regex]::Match($runEntrySmokeMatch.Groups['body'].Value, '(?s)PyInstaller did not produce dist\\%ENVNAME%\.exe during warnfix rebuild.*?\)') } else { $null }
+$warnfixMissingOutputClearsFlag = $warnfixMissingOutputBody -and $warnfixMissingOutputBody.Success -and ($warnfixMissingOutputBody.Value -match [regex]::Escape('set "HP_FRESH_BUILD_OK="'))
+$hasWarnfixFreshBuildOkClear = $warnfixExecFailClearsFlag -and $warnfixMissingOutputClearsFlag
+Write-Result 'batch.warnfix.fresh_build_ok_clear' 'Warnfix rebuild failure branches clear HP_FRESH_BUILD_OK so a stale, warnfix-incomplete EXE is never trusted as fresh by the next run' $hasWarnfixFreshBuildOkClear @{ execFailClears = $warnfixExecFailClearsFlag; missingOutputClears = $warnfixMissingOutputClearsFlag }
 # derived requirement: pre-build --collect-submodules double-gate (REQ-005.x) must stay wired.
 # Static guard against silent deletion; runtime proof is self.collect.submodules (selfapps_collect.ps1).
 $collectCall    = $AllText -match 'call :compute_collect_flags'
