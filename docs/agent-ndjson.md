@@ -995,15 +995,16 @@ self.exe.warnfix.venv_repair
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
-CLAUDE.md Active Backlog Item 39: the EXE fast path's freshness check (`HP_FAST_CHECK`,
+CLAUDE.md's former Active Backlog Item 39 (closed): the EXE fast path's freshness check (`HP_FAST_CHECK`,
 `tools/fast_check.ps1`) switched from mtime-only over `*.py` files to a content-hash
 comparison over the same file set, extended to `requirements.txt`/`pyproject.toml`/
 `runtime.txt`. Closes two exposures: (a) a timestamp-preserving delivery method (a ZIP,
 xcopy, robocopy) carrying a genuinely changed file whose mtime still predates the built
 EXE was previously silently treated as fresh; (b) a dependency-file-only change was
 previously invisible to the scan regardless of mtime. `:write_fast_hash` (called from
-`:success`, gated on `HP_FASTPATH_USED` being unset so the already-fast reuse case never
-pays a redundant re-hash pass) writes the stored hash after a genuine fresh build attempt.
+`:success`, gated on `HP_FRESH_BUILD_OK` being defined -- set only in the genuine
+build-success branches, so the already-fast reuse case never pays a redundant re-hash
+pass) writes the stored hash after a genuine fresh build attempt.
 
 This test is the coverage-gap Item 39 itself named ("no scenario backdates a source file's
 mtime below the EXE's to test this"): run 1 builds the EXE from an entry file printing a V1

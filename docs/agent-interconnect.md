@@ -1184,7 +1184,7 @@ individual test file pins it locally -- see the "Accepted gap" entry in
 path is completely provider-independent. The test correctly validates the EXE fast path, not
 the env-state or uv venv fast path.
 
-**`HP_FAST_CHECK`'s own freshness signal (CLAUDE.md Active Backlog Item 39): content-hash, not
+**`HP_FAST_CHECK`'s own freshness signal (CLAUDE.md's former Active Backlog Item 39, closed): content-hash, not
 mtime -- read side and write side are two separate call sites, must stay paired.** `:try_fast_exe`
 (read/`check` mode, unchanged call site) compares a stored `~fast_check.hash.txt` against a
 composite SHA256 over the same non-infra `*.py` files already scanned, extended to
