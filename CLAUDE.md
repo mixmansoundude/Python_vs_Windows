@@ -985,8 +985,23 @@ but several represent real gaps worth closing before calling the path fully rele
   `conda per-pkg fallback` phrase (an `[INSTALL]`-tagged line) from its own console-redirected
   capture too; fixed the same way (switched to `~setup.log`). Confirms the audit's own caution was
   warranted: a test landed between the 2026-08-23 audit and this 2026-08-24 implementation that
-  the audit could not have seen. A repo-wide re-grep after all three fixes found no further
-  dependencies.
+  the audit could not have seen.
+
+  **A FOURTH dependency was missed by that same re-grep and was caught only by a real CI failure**
+  (`self.stub.conda_retry`, `contract-uv` lane, non-gating but still investigated per this
+  session's own drive-to-green posture on a PR it opened): the re-grep searched for the literal
+  bracketed tag strings (`\[DEBUG\]|\[TRACE\]|\[INSTALL\]`), which finds a test only when the
+  test's OWN assertion text still contains the bracket -- but `self.stub.conda_retry` matches the
+  bracket-free phrase `'*conda bulk: transient failure detected*'` (the exact same
+  `-like`-treats-`[INSTALL]`-as-a-wildcard workaround already documented for `self.stub.
+  conda_perpkg`), so the bracket-only search never surfaced it. Fixed the same way (`~setup.log`
+  instead of the console-redirected capture). **Closed by a proper fix, not a workaround**: a
+  follow-up EXHAUSTIVE sweep -- every one of the 21 real `[DEBUG]`/`[TRACE]`/`[INSTALL]` message
+  bodies in `run_setup.bat` (extracted directly via `grep -oE 'call :log "\[(DEBUG|TRACE|INSTALL)
+  \][^"]*"'`), each grepped bracket-free against the full `tests/` tree -- confirmed no fifth
+  dependency remains. This is the correct methodology for this class of check going forward:
+  search by MESSAGE BODY, not by TAG STRING, since a test's own `-like` wildcard workaround
+  routinely strips the tag from its own match pattern.
 
   New regression coverage: `tests/selfapps_console_tiering.ps1` (`self.console.tiering`, `uv`
   lane, non-gating first landing) runs two scenarios (`default`/`verbose`) proving the suppression
