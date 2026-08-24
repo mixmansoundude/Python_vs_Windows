@@ -12,8 +12,9 @@
 # uv/venv/embed's own dependency-install branches carry no [INSTALL] tag at all (see
 # docs/agent-interconnect.md's uv-First Provider Architecture section for the per-provider
 # dependency-install dispatch). A trivial `six` requirement keeps the real conda solve/install
-# fast. HP_SKIP_PIPREQS is deliberately left UNSET so pipreqs runs normally and fires its own
-# [DEBUG] line. Self-contained (own HP_FORCE_CONDA_ONLY=1 override, matching
+# fast. HP_SKIP_PIPREQS is explicitly cleared (save/restore around the call) so an ambient value
+# inherited from the calling shell can never skip pipreqs and cost this test its own [DEBUG]
+# trigger. Self-contained (own HP_FORCE_CONDA_ONLY=1 override, matching
 # selfapps_pipgap.ps1's pattern) -- wired into the uv lane (non-gating), placed after
 # selfapps_cascade.ps1/selfapps_cascade_conda_create_fail.ps1 so Miniconda is already
 # installed/cached from those steps rather than triggering a second fresh download.
@@ -37,7 +38,10 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+# $IsWindows is unavailable in Windows PowerShell 5.1 (see this repo's own CodeRabbit learning
+# from PR #434, selfapps_lineending_check.ps1) -- use OSVersion.Platform instead, which works
+# under both pwsh (this repo's CI dispatch) and a local WinPS 5.1 session.
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
         id = 'self.console.tiering'; pass = $true
         desc = 'console tiering skipped on non-Windows host'
@@ -65,8 +69,19 @@ $exitCode = $null
 $errorMessage = $null
 $savedForceConda = $env:HP_FORCE_CONDA_ONLY
 $savedVerbose = $env:HP_VERBOSE_CONSOLE
+# Save/clear/restore, matching selfapps_autopep_discovery.ps1's own established pattern -- an
+# ambient HP_SKIP_PIPREQS inherited from the calling shell would silently skip pipreqs and cost
+# this test its one genuine, unflagged [DEBUG] trigger ("[DEBUG] pipreqs (direct) rc=...").
+$savedSkipPipreqs = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
+# HP_CI_LANE is always set at the job level in real CI (inherited by this child process
+# automatically), but a local/standalone run of this script would otherwise reach a genuine
+# successful build's post-execution checkpoint prompt with no HP_CI_LANE to auto-decline it --
+# save/set/restore so this script is reproducible outside the workflow too.
+$savedCiLane = $env:HP_CI_LANE
 $env:HP_FORCE_CONDA_ONLY = '1'
 if ($scenario -eq 'verbose') { $env:HP_VERBOSE_CONSOLE = '1' } else { $env:HP_VERBOSE_CONSOLE = $null }
+Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue
+$env:HP_CI_LANE = 'selftest'
 try {
     Push-Location -LiteralPath $work
     try {
@@ -80,6 +95,8 @@ try {
 } finally {
     $env:HP_FORCE_CONDA_ONLY = $savedForceConda
     $env:HP_VERBOSE_CONSOLE = $savedVerbose
+    if ($null -eq $savedSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $savedSkipPipreqs }
+    $env:HP_CI_LANE = $savedCiLane
 }
 
 $consoleLog = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw -Encoding Ascii } else { '' }

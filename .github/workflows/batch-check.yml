@@ -1943,6 +1943,14 @@ jobs:
             tests\~selftest_fastpath_hash\~run.out.txt
             tests/~selftest_fastpath_hash/~fast_check.hash.txt
             tests\~selftest_fastpath_hash\~fast_check.hash.txt
+            tests/~selftest_console_tier_default/~console_tier_default_bootstrap.log
+            tests\~selftest_console_tier_default\~console_tier_default_bootstrap.log
+            tests/~selftest_console_tier_default/~setup.log
+            tests\~selftest_console_tier_default\~setup.log
+            tests/~selftest_console_tier_verbose/~console_tier_verbose_bootstrap.log
+            tests\~selftest_console_tier_verbose\~console_tier_verbose_bootstrap.log
+            tests/~selftest_console_tier_verbose/~setup.log
+            tests\~selftest_console_tier_verbose\~setup.log
             tests/~pandas_excel/~pandas_excel.log
             tests\~pandas_excel\~pandas_excel.log
             tests/~pipgap/~pipgap.log

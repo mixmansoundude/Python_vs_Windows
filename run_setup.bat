@@ -5223,12 +5223,15 @@ rem derived requirement (CLAUDE.md Item 42, lever 1): DEBUG/TRACE/INSTALL-tagged
 rem suppressed from the LIVE console by default (opt back in via HP_VERBOSE_CONSOLE=1) -- the
 rem full detail is always written to LOG regardless, so this only trims what a beginner
 rem double-click user sees, never what a diagnostic re-read of ~setup.log can find. Detected
-rem via a pure %VAR:~start,len% substring slice, never findstr/piping -- see docs/agent-lessons-
-rem learned.md's "Quote a variable before piping it into findstr" entry for why a subprocess
-rem pipe on MSG would be hazardous here (message text can legally contain "&").
+rem via a pure substring-slice comparison (VAR colon-tilde start,length), never findstr/piping --
+rem see docs/agent-lessons-learned.md's "Quote a variable before piping it into findstr" entry
+rem for why a subprocess pipe on MSG would be hazardous here (message text can legally contain
+rem "&"). HP_VERBOSE_CONSOLE is checked against the exact string "1", not merely defined, so an
+rem accidental HP_VERBOSE_CONSOLE=0 (or any other non-"1" value) still suppresses -- matches this
+rem file's own established flag-check idiom elsewhere (e.g. HP_FORCE_CONDA_ONLY).
 set "MSG=%~1"
 set "HP_LOG_SUPPRESS="
-if not defined HP_VERBOSE_CONSOLE (
+if not "%HP_VERBOSE_CONSOLE%"=="1" (
   if "%MSG:~0,7%"=="[DEBUG]" set "HP_LOG_SUPPRESS=1"
   if "%MSG:~0,7%"=="[TRACE]" set "HP_LOG_SUPPRESS=1"
   if "%MSG:~0,9%"=="[INSTALL]" set "HP_LOG_SUPPRESS=1"
