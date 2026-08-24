@@ -963,15 +963,38 @@ but several represent real gaps worth closing before calling the path fully rele
     example of a larger pattern still to be found. Re-grep before implementing, since new tests
     land between this audit and whenever lever 1 is actually built.
 
-  **Still open, NOT part of this fix**: the actual `:log` tiering MECHANISM itself (how the
-  opt-in verbose flag is spelled, whether tiering applies per-call-site or via a single
-  suppress-list check inside `:log`, and fixing `selfapps_pvw_overrides.ps1` above) is still
-  unbuilt -- this closes only the classification precondition, deliberately kept as its own slice
-  given `:log`'s 425-call-site blast radius (counted via `grep -c 'call :log' run_setup.bat`) and
-  this file's own established "EXTREME CAUTION, one
-  slice at a time" precedent for changes to widely-shared core subroutines (see the DLL-bundling
-  and hidden-import repair loops elsewhere in this backlog for the shape that discipline takes).
-  Lever 2 (the two Y/N prompts) is fully separate and untouched by this slice.
+  **Lever 1 mechanism: CLOSED 2026-08-24.** `:log` now suppresses `[DEBUG]`/`[TRACE]`/`[INSTALL]`
+  from the LIVE console by default via a single suppress-list check inside `:log` itself (a plain
+  `if not defined HP_VERBOSE_CONSOLE (if "%MSG:~0,N%"=="[TAG]" set "HP_LOG_SUPPRESS=1")` block per
+  tag, using `%VAR:~start,len%` substring slicing rather than `findstr`/piping -- see
+  `docs/agent-lessons-learned.md`'s "Quote a variable before piping it into findstr" entry for why
+  a subprocess pipe on `MSG` would be hazardous here, since message text can legally contain `&`).
+  `~setup.log` is untouched -- `:log`'s own `>> "%LOG%" echo ...` line still fires unconditionally
+  regardless of suppression. New opt-in flag `HP_VERBOSE_CONSOLE=1` restores all three tags to the
+  console (REQ-019-compliant: a pure additive opt-in, never gates a Prime-Directive-required
+  behavior), documented in README.md's Advanced Environment Variables table. None of the file's
+  425 `call :log` call sites were touched -- only `:log`'s own body changed, so the blast radius
+  this precondition audit was worried about never materialized at the call-site level.
+
+  Both real dependencies the precondition audit found were fixed in the same change:
+  `tests/selfapps_pvw_overrides.ps1`'s `$wsDebugLogFound`/`$wsInvalidDebugLogFound` (both the
+  valid- and invalid-value `PVW_WORKSPACE` scenarios, not just the one the audit named) now read
+  `~setup.log` instead of the console-redirected capture. **A fresh re-grep (per the audit's own
+  "re-grep before implementing" instruction) found a THIRD dependency the original audit had
+  missed** -- `tests/selftest.ps1`'s `self.stub.conda_perpkg` scenario read the bracket-free
+  `conda per-pkg fallback` phrase (an `[INSTALL]`-tagged line) from its own console-redirected
+  capture too; fixed the same way (switched to `~setup.log`). Confirms the audit's own caution was
+  warranted: a test landed between the 2026-08-23 audit and this 2026-08-24 implementation that
+  the audit could not have seen. A repo-wide re-grep after all three fixes found no further
+  dependencies.
+
+  New regression coverage: `tests/selfapps_console_tiering.ps1` (`self.console.tiering`, `uv`
+  lane, non-gating first landing) runs two scenarios (`default`/`verbose`) proving the suppression
+  and the opt-in restoration both work against a real bootstrap, not just that the source code
+  exists -- see `docs/agent-ndjson.md`'s own entry for the full mechanism and placement reasoning.
+
+  Lever 2 (the two Y/N prompts) is fully separate and remains untouched -- still open, its own
+  future slice.
 
 Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
 external AI reviews plus direct verification against current source by the acting agent) chasing a

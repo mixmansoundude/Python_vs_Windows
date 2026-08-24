@@ -852,6 +852,31 @@ jobs:
         run: |
           & tests\selfapps_cascade_conda_create_fail.ps1
 
+      # CLAUDE.md Active Backlog Item 42 (lever 1): proves the :log console-tiering mechanism
+      # actually behaves at runtime -- [DEBUG]/[TRACE]/[INSTALL] suppressed from the live console
+      # by default, always still written to ~setup.log, restorable via HP_VERBOSE_CONSOLE=1. Two
+      # scenarios (see the script's own header). Must run after the cascade steps above so
+      # Miniconda is already installed/cached, avoiding a second fresh download for this test's
+      # own HP_FORCE_CONDA_ONLY=1 conda-create. Non-gating for its first landing (uv lane is
+      # continue-on-error at the job level) -- promote once proven stable across several real runs.
+      - name: "Self-test: console output tiering, default suppression (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          CONSOLE_TIER_SCENARIO: default
+        run: |
+          & tests\selfapps_console_tiering.ps1
+
+      - name: "Self-test: console output tiering, HP_VERBOSE_CONSOLE=1 opt-in (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          CONSOLE_TIER_SCENARIO: verbose
+        run: |
+          & tests\selfapps_console_tiering.ps1
+
       # docs/agent-closed-backlog.md's Item 22: a real, non-simulated end-to-end test proving the
       # uv-to-conda cascade, warnfix repair (both success and failure in the same round), and
       # --hidden-import auto-recovery all fire for real in ONE run -- no HP_TEST_FORCE_*/

@@ -63,6 +63,7 @@ self.cascade.conda_create_fail (uv lane only -- selfapps_cascade_conda_create_fa
 self.layered_e2e.chain (cache lane only -- selfapps_layered_e2e.ps1; non-gating),
 self.gribapi_hook_probe.hidden_import (conda-full lane only -- selfapps_gribapi_hook_probe.ps1; non-gating),
 self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
+self.console.tiering (uv lane only -- selfapps_console_tiering.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
 self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
@@ -763,6 +764,40 @@ succeeded, not a simulated-failure path in disguise). Non-gating: depends on
 
 ```
 self.cascade.conda_create_fail
+```
+
+## selfapps-console-tiering NDJSON rows (selfapps_console_tiering.ps1, uv lane only, non-gating)
+
+CLAUDE.md Active Backlog Item 42 (lever 1): proves the `:log` console-output tiering mechanism
+actually behaves at runtime -- `[DEBUG]`/`[TRACE]`/`[INSTALL]`-tagged lines are suppressed from
+the live console by default (always still written to `~setup.log`, unaffected by tiering) and
+restorable via the new `HP_VERBOSE_CONSOLE=1` opt-in flag. See `docs/agent-lessons-learned.md`'s
+`:log` UNQUOTED-echo entry for why the suppression check itself is a plain `%VAR:~start,len%`
+substring slice rather than `findstr`/piping (message text can legally contain `&`).
+
+Two scenarios (`CONSOLE_TIER_SCENARIO` env var; unset defaults to `default`): `default` asserts
+all three tags are ABSENT from the redirected console capture but PRESENT in `~setup.log`;
+`verbose` (`HP_VERBOSE_CONSOLE=1`) asserts all three are present in BOTH. Forces
+`HP_FORCE_CONDA_ONLY=1` -- conda is the only provider with a real `[INSTALL]`-tagged dependency-
+install call site (`uv`/`venv`/`embed`'s own install branches carry no `[INSTALL]` tag at all,
+see `docs/agent-interconnect.md`'s uv-First Provider Architecture section); a trivial `six`
+requirement keeps the real conda solve/install fast. `HP_SKIP_PIPREQS` is deliberately left UNSET
+so pipreqs runs normally and fires its own `[DEBUG]` line (`[DEBUG] pipreqs (direct) rc=...`);
+`[TRACE] dep install phase: start` fires unconditionally once the dependency-install phase is
+reached, giving all three tags a genuine, unflagged trigger in one run.
+
+**Placement is load-bearing.** Wired into the `uv` lane immediately after
+`selfapps_cascade_conda_create_fail.ps1`'s two steps, so Miniconda is already installed/cached
+from `selfapps_cascade.ps1`'s own earlier real download -- this test's own `HP_FORCE_CONDA_ONLY=1`
+conda-create then reuses the already-installed Miniconda rather than triggering a second fresh
+download, same CI-ordering reasoning as `selfapps_cascade_conda_create_fail.ps1`'s own placement
+note.
+
+Non-gating for its first landing (`uv` lane is `continue-on-error` at the job level) -- promote
+once proven stable across several real runs, matching this repo's established graduation pattern.
+
+```
+self.console.tiering
 ```
 
 ## selfapps-pyinstaller-fail NDJSON rows (selfapps_pyinstaller_fail.ps1, real/conda-full lanes)
