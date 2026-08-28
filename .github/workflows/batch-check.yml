@@ -2333,6 +2333,30 @@ jobs:
             tests\~selftest_entrysmoke_no_interpreter\~setup.log
             tests/~selftest_entrysmoke_no_interpreter/~bootstrap.status.json
             tests\~selftest_entrysmoke_no_interpreter\~bootstrap.status.json
+            tests/~selftest_die_emit_missing_python/~die_emit_missing_python_bootstrap.log
+            tests\~selftest_die_emit_missing_python\~die_emit_missing_python_bootstrap.log
+            tests/~selftest_die_emit_missing_python/~setup.log
+            tests\~selftest_die_emit_missing_python\~setup.log
+            tests/~selftest_die_emit_missing_python/~bootstrap.status.json
+            tests\~selftest_die_emit_missing_python\~bootstrap.status.json
+            tests/~selftest_die_emit_condarc/~die_emit_condarc_bootstrap.log
+            tests\~selftest_die_emit_condarc\~die_emit_condarc_bootstrap.log
+            tests/~selftest_die_emit_condarc/~setup.log
+            tests\~selftest_die_emit_condarc\~setup.log
+            tests/~selftest_die_emit_condarc/~bootstrap.status.json
+            tests\~selftest_die_emit_condarc\~bootstrap.status.json
+            tests/~selftest_die_emit_ci_skip_entry/~die_emit_ci_skip_entry_bootstrap.log
+            tests\~selftest_die_emit_ci_skip_entry\~die_emit_ci_skip_entry_bootstrap.log
+            tests/~selftest_die_emit_ci_skip_entry/~setup.log
+            tests\~selftest_die_emit_ci_skip_entry\~setup.log
+            tests/~selftest_die_emit_ci_skip_entry/~bootstrap.status.json
+            tests\~selftest_die_emit_ci_skip_entry\~bootstrap.status.json
+            tests/~selftest_die_emit_determine_entry/~die_emit_determine_entry_bootstrap.log
+            tests\~selftest_die_emit_determine_entry\~die_emit_determine_entry_bootstrap.log
+            tests/~selftest_die_emit_determine_entry/~setup.log
+            tests\~selftest_die_emit_determine_entry\~setup.log
+            tests/~selftest_die_emit_determine_entry/~bootstrap.status.json
+            tests\~selftest_die_emit_determine_entry\~bootstrap.status.json
             tests/extracted/**
           if-no-files-found: ignore
           include-hidden-files: true

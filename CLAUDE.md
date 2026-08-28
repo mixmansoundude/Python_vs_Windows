@@ -145,6 +145,7 @@ Get-ChildItem /home/user/Python_vs_Windows/tests/*.ps1, /home/user/Python_vs_Win
   }
 }
 if (\$fail -eq 0) { Write-Host 'PS PARSE SWEEP DONE - ALL CLEAN' }
+exit \$fail
 "
 python -m pytest /home/user/Python_vs_Windows/tests/test_*.py -q 2>&1 | tail -5
 ```
