@@ -72,9 +72,13 @@
 #   that block outright; the second call still runs and still dies (same message text at both
 #   sites, so this asserts an exact COUNT of 2 rather than distinguishing which site fired), then
 #   falls through to the ALREADY-benign "if HP_ENTRY=="" skip packaging" branch confirmed safe by
-#   the full trace (docs/plan-die-fatal-remediation.md Finding 3) -- run still completes,
-#   state=ok. The key assertion is the ABSENCE of a dependency-install-phase marker that would
-#   only appear if the skipped block had actually run.
+#   the full trace (docs/plan-die-fatal-remediation.md Finding 3) -- "benign" there means the
+#   fall-through doesn't crash or loop, not that the final status reads ok: :die already set
+#   HP_BOOTSTRAP_STATE=error at both call sites (its own centralized, unconditional set, same as
+#   every other scenario in this file) and nothing downstream resets it, so the honest, correct
+#   report is state=error, confirmed directly against a real CI run. The key assertion is the
+#   ABSENCE of a dependency-install-phase marker that would only appear if the skipped block had
+#   actually run.
 #
 # "condarc"/"ci_skip_entry"/"determine_entry" (NOT "missing_python", see above) set
 # HP_SKIP_ENTRY_SMOKE=1 / HP_SKIP_EXE_SMOKERUN=1 (REQ-012) -- those three are about the setup-flow
@@ -304,7 +308,7 @@ switch ($scenario) {
         # The intervening dependency-install/pipreqs/warnfix block must NOT have run -- this
         # marker only appears once dependency installation actually begins.
         $depPhaseSkipped = -not ($combined -match [regex]::Escape('[TRACE] dep install phase: start'))
-        $pass = $bothSitesReached -and $depPhaseSkipped -and ($statusState -eq 'ok')
+        $pass = $bothSitesReached -and $depPhaseSkipped -and ($statusState -eq 'error')
         $details = [ordered]@{
             scenario          = $scenario
             dieMsgCount       = $dieMsgCount
