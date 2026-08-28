@@ -231,8 +231,8 @@ is worth the added coordination code.
   indefinitely, or as a future opportunistic micro-slice.
 
 **Total accounted for**: Batch 1 (5) + Batch 2 (1) + Batch 3 (1 fix + 1 no-op) + Batch 4 (7) +
-Batch 5 (2) + Batch 6 (2) + 1334 (no-op, deferred) = 20. Every remaining site now has an explicit
-classification; none are unaccounted for.
+Batch 5 (2) + Batch 6 (2) + the "Active Python interpreter not resolved" sink (no-op, deferred) =
+20. Every remaining site now has an explicit classification; none are unaccounted for.
 
 **No two sites are identical in shape.** A single mechanical find/replace could not safely close
 all 20 -- each genuinely needed the same "what actually follows, is it doomed or not, where's the
