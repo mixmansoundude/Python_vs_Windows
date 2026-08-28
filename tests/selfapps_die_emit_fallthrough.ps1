@@ -233,7 +233,11 @@ switch ($scenario) {
         # counting technique selfapps_cascade_conda_create_fail.ps1's own sibling scenario uses);
         # this alone does not distinguish pre- from post-fix (the fix runs AFTER :die already
         # echoed), so the real proof is the misleading success line's absence below.
-        $dieMsgCount = ([regex]::Matches($combined, [regex]::Escape('[ERROR] python.exe missing from conda environment.'))).Count
+        # derived requirement: count against $setupText alone, not $combined -- every :log line
+        # is written to BOTH the console (captured in $logText) AND ~setup.log, so counting
+        # against $combined silently doubles every occurrence (caught via a real CI failure:
+        # dieMsgCount read 4, not 2, on the very first run).
+        $dieMsgCount = ([regex]::Matches($setupText, [regex]::Escape('[ERROR] python.exe missing from conda environment.'))).Count
         $dieFiredTwice = ($dieMsgCount -eq 2)
         $misleadingMsgFound = $combined -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Conda (Portable).')
         # Item 45's own guard (already proven by selfapps_entrysmoke_no_interpreter.ps1 for a
@@ -290,10 +294,11 @@ switch ($scenario) {
         }
     }
     'determine_entry' {
-        $dieMsgCount = ([regex]::Matches($combined, [regex]::Escape('[ERROR] Could not determine entry point'))).Count
+        $dieMsgCount = ([regex]::Matches($setupText, [regex]::Escape('[ERROR] Could not determine entry point'))).Count
         # Both call sites share identical message text (by design, same underlying failure) --
         # exactly 2 proves the mechanism reached BOTH :determine_entry invocations, not more
-        # (a goto loop) and not fewer (the second call silently skipped too).
+        # (a goto loop) and not fewer (the second call silently skipped too). Counted against
+        # $setupText alone, not $combined -- see the identical note in the missing_python block.
         $bothSitesReached = ($dieMsgCount -eq 2)
         # The intervening dependency-install/pipreqs/warnfix block must NOT have run -- this
         # marker only appears once dependency installation actually begins.
