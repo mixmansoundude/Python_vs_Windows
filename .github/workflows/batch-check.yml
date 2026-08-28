@@ -379,8 +379,16 @@ jobs:
       # call :die ("find_entry helper syntax error") for the same root cause. Cheap
       # (HP_CI_SKIP_ENV path, no conda/uv needed) so runs in every lane, matching the
       # HP_CI_SKIP_ENV-based steps directly above.
+      # derived requirement: per-step continue-on-error, not just the job-level one -- see the
+      # identical note above the PEP 723 write-back steps (this same file, "REQ-005.11: PEP 723
+      # header write-back") for why: without it, a genuine failure here silently skips every
+      # later step in the SAME job on a non-gating lane. Scoped to non-gating lanes only
+      # (matches matrix.mode != 'real' && matrix.mode != 'conda-full', the complement of the
+      # job-level continue-on-error list on the job definition itself) -- a real failure on the
+      # two gating lanes must still fail the job.
       - name: "Self-test: die-emit-fallthrough ci_skip_entry (CI-only)"
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        continue-on-error: ${{ matrix.mode != 'real' && matrix.mode != 'conda-full' }}
         env:
           DIE_EMIT_SCENARIO: ci_skip_entry
         shell: pwsh

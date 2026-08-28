@@ -1,9 +1,9 @@
 # ASCII only
 # selfapps_die_emit_fallthrough.ps1 - Regression coverage for CLAUDE.md Active Backlog Item 46
-# Bucket A Batches 3 and 4/5 (docs/plan-die-fatal-remediation.md's "Batch Roadmap" -- the full
+# Bucket A Batches 2, 3, and 4/5 (docs/plan-die-fatal-remediation.md's "Batch Roadmap" -- the full
 # 20-site trace and batch grouping). :die uses "exit /b" (a subroutine return, not a process
 # halt -- see docs/agent-lessons-learned.md's ":die" entry), so a caller with no goto/halt after
-# "call :die" simply continues. This file covers three of the sites the full trace found genuinely
+# "call :die" simply continues. This file covers four of the sites the full trace found genuinely
 # needed a goto -- each reached via a new, narrow test hook rather than a real disk failure:
 #
 # New hook: HP_TEST_FORCE_EMIT_FAIL=<VARNAME> (run_setup.bat, :emit_from_base64) deterministically
@@ -14,7 +14,7 @@
 #
 # Four scenarios (DIE_EMIT_SCENARIO env var):
 #
-# - "missing_python" (Batch 2, site ~1252, the NON-cascade path -- distinct from
+# - "missing_python" (Batch 2, :conda_create_done, the NON-cascade path -- distinct from
 #   selfapps_cascade_conda_create_fail.ps1's own "missing_python" scenario, which is specifically
 #   a REQ-009 cascade RE-ENTRY where HP_CASCADE_SAVED_PY is defined and routes through
 #   :cascade_conda_create_failed instead, never reaching this site at all): HP_FORCE_CONDA_ONLY=1,
@@ -30,7 +30,8 @@
 #   selfapps_entrysmoke_no_interpreter.ps1 for a DIFFERENT trigger) gets a chance to catch the
 #   broken interpreter and confirms no PyInstaller build is attempted against it.
 #
-# - "condarc" (Batch 2's neighbor code path, site ~1275): HP_FORCE_CONDA_ONLY=1 drives a REAL,
+# - "condarc" (Batch 4, the same :conda_create_done subroutine's own .condarc-staging step,
+#   right after the "missing_python" site above): HP_FORCE_CONDA_ONLY=1 drives a REAL,
 #   successful conda create (python.exe genuinely produced) so :conda_create_done reaches its own
 #   normal .condarc-staging step. HP_TEST_FORCE_EMIT_FAIL=HP_CONDARC fails that staging; before
 #   this fix, the fall-through then attempted `copy /y "~condarc" ...` (doomed, since the source
@@ -43,7 +44,7 @@
 #   state=error (the correct, honest report -- :die's own centralized HP_BOOTSTRAP_STATE=error set
 #   is not undone by the graceful continuation downstream).
 #
-# - "ci_skip_entry" (Batch 5, site ~2011): HP_CI_SKIP_ENV=1 takes the cheap, no-conda/no-uv system-
+# - "ci_skip_entry" (Batch 5, :ci_skip_entry): HP_CI_SKIP_ENV=1 takes the cheap, no-conda/no-uv system-
 #   Python path. HP_TEST_FORCE_EMIT_FAIL=HP_FIND_ENTRY fails :ci_skip_entry's own ~find_entry.py
 #   staging; before this fix, the fall-through continued into :update_find_entry_abs /
 #   :verify_find_entry_helper, which -- since the helper file was never staged -- ALSO failed and
@@ -60,9 +61,9 @@
 #   flagged here so a future reader does not mistake it for something this change broke. Asserted
 #   as the known, unchanged behavior rather than silently ignored.
 #
-# - "determine_entry" (Batch 3, site ~1362): HP_FORCE_CONDA_ONLY=1 (same real-create cost as
+# - "determine_entry" (Batch 3, :after_env_mode_selection): HP_FORCE_CONDA_ONLY=1 (same real-create cost as
 #   "condarc"). :determine_entry runs TWICE in a normal bootstrap -- once early inside
-#   :after_env_mode_selection (site ~1362), once again inside :after_env_bootstrap (site ~2125) --
+#   :after_env_mode_selection, once again inside :after_env_bootstrap --
 #   both via the identical ~find_entry.py staging call, so HP_TEST_FORCE_EMIT_FAIL=HP_FIND_ENTRY
 #   fails BOTH invocations identically. Before this fix, the first failure's fall-through ran the
 #   ENTIRE intervening dependency-install/pipreqs/warnfix/pyvisa block (real work, not just a
