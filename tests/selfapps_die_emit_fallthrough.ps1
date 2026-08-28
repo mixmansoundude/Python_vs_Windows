@@ -112,6 +112,22 @@ function Write-NdjsonRow {
 $scenario = $env:DIE_EMIT_SCENARIO
 if (-not $scenario) { $scenario = 'missing_python' }
 
+# derived requirement: validate BEFORE the non-Windows platform-skip write below (which would
+# otherwise report pass=true for a typo'd/unknown scenario, since it fires unconditionally and
+# neither switch block below has a default case) and before $scenario is used to build $workDir
+# for a Remove-Item -Recurse -Force cleanup a few lines down.
+$validScenarios = @('missing_python', 'condarc', 'ci_skip_entry', 'determine_entry')
+if ($validScenarios -notcontains $scenario) {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.die_emit_fallthrough'
+        req     = 'CLAUDE.md-Item-46-BucketA'
+        pass    = $false
+        desc    = "die-emit-fallthrough: unknown DIE_EMIT_SCENARIO value"
+        details = [ordered]@{ scenario = $scenario; error = 'unrecognized DIE_EMIT_SCENARIO value' }
+    })
+    exit 1
+}
+
 # derived requirement: matches selfapps_pyinstaller_fail.ps1's own established multi-scenario
 # precedent (docs/agent-ndjson.md: "Three scenarios... all emitting the same row id") -- ONE
 # shared, LITERAL id at every Write-NdjsonRow call site, with details.scenario as the
@@ -147,7 +163,7 @@ if (-not (Test-Path $batchPath)) {
 }
 
 $workDir = Join-Path $here "~selftest_die_emit_$scenario"
-if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
+if (Test-Path -LiteralPath $workDir) { Remove-Item -LiteralPath $workDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 Set-Content -Path (Join-Path $workDir 'app.py') -Value 'print("should-not-matter")' -Encoding ASCII
