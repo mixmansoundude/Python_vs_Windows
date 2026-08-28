@@ -96,9 +96,10 @@ what the correct `goto` target (or "no fix needed") is. Line numbers below are c
 pass (`git log`-visible drift from the original ~806/~838-852/~1157/~1908/~1911 estimates is
 expected -- this repo's own files move as unrelated work lands).
 
-This trace groups the 20 sites into 6 batches by shape, plus 2 sites that need no code change. See
-"Batch Roadmap" below for the landing plan; this Finding is the evidence each batch's grouping and
-priority is based on. Sites below are cited by subroutine/label and `call :die` message text, not
+This trace groups the 20 sites into 6 batches by shape, including 2 sites that need no code
+change. See "Batch Roadmap" below for the landing plan; this Finding is the evidence each batch's
+grouping and priority is based on. Sites below are cited by subroutine/label and `call :die`
+message text, not
 line number, per this repo's own "cite by stable label, not exact line number" documentation
 convention (line numbers drift on every unrelated edit above the citation).
 
