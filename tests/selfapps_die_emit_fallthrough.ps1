@@ -135,7 +135,7 @@ if (-not (Test-Path $batchPath)) {
         id      = 'self.die_emit_fallthrough'
         req     = 'CLAUDE.md-Item-46-BucketA'
         pass    = $false
-        desc    = "die-emit-fallthrough $scenario: run_setup.bat not found"
+        desc    = "die-emit-fallthrough ${scenario}: run_setup.bat not found"
         details = [ordered]@{ scenario = $scenario; error = 'run_setup.bat not found at ' + $batchPath }
     })
     exit 1
@@ -320,7 +320,7 @@ Write-NdjsonRow ([ordered]@{
     id      = 'self.die_emit_fallthrough'
     req     = 'CLAUDE.md-Item-46-BucketA'
     pass    = [bool]$pass
-    desc    = "die-emit-fallthrough $scenario: redundant call :die cascade avoided via goto"
+    desc    = "die-emit-fallthrough ${scenario}: redundant call :die cascade avoided via goto"
     details = $details
 })
 
