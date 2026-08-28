@@ -907,6 +907,7 @@ if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (
   call :handle_conda_failure "conda.bat not found after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] conda.bat not found after bootstrap."
+  goto :after_env_mode_selection
 )
 
 rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
@@ -937,24 +938,28 @@ where conda >> "%LOG%" 2>&1 || (
   call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'conda' not found on PATH after bootstrap."
+  goto :after_env_mode_selection
 )
 where python >> "%LOG%" 2>&1 || (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'python' not found on PATH after bootstrap."
+  goto :after_env_mode_selection
 )
 python -V >> "%LOG%" 2>&1 || (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'python -V' failed after bootstrap."
+  goto :after_env_mode_selection
 )
 :after_conda_probes
 
 rem === Channel policy (determinism & legal) ===================================
 if not defined HP_UV_PROVIDING_PYTHON if not exist "%CONDA_BAT%" (
   call :die "[ERROR] Conda not found at: %CONDA_BAT%"
+  goto :after_env_mode_selection
 )
 if not defined HP_UV_PROVIDING_PYTHON call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 

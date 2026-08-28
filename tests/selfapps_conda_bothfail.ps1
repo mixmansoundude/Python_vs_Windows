@@ -38,6 +38,19 @@
 # of HP_BOOTSTRAP_STATE (this repo's established "graceful stop" contract for this failure class;
 # see selfapps_pyinstaller_fail.ps1's sibling reasoning).
 #
+# Also regression-tests CLAUDE.md Active Backlog Item 46 Bucket A Batch 1
+# (docs/plan-die-fatal-remediation.md's "Batch Roadmap"): a genuine Miniconda-install failure via
+# :tci_both_failed's own fall-through (its `call :die` returns via `goto :eof` to :try_conda_
+# install's caller, which then finds no conda.bat and falls into the conda-acquisition-probe chain)
+# used to be able to stack up to 4-5 redundant [ERROR]/pause pairs (conda.bat not found -> 'conda'
+# not found on PATH -> 'python' not found on PATH -> 'python -V' failed -> Conda not found at:)
+# before finally reaching the real "Active Python interpreter not resolved" sink. Each of those 5
+# sites now `goto :after_env_mode_selection` right after its own `call :die`, so this exact scenario
+# should show the conda.bat-not-found message (the first site in the chain, always reached since
+# CONDA_BAT genuinely never gets set here) and the eventual sink message, but NONE of the other 4
+# chain messages -- this test already drives the real fall-through path, so no new test hook is
+# needed, only new assertions.
+#
 # Lane: uv only, non-gating (real Miniconda download+install-attempt cost; unproven CI-ordering
 # assumption above needs to soak before considering gating-lane promotion).
 param()
@@ -121,6 +134,22 @@ try {
     # terminal wording says so instead of implying a genuine AllUsers install failure.
     $bothFailedMsgFound = $combined -match [regex]::Escape('Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)')
 
+    # Item 46 Bucket A Batch 1: conda.bat-not-found is the first (and, post-fix, only) site in the
+    # conda-acquisition-probe chain this fall-through path reaches -- CONDA_BAT genuinely never
+    # gets set in this scenario, so this message MUST still appear.
+    $condaBatNotFoundMsgFound = $combined -match [regex]::Escape("conda.bat not found after bootstrap")
+    # The 4 sibling chain sites must NOT fire anymore -- their own `goto :after_env_mode_selection`
+    # (added right after conda.bat-not-found's own) must short-circuit past all of them.
+    $condaPathMsgFound   = $combined -match [regex]::Escape("'conda' not found on PATH after bootstrap")
+    $pythonPathMsgFound  = $combined -match [regex]::Escape("'python' not found on PATH after bootstrap")
+    $pythonVMsgFound     = $combined -match [regex]::Escape("'python -V' failed after bootstrap")
+    $condaNotFoundAtFound = $combined -match [regex]::Escape('Conda not found at:')
+    $chainCollapsed = -not ($condaPathMsgFound -or $pythonPathMsgFound -or $pythonVMsgFound -or $condaNotFoundAtFound)
+    # Execution should still reach the real sink (Active Python interpreter not resolved) rather
+    # than hanging or erroring out somewhere unexpected -- proves the goto landed at a working
+    # convergence point, not just that the intermediate messages went silent.
+    $reachedSink = $combined -match [regex]::Escape('Active Python interpreter not resolved')
+
     $statusPath = Join-Path $workDir '~bootstrap.status.json'
     $statusText = if (Test-Path -LiteralPath $statusPath) { Get-Content -LiteralPath $statusPath -Raw } else { $null }
     $statusState = $null
@@ -128,20 +157,28 @@ try {
         try { $statusState = ($statusText | ConvertFrom-Json).state } catch { $statusState = $null }
     }
 
-    $pass = $notElevatedSkip -and $justmeFailHookFired -and $bothFailedMsgFound -and ($statusState -eq 'error')
+    $pass = $notElevatedSkip -and $justmeFailHookFired -and $bothFailedMsgFound -and ($statusState -eq 'error') `
+        -and $condaBatNotFoundMsgFound -and $chainCollapsed -and $reachedSink
 
     Write-NdjsonRow ([ordered]@{
         id      = 'self.conda.bothfail'
         req     = 'REQ-003'
         pass    = $pass
-        desc    = 'Miniconda both-install-types-fail (:tci_both_failed) correctly reported, state=error'
+        desc    = 'Miniconda both-install-types-fail (:tci_both_failed) correctly reported, state=error, Item 46 Batch 1 chain collapsed'
         details = [ordered]@{
-            notElevatedSkip      = [bool]$notElevatedSkip
-            justmeFailHookFired  = [bool]$justmeFailHookFired
-            bothFailedMsgFound   = [bool]$bothFailedMsgFound
-            statusState          = $statusState
-            bootstrapExit        = $runExit
-            log                  = $bootstrapLog
+            notElevatedSkip           = [bool]$notElevatedSkip
+            justmeFailHookFired       = [bool]$justmeFailHookFired
+            bothFailedMsgFound        = [bool]$bothFailedMsgFound
+            condaBatNotFoundMsgFound  = [bool]$condaBatNotFoundMsgFound
+            condaPathMsgFound         = [bool]$condaPathMsgFound
+            pythonPathMsgFound        = [bool]$pythonPathMsgFound
+            pythonVMsgFound           = [bool]$pythonVMsgFound
+            condaNotFoundAtFound      = [bool]$condaNotFoundAtFound
+            chainCollapsed            = [bool]$chainCollapsed
+            reachedSink               = [bool]$reachedSink
+            statusState               = $statusState
+            bootstrapExit             = $runExit
+            log                       = $bootstrapLog
         }
     })
 } finally {
