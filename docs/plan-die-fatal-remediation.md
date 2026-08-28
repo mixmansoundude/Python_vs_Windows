@@ -98,27 +98,33 @@ expected -- this repo's own files move as unrelated work lands).
 
 This trace groups the 20 sites into 6 batches by shape, plus 2 sites that need no code change. See
 "Batch Roadmap" below for the landing plan; this Finding is the evidence each batch's grouping and
-priority is based on.
+priority is based on. Sites below are cited by subroutine/label and `call :die` message text, not
+line number, per this repo's own "cite by stable label, not exact line number" documentation
+convention (line numbers drift on every unrelated edit above the citation).
 
-**Batch 1 -- conda-acquisition-probe chain (5 sites: 897, 927, 933, 939, 945).** All top-level (no
-active call frame), all guard a step in acquiring/validating a conda installation before
-`:try_conda_create` is ever reached. 897/927/933/939 already call `:handle_conda_failure` and check
-`HP_ENV_READY` first -- structurally identical to `:conda_create_failed` pre-slice-1, the exact
-shape slice 1 already proved safe. 945 (the REQ-... channel-policy check, `Conda not found at:
+**Batch 1 -- conda-acquisition-probe chain (5 sites, all inside `:after_conda_bat_validation` or
+`:after_conda_probes`).** All top-level (no active call frame), all guard a step in
+acquiring/validating a conda installation before `:try_conda_create` is ever reached. The 4 sites
+in `:after_conda_bat_validation` (`conda.bat not found after bootstrap.`, `'conda' not found on
+PATH after bootstrap.`, `'python' not found on PATH after bootstrap.`, `'python -V' failed after
+bootstrap.`) already call `:handle_conda_failure` and check `HP_ENV_READY` first -- structurally
+identical to `:conda_create_failed` pre-slice-1, the exact shape slice 1 already proved safe. The
+1 site in `:after_conda_probes` (the REQ-... channel-policy check, `Conda not found at:
 %CONDA_BAT%`) skips the `:handle_conda_failure` attempt entirely (by design -- at that point
 `CONDA_BAT` is known bad, not just possibly-recoverable) but shares the identical root cause and
-convergence target. Traced the fall-through chain explicitly: 897's fall-through reaches 900-922's
-REQ-020 warm-up/corruption-check blocks (both no-ops when `CONDA_BAT` is undefined), then falls into
-`where conda` (927), and on THAT falling through too, `where python` (933), `python -V` (939), then
-`:after_conda_probes` at line 941 flows straight into 945's own channel-policy check -- so in the
-worst case (conda genuinely never acquired), a single root cause can currently stack **4-5** back-
-to-back `[ERROR]`/pause pairs before the chain finally reaches `:try_conda_create` with a broken
-`CONDA_BAT` and dies again (already-safe, slice-1-fixed) at what is today's 1229, ultimately landing
-on the real sink at 1334 (`Active Python interpreter not resolved`). Fix: `goto
+convergence target. Traced the fall-through chain explicitly: `conda.bat not found after
+bootstrap.`'s fall-through reaches the REQ-020 warm-up/corruption-check blocks right after it
+(both no-ops when `CONDA_BAT` is undefined), then falls into the `where conda` check, and on THAT
+falling through too, `where python`, `python -V`, then `:after_conda_probes` flows straight into
+the channel-policy check -- so in the worst case (conda genuinely never acquired), a single root
+cause can currently stack **4-5** back-to-back `[ERROR]`/pause pairs before the chain finally
+reaches `:try_conda_create` with a broken `CONDA_BAT` and dies again (already-safe, slice-1-fixed)
+at `:conda_create_failed`'s own `conda env create failed.` site, ultimately landing on the real
+sink -- `:after_env_mode_selection`'s `Active Python interpreter not resolved.` check. Fix: `goto
 :after_env_mode_selection` after each of the 5 `call :die` lines, mirroring slice 1's proven
 pattern exactly. Per the already-documented limitation (this does not eliminate the pause at the
-1334 sink, only the redundant intermediate ones), this collapses the worst case from 5-6 stacked
-pauses down to 2 (this site's own + the 1334 sink). **Existing test infrastructure already reaches
+sink, only the redundant intermediate ones), this collapses the worst case from 5-6 stacked
+pauses down to 2 (this site's own + the sink). **Existing test infrastructure already reaches
 this exact chain**: `tests/selfapps_conda_bothfail.ps1` (`HP_TEST_FORCE_JUSTME_FAIL=1` +
 `HP_TEST_NOT_ELEVATED=1` + `HP_FORCE_CONDA_ONLY=1`) drives a genuine Miniconda-install failure
 straight into this chain via `:try_conda_install`'s own fall-through (see Batch 6) -- no new test
@@ -126,77 +132,84 @@ hook needed, only new assertions on the existing scenario. **Risk: LOW** -- same
 slice 1, applied to sibling call sites in the same functional chain, with an existing test already
 positioned to prove it.
 
-**Batch 2 -- `:conda_create_done`'s "python.exe missing" check (1 site: 1247).** Different shape
+**Batch 2 -- `:conda_create_done`'s "python.exe missing" check (1 site).** Different shape
 from Batch 1: this site already checks `HP_ENV_READY` AND `HP_CASCADE_SAVED_PY` (for cascade
-re-entry) before its own `call :die`, but on a genuine, non-cascade fall-through, execution
-continues through the REST of `:conda_create_done`'s body -- writing `.condarc` (which is harmless;
-conda config is arguably fine to write even with a broken interpreter) and, more importantly,
-logging `[BOOT] REQ-009: Selected Python provider: Conda (Portable).` -- a **misleading
-success-sounding message immediately after an `[ERROR]` was already reported** -- before an
-unconditional `goto :after_env_mode_selection` at line 1274 anyway. **Correction to the original
-Finding 3's "backstopped by Item 45" framing**: HP_PY is *defined* here (set to a nonexistent path a
-few lines earlier), not *undefined* -- so 1334's own `if not defined HP_PY` check does NOT catch
-this case (it only catches a genuinely-unset HP_PY). The actual backstop is Item 45's `if not
-exist "%HP_PY%"` guard in `:run_entry_smoke`, which correctly catches a defined-but-nonexistent
-path. The dangerous consequence (a doomed PyInstaller build) is therefore still closed, but the
-misleading log line is real and worth fixing. Fix: `goto :after_env_mode_selection` right after
-1247's `call :die`, skipping the misleading message and the two now-pointless `.condarc`-write
-steps (1269/1272 remain untouched as *code* -- they still run normally for the success path that
-reaches them without going through 1247's failure branch). **Risk: LOW**, but kept as its own PR
-since the surrounding code differs enough from Batch 1 to deserve independent CI proof, per this
-item's own "don't assume symmetry" lesson (the same lesson slice 1 itself taught when its "reduces
-to one pause" claim needed correcting).
+re-entry) before its own `call :die "[ERROR] python.exe missing from conda environment."`, but on
+a genuine, non-cascade fall-through, execution continues through the REST of
+`:conda_create_done`'s body -- writing `.condarc` (which is harmless; conda config is arguably fine
+to write even with a broken interpreter) and, more importantly, logging `[BOOT] REQ-009: Selected
+Python provider: Conda (Portable).` -- a **misleading success-sounding message immediately after
+an `[ERROR]` was already reported** -- before an unconditional `goto :after_env_mode_selection`
+anyway. **Correction to the original Finding 3's "backstopped by Item 45" framing**: HP_PY is
+*defined* here (set to a nonexistent path a few lines earlier), not *undefined* -- so the sink's own
+`if not defined HP_PY` check does NOT catch this case (it only catches a genuinely-unset HP_PY).
+The actual backstop is Item 45's `if not exist "%HP_PY%"` guard in `:run_entry_smoke`, which
+correctly catches a defined-but-nonexistent path. The dangerous consequence (a doomed PyInstaller
+build) is therefore still closed, but the misleading log line is real and worth fixing. Fix:
+`goto :after_env_mode_selection` right after this site's `call :die`, skipping the misleading
+message and the two now-pointless `.condarc`-write steps (`Could not stage ~condarc` and
+`Could not write %ENV_PATH%\.condarc` remain untouched as *code* -- they still run normally for the
+success path that reaches them without going through this site's failure branch). **Risk: LOW**,
+but kept as its own PR since the surrounding code differs enough from Batch 1 to deserve
+independent CI proof, per this item's own "don't assume symmetry" lesson (the same lesson slice 1
+itself taught when its "reduces to one pause" claim needed correcting).
 
-**Batch 3 -- entry-determination double-call (1 site to fix: 1353; 1 site confirmed already safe:
-2113).** `:determine_entry` is called **twice** in a normal (non-CI-skip) run: once at line 1348
-inside `:after_env_mode_selection` (early, for PEP 723/pyproject-detection purposes), and again at
-line 2108 inside `:after_env_bootstrap` (late, for the real entry-smoke decision) -- confirmed via
-`grep` that `:after_env_mode_selection`'s body flows straight through, with no goto, into
-`:after_env_bootstrap` a few hundred lines later. If 1348's call fails and 1353's `call :die` falls
-through, execution runs the **entire** intervening dependency-install/pipreqs/heuristics/warnfix-
-writeback/pyvisa-detection block (lines 1354-2105, real network and disk work) before reaching the
-second `:determine_entry` call at 2108, which -- if the same root cause persists -- reproduces the
-identical failure and dies again at 2113. This is a genuinely new finding (not in the original
-spot-sample): a redundant pause with far MORE wasted intervening work than Batch 1's chain, even
-though it is likely rarer in practice. **2113 needs no fix**: its own fall-through is already
-benign -- the very next line (`if "%HP_ENTRY%"=="" (...)`) gracefully treats a blank entry as "no
-entry script detected, skip PyInstaller packaging," not a crash. Fix: `goto :after_env_bootstrap`
-after 1353's `call :die`, skipping the entire pointless dependency-install block when the entry is
-already known-unresolvable. **Risk: MEDIUM** -- unlike Batches 1-2, this skips a large block of
-genuine work (not just a misleading log line or a handful of already-doomed probe lines), so it is
-a real behavior change deserving its own careful trace and test, not a drive-by lump into a
-lower-risk batch.
+**Batch 3 -- entry-determination double-call (1 site to fix, the first `Could not determine entry
+point` site inside `:after_env_mode_selection`; 1 site confirmed already safe, the second `Could
+not determine entry point` site inside `:after_env_bootstrap`).** `:determine_entry` is called
+**twice** in a normal (non-CI-skip) run: once inside `:after_env_mode_selection` (early, for PEP
+723/pyproject-detection purposes), and again inside `:after_env_bootstrap` (late, for the real
+entry-smoke decision) -- confirmed via `grep` that `:after_env_mode_selection`'s body flows
+straight through, with no goto, into `:after_env_bootstrap` a few hundred lines later. If the
+first call fails and its `call :die` falls through, execution runs the **entire** intervening
+dependency-install/pipreqs/heuristics/warnfix-writeback/pyvisa-detection block (real network and
+disk work) before reaching the second `:determine_entry` call, which -- if the same root cause
+persists -- reproduces the identical failure and dies again at that second site. This is a
+genuinely new finding (not in the original spot-sample): a redundant pause with far MORE wasted
+intervening work than Batch 1's chain, even though it is likely rarer in practice. **The second
+site needs no fix**: its own fall-through is already benign -- the very next line (`if
+"%HP_ENTRY%"=="" (...)`) gracefully treats a blank entry as "no entry script detected, skip
+PyInstaller packaging," not a crash. Fix: `goto :after_env_bootstrap` after the first site's
+`call :die`, skipping the entire pointless dependency-install block when the entry is already
+known-unresolvable. **Risk: MEDIUM** -- unlike Batches 1-2, this skips a large block of genuine
+work (not just a misleading log line or a handful of already-doomed probe lines), so it is a real
+behavior change deserving its own careful trace and test, not a drive-by lump into a lower-risk
+batch.
 
-**Batch 4 -- embedded-helper / file-staging write failures (7 sites: 967, 1251, 1269, 1272, 1319,
-1501, 1880).** Single-line `if errorlevel 1 call :die "..."` after a `call :emit_from_base64` /
-`copy` / redirected-write operation, all top-level, no active call frame, scattered across
-different sections of the file (detect_python, print_pyver, condarc x2, prep_requirements, PEP 723
-requirements staging, detect_visa). Each needs its own small trace (they are NOT one shared goto
-target -- each lives in a different part of the dependency-resolution flow) but each trace is cheap
-and mechanical once done, the same per-site effort Batch 1's sites needed, just spread across more
-distinct locations in the file. Low real-world trigger rate: failure here implies a disk-write
-problem (permissions, disk full, AV lock) that would almost certainly also break the very next real
-operation loudly and quickly. **Risk: LOW per site**, but 7 independent small traces is real
-surface area -- batchable as "several independent small gotos landed together" since none of the 7
-share state with each other (unlike Batch 1's genuinely chained sites), but each deserves its own
-one-line trace note in the PR description so a reviewer isn't asked to trust 7 unexplained diffs.
+**Batch 4 -- embedded-helper / file-staging write failures (7 sites).** Single-line `if errorlevel
+1 call :die "..."` after a `call :emit_from_base64` / `copy` / redirected-write operation, all
+top-level, no active call frame, scattered across different sections of the file: `Could not write
+~detect_python.py` (inside `:after_conda_probes`), `Could not write ~print_pyver.py` / `Could not
+stage ~condarc` / `Could not write %ENV_PATH%\.condarc` (all three inside `:conda_create_done`),
+`Could not write ~prep_requirements.py` / `Could not stage PEP 723 requirements.` (both inside
+`:after_env_mode_selection`), and `Could not write ~detect_visa.py` (inside `:lock_done`). Each
+needs its own small trace (they are NOT one shared goto target -- each lives in a different part of
+the dependency-resolution flow) but each trace is cheap and mechanical once done, the same per-site
+effort Batch 1's sites needed, just spread across more distinct locations in the file. Low
+real-world trigger rate: failure here implies a disk-write problem (permissions, disk full, AV
+lock) that would almost certainly also break the very next real operation loudly and quickly.
+**Risk: LOW per site**, but 7 independent small traces is real surface area -- batchable as
+"several independent small gotos landed together" since none of the 7 share state with each other
+(unlike Batch 1's genuinely chained sites), but each deserves its own one-line trace note in the PR
+description so a reviewer isn't asked to trust 7 unexplained diffs.
 
-**Batch 5 -- CI-only entry-helper staging (2 sites: 2002, 2005, both inside `:ci_skip_entry`).**
-Only reachable under `HP_CI_SKIP_ENV=1`, a test-infrastructure-only flag never set by a real user or
-the default bootstrap path. 2002 (`~find_entry.py` staging) structurally overlaps with Batch 4's
-write-failure shape, but is classified here by **exposure** rather than shape, since exposure is
-what should drive landing priority -- this is the lowest-priority batch of the six; could be
-deferred indefinitely with near-zero real-world cost.
+**Batch 5 -- CI-only entry-helper staging (2 sites, both inside `:ci_skip_entry`).** Only reachable
+under `HP_CI_SKIP_ENV=1`, a test-infrastructure-only flag never set by a real user or the default
+bootstrap path. The `CI skip: entry helper staging failed` site (`~find_entry.py` staging)
+structurally overlaps with Batch 4's write-failure shape, but is classified here by **exposure**
+rather than shape, since exposure is what should drive landing priority -- this is the
+lowest-priority batch of the six; could be deferred indefinitely with near-zero real-world cost.
+The sibling site (`find_entry helper syntax error`) shares the same subroutine and exposure.
 
-**Batch 6 -- `:try_conda_install`'s own failure sites (2 sites: 5520, 5522, inside
-`:tci_both_failed`).** Structurally different from every other batch: these live inside a genuinely
-`call`ed subroutine (`:try_conda_install`, called once, line 884), and already have their own
-`goto :eof` immediately after the if/else -- so falling through does NOT skip `:die`'s choreography
-and does NOT itself produce a *dangerous* silent state; it simply means the CALLER (back at line
-884-887) proceeds to `:select_conda_bat`, finds no conda.bat, and re-runs the entire Batch 1 chain a
-second time for the same root cause. **Batch 1's own fix, once landed, already shrinks this site's
-blast radius as a side effect** -- post-Batch-1, this cascade collapses from "5522 then the full
-5-6-pause Batch-1 chain" down to "5522 then just 897's own single pause." A *complete* fix here
+**Batch 6 -- `:try_conda_install`'s own failure sites (2 sites, both inside `:tci_both_failed`).**
+Structurally different from every other batch: these live inside a genuinely `call`ed subroutine
+(`:try_conda_install`, called once), and already have their own `goto :eof` immediately after the
+if/else -- so falling through does NOT skip `:die`'s choreography and does NOT itself produce a
+*dangerous* silent state; it simply means the CALLER proceeds to `:select_conda_bat`, finds no
+conda.bat, and re-runs the entire Batch 1 chain a second time for the same root cause. **Batch 1's
+own fix, once landed, already shrinks this site's blast radius as a side effect** -- post-Batch-1,
+this cascade collapses from "`:tci_both_failed` then the full 5-6-pause Batch-1 chain" down to
+"`:tci_both_failed` then just the first Batch-1 site's own single pause." A *complete* fix here
 would need a signal-passing mechanism (a flag the caller checks right after `call
 :try_conda_install` to skip straight to `:after_env_mode_selection`, since a plain in-place `goto`
 inside the subroutine can't reach past its own `call`-frame return) rather than a simple in-place
@@ -206,15 +219,16 @@ mitigating side-effect is confirmed via real CI, then reassess whether the resid
 is worth the added coordination code.
 
 **No fix needed (2 sites, already traced and confirmed safe):**
-- **2113** -- see Batch 3 above; its own fall-through is already benign.
-- **1334** -- the "Active Python interpreter not resolved" sink every other batch's `goto` routes
-  toward. Already Item-45-backstopped for the one dangerous consequence (a doomed PyInstaller
-  build): if this falls through, the only cost is some wasted-but-harmless intermediate work (a
-  failed interpreter smoke-test attempt, a redundant `:determine_entry` call, some PEP 723
-  discovery attempts) before Item 45's `if not exist "%HP_PY%"` guard in `:run_entry_smoke` catches
-  it. Lowest priority of everything traced in this pass; a goto here would only trim harmless
-  wasted work, not close any remaining risk. Deferred indefinitely, or as a future opportunistic
-  micro-slice.
+- **The second `Could not determine entry point` site** (inside `:after_env_bootstrap`) -- see
+  Batch 3 above; its own fall-through is already benign.
+- **The "Active Python interpreter not resolved" sink** (inside `:after_env_mode_selection`) --
+  every other batch's `goto` routes toward it. Already Item-45-backstopped for the one dangerous
+  consequence (a doomed PyInstaller build): if this falls through, the only cost is some
+  wasted-but-harmless intermediate work (a failed interpreter smoke-test attempt, a redundant
+  `:determine_entry` call, some PEP 723 discovery attempts) before Item 45's `if not exist
+  "%HP_PY%"` guard in `:run_entry_smoke` catches it. Lowest priority of everything traced in this
+  pass; a goto here would only trim harmless wasted work, not close any remaining risk. Deferred
+  indefinitely, or as a future opportunistic micro-slice.
 
 **Total accounted for**: Batch 1 (5) + Batch 2 (1) + Batch 3 (1 fix + 1 no-op) + Batch 4 (7) +
 Batch 5 (2) + Batch 6 (2) + 1334 (no-op, deferred) = 20. Every remaining site now has an explicit
@@ -252,16 +266,19 @@ note:**
    - **Batch 1** (conda-acquisition-probe chain, 5 sites) lands first -- highest realistic exposure
      (a real, if uncommon, "conda never acquired" production scenario), lowest risk (proven shape,
      existing test already reaches it).
-   - **Batch 2** (1247) lands next -- low risk, fixes a genuinely misleading message.
-   - **Batch 4** (7 write-failure sites) and **Batch 5** (2 CI-only sites) land after, in either
-     order -- both low risk, low urgency, mechanical once traced.
-   - **Batch 3** (1353, entry-determination double-call) and **Batch 6** (5520/5522,
+   - **Batch 2** (`:conda_create_done`'s "python.exe missing" check) lands next -- low risk, fixes
+     a genuinely misleading message.
+   - **Batch 4** (7 write-failure sites) and **Batch 5** (2 CI-only sites, both inside
+     `:ci_skip_entry`) land after, in either order -- both low risk, low urgency, mechanical once
+     traced.
+   - **Batch 3** (the entry-determination double-call, the first `Could not determine entry point`
+     site inside `:after_env_mode_selection`) and **Batch 6** (`:tci_both_failed`'s two sites,
      `:try_conda_install` coordination) land last, each on its own -- both medium risk / more
      design thought than a drop-in goto, and Batch 6 specifically benefits from waiting until
      Batch 1's mitigating side-effect is confirmed via real CI before deciding whether it's still
      worth the extra coordination code.
-   - **1334** stays deferred indefinitely (lowest priority, already-mitigated, no fix currently
-     planned).
+   - **The "Active Python interpreter not resolved" sink** (inside `:after_env_mode_selection`)
+     stays deferred indefinitely (lowest priority, already-mitigated, no fix currently planned).
 4. **This pass's full trace (Finding 3 above) is the roadmap** -- no further blanket re-audit is
    needed before starting Batch 1; each batch's own PR should re-verify its own sites' current line
    numbers and surrounding code (this file's own history shows line numbers drift as unrelated work

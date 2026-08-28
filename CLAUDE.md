@@ -1110,19 +1110,21 @@ way (no live Windows execution available here), that is noted explicitly rather 
     that currently prints right after an `[ERROR]` was already reported.
   - **Batch 4/5**: 7 embedded-helper-write-failure sites plus 2 CI-only-exposure sites -- low risk,
     low urgency, mechanical once each is individually traced.
-  - **Batch 3**: the `:determine_entry` double-call (1353) -- `:determine_entry` runs TWICE per
-    normal bootstrap; falling through here wastes the entire dependency-install/pipreqs/warnfix
-    block (far more intervening work than Batch 1) before reproducing the same failure at the
-    second call site. MEDIUM risk (a real behavior change, not just a redundant-pause removal) --
-    lands on its own, later.
-  - **Batch 6**: `:try_conda_install`'s own two failure sites (5520/5522) -- MEDIUM risk, needs a
-    new caller-side coordination flag (not a drop-in goto, since these sites already sit inside a
-    `call`ed subroutine with their own `goto :eof`); deliberately deferred until after Batch 1
-    lands, since Batch 1's own fix already shrinks this site's fall-through blast radius as a side
-    effect.
-  - **1334** (the "Active Python interpreter not resolved" sink every other batch's `goto` routes
-    toward) stays deferred indefinitely -- already Item-45-backstopped for the one dangerous
-    consequence, a fix here would only trim harmless wasted work.
+  - **Batch 3**: the `:determine_entry` double-call (the first `call :die "[ERROR] Could not
+    determine entry point"` site, inside `:after_env_mode_selection`) -- `:determine_entry` runs
+    TWICE per normal bootstrap; falling through here wastes the entire
+    dependency-install/pipreqs/warnfix block (far more intervening work than Batch 1) before
+    reproducing the same failure at the second call site. MEDIUM risk (a real behavior change, not
+    just a redundant-pause removal) -- lands on its own, later.
+  - **Batch 6**: `:tci_both_failed`'s own two failure sites (inside `:try_conda_install`) -- MEDIUM
+    risk, needs a new caller-side coordination flag (not a drop-in goto, since these sites already
+    sit inside a `call`ed subroutine with their own `goto :eof`); deliberately deferred until after
+    Batch 1 lands, since Batch 1's own fix already shrinks this site's fall-through blast radius as
+    a side effect.
+  - **The "Active Python interpreter not resolved" sink** (inside `:after_env_mode_selection`,
+    every other batch's `goto` routes toward it) stays deferred indefinitely -- already
+    Item-45-backstopped for the one dangerous consequence, a fix here would only trim harmless
+    wasted work.
   Same EXTREME CAUTION discipline as every other high-risk change in this file: one batch lands at
   a time, full 8-lane matrix CI proof to completion before the next batch starts, no blanket sweep
   across every remaining site in one PR.
