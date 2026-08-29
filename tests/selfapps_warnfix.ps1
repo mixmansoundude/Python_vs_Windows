@@ -64,7 +64,7 @@ $bootstrapLog = switch ($scenario) {
 }
 
 # Non-Windows skip
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     if ($scenario -eq 'xfail') {
         Write-NdjsonRow ([ordered]@{

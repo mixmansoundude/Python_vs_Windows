@@ -25,7 +25,7 @@ function Write-NdjsonRow {
 }
 
 # Non-Windows skip
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.syntax'

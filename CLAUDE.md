@@ -169,6 +169,7 @@ Full rules in **AGENTS.md**. The most critical:
 | `call "%CONDA_BAT%" ...` for all conda invocations | Keeps parent batch running after conda |
 | No PSGallery downloads in CI | Proxy blocks it; use syntax-only validation |
 | Tag non-obvious constraints: `# derived requirement: <why>` | Prevents future regression on subtle fixes |
+| Never use `$IsWindows` in a `.ps1` file -- use `[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT` | `$IsWindows` is undefined (reads `$null`/falsy) under Windows PowerShell 5.1, silently skipping real Windows execution -- fixed one file at a time across 4+ PRs before `tools/check_delimiters.py` and the sanity sweep's "ISWINDOWS CHECK" step started catching it mechanically; see `docs/agent-lessons-learned.md` |
 
 ---
 
@@ -321,7 +322,7 @@ rather than embedding non-trivial logic inline in `.yml`, `.bat`, or `.ps1` file
 ```bash
 # Validate delimiter balance
 python tools/check_delimiters.py run_setup.bat
-python tools/check_delimiters.py run          # all supported files
+python tools/check_delimiters.py .            # all supported files
 
 # Validate YAML workflows
 python tools/check_workflows_yaml.py

@@ -18,7 +18,7 @@ function Write-NdjsonRow {
 }
 
 # Non-Windows skip: emit pass=true with skip flag and exit 0
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform
     foreach ($id in @('self.depcheck.install','self.depcheck.skip')) {
         Write-NdjsonRow ([ordered]@{

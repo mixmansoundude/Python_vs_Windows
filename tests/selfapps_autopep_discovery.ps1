@@ -50,7 +50,7 @@ function Write-AutopepRow {
 }
 
 # Non-Windows skip (matches this suite's convention).
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-AutopepRow -Pass $true -Desc 'autopep723 discovery merge (skipped on non-Windows)' -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' })
     exit 0

@@ -47,7 +47,7 @@ function Invoke-WithEnvOverrides {
 }
 
 # Non-Windows skip
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     $skipDetails = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     foreach ($id in @('self.pvw.python_exe.valid', 'self.pvw.workspace.valid', 'self.pvw.python_exe.invalid', 'self.pvw.workspace.invalid')) {

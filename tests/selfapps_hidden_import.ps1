@@ -38,7 +38,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.exe.hidden_import'
         req     = 'REQ-016'

@@ -10,6 +10,38 @@ def test_check_delimiters_import_and_empty_run(tmp_path, capsys):
     assert "No delimiter issues found." in captured.out
 
 
+# derived requirement: this exact bug ($IsWindows undefined under Windows PowerShell 5.1,
+# where it reads as $null/falsy so "-not $IsWindows" silently skips real Windows execution)
+# was independently rediscovered and fixed one file at a time across at least 4 separate PRs
+# before this check existed -- see docs/agent-lessons-learned.md's own entry. Regression guard
+# for the automated check that now catches it mechanically instead.
+def test_live_iswindows_reference_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("if (-not $IsWindows) {\n    Write-Host 'skip'\n}\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "$IsWindows" in captured.out
+    assert "OSVersion.Platform" in captured.out
+
+
+def test_commented_iswindows_mention_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "# $IsWindows is undefined under Windows PowerShell 5.1 -- do not use it here.\n"
+        "if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {\n"
+        "    Write-Host 'skip'\n"
+        "}\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
 # derived requirement: these four tests are a regression guard for a real bug that
 # shipped in run_setup.bat and was only caught on real Windows CI (see
 # docs/agent-lessons-learned.md's "rem needs a space after it" entry) -- a "rem"

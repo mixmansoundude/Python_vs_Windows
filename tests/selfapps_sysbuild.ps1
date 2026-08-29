@@ -26,7 +26,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
         id = 'self.sysbuild.decline'; req = 'REQ-007'; pass = $true
         desc = 'system-Python build consent decline (skipped on non-Windows)'

@@ -48,7 +48,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
         id='self.ci.cache_selfheal'; req='N/A'; pass=$true
         desc='ci_cache_selfheal.ps1 regression test (skipped on non-Windows: shells out to conda.bat via cmd.exe, and the locked-directory scenario needs Windows file-locking semantics)'

@@ -17,7 +17,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.detect';    req = 'REQ-004'; pass = $true; desc = 'pyproject precedence detect skipped on non-Windows host';   details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyproject.precedence.writeback'; req = 'REQ-004'; pass = $true; desc = 'pyproject precedence writeback skipped on non-Windows host'; details = $skipDetails })

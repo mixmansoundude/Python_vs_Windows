@@ -30,6 +30,49 @@ See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this principle
 
 ---
 
+## `$IsWindows` is undefined under Windows PowerShell 5.1 -- NEVER use it in a `tests/*.ps1` file, use `OSVersion.Platform`
+
+**Now mechanically enforced -- `tools/check_delimiters.py` flags any live (non-comment) use of
+the bare `$IsWindows` token, and `tools/run_sanity_sweep.sh`'s "ISWINDOWS CHECK" step scans
+`tests/*.ps1`/`tools/*.ps1` directly for it.** Recorded here anyway because this exact bug was
+independently rediscovered and fixed ONE FILE AT A TIME, at least 4 times, before either safety
+net existed -- each fix left its own "derived requirement" comment explaining the same thing (two
+of them citing distinct PRs, #434 and #436), with no one ever generalizing it into a repo-wide
+rule or a check. A full-repo audit while fixing yet another occurrence (this session, PR #470)
+found 44 files still carrying the ORIGINAL buggy pattern, unfixed -- all bulk-corrected in the
+same pass that added the two safety nets above. Read this instead of rediscovering it again by
+hand.
+
+**The bug**: `$IsWindows` is a PowerShell 6+ automatic variable. Under Windows PowerShell 5.1 (the
+edition every real Windows machine ships by default, and what `powershell.exe` launches -- as
+opposed to `pwsh.exe`, PowerShell 7+), it does not exist at all -- referencing it returns `$null`,
+which is falsy. So `if (-not $IsWindows) { ... skip ... }` silently evaluates to `$true` on
+GENUINE Windows, and a test meant to run for real quietly no-ops instead, reporting a false
+`skip=true` with no error anywhere.
+
+**Why this stayed dormant in real CI for a long time**: every `batch-check.yml` step dispatches
+these scripts via `shell: pwsh` explicitly, and `pwsh` (PowerShell 7+) always defines
+`$IsWindows`/`$IsLinux`/`$IsMacOS` correctly regardless of OS. The bug is dormant, not absent --
+it fires the moment any of these three things happens: (1) a maintainer runs a `selfapps_*.ps1`
+file locally via the Windows-default `powershell.exe` rather than `pwsh.exe`; (2) a future CI
+change ever switches a step's `shell:` from `pwsh` to `powershell`; (3) an agent (this one
+included) runs the file under `pwsh` on a non-Windows sandbox for local self-verification --
+`$IsWindows` IS correctly defined there too (as `$false`), so this specific case was never
+actually broken, but it's the scenario that makes the skip branch exist at all, and the one most
+likely to make a future agent reach for `$IsWindows` again without realizing case (1)/(2) exist.
+
+**The fix, proven correct across every real usage in this repo**:
+```powershell
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    # genuinely not Windows -- skip
+}
+```
+Works identically under `pwsh` (Windows or Linux) and Windows PowerShell 5.1, since
+`OSVersion.Platform` is a .NET API that has existed since .NET 1.0, not a PowerShell-edition
+automatic variable.
+
+---
+
 ## CodeRabbit review requires a manual trigger on every PR (repo has fewer than 10 stars)
 
 Former CLAUDE.md Active Backlog Item 59 (closed -- see `docs/agent-closed-backlog.md`'s Item 59

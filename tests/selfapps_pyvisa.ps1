@@ -17,7 +17,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.detect';         req = 'REQ-008'; pass = $true; desc = 'pyvisa detection skipped on non-Windows host';  details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pyvisa.nivisa.branch';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA branch skipped on non-Windows host';    details = $skipDetails })

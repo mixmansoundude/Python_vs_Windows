@@ -261,6 +261,42 @@ class DelimiterChecker:
                     f'PowerShell scoped variable token "{token}" (wrap with ${{...}} or use -f formatting)',
                 )
 
+            # derived requirement (this exact bug independently rediscovered and fixed one file
+            # at a time across at least 4 separate PRs -- #434, #436, and others -- before this
+            # check existed, per docs/agent-lessons-learned.md's "$IsWindows undefined under
+            # Windows PowerShell 5.1" entry): $IsWindows is a PowerShell 6+ automatic variable,
+            # undefined (reads as $null, which is falsy) under Windows PowerShell 5.1 -- real
+            # CI dispatches these scripts via pwsh (where it IS defined), but a maintainer's own
+            # local double-click/console session defaults to powershell.exe, where "-not
+            # $IsWindows" silently reads true and skips real Windows execution. This repo has
+            # zero legitimate uses of the bare $IsWindows token; every occurrence found so far
+            # has been this exact bug. Blunt on purpose (no attempt to distinguish a
+            # version-guarded reference from a bare one) -- flag any live, non-commented
+            # reference and point at the one correct replacement.
+            iswindows_re = re.compile(r"\$IsWindows\b")
+            for match in iswindows_re.finditer(text):
+                prefix = text[: match.start()]
+                line_no = prefix.count("\n") + 1
+                last_newline = prefix.rfind("\n")
+                column = match.start() + 1 if last_newline == -1 else match.start() - last_newline
+                line_text = lines[line_no - 1] if line_no - 1 < len(lines) else ""
+                stripped_line = line_text.lstrip()
+                if stripped_line.startswith("#"):
+                    continue
+                comment_index = line_text.find("#")
+                if comment_index != -1 and comment_index <= column - 1:
+                    continue
+                self.add_issue(
+                    line_no,
+                    column,
+                    "PowerShell automatic variable $IsWindows is undefined under Windows "
+                    "PowerShell 5.1 (a maintainer's local powershell.exe session, not real CI's "
+                    "pwsh dispatch) -- an undefined variable is $null, which is falsy, so "
+                    "'-not $IsWindows' silently reads as true and skips real Windows execution. "
+                    "Use [System.Environment]::OSVersion.Platform -ne "
+                    "[System.PlatformID]::Win32NT instead.",
+                )
+
         for line_no, raw_line in enumerate(lines, start=1):
             line = raw_line.rstrip("\n\r")
 

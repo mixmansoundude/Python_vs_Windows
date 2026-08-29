@@ -68,7 +68,7 @@ function Check-PipreqsFailure {
 
 # Non-Windows runners cannot exercise the Windows bootstrap; Windows CI still
 # covers the real envsmoke flow, so explicitly mark these checks as skipped.
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     $details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     Write-NdjsonRow ([ordered]@{

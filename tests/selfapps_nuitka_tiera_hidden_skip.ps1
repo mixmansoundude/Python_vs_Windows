@@ -62,7 +62,7 @@ function Write-HiddenSkipRow {
 }
 
 # Non-Windows skip
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-HiddenSkipRow -Pass $true -Desc 'Tier A / hidden-import-recovery skip guard (skipped on non-Windows)' -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' })
     exit 0
