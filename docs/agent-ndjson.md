@@ -29,6 +29,7 @@ self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run, self.exe.build.xfail,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
+self.exe.smokerun.cwd_consistency,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
 self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe,
@@ -1277,6 +1278,15 @@ self.entrysmoke.no_interpreter_guard
 
 ## Key facts for debugging missing rows
 
+- `self.exe.smokerun.cwd_consistency` (CLAUDE.md Active Backlog Item 38, `tests/selfapps_
+  exe_cwd_consistency.ps1`, real/conda-full lanes) is a POSITIVE proof, not an xfail like its
+  `self.exe.smokerun.exedata.xfail` sibling immediately above it -- it split out of that file's
+  former "plain" scenario once the underlying CWD mismatch was fixed (see
+  `docs/agent-interconnect.md`'s "Single-verification smoke model" section for the full
+  mechanism). Runs `run_setup.bat` TWICE against a stub app that opens a CWD-relative
+  `config.json` sitting at the app root: run 1 (`:run_exe_smokerun`, a fresh build) and run 2
+  (`:try_fast_exe`, the cached-EXE fast path) must BOTH succeed, from the same current working
+  directory (CWD) -- proving the two verification points no longer disagree.
 - `self.exe.hidden_import.exhaust` (CLAUDE.md Active Backlog item 11, `tests/selfapps_
   hidden_import_exhaust.ps1`, real/conda-full lanes) proves `--hidden-import` auto-recovery
   reaches its 3-attempt cap for real, unlike its sibling `self.exe.hidden_import` (one-shot

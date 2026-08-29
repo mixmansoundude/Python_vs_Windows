@@ -6,16 +6,16 @@
 # artifact or interpreter run can.
 #
 # Reads inputs from env vars (same cmd.exe-quoting-hazard-avoidance reasoning as
-# ~failfast_probe.ps1's own header comment): HP_SMOKERUN_EXE (bare filename; caller runs this
-# script with CWD already set to dist\, matching :run_exe_smokerun's existing pushd dist
-# convention -- REQ-018 2b-A.2, load-bearing for the CWD-relative config.json xfail case, see
-# docs/agent-interconnect.md "Single-verification smoke model"). HP_SMOKERUN_OUT/HP_SMOKERUN_ERR
-# default to ..\~run.out.txt / ..\~run.err.txt (relative to dist\, matching the pre-existing
-# convention). HP_SMOKERUN_RESULT (default ~smokerun_result.txt) is where this script writes its
-# exit-code result -- NOT stdout; see ~failfast_probe.ps1's header comment (same reasoning: the
-# caller invokes this script directly, no for /f/backtick stdout capture, so live-teed output
-# reaches the console instead of being silently swallowed and corrupting result parsing). Caller
-# must pre-truncate the output/result files before invoking, same as ~failfast_probe.ps1.
+# ~failfast_probe.ps1's own header comment): HP_SMOKERUN_EXE is a path to the built EXE (e.g.
+# dist\<env>.exe), CWD-relative. Caller CWD = app root (CLAUDE.md Item 38: matches :try_fast_exe/
+# :verify_no_exe_interpreter's own CWD now, not dist\ as before -- see docs/agent-interconnect.md
+# "Single-verification smoke model"). HP_SMOKERUN_OUT/ERR default to ~run.out.txt / ~run.err.txt
+# (CWD-relative, i.e. the app root). HP_SMOKERUN_RESULT (default ~smokerun_result.txt) is where
+# this script writes its exit-code result -- NOT stdout; see ~failfast_probe.ps1's header comment
+# (same reasoning: the caller invokes this script directly, no for /f/backtick stdout capture, so
+# live-teed output reaches the console instead of being silently swallowed and corrupting result
+# parsing). Caller must pre-truncate the output/result files before invoking, same as
+# ~failfast_probe.ps1.
 #
 # Same live-tee as ~failfast_probe.ps1 -- see that file's header comment for the full rationale
 # (self-sequenced chunk reads via StreamReader.ReadAsync(char[], int, int), NOT
@@ -44,9 +44,9 @@ $killMs = 30000
 if ($env:HP_SMOKERUN_KILL_MS) { $killMs = [int]$env:HP_SMOKERUN_KILL_MS }
 $argsRaw = $env:HP_SMOKERUN_ARGS
 $outPath = $env:HP_SMOKERUN_OUT
-if (-not $outPath) { $outPath = '..\~run.out.txt' }
+if (-not $outPath) { $outPath = '~run.out.txt' }
 $errPath = $env:HP_SMOKERUN_ERR
-if (-not $errPath) { $errPath = '..\~run.err.txt' }
+if (-not $errPath) { $errPath = '~run.err.txt' }
 $resultPath = $env:HP_SMOKERUN_RESULT
 if (-not $resultPath) { $resultPath = '~smokerun_result.txt' }
 

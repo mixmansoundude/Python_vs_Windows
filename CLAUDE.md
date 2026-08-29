@@ -788,12 +788,15 @@ but several represent real gaps worth closing before calling the path fully rele
   way, so the real-launch consequence described here is reasoned from documented Windows
   behavior, not confirmed against a genuine double-click.
 
-  **Fix options to weigh for the CWD mismatch itself** (still not pre-decided): (a) unify both
-  verification points to the same CWD (which one is "more correct" needs its own thought --
-  `dist\` matches a real double-clicked EXE's default CWD, so verifying from the app root may be
-  the actually-wrong choice, not `dist\`); (b) leave the two CWDs as-is (re-verify
-  `selfapps_exedata_fail.ps1`'s own xfail check, which is explicitly load-bearing on the current
-  `pushd dist` behavior per the interconnect doc's own note, before ever changing this).
+  **Decision (owner-approved, 2026-08-29): Option A -- unify both verification points to the app
+  root, not `dist\`.** The bootstrapper's job is "make it run" for the way a real user actually
+  organizes files: adjacent data files sit next to the `.py` source at the app root, not inside a
+  `dist\` folder that does not even exist until after the build. Verifying from `dist\` was
+  matching an artifact of PyInstaller's own output layout, not how a beginner's code is actually
+  structured or how the interpreter itself already ran the code during development. Unifying to
+  the app root also means the EXE verification now shares the exact same current working
+  directory (CWD) the interpreter's own run always used, not merely "similar behavior" in some
+  general sense.
 
   **The hint-honesty half of option (b) is CLOSED 2026-08-23, independently of the CWD-mismatch
   design decision above.** The hint previously compounded the problem for the common (no-override)
@@ -848,11 +851,37 @@ but several represent real gaps worth closing before calling the path fully rele
   not the exact character class of the suffix -- verified via a standalone `pwsh` script against
   all prior cases plus both newly-captured hex examples before landing.
 
-  **Still open, NOT part of this fix**: the CWD-mismatch verdict-flip itself (options a/b above)
-  remains undecided, and the coverage gap this item originally named -- no test asserts what run 2
-  reports for a CWD-sensitive app, since `selfapps_exedata_fail.ps1` invokes `run_setup.bat`
-  exactly once -- is still open. Add a second-run assertion for the same app once the CWD question
-  itself is resolved.
+  **Implemented (2026-08-29): `:run_exe_smokerun` and `:exe_smokerun_hints` now both verify from
+  the app root.** `:run_exe_smokerun`'s `pushd dist`/`popd` were removed and `HP_SMOKERUN_EXE` is
+  now `dist\%ENVNAME%.exe` (a path, not a bare filename needing `dist\` as the current working
+  directory (CWD)); `~run.out.txt`/`~run.err.txt` default to plain, CWD-relative names in
+  `tools/exe_smokerun.ps1` since the caller's CWD is the app root now. `:exe_smokerun_hints`
+  (the diagnostic re-run explaining `:run_exe_smokerun`'s own failure) got the identical
+  treatment, since it must reproduce the exact same launch conditions as the run it explains --
+  see `docs/agent-interconnect.md`'s "Single-verification smoke model" section for the full
+  mechanism. Closes the coverage gap this item originally named: `selfapps_exedata_fail.ps1`'s
+  former "plain" scenario (an EXPECTED failure that depended on the old `dist\` CWD) is now
+  `tests/selfapps_exe_cwd_consistency.ps1`, a POSITIVE two-run proof that a fresh build
+  (`:run_exe_smokerun`) and a cached-EXE fast-path reuse (`:try_fast_exe`) agree on the same
+  CWD-relative app. `selfapps_exedata_fail.ps1`'s remaining `mei_substring`/`mei_genuine`
+  scenarios stay genuine XFAILs, unaffected by the CWD unification (a genuinely-absent file, and
+  a real `_MEIxxxxxx` extraction path, respectively -- see that file's own updated header).
+
+  **Deliberately deferred, two narrower-blast-radius `pushd dist\` sites, per this item's own
+  "EXTREME CAUTION" discipline (see the DLL-bundling/hidden-import repair loops elsewhere in this
+  backlog for the established precedent of scoping a widely-shared verification subroutine's fix
+  one slice at a time):** `:offer_optimized_build`'s internal Nuitka-optimized-build verification,
+  and `:hidden_import_recover`'s own diagnostic re-run. Neither has any existing test asserting
+  its specific CWD either way (the optimized-build stub app does no file I/O at all; the
+  hidden-import loop's own write and read-back already agree with each other regardless of which
+  CWD is chosen), so leaving them as-is does not reintroduce the inconsistency this item exists to
+  close for the PRIMARY, widely-hit verification path -- but re-derive whether to unify them too
+  the next time either subroutine is touched (each carries its own `run_setup.bat` comment naming
+  this deferral explicitly).
+
+  **Not yet closed out to `docs/agent-closed-backlog.md`** -- pending a green CI run confirming
+  `self.exe.smokerun.cwd_consistency` and the updated `self.exe.smokerun.exedata.xfail` scenarios
+  both pass for real, per this repo's own "verify before archiving" convention.
 
 - **Item 42: console output is verbose across all log levels, and every fresh build ends with two
   unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience
