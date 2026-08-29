@@ -7,42 +7,7 @@ here and fold the outcome into wherever it actually belongs (CLAUDE.md's Active/
 answered questions accumulate here as history; that's what the other docs' own Closed Backlog /
 changelog-style sections are for.
 
-## 1. CLAUDE.md Active Backlog Item 38: which CWD is "correct" for EXE verification -- unify to `dist\`, or leave the two verification points as-is?
-
-Two verification points use different working directories today: `:run_exe_smokerun` (run 1,
-fresh build) runs from `pushd dist`; `:try_fast_exe`/`:verify_no_exe_interpreter` (every later
-run) run from the app root. A CWD-relative-path app (e.g. `open("config.json")`) can pass on one
-and fail on the other with zero code change in between -- see CLAUDE.md's Item 38 for the full
-trace, including the reasoning (NOT a confirmed universal fact -- see the caveat below) that a
-plain double-click without an explicit "Start in" override commonly lands a launched EXE's CWD at
-its own containing folder (`dist\` here), per documented `ShellExecute`/`CreateProcess` behavior.
-
-**Two fix directions, neither pre-decided:**
-- **(a) Unify both verification points to the same CWD.** Which one is "more correct" needs its
-  own thought -- `dist\` plausibly matches a real double-clicked EXE's default launch CWD (see the
-  caveat below), so verifying from the app root (the CURRENT behavior at 3 of 4 call sites) may be
-  the one that's actually wrong, not `dist\`.
-- **(b) Leave the two CWDs as-is.** `docs/agent-interconnect.md` already flags this as
-  deliberate/load-bearing: `selfapps_exedata_fail.ps1`'s own xfail check depends on
-  `:run_exe_smokerun`'s `pushd dist` specifically -- re-verify that test before changing this CWD.
-
-**Caveat on the "dist\ is the real double-click default" claim, per CodeRabbit review + Microsoft's
-own docs**: `CreateProcess`'s `lpCurrentDirectory`/`ShellExecute`'s `lpDirectory`, when NULL, make
-the new process inherit the CALLING process's current directory, not unconditionally the target
-EXE's own folder -- and a shortcut's own "Start in" field, when set, overrides this entirely. No CI
-lane launches via an actual double-click or shortcut either way. So `dist\` matching a real
-double-click is a plausible, commonly-true default, not a guaranteed universal fact -- factor that
-uncertainty into whichever CWD answer (a) or (b) above.
-
-The hint-honesty half of this item (PR #458, merged) is orthogonal and already closed -- it makes
-the post-failure ADVICE correct regardless of which CWD answer is chosen. This question is only
-about the underlying verification-CWD mismatch itself, still open.
-
-**Needs the maintainer's call** -- picking (a) vs (b) changes real runtime behavior for any
-CWD-relative-path app between a first and second run, not just wording; an agent choosing wrong
-here silently changes what "works" means for a live feature, not just doc content.
-
-## 2. CLAUDE.md Active Backlog Item 35: does the agent have (or can it get) the GitHub repo-admin access needed to actually flip a check to gating?
+## 1. CLAUDE.md Active Backlog Item 35: does the agent have (or can it get) the GitHub repo-admin access needed to actually flip a check to gating?
 
 Item 35's real mechanism (an aggregate `selftest-gate` check that could cover every lane with one
 required-check entry) is implemented and its precondition has landed, but "gating" in this repo is
@@ -62,7 +27,7 @@ Without an answer, Item 35's own soak-then-promote slices can get PREPARED (impl
 several green runs) but never actually CLOSED -- the last step structurally can't happen without
 this.
 
-## 3. CLAUDE.md Active Backlog Item 42, lever 2: is the two-prompt fresh-build flow still worth changing, and if so, reword only or also combine the two prompts?
+## 2. CLAUDE.md Active Backlog Item 42, lever 2: is the two-prompt fresh-build flow still worth changing, and if so, reword only or also combine the two prompts?
 
 Lever 1 (console-output tiering) shipped and merged 2026-08-24 (PR #466). Lever 2 -- the two
 elective Y/N prompts every successful fresh interactive build shows (`:run_postexec_checkpoint`'s

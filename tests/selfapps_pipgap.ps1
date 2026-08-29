@@ -30,7 +30,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $skipDetails = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     Write-NdjsonRow ([ordered]@{ id = 'pipgap.conda.miss'; req = 'REQ-005'; pass = $true; desc = 'conda-miss skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'pipgap.pip.fill';   req = 'REQ-005'; pass = $true; desc = 'pip gap-fill skipped on non-Windows host'; details = $skipDetails })

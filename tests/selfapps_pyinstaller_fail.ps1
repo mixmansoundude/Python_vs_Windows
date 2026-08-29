@@ -91,7 +91,7 @@ function Write-PyiFailRow {
 }
 
 # Non-Windows skip
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-PyiFailRow -Pass $true -Desc "PyInstaller build XFAIL ($scenario, skipped on non-Windows)" -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host'; scenario = $scenario })
     exit 0

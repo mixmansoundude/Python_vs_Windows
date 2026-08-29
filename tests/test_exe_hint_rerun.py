@@ -80,17 +80,16 @@ def _make_script(d, name, body):
 
 
 def _run_hint_rerun(d, script, env_extra, timeout=15):
-    # Mirrors :exe_smokerun_hints' own `pushd dist` convention: default HP_HINT_RERUN_OUT is
-    # the CWD-relative "~exe_out.txt", so run with cwd=d/dist to land the default at
-    # d/dist/~exe_out.txt, matching :exe_smokerun_hints' own `dist\~exe_out.txt` reference.
-    dist = Path(d) / "dist"
-    dist.mkdir(exist_ok=True)
+    # CLAUDE.md Active Backlog Item 38: :exe_smokerun_hints' caller CWD is now the app root, not
+    # dist\ (matching :run_exe_smokerun's own primary-run CWD, since this rerun exists purely to
+    # explain that primary run's own failure). Default HP_HINT_RERUN_OUT is the CWD-relative
+    # "~exe_out.txt", so run with cwd=d to land the default at d/~exe_out.txt.
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HP_HINT_RERUN_EXE": sys.executable}
     env.update(env_extra)
     with open(script, "r", encoding="utf-8") as stdin_src:
         return subprocess.run(
             [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
-            cwd=str(dist),
+            cwd=str(d),
             env=env,
             stdin=stdin_src,
             capture_output=True,
@@ -101,12 +100,12 @@ def _run_hint_rerun(d, script, env_extra, timeout=15):
 
 def _out_path(d, env_extra):
     override = env_extra.get("HP_HINT_RERUN_OUT")
-    return Path(override) if override else (Path(d) / "dist" / "~exe_out.txt")
+    return Path(override) if override else (Path(d) / "~exe_out.txt")
 
 
 def _killms_path(d, env_extra) -> Path:
     override = env_extra.get("HP_HINT_RERUN_KILLMS_OUT")
-    return Path(override) if override else (Path(d) / "dist" / "~exe_hint_killms.txt")
+    return Path(override) if override else (Path(d) / "~exe_hint_killms.txt")
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")
@@ -223,7 +222,7 @@ class OutputPaths(unittest.TestCase):
     def test_custom_out_path_honored(self):
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "fast", FAST_SCRIPT)
-            custom = str(Path(d) / "dist" / "~custom_hint.txt")
+            custom = str(Path(d) / "~custom_hint.txt")
             env = {"HP_HINT_RERUN_OUT": custom}
             proc = _run_hint_rerun(d, script, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -232,7 +231,7 @@ class OutputPaths(unittest.TestCase):
     def test_custom_killms_out_path_honored(self):
         with tempfile.TemporaryDirectory() as d:
             script = _make_script(d, "fast", FAST_SCRIPT)
-            custom = str(Path(d) / "dist" / "~custom_killms.txt")
+            custom = str(Path(d) / "~custom_killms.txt")
             env = {"HP_HINT_RERUN_KILLMS_OUT": custom, "HP_HINT_RERUN_KILL_MS": "7000"}
             proc = _run_hint_rerun(d, script, env)
             self.assertEqual(proc.returncode, 0, proc.stderr)

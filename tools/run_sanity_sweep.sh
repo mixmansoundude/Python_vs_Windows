@@ -67,7 +67,15 @@ check_pyflakes() {
 }
 
 check_delimiters() {
-  python tools/check_delimiters.py run_setup.bat
+  # derived requirement: scans the WHOLE repo (not just run_setup.bat) -- this also covers
+  # tests/*.ps1 and tools/*.ps1 for the $IsWindows check (see docs/agent-lessons-learned.md's
+  # "$IsWindows undefined under Windows PowerShell 5.1" entry) and the PowerShell boolean-operator
+  # heuristic. The latter used to false-positive on 24 real, already-shipped multi-line
+  # expressions (backtick/trailing-operator continuations, brackets opened on an earlier line) --
+  # fixed at the source in check_delimiters.py itself (carried statement-safety-context tracking)
+  # rather than narrowing this sweep's scope to dodge it, so this call now genuinely reports zero
+  # findings, not zero-after-manual-triage.
+  python tools/check_delimiters.py .
 }
 
 check_crlf() {

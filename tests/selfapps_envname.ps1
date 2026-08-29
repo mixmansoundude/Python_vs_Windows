@@ -82,7 +82,7 @@ switch ($scenario) {
     }
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     # derived requirement: tools/check_ndjson_registry.py's static scan matches a literal
     # id='...' hashtable-literal pattern (\bid\s*=\s*['"]...['"]), not a variable reference --
     # each scenario's id must appear as a literal string at its own Write-NdjsonRow call site,

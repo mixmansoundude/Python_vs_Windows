@@ -10,6 +10,183 @@ def test_check_delimiters_import_and_empty_run(tmp_path, capsys):
     assert "No delimiter issues found." in captured.out
 
 
+# derived requirement: this exact bug ($IsWindows undefined under Windows PowerShell 5.1,
+# where it reads as $null/falsy so "-not $IsWindows" silently skips real Windows execution)
+# was independently rediscovered and fixed one file at a time across at least 4 separate PRs
+# before this check existed -- see docs/agent-lessons-learned.md's own entry. Regression guard
+# for the automated check that now catches it mechanically instead.
+def test_live_iswindows_reference_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("if (-not $IsWindows) {\n    Write-Host 'skip'\n}\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "$IsWindows" in captured.out
+    assert "OSVersion.Platform" in captured.out
+
+
+def test_commented_iswindows_mention_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "# $IsWindows is undefined under Windows PowerShell 5.1 -- do not use it here.\n"
+        "if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {\n"
+        "    Write-Host 'skip'\n"
+        "}\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470): the $IsWindows scan used to search raw
+# whole-file text with re.finditer, so a QUOTED occurrence (data, not a live reference) was
+# indistinguishable from a real one. Fixed by routing the scan through
+# find_live_ps1_matches/sanitize_ps1_line, the same quote/comment-stripping machinery the
+# boolean-operator checker already relies on.
+def test_quoted_iswindows_string_literal_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host '$IsWindows'\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470): the old comment-skip logic was a bare
+# `line_text.find("#")` against the RAW line -- a '#' inside an earlier quoted string on the
+# same line was misread as the start of a real comment, silently suppressing a genuine LIVE
+# $IsWindows reference appearing later on that same line. sanitize_ps1_line strips quoted
+# content (and the '#' inside it) before comment detection, so this no longer happens.
+def test_iswindows_after_quoted_hash_on_same_line_is_still_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host '#not a comment'; if (-not $IsWindows) { 1 }\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "$IsWindows" in captured.out
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470, follow-up round): a DOUBLE-quoted
+# PowerShell string interpolates an embedded $variable at runtime -- "$IsWindows" is a
+# genuine live reference, not inert text, unlike a single-quoted string (which never
+# interpolates). sanitize_ps1_line used to strip ALL quoted content uniformly, so this
+# shape was silently missed. Now the variable token itself survives sanitization inside
+# a double-quoted string.
+def test_iswindows_interpolated_in_double_quoted_string_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "Platform: $IsWindows"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "$IsWindows" in captured.out
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement: the SINGLE-quoted counterpart of the test above must stay clean --
+# PowerShell single-quoted strings never interpolate, under any circumstance, so
+# '$IsWindows' in single quotes is genuinely inert text, same as the pre-existing
+# test_quoted_iswindows_string_literal_is_not_flagged case.
+def test_iswindows_in_single_quoted_string_is_still_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host 'Platform: $IsWindows'\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement: the same interpolation fix must correctly resolve the scoped-
+# variable ($var:) check too -- "$myModule:someVar" inside a double-quoted string is the
+# exact live scoped-lookup this check exists to catch (a scope-shaped prefix that is NOT
+# one of the known-safe script/global/local/private/env/using scopes), not just a bare
+# $IsWindows shape.
+def test_scoped_variable_interpolated_in_double_quoted_string_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "value is $myModule:someVar here"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "scoped variable token" in captured.out
+
+
+# derived requirement: this exact real bug in run_setup.bat was already using
+# ${...}-braced interpolation as its OWN escape hatch (per docs/agent-lessons-learned.md's
+# "PowerShell adjacent traps" -- wrap with ${...} or use -f formatting) -- confirm the
+# interpolation fix does not misfire on the correctly-escaped form.
+def test_braced_scoped_variable_interpolation_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "value is ${script:someVar} here"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470, third round): PowerShell variable
+# names are case-insensitive -- $ISWINDOWS/$iswindows are the SAME undefined-under-PS-5.1
+# automatic variable as $IsWindows, not a different, safe identifier.
+def test_iswindows_lowercase_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("if (-not $iswindows) {\n    Write-Host 'skip'\n}\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470, third round): ${IsWindows} (braced) is
+# valid PowerShell syntax referencing the exact same automatic variable as bare
+# $IsWindows, live anywhere a bare reference is -- not just inside an interpolated
+# string -- so it carries the identical undefined-under-PS-5.1 bug.
+def test_iswindows_braced_bare_reference_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("if (-not ${IsWindows}) {\n    Write-Host 'skip'\n}\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement: the braced form must also be caught when genuinely interpolated
+# inside a double-quoted string, mirroring the earlier bare-$IsWindows interpolation
+# test -- both the sanitizer's VAR_INTERP_RE and iswindows_re itself must agree on the
+# braced shape.
+def test_iswindows_braced_interpolated_in_double_quoted_string_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "Platform: ${IsWindows}"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement: a braced reference inside a SINGLE-quoted string stays inert,
+# same as the bare-form single-quote test -- single-quoted strings never interpolate,
+# under any circumstance, braced or not.
+def test_iswindows_braced_in_single_quoted_string_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host 'Platform: ${IsWindows}'\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
 # derived requirement: these four tests are a regression guard for a real bug that
 # shipped in run_setup.bat and was only caught on real Windows CI (see
 # docs/agent-lessons-learned.md's "rem needs a space after it" entry) -- a "rem"
@@ -390,3 +567,122 @@ def test_tab_delimited_rem_line_inside_block_is_flagged(tmp_path, capsys):
     assert result == 1
     assert "does not close until line" in captured.out
     assert "counts parens in rem text too" in captured.out
+
+
+# derived requirement: a full-repo scan (python tools/check_delimiters.py .) found 24 false
+# positives from _check_ps1_boolean_operators across 8 real, already-shipped test files --
+# the space_pattern/leading-operator checks only ever looked at the CURRENT physical line for
+# an '=' or control keyword, missing that a PowerShell statement can legitimately span multiple
+# lines (backtick continuation, natural continuation via a trailing -and/-or, or simply being
+# nested inside a bracket opened on an earlier line). These tests are the regression guard for
+# the fix (carried "was this statement's context already established" state) and for the
+# ORIGINAL hazard the check still must catch: a bare command followed by -and/-or, genuinely
+# parsed by PowerShell as an attempt to bind a parameter named -and/-or.
+def test_bare_command_followed_by_and_is_still_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("someCommand -and $x\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "PowerShell boolean operator '-and'" in captured.out
+
+
+def test_leading_or_with_no_preceding_backtick_is_still_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("-or $x\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "cannot begin a statement" in captured.out
+
+
+def test_and_across_natural_trailing_operator_continuation_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_runtime_writeback.ps1: no backtick, no brackets -- the
+    # statement continues naturally because each line ends in a trailing -and.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and\n"
+        "        $noTrailingSpace -and $logContainsWriteback -and\n"
+        "        ($secondRunExitCode -eq 0) -and $secondRunMatches -and $secondRunNoWriteback\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_and_inside_bracket_opened_on_earlier_line_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_envsmoke.ps1: an if-expression's own {} branch, opened
+    # and assigned via '=' two lines above the flagged -and.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$hasExpectedEnv = if ($isUvMode) {\n"
+        "    ($hasInterpreter -and ($interpreterPath -match 'x'))\n"
+        "} else {\n"
+        "    ($hasInterpreter -and ($interpreterPath -match 'y'))\n"
+        "}\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_and_inside_scriptblock_from_earlier_line_is_not_flagged(tmp_path, capsys):
+    # Real shape from tools/ps-compileall.ps1: a Where-Object scriptblock's own boolean
+    # return expression, with no '=' or control keyword anywhere in the scriptblock body.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$files = $allFiles | Where-Object {\n"
+        "  $p = $_.FullName\n"
+        "  -not ($p -match 'skip') -and ($_.Extension -in $Extensions)\n"
+        "}\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_backtick_continued_leading_or_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_pyvisa.ps1: explicit backtick continuation, each
+    # continuation line starting with -or for readability.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$nisaReasonPass = ($installerRcMatch.Success) `\n"
+        "    -or ($log -match 'a') `\n"
+        "    -or ($log -match 'b') `\n"
+        "    -or ($log -match 'c')\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_backtick_continued_and_across_multiple_lines_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_contract_uv.ps1: assignment on the first line, each
+    # backtick-continued line below it carries -and with no '=' of its own.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$pass = $fallbackInjected -and $fallbackLogged -and `\n"
+        "        ($fallbackReason -eq 'x') -and `\n"
+        "        $uvVenvReady -and `\n"
+        "        $lockNonEmpty -and $runtimeValid\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out

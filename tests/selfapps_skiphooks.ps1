@@ -26,7 +26,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
         id='self.skiphooks.combined'; req='REQ-012'; pass=$true
         desc='Skip hooks run no user code while build proceeds (skipped on non-Windows)'

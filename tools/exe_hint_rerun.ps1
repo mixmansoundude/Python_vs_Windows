@@ -4,9 +4,13 @@
 # partial output on a hang beats hanging the bootstrap on a run nobody is watching. See CLAUDE.md
 # former item 15 / docs/agent-closed-backlog.md for the untimed-rerun gap this closed.
 #
-# Reads: HP_HINT_RERUN_EXE (bare filename; CWD already dist\). HP_HINT_RERUN_OUT (default
-# ~exe_out.txt) gets combined stdout+stderr, matching the original `2>&1` merge. HP_HINT_RERUN_KILL_MS
-# (default 10000) is a test override, mirroring HP_SMOKERUN_KILL_MS.
+# Reads: HP_HINT_RERUN_EXE (a path to the built EXE, e.g. dist\<env>.exe, relative to the current
+# working directory (CWD) -- the caller runs this script with CWD set to the app root, matching
+# :run_exe_smokerun's own CWD per CLAUDE.md Active Backlog Item 38; see
+# docs/agent-interconnect.md "Single-verification smoke model"). HP_HINT_RERUN_OUT (default
+# ~exe_out.txt, CWD-relative -- the app root) gets combined stdout+stderr, matching the original
+# `2>&1` merge. HP_HINT_RERUN_KILL_MS (default 10000) is a test override, mirroring
+# HP_SMOKERUN_KILL_MS.
 #
 # $killMs is always written to HP_HINT_RERUN_KILLMS_OUT (default ~exe_hint_killms.txt) so tests can
 # assert the override was honored directly -- wall-clock elapsed proved unreliable on shared

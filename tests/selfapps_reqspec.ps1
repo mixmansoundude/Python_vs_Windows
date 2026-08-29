@@ -295,7 +295,7 @@ function Export-PrepRequirementsHelper {
     [IO.File]::WriteAllBytes($OutPath, $bytes)
 }
 
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-ReqspecRows -Pass $true -TranslationChecks @{} -DryRunDetails @{} -InstallDetails @{} -FailcaseDetails @{} -ChannelPinDetails @{} -Skip $true -Reason 'non-windows-host'
     Write-ReqspecIngestRows -TranslateDetails @{} -DryRunDetails @{} -ImportDetails @{} -Skip $true -Reason 'non-windows-host'
     exit 0

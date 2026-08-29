@@ -102,17 +102,16 @@ def _make_script(d, name, body):
 
 
 def _run_smokerun(d, script, env_extra, timeout=15):
-    # Mirrors :run_exe_smokerun's own `pushd dist` convention (REQ-018 2b-A.2): default output
-    # paths are `..\~run.out.txt` / `..\~run.err.txt`, relative to a dist\ subdirectory -- so the
-    # default-path tests run with cwd=d/dist to land the defaults at d/~run.out.txt etc.
-    dist = Path(d) / "dist"
-    dist.mkdir(exist_ok=True)
+    # CLAUDE.md Active Backlog Item 38: :run_exe_smokerun's caller CWD is now the app root, not
+    # dist\ -- HP_SMOKERUN_OUT/HP_SMOKERUN_ERR default to the plain, CWD-relative ~run.out.txt /
+    # ~run.err.txt (no ..\ prefix), so this harness runs with cwd=d directly to land the defaults
+    # at d/~run.out.txt etc., matching production.
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HP_SMOKERUN_EXE": sys.executable}
     env.update(env_extra)
     with open(script, "r", encoding="utf-8") as stdin_src:
         return subprocess.run(
             [PWSH, "-NoProfile", "-NonInteractive", "-File", str(SOURCE)],
-            cwd=str(dist),
+            cwd=str(d),
             env=env,
             stdin=stdin_src,
             capture_output=True,
@@ -122,11 +121,10 @@ def _run_smokerun(d, script, env_extra, timeout=15):
 
 
 def _result(d, env_extra):
-    # HP_SMOKERUN_RESULT defaults to plain ~smokerun_result.txt (CWD-relative, i.e. inside
-    # dist\, unlike HP_SMOKERUN_OUT/ERR's ..\-prefixed defaults) -- see _run_smokerun's own
-    # comment for why cwd is d/dist.
+    # HP_SMOKERUN_RESULT defaults to plain ~smokerun_result.txt, CWD-relative -- see
+    # _run_smokerun's own comment for why cwd is d.
     override = env_extra.get("HP_SMOKERUN_RESULT")
-    result_path = Path(override) if override else (Path(d) / "dist" / "~smokerun_result.txt")
+    result_path = Path(override) if override else (Path(d) / "~smokerun_result.txt")
     return result_path.read_text(encoding="ascii").strip()
 
 

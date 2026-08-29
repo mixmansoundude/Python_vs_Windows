@@ -66,7 +66,7 @@ $scenario = if ($env:QUICKSTART_SCENARIO) { $env:QUICKSTART_SCENARIO.ToLower() }
 # derived requirement: literal -Id per branch, not a variable -- tools/check_ndjson_registry.py's
 # PowerShell scanner only matches a literal `-Id '...'` string at the call site (see
 # selfapps_pep723_writeback.ps1's own Write-Pep723Row comment for the same convention).
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     if ($scenario -eq 'run') {
         Write-QuickstartRow -Id 'self.pvw_quickstart.run' -Pass $true -Desc "PVW QuickStart $scenario (skipped on non-Windows)" -Details ([ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' })

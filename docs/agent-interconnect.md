@@ -1636,13 +1636,27 @@ strings and run artifacts:
     (`'Running entry script smoke test'`).
   - `[INFO] Entry smoke exit=%HP_EXE_EXIT%` at `:smokerun_ndjson` -> matches `$hasEntryExit`
     (`'Entry smoke exit=0'`) when the EXE verifies clean.
-  - The EXE smoke runs from `pushd dist` (CWD = dist\) -- the working directory a frozen EXE has
-    always used here, and **load-bearing**: `selfapps_exedata_fail`'s app opens a CWD-relative
-    `config.json` that MUST be absent at runtime (xfail), which only holds when CWD is `dist\`, not
-    the app root (the app root contains `config.json`). Do NOT switch the EXE smoke to run from the
-    app root -- it makes that file findable and turns the xfail into an xpass.
-  - `$so.Result | Set-Content -Path '..\~run.out.txt'` (and `~run.err.txt`) from inside `pushd dist`
-    captures the EXE's stdout/stderr to the app root so envsmoke `$tokenFound` (`'smoke-ok'`, on
+  - **CLAUDE.md Active Backlog Item 38 (resolved): the EXE smoke now runs from the app root, the
+    same current working directory (CWD) `:try_fast_exe`/`:verify_no_exe_interpreter` (every
+    later run) and the interpreter's own run already used -- NOT `dist\` as it did before this
+    fix.** Previously this was the ONE verification point using a different CWD than every other
+    one: a CWD-relative-path app (e.g. `open("config.json")`, with `config.json` sitting next to
+    the `.py` source at the app root -- the way a beginner naturally organizes adjacent data
+    files) could pass on a fresh build and fail on the very next (fast-path) run, or vice versa,
+    with no code change in between. `tests/selfapps_exedata_fail.ps1`'s former "plain" scenario
+    depended on the OLD `dist\` CWD specifically to stay a reliable xfail; it is now
+    `tests/selfapps_exe_cwd_consistency.ps1`, a POSITIVE proof that a fresh build
+    (`:run_exe_smokerun`) and a fast-path reuse (`:try_fast_exe`) agree on the SAME CWD-relative
+    app. `selfapps_exedata_fail.ps1`'s remaining two scenarios (`mei_substring`, `mei_genuine`)
+    are unaffected -- their missing files are either genuinely absent regardless of CWD, or live
+    under PyInstaller's own randomly-named `_MEIxxxxxx` extraction directory, independent of
+    launch CWD entirely. Two narrower-blast-radius `pushd dist` sites remain, deliberately
+    deferred (see their own `run_setup.bat` comments): `:offer_optimized_build`'s internal
+    Nuitka-build verification, and `:hidden_import_recover`'s own diagnostic re-run (its write
+    and read-back already agree with each other regardless of which CWD is chosen, and no test
+    depends on either site's specific CWD).
+  - `$so.Result | Set-Content -Path '~run.out.txt'` (and `~run.err.txt`, both CWD-relative to the
+    app root now) captures the EXE's stdout/stderr so envsmoke `$tokenFound` (`'smoke-ok'`, on
     stdout) is satisfied by the EXE run instead of the deleted interpreter run.
   - **sys.argv[0]-relative files land in dist\ for a frozen EXE.** An app that writes next to
     `sys.argv[0]` (e.g. the spaced-path app's `~smoke_token.txt`, written to
@@ -1695,10 +1709,11 @@ classification checkpoint, never a ceiling), then, if still running, a SECOND, U
   caller-owned quoting contract the Argv passthrough feature established (see below): the caller
   quotes each token, and `~failfast_probe.ps1` assigns the string to `ProcessStartInfo.Arguments`
   VERBATIM, adding no quotes of its own.** Do not wrap the complete string in another pair of
-  quotes -- that collapses multiple arguments into one token. **CWD is preserved per call site**: both `:try_fast_exe` and
-  `:verify_no_exe_interpreter` run from the app root (no `pushd dist`), unlike
-  `:run_exe_smokerun`'s `pushd dist` (load-bearing for `selfapps_exedata_fail`'s CWD-relative
-  `config.json` xfail check -- re-verify that test if these CWDs are ever unified).
+  quotes -- that collapses multiple arguments into one token. **CWD now matches across all three
+  call sites (CLAUDE.md Active Backlog Item 38, resolved)**: `:try_fast_exe`,
+  `:verify_no_exe_interpreter`, and `:run_exe_smokerun` all run from the app root (no `pushd
+  dist`) -- see the "Single-verification smoke model" section above for the fix and
+  `tests/selfapps_exe_cwd_consistency.ps1`, its regression proof.
 - `:run_failfast_probe` always leaves `HP_SMOKE_RC` set to the true final exit code and
   `HP_PROBE_EXCEEDED` set (`1`) iff the probe window was crossed. `:try_fast_exe`'s
   discard-and-rebuild block is gated on `if not "%HP_SMOKE_RC%"=="0" if not defined

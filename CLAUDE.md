@@ -112,53 +112,16 @@ git push -u origin <branch-name>
 
 ## Mandatory Sanity Checks
 
-Run this full sweep before every commit. README.md-only changes do not affect most of these
-checks but still run the sweep as a baseline (it also catches an accidental non-doc diff).
-
-```bash
-python -m compileall -q . && echo "COMPILEALL OK"
-python -m pyflakes . 2>&1 | head -20
-python tools/check_delimiters.py run_setup.bat && echo "DELIM OK"
-python tools/check_crlf.py && echo "CRLF OK"
-python -m yamllint .github/workflows/ && echo "YAMLLINT OK"
-export PATH="$PATH:/root/go/bin"
-actionlint -oneline .github/workflows/*.yml && echo "ACTIONLINT OK"
-
-for f in run_setup.bat tests/harness.ps1 docs/agent-interconnect.md docs/agent-lessons-learned.md CLAUDE.md; do
-  out=$(grep -nP '[^\x00-\x7F]' "$f")
-  if [ -n "$out" ]; then echo "=== $f ==="; echo "$out"; fi
-done
-echo "ASCII SWEEP DONE"
-git diff --stat origin/main
-
-pwsh -c "
-\$ErrorActionPreference = 'Stop'
-\$fail = 0
-Get-ChildItem /home/user/Python_vs_Windows/tests/*.ps1, /home/user/Python_vs_Windows/tools/*.ps1 | ForEach-Object {
-  \$errs = \$null
-  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$errs) | Out-Null }
-  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1; return }
-  if (\$errs.Count -gt 0) {
-    Write-Host \"PARSE FAIL: \$(\$_.FullName):\"
-    \$errs | ForEach-Object { Write-Host \"  \$_\" }
-    \$fail = 1
-  }
-}
-if (\$fail -eq 0) { Write-Host 'PS PARSE SWEEP DONE - ALL CLEAN' }
-exit \$fail
-"
-python -m pytest /home/user/Python_vs_Windows/tests/test_*.py -q 2>&1 | tail -5
-```
-
-The ASCII sweep's file list is illustrative, not exhaustive -- extend it to cover whatever
-files the current change actually touches. `actionlint`/`pwsh` install methods (if not already
-present in the environment) are documented in **AGENTS.md**.
-
-**`tools/run_sanity_sweep.sh` runs this exact block as one command** (`tools/run_sanity_sweep.sh
-[extra-file ...]`, extra args extend the ASCII sweep's file list), with a clear per-check
-pass/fail summary instead of scrolling raw tool output -- prefer it over copy-pasting the block
-above by hand. See AGENTS.md's "Recurring tooling" section for what it does and does not do
-(it does not auto-install missing tools).
+Run `tools/run_sanity_sweep.sh [extra-file ...]` before every commit -- compileall, pyflakes,
+`check_delimiters.py .` (whole repo), `check_crlf.py`, yamllint, actionlint, an ASCII sweep,
+`git diff --stat`, a PowerShell AST parse of every `tests/`/`tools/` `.ps1` file, and
+`pytest tests/test_*.py`, with a clear per-check pass/fail summary. Extra args extend the ASCII
+sweep's default file list (illustrative, not exhaustive -- add whatever the current change
+touches). README.md-only changes still run it as a baseline (catches an accidental non-doc
+diff). It does not auto-install missing tools (`pwsh`/`actionlint`/`yamllint`/`pyflakes`) --
+see AGENTS.md's "Style and robustness" section for install steps, and its "Recurring tooling"
+section for what the sweep does and does not do. The script itself is the single source of
+truth for exactly what runs; do not hand-copy its steps elsewhere.
 
 ---
 
@@ -176,6 +139,7 @@ Full rules in **AGENTS.md**. The most critical:
 | `call "%CONDA_BAT%" ...` for all conda invocations | Keeps parent batch running after conda |
 | No PSGallery downloads in CI | Proxy blocks it; use syntax-only validation |
 | Tag non-obvious constraints: `# derived requirement: <why>` | Prevents future regression on subtle fixes |
+| Never use `$IsWindows` in a `.ps1` file -- use `[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT` | `$IsWindows` is undefined (reads `$null`/falsy) under Windows PowerShell 5.1, silently skipping real Windows execution -- fixed one file at a time across 4+ PRs before `tools/check_delimiters.py` (run repo-wide by the sanity sweep's "DELIMITER CHECK" step) started catching it mechanically; see `docs/agent-lessons-learned.md` |
 
 ---
 
@@ -328,7 +292,7 @@ rather than embedding non-trivial logic inline in `.yml`, `.bat`, or `.ps1` file
 ```bash
 # Validate delimiter balance
 python tools/check_delimiters.py run_setup.bat
-python tools/check_delimiters.py run          # all supported files
+python tools/check_delimiters.py .            # all supported files
 
 # Validate YAML workflows
 python tools/check_workflows_yaml.py
@@ -795,12 +759,15 @@ but several represent real gaps worth closing before calling the path fully rele
   way, so the real-launch consequence described here is reasoned from documented Windows
   behavior, not confirmed against a genuine double-click.
 
-  **Fix options to weigh for the CWD mismatch itself** (still not pre-decided): (a) unify both
-  verification points to the same CWD (which one is "more correct" needs its own thought --
-  `dist\` matches a real double-clicked EXE's default CWD, so verifying from the app root may be
-  the actually-wrong choice, not `dist\`); (b) leave the two CWDs as-is (re-verify
-  `selfapps_exedata_fail.ps1`'s own xfail check, which is explicitly load-bearing on the current
-  `pushd dist` behavior per the interconnect doc's own note, before ever changing this).
+  **Decision (owner-approved, 2026-08-29): Option A -- unify both verification points to the app
+  root, not `dist\`.** The bootstrapper's job is "make it run" for the way a real user actually
+  organizes files: adjacent data files sit next to the `.py` source at the app root, not inside a
+  `dist\` folder that does not even exist until after the build. Verifying from `dist\` was
+  matching an artifact of PyInstaller's own output layout, not how a beginner's code is actually
+  structured or how the interpreter itself already ran the code during development. Unifying to
+  the app root also means the EXE verification now shares the exact same current working
+  directory (CWD) the interpreter's own run always used, not merely "similar behavior" in some
+  general sense.
 
   **The hint-honesty half of option (b) is CLOSED 2026-08-23, independently of the CWD-mismatch
   design decision above.** The hint previously compounded the problem for the common (no-override)
@@ -855,11 +822,37 @@ but several represent real gaps worth closing before calling the path fully rele
   not the exact character class of the suffix -- verified via a standalone `pwsh` script against
   all prior cases plus both newly-captured hex examples before landing.
 
-  **Still open, NOT part of this fix**: the CWD-mismatch verdict-flip itself (options a/b above)
-  remains undecided, and the coverage gap this item originally named -- no test asserts what run 2
-  reports for a CWD-sensitive app, since `selfapps_exedata_fail.ps1` invokes `run_setup.bat`
-  exactly once -- is still open. Add a second-run assertion for the same app once the CWD question
-  itself is resolved.
+  **Implemented (2026-08-29): `:run_exe_smokerun` and `:exe_smokerun_hints` now both verify from
+  the app root.** `:run_exe_smokerun`'s `pushd dist`/`popd` were removed and `HP_SMOKERUN_EXE` is
+  now `dist\%ENVNAME%.exe` (a path, not a bare filename needing `dist\` as the current working
+  directory (CWD)); `~run.out.txt`/`~run.err.txt` default to plain, CWD-relative names in
+  `tools/exe_smokerun.ps1` since the caller's CWD is the app root now. `:exe_smokerun_hints`
+  (the diagnostic re-run explaining `:run_exe_smokerun`'s own failure) got the identical
+  treatment, since it must reproduce the exact same launch conditions as the run it explains --
+  see `docs/agent-interconnect.md`'s "Single-verification smoke model" section for the full
+  mechanism. Closes the coverage gap this item originally named: `selfapps_exedata_fail.ps1`'s
+  former "plain" scenario (an EXPECTED failure that depended on the old `dist\` CWD) is now
+  `tests/selfapps_exe_cwd_consistency.ps1`, a POSITIVE two-run proof that a fresh build
+  (`:run_exe_smokerun`) and a cached-EXE fast-path reuse (`:try_fast_exe`) agree on the same
+  CWD-relative app. `selfapps_exedata_fail.ps1`'s remaining `mei_substring`/`mei_genuine`
+  scenarios stay genuine XFAILs, unaffected by the CWD unification (a genuinely-absent file, and
+  a real `_MEIxxxxxx` extraction path, respectively -- see that file's own updated header).
+
+  **Deliberately deferred, two narrower-blast-radius `pushd dist\` sites, per this item's own
+  "EXTREME CAUTION" discipline (see the DLL-bundling/hidden-import repair loops elsewhere in this
+  backlog for the established precedent of scoping a widely-shared verification subroutine's fix
+  one slice at a time):** `:offer_optimized_build`'s internal Nuitka-optimized-build verification,
+  and `:hidden_import_recover`'s own diagnostic re-run. Neither has any existing test asserting
+  its specific CWD either way (the optimized-build stub app does no file I/O at all; the
+  hidden-import loop's own write and read-back already agree with each other regardless of which
+  CWD is chosen), so leaving them as-is does not reintroduce the inconsistency this item exists to
+  close for the PRIMARY, widely-hit verification path -- but re-derive whether to unify them too
+  the next time either subroutine is touched (each carries its own `run_setup.bat` comment naming
+  this deferral explicitly).
+
+  **Not yet closed out to `docs/agent-closed-backlog.md`** -- pending a green CI run confirming
+  `self.exe.smokerun.cwd_consistency` and the updated `self.exe.smokerun.exedata.xfail` scenarios
+  both pass for real, per this repo's own "verify before archiving" convention.
 
 - **Item 42: console output is verbose across all log levels, and every fresh build ends with two
   unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience

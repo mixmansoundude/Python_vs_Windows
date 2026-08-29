@@ -31,7 +31,7 @@ function Write-NdjsonRow {
 }
 
 # Non-Windows skip (parity with other selfapps tests).
-if (-not $IsWindows) {
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.collect.submodules'
         req     = 'REQ-005'
