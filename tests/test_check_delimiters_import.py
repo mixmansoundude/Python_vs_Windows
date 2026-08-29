@@ -422,3 +422,122 @@ def test_tab_delimited_rem_line_inside_block_is_flagged(tmp_path, capsys):
     assert result == 1
     assert "does not close until line" in captured.out
     assert "counts parens in rem text too" in captured.out
+
+
+# derived requirement: a full-repo scan (python tools/check_delimiters.py .) found 24 false
+# positives from _check_ps1_boolean_operators across 8 real, already-shipped test files --
+# the space_pattern/leading-operator checks only ever looked at the CURRENT physical line for
+# an '=' or control keyword, missing that a PowerShell statement can legitimately span multiple
+# lines (backtick continuation, natural continuation via a trailing -and/-or, or simply being
+# nested inside a bracket opened on an earlier line). These tests are the regression guard for
+# the fix (carried "was this statement's context already established" state) and for the
+# ORIGINAL hazard the check still must catch: a bare command followed by -and/-or, genuinely
+# parsed by PowerShell as an attempt to bind a parameter named -and/-or.
+def test_bare_command_followed_by_and_is_still_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("someCommand -and $x\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "PowerShell boolean operator '-and'" in captured.out
+
+
+def test_leading_or_with_no_preceding_backtick_is_still_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("-or $x\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "cannot begin a statement" in captured.out
+
+
+def test_and_across_natural_trailing_operator_continuation_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_runtime_writeback.ps1: no backtick, no brackets -- the
+    # statement continues naturally because each line ends in a trailing -and.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and\n"
+        "        $noTrailingSpace -and $logContainsWriteback -and\n"
+        "        ($secondRunExitCode -eq 0) -and $secondRunMatches -and $secondRunNoWriteback\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_and_inside_bracket_opened_on_earlier_line_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_envsmoke.ps1: an if-expression's own {} branch, opened
+    # and assigned via '=' two lines above the flagged -and.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$hasExpectedEnv = if ($isUvMode) {\n"
+        "    ($hasInterpreter -and ($interpreterPath -match 'x'))\n"
+        "} else {\n"
+        "    ($hasInterpreter -and ($interpreterPath -match 'y'))\n"
+        "}\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_and_inside_scriptblock_from_earlier_line_is_not_flagged(tmp_path, capsys):
+    # Real shape from tools/ps-compileall.ps1: a Where-Object scriptblock's own boolean
+    # return expression, with no '=' or control keyword anywhere in the scriptblock body.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$files = $allFiles | Where-Object {\n"
+        "  $p = $_.FullName\n"
+        "  -not ($p -match 'skip') -and ($_.Extension -in $Extensions)\n"
+        "}\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_backtick_continued_leading_or_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_pyvisa.ps1: explicit backtick continuation, each
+    # continuation line starting with -or for readability.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$nisaReasonPass = ($installerRcMatch.Success) `\n"
+        "    -or ($log -match 'a') `\n"
+        "    -or ($log -match 'b') `\n"
+        "    -or ($log -match 'c')\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+def test_backtick_continued_and_across_multiple_lines_is_not_flagged(tmp_path, capsys):
+    # Real shape from tests/selfapps_contract_uv.ps1: assignment on the first line, each
+    # backtick-continued line below it carries -and with no '=' of its own.
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text(
+        "$pass = $fallbackInjected -and $fallbackLogged -and `\n"
+        "        ($fallbackReason -eq 'x') -and `\n"
+        "        $uvVenvReady -and `\n"
+        "        $lockNonEmpty -and $runtimeValid\n",
+        encoding="ascii",
+    )
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out

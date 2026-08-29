@@ -33,8 +33,9 @@ See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this principle
 ## `$IsWindows` is undefined under Windows PowerShell 5.1 -- NEVER use it in a `tests/*.ps1` file, use `OSVersion.Platform`
 
 **Now mechanically enforced -- `tools/check_delimiters.py` flags any live (non-comment) use of
-the bare `$IsWindows` token, and `tools/run_sanity_sweep.sh`'s "ISWINDOWS CHECK" step scans
-`tests/*.ps1`/`tools/*.ps1` directly for it.** Recorded here anyway because this exact bug was
+the bare `$IsWindows` token, and `tools/run_sanity_sweep.sh`'s "DELIMITER CHECK" step scans the
+whole repo (including `tests/*.ps1`/`tools/*.ps1`) with it.** Recorded here anyway because this
+exact bug was
 independently rediscovered and fixed ONE FILE AT A TIME, at least 4 times, before either safety
 net existed -- each fix left its own "derived requirement" comment explaining the same thing (two
 of them citing distinct PRs, #434 and #436), with no one ever generalizing it into a repo-wide
@@ -708,6 +709,19 @@ list; the recurring traps that have actually bitten us:
 names ("parameter name 'or'"); `tools/check_delimiters.py` flags these. Multi-line `run:`
 PowerShell in YAML interacts badly with quote nesting -- run `actionlint` on changed
 workflows.
+
+**That checker's own heuristic only looked at the CURRENT physical line for a `=`/keyword,
+producing 24 false positives repo-wide on real, valid multi-line PowerShell** (backtick
+continuation, natural continuation via a trailing `-and`/`-or`, or nesting inside a bracket
+opened on an earlier line -- a hashtable literal, an `if{}else{}` expression, a `Where-Object`
+scriptblock). Fixed at the source (`_check_ps1_boolean_operators` now carries a "was this
+statement's context already established" verdict across continuations, and treats an
+already-open bracket -- `len(self.stack) > 0`, evaluated before the current line's own brackets
+are pushed -- as safe too) rather than narrowing what the sanity sweep scans to dodge it; the
+sweep's "DELIMITER CHECK" step now runs `check_delimiters.py .` (the whole repo) and reports
+zero findings for real, not zero-after-manual-triage. This does not weaken the original hazard
+the function exists to catch -- a bare command followed by `-and`/`-or` -- since that is a
+SEPARATE, unconditional check (`command_pattern`) untouched by this fix.
 
 ---
 

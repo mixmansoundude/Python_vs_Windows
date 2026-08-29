@@ -112,46 +112,16 @@ git push -u origin <branch-name>
 
 ## Mandatory Sanity Checks
 
-Run this full sweep before every commit. README.md-only changes do not affect most of these
-checks but still run the sweep as a baseline (it also catches an accidental non-doc diff).
-
-```bash
-python -m compileall -q . && echo "COMPILEALL OK"
-python -m pyflakes . 2>&1 | head -20
-python tools/check_delimiters.py run_setup.bat && echo "DELIM OK"
-python tools/check_crlf.py && echo "CRLF OK"
-python -m yamllint .github/workflows/ && echo "YAMLLINT OK"
-export PATH="$PATH:/root/go/bin"
-actionlint -oneline .github/workflows/*.yml && echo "ACTIONLINT OK"
-
-for f in run_setup.bat tests/harness.ps1 docs/agent-interconnect.md docs/agent-lessons-learned.md CLAUDE.md; do
-  out=$(grep -nP '[^\x00-\x7F]' "$f")
-  if [ -n "$out" ]; then echo "=== $f ==="; echo "$out"; fi
-done
-echo "ASCII SWEEP DONE"
-git diff --stat origin/main
-
-pwsh -c "
-\$ErrorActionPreference = 'Stop'
-\$fail = 0
-Get-ChildItem /home/user/Python_vs_Windows/tests/*.ps1, /home/user/Python_vs_Windows/tools/*.ps1 | ForEach-Object {
-  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$null) | Out-Null }
-  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1 }
-}
-if (\$fail -eq 0) { Write-Host 'PS PARSE SWEEP DONE - ALL CLEAN' }
-"
-python -m pytest /home/user/Python_vs_Windows/tests/test_*.py -q 2>&1 | tail -5
-```
-
-The ASCII sweep's file list is illustrative, not exhaustive -- extend it to cover whatever
-files the current change actually touches. `actionlint`/`pwsh` install methods (if not already
-present in the environment) are documented in **AGENTS.md**.
-
-**`tools/run_sanity_sweep.sh` runs this exact block as one command** (`tools/run_sanity_sweep.sh
-[extra-file ...]`, extra args extend the ASCII sweep's file list), with a clear per-check
-pass/fail summary instead of scrolling raw tool output -- prefer it over copy-pasting the block
-above by hand. See AGENTS.md's "Recurring tooling" section for what it does and does not do
-(it does not auto-install missing tools).
+Run `tools/run_sanity_sweep.sh [extra-file ...]` before every commit -- compileall, pyflakes,
+`check_delimiters.py .` (whole repo), `check_crlf.py`, yamllint, actionlint, an ASCII sweep,
+`git diff --stat`, a PowerShell AST parse of every `tests/`/`tools/` `.ps1` file, and
+`pytest tests/test_*.py`, with a clear per-check pass/fail summary. Extra args extend the ASCII
+sweep's default file list (illustrative, not exhaustive -- add whatever the current change
+touches). README.md-only changes still run it as a baseline (catches an accidental non-doc
+diff). It does not auto-install missing tools (`pwsh`/`actionlint`/`yamllint`/`pyflakes`) --
+see AGENTS.md's "Style and robustness" section for install steps, and its "Recurring tooling"
+section for what the sweep does and does not do. The script itself is the single source of
+truth for exactly what runs; do not hand-copy its steps elsewhere.
 
 ---
 
@@ -169,7 +139,7 @@ Full rules in **AGENTS.md**. The most critical:
 | `call "%CONDA_BAT%" ...` for all conda invocations | Keeps parent batch running after conda |
 | No PSGallery downloads in CI | Proxy blocks it; use syntax-only validation |
 | Tag non-obvious constraints: `# derived requirement: <why>` | Prevents future regression on subtle fixes |
-| Never use `$IsWindows` in a `.ps1` file -- use `[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT` | `$IsWindows` is undefined (reads `$null`/falsy) under Windows PowerShell 5.1, silently skipping real Windows execution -- fixed one file at a time across 4+ PRs before `tools/check_delimiters.py` and the sanity sweep's "ISWINDOWS CHECK" step started catching it mechanically; see `docs/agent-lessons-learned.md` |
+| Never use `$IsWindows` in a `.ps1` file -- use `[System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT` | `$IsWindows` is undefined (reads `$null`/falsy) under Windows PowerShell 5.1, silently skipping real Windows execution -- fixed one file at a time across 4+ PRs before `tools/check_delimiters.py` (run repo-wide by the sanity sweep's "DELIMITER CHECK" step) started catching it mechanically; see `docs/agent-lessons-learned.md` |
 
 ---
 

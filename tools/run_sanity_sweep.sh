@@ -67,35 +67,15 @@ check_pyflakes() {
 }
 
 check_delimiters() {
-  python tools/check_delimiters.py run_setup.bat
-}
-
-check_iswindows() {
-  # derived requirement: $IsWindows is undefined (reads as $null, so "-not $IsWindows" silently
-  # reads true) under Windows PowerShell 5.1 -- real CI dispatches these scripts via pwsh (where
-  # it IS defined), but a maintainer's own local double-click/console session defaults to
-  # powershell.exe. This exact bug was independently rediscovered and fixed one file at a time
-  # across at least 4 separate PRs (#434, #436, and others) before this check existed -- see
-  # docs/agent-lessons-learned.md's "$IsWindows undefined under Windows PowerShell 5.1" entry.
-  # tools/check_delimiters.py also flags this (its own check runs against any .ps1 file passed
-  # to it), but is NOT invoked broadly against tests/*.ps1 here -- its separate PowerShell
-  # boolean-operator heuristic has known false positives on multi-line expressions in several
-  # existing test files, unrelated to this specific pattern, and untangling those is its own
-  # separate task. A direct, targeted grep avoids that coupling entirely.
-  local bad=0
-  while IFS= read -r -d '' f; do
-    local hit
-    hit=$(grep -nP '^\s*[^#\s].*\$IsWindows\b' "$f" || true)
-    if [ -n "$hit" ]; then
-      echo "=== $f ==="
-      echo "$hit"
-      bad=1
-    fi
-  done < <(find tests tools -maxdepth 1 -name '*.ps1' -print0 2>/dev/null)
-  if [ "$bad" -eq 0 ]; then
-    echo "No live \$IsWindows references found -- use [System.Environment]::OSVersion.Platform instead if this ever fires."
-  fi
-  return "$bad"
+  # derived requirement: scans the WHOLE repo (not just run_setup.bat) -- this also covers
+  # tests/*.ps1 and tools/*.ps1 for the $IsWindows check (see docs/agent-lessons-learned.md's
+  # "$IsWindows undefined under Windows PowerShell 5.1" entry) and the PowerShell boolean-operator
+  # heuristic. The latter used to false-positive on 24 real, already-shipped multi-line
+  # expressions (backtick/trailing-operator continuations, brackets opened on an earlier line) --
+  # fixed at the source in check_delimiters.py itself (carried statement-safety-context tracking)
+  # rather than narrowing this sweep's scope to dodge it, so this call now genuinely reports zero
+  # findings, not zero-after-manual-triage.
+  python tools/check_delimiters.py .
 }
 
 check_crlf() {
@@ -196,7 +176,6 @@ check_pytest() {
 step "COMPILEALL" check_compileall
 step "PYFLAKES" check_pyflakes
 step "DELIMITER CHECK" check_delimiters
-step "ISWINDOWS CHECK (tests/tools .ps1)" check_iswindows
 step "CRLF CHECK (.bat/.cmd)" check_crlf
 step "MARKDOWNLINT (advisory, MD029 only)" check_markdownlint
 step "YAMLLINT" check_yamllint

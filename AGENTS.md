@@ -321,17 +321,11 @@ similar one-off script for the third time in a session, consider whether it belo
 ## Embedded payload inventory (run_setup.bat)
 
 All helpers are base64-encoded inside `run_setup.bat` under `:define_helper_payloads`.
-Adding or changing a payload requires re-encoding and updating the matching `set "HP_*"=...` line.
-Run the delimiter check after every payload change.
-
-| Variable | Decoded filename | Purpose |
-|----------|-----------------|---------|
-| `HP_FAST_CHECK` | `~fast_check.py` | Pre-bootstrap sanity checks (Python files present, etc.) |
-| `HP_DEP_CHECK` | `~dep_check.py` | Compares pipreqs output against `~environment.lock.txt`; exits 0 (skip install) or 1 (install needed). SHIPPED Loop 2. |
-| `HP_ENV_STATE` | `~env_state.py` | Reads/writes `~env.state.json`; validates env cache across runs. SHIPPED Loop 3. |
-| `HP_PARSE_WARN` | `~parse_warn.py` | Reads PyInstaller warn file, extracts missing module names, applies import-to-conda translation table. Supports PyInstaller 5.x (W: no module named 'foo') and 6.x (missing module named foo - imported by ... (delayed|top-level|conditional)) formats. Skips (optional)-only entries (try-except guards). Prints one package per line. Version is intentionally unpinned -- update this table and the translation logic if a new format is introduced. |
-| `HP_COLLECT_SUBMODULES` | `~collect_submodules.py` | Emits pre-build `--collect-submodules=PKG` flags (one space-separated line) for curated packages (sklearn, matplotlib, scipy, plotly) that load submodules dynamically and are invisible to the warn file. Double-gated: a flag is emitted only when the package is BOTH imported by the user's project source AND importable in the build interpreter. Canonical source `tools/collect_submodules.py`; PayloadSync in `tests/test_collect_submodules.py`. |
-| `HP_HIDDEN_IMPORT_SCAN` | `~hidden_import_scan.py` | Decides the next `--hidden-import` target from a frozen EXE's stderr for the Slice 2 auto-recovery loop. Strict + double-gated: emits a module ONLY on `ModuleNotFoundError: No module named 'X'` AND when X is installed in the build interpreter (so a user typo / `ImportError: cannot import name` never triggers a rebuild). Canonical source `tools/hidden_import_scan.py`; PayloadSync in `tests/test_hidden_import_scan.py`. |
+Adding or changing a payload requires `python tools/sync_payload.py HP_VARNAME tools/the_file.py`
+(never hand-roll it) followed by the delimiter check. **CLAUDE.md's "run_setup.bat Rules" section
+1 is the authoritative, actively-maintained payload table** -- do not keep a second copy here; it
+only goes stale (this section's own prior copy was already missing several real payloads before
+being replaced with this pointer).
 
 ## Runtime artifact paths
 

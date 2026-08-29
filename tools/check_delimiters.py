@@ -167,6 +167,17 @@ class DelimiterChecker:
         self.here_string: Optional[str] = None
         self.in_block_comment = False
         self.prev_ps1_backtick = False
+        # derived requirement: a PowerShell statement can also continue naturally (no backtick
+        # needed) when a line ends in a trailing binary operator like -and/-or -- the next
+        # physical line is still part of the SAME logical statement. Tracked alongside
+        # prev_ps1_backtick so _check_ps1_boolean_operators can tell "is this line a
+        # continuation of the previous one" regardless of which continuation style was used.
+        self.ps1_natural_continues = False
+        # Carried "was the logical statement this line belongs to already judged safe"
+        # verdict -- True once an assignment ('='), a control keyword, an already-open
+        # bracket, or a genuinely safe continuation established it; reset to a fresh
+        # per-line computation whenever the line is NOT a continuation of the previous one.
+        self.ps1_stmt_safe_context = False
         self.yaml_shell_by_indent: dict[int, str] = {}
         self.in_yaml_pwsh_block = False
         self.yaml_pwsh_block_indent = 0
@@ -700,14 +711,32 @@ class DelimiterChecker:
         # outside a boolean expression.
         # These heuristics stay intentionally simple per the latest CI spec; keep this comment to avoid
         # reintroducing syntax regressions when adjusting the PowerShell parsing rules.
+        #
+        # derived requirement (full-repo audit, PR #470-adjacent): the space_pattern branch below
+        # ("appears without an enclosing if/elseif/while/for context") only ever looked at the
+        # CURRENT physical line for an '=' or control keyword -- a real PowerShell statement can
+        # legitimately span multiple physical lines (explicit backtick continuation, natural
+        # continuation when a line ends in a trailing -and/-or, or simply being nested inside a
+        # bracket opened on an earlier line: a hashtable literal, an if-expression's own {} branch,
+        # a Where-Object scriptblock). All of those are safe, working, already-shipped code in this
+        # repo; the checker just couldn't see far enough back to know it. is_continuation /
+        # ps1_stmt_safe_context (set on DelimiterChecker, see __init__) carry the "was this
+        # statement's context already established" verdict across such continuations; bracket_open
+        # (len(self.stack) > 0, evaluated BEFORE this line's own brackets are pushed by the main
+        # scanning loop below) covers the nested-inside-an-open-bracket case. This does not weaken
+        # the ORIGINAL hazard this function exists to catch -- a bare command followed by -and/-or
+        # being parsed as a parameter name -- since that is caught unconditionally by the separate
+        # command_pattern loop further down, which does not depend on any of this.
         if self.here_string or self.in_block_comment:
             self.prev_ps1_backtick = False
+            self.ps1_natural_continues = False
             return
 
         sanitized, index_map = sanitize_ps1_line(line)
         trimmed = sanitized.strip()
         if not trimmed:
             self.prev_ps1_backtick = False
+            self.ps1_natural_continues = False
             return
 
         sanitized_lower = sanitized.lower()
@@ -731,19 +760,29 @@ class DelimiterChecker:
                 f"PowerShell boolean operator '{op}' {detail}; wrap it inside an explicit conditional expression.",
             )
 
+        # A leading -or/-and can only be valid PowerShell as an explicit backtick continuation of
+        # the PREVIOUS line (natural trailing-operator continuation never produces a line that
+        # itself starts with another operator) -- so only that specific case can be a carried-safe
+        # continuation here.
+        backtick_continuation_safe = self.prev_ps1_backtick and self.ps1_stmt_safe_context
         if trimmed_lower.startswith("-or") or trimmed_lower.startswith("-and"):
-            op = "-or" if trimmed_lower.startswith("-or") else "-and"
-            idx = sanitized_lower.find(op)
-            if idx != -1:
-                detail = "cannot begin a statement"
-                if self.prev_ps1_backtick:
-                    detail = "cannot follow a line ending with '`'; add parentheses around the condition"
-                note_issue(op, idx, detail)
+            if not backtick_continuation_safe:
+                op = "-or" if trimmed_lower.startswith("-or") else "-and"
+                idx = sanitized_lower.find(op)
+                if idx != -1:
+                    detail = "cannot begin a statement"
+                    if self.prev_ps1_backtick:
+                        detail = "cannot follow a line ending with '`'; add parentheses around the condition"
+                    note_issue(op, idx, detail)
 
         has_assignment = bool(assignment_re.search(sanitized))
         has_control_keyword = bool(keyword_re.search(sanitized_lower))
+        bracket_open = len(self.stack) > 0
+        is_continuation = self.prev_ps1_backtick or self.ps1_natural_continues
+        fresh_context = has_assignment or has_control_keyword or bracket_open
+        effective_context = fresh_context or (is_continuation and self.ps1_stmt_safe_context)
         space_pattern = re.compile(r"\s-(or|and)\s", re.IGNORECASE)
-        if not has_control_keyword and not has_assignment:
+        if not effective_context:
             for match in space_pattern.finditer(sanitized_lower):
                 start_index = match.start()
                 segment_before = sanitized[:start_index]
@@ -784,6 +823,11 @@ class DelimiterChecker:
 
         raw_trimmed = line.rstrip()
         self.prev_ps1_backtick = bool(trimmed) and raw_trimmed.endswith("`")
+        # derived requirement: a line ending in a trailing binary operator (-and/-or) continues
+        # naturally onto the next line with no backtick needed -- real, valid PowerShell syntax,
+        # and the shape every trailing-operator false positive in this repo's own test suite used.
+        self.ps1_natural_continues = bool(re.search(r"-(?:and|or)\b\s*$", trimmed_lower))
+        self.ps1_stmt_safe_context = effective_context
 
     def _check_yaml_pwsh_block(self, line_no: int, line: str) -> None:
         if self.here_string:
