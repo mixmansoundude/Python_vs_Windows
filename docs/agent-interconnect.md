@@ -123,6 +123,21 @@ doesn't leave stale locks for other users of the same folder.
 
 ---
 
+## `:emit_from_base64` (shared by ~10+ call sites) now carries a test-injection hook -- any future call site inherits it automatically
+
+CLAUDE.md Active Backlog Item 46 Bucket A Batches 2/3/4/5 (`docs/plan-die-fatal-remediation.md`)
+added `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` to `:emit_from_base64` itself (the one subroutine every
+embedded-helper write in the file funnels through -- `~detect_python.py`, `~condarc`,
+`~print_pyver.py`, `~prep_requirements.py`, `~find_entry.py`, `~detect_visa.py`, and any future
+addition). Checked FIRST, before the real PowerShell write: if defined and equal to the CALL's own
+`%VAR%` argument, logs a `[TEST]` line and `exit /b 1` immediately, simulating a genuine disk-write/
+AV-lock failure for that ONE payload without touching any other payload emitted in the same run.
+REQ-019-compliant (absence changes nothing). Any future new embedded helper (a new `HP_*` payload
+variable) automatically gains this same test-injection capability with zero additional wiring --
+worth knowing before adding a bespoke failure-simulation mechanism for a new helper's write step.
+
+---
+
 ## AV-Safe Build Path Tier A (`:try_nuitka_tier_a`) and hidden-import auto-recovery
 
 **Touch either subroutine, must understand the other.** `:try_nuitka_tier_a` (AV-Safe Build Path
@@ -1062,6 +1077,53 @@ this specific check does not catch. So the fix relocates pause #2 to an already-
 `:handle_conda_failure` call (and its embed/venv-attempt and system-consent-prompt replay), not
 cutting pause count. A further Bucket A slice targeting `:after_env_mode_selection`'s own check is
 the natural next candidate if reducing to a single pause is ever pursued.
+
+### Batch 1 (CLAUDE.md Item 46 Bucket A): the conda-acquisition-probe chain now also collapses, same limitation as above
+
+**Sibling fix to slice 1 above, applied one step EARLIER in the same overall provider-acquisition
+flow -- touch any of these 5 sites, must understand the other 4, since they form one linear
+fall-through chain, not 5 independent bugs.** `docs/plan-die-fatal-remediation.md`'s Finding 3
+traced this chain in full: `:after_conda_bat_validation`'s own `if not defined CONDA_BAT (...)`
+block (`conda.bat not found after bootstrap.`), then (once `CONDA_BAT` update reaches PATH) `where
+conda` / `where python` / `python -V`'s own `||` failure blocks, then the REQ-... channel-policy
+check (`Conda not found at: %CONDA_BAT%`) -- all 5 share the identical root cause (conda was never
+successfully acquired) and, before this fix, could stack up to 4-5 back-to-back `[ERROR]`/pause
+pairs before finally reaching `:try_conda_create` with a broken `CONDA_BAT`, dying again there
+(already `goto`-fixed by slice 1), and ultimately landing on the same `:after_env_mode_selection`
+"Active Python interpreter not resolved" sink slice 1's own fix routes toward. Fixed by adding
+`goto :after_env_mode_selection` right after each of the 5 `call :die` lines, same pattern as
+slice 1.
+
+**Same "does not reduce to one pause" limitation slice 1 already taught -- do not expect this fix
+to eliminate the sink pause.** Whichever of the 5 sites fires first still pauses once (its own
+message is the most specific, most actionable one), and execution still reaches the SAME
+`:after_env_mode_selection`-guard sink pause described above for slice 1 -- this fix only prevents
+the OTHER 4 sites in the chain from ALSO firing for the identical root cause. Worst case goes from
+5-6 stacked pauses down to 2, not 1.
+
+**`:try_conda_install`'s own two failure sites (`:tci_both_failed`, CLAUDE.md's Batch 6, not yet
+fixed) fall through INTO this exact chain as their caller resumes** -- see that subroutine's own
+`call`-frame return via `goto :eof` back to its caller at the Miniconda-install call site, which
+then runs `:select_conda_bat` and falls straight into this chain's own top (`conda.bat not found`)
+when the install genuinely failed. This means Batch 1's fix already shrinks Batch 6's own
+fall-through blast radius as a side effect, even before Batch 6 itself is touched -- confirmed via
+`tests/selfapps_conda_bothfail.ps1`, which drives a genuine `:tci_both_failed` failure and (post
+this fix) now asserts the resulting cascade collapses to exactly this chain's first site plus the
+sink, not the full 5-6-pause worst case.
+
+**Status: implemented, landed as a follow-on PR stacked on Batch 1 (2026-08-28).** A second
+`:try_conda_install` call site was found while tracing Batch 6 (the `:tci_both_failed` failure
+sites themselves) -- `:cascade_acquire_conda` (the REQ-009 uv-to-conda cascade's own on-demand
+Miniconda acquisition) calls it independently of the main install-if-missing block (inside
+`:uv_first_skip`). Its OWN fall-through does NOT re-enter this probe chain at all (that chain is
+specific to the first-attempt, non-cascade path, reached only from `:uv_first_skip`'s own call
+site) -- it proceeds fairly directly to a
+conda-create attempt that already `goto`s correctly (slice 1, pre-existing). This means Batch 1's
+fix only reduces THIS section's own described blast-radius reduction for the FIRST call site;
+`docs/plan-die-fatal-remediation.md`'s "Implementation Status" section has the full trace for both
+call sites and why Batch 6 (a caller-side coordination flag) remains deferred as a result -- its
+now-confirmed remaining value is "one fewer redundant pause in an already-rare scenario," smaller
+than originally scoped.
 
 Regression test: `tests/selfapps_entrysmoke_no_interpreter.ps1` (`self.entrysmoke.no_interpreter_
 guard`, `conda-full` lane) -- asserts `[ERROR] python.exe missing from conda environment.` is

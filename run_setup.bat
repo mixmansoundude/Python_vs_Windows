@@ -907,6 +907,7 @@ if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (
   call :handle_conda_failure "conda.bat not found after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] conda.bat not found after bootstrap."
+  goto :after_env_mode_selection
 )
 
 rem === Fresh install: warm up conda to initialize base-env state (REQ-020) ===
@@ -937,24 +938,28 @@ where conda >> "%LOG%" 2>&1 || (
   call :handle_conda_failure "[ERROR] 'conda' not found on PATH after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'conda' not found on PATH after bootstrap."
+  goto :after_env_mode_selection
 )
 where python >> "%LOG%" 2>&1 || (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] 'python' not found on PATH after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'python' not found on PATH after bootstrap."
+  goto :after_env_mode_selection
 )
 python -V >> "%LOG%" 2>&1 || (
   set "HP_ENV_READY="
   call :handle_conda_failure "[ERROR] 'python -V' failed after bootstrap."
   if defined HP_ENV_READY goto :after_env_mode_selection
   call :die "[ERROR] 'python -V' failed after bootstrap."
+  goto :after_env_mode_selection
 )
 :after_conda_probes
 
 rem === Channel policy (determinism & legal) ===================================
 if not defined HP_UV_PROVIDING_PYTHON if not exist "%CONDA_BAT%" (
   call :die "[ERROR] Conda not found at: %CONDA_BAT%"
+  goto :after_env_mode_selection
 )
 if not defined HP_UV_PROVIDING_PYTHON call "%CONDA_BAT%" config --name base --add channels conda-forge >> "%LOG%" 2>&1
 
@@ -1257,6 +1262,7 @@ if not exist "%HP_PY%" (
   if defined HP_ENV_READY goto :after_env_mode_selection
   if defined HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed
   call :die "[ERROR] python.exe missing from conda environment."
+  goto :after_env_mode_selection
 )
 
 call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
@@ -1278,7 +1284,10 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
 rem README.md documents the conda-forge policy for this project and why .condarc is required.
 rem Emit the .condarc payload from base64 so quoting stays robust on Windows CMD.
 call :emit_from_base64 "~condarc" HP_CONDARC
-if errorlevel 1 call :die "[ERROR] Could not stage ~condarc"
+if errorlevel 1 (
+  call :die "[ERROR] Could not stage ~condarc"
+  goto :after_env_mode_selection
+)
 if not exist "%ENV_PATH%" mkdir "%ENV_PATH%"
 copy /y "~condarc" "%ENV_PATH%\.condarc" >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
@@ -1362,7 +1371,10 @@ if errorlevel 11 (
   call :write_status "error" 1 %PYCOUNT%
   exit /b 1
 )
-if errorlevel 1 call :die "[ERROR] Could not determine entry point"
+if errorlevel 1 (
+  call :die "[ERROR] Could not determine entry point"
+  goto :after_env_bootstrap
+)
 rem derived requirement: do NOT interpolate %HP_APP_ARGS% into this message -- :log echoes
 rem UNQUOTED, and a user-supplied argument could contain < > | & (docs/agent-lessons-learned.md
 rem ":log echoes UNQUOTED"). This confirms forwarding is active without echoing arg content.
@@ -2017,7 +2029,10 @@ set "HP_CRUMB="
 if exist "~entry.abs" del "~entry.abs"
 rem --- stage helper ---
 call :emit_from_base64 "~find_entry.py" HP_FIND_ENTRY
-if errorlevel 1 call :die "[ERROR] CI skip: entry helper staging failed"
+if errorlevel 1 (
+  call :die "[ERROR] CI skip: entry helper staging failed"
+  goto :after_env_bootstrap
+)
 call :update_find_entry_abs
 call :verify_find_entry_helper
 if errorlevel 1 call :die "[ERROR] find_entry helper syntax error"
@@ -5173,6 +5188,15 @@ set "DST=%~1"
 set "VAR=%~2"
 if not defined DST exit /b 1
 if not defined VAR exit /b 1
+rem derived requirement: CLAUDE.md Item 46 Bucket A Batch regression coverage -- deterministically
+rem force a SPECIFIC payload's own write to fail (simulating the disk-write/AV-lock class of
+rem failure every real call site of this subroutine can hit) without touching any other payload
+rem in the same run. Absence changes nothing (REQ-019): only fires when HP_TEST_FORCE_EMIT_FAIL
+rem exactly matches this call's own %VAR%.
+if defined HP_TEST_FORCE_EMIT_FAIL if /i "%HP_TEST_FORCE_EMIT_FAIL%"=="%VAR%" (
+  call :log "[TEST] HP_TEST_FORCE_EMIT_FAIL=%VAR%: simulating embedded helper write failure."
+  exit /b 1
+)
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$varName = '%VAR%'; $envItem = Get-Item Env:$varName -ErrorAction SilentlyContinue; if (-not $envItem) { exit 1 }; $base64 = $envItem.Value; if (-not $base64) { exit 1 }; $outFile = Join-Path (Get-Location) '%DST%'; $bytes = [Convert]::FromBase64String($base64); [IO.File]::WriteAllBytes($outFile, $bytes)" >> "%LOG%" 2>&1
 exit /b %errorlevel%

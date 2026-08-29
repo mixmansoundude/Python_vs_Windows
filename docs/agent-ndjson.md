@@ -1276,6 +1276,58 @@ self.entrysmoke.no_interpreter_guard
 
 ---
 
+## selfapps-die-emit-fallthrough NDJSON rows (selfapps_die_emit_fallthrough.ps1, mixed lanes, GATING)
+
+CLAUDE.md Active Backlog Item 46 Bucket A, Batches 2/3/4/5 (`docs/plan-die-fatal-remediation.md`'s
+"Batch Roadmap" -- the full 20-site trace). Four scenarios (`DIE_EMIT_SCENARIO` env var):
+`missing_python` (Batch 2, `:conda_create_done`'s own "python.exe missing" check, the NON-cascade
+path -- distinct from `self.cascade.conda_create_fail`'s own `missing_python` scenario, a REQ-009
+cascade RE-ENTRY that never reaches this site at all), `condarc` (Batch 4, the same subroutine's
+`.condarc`-staging failure), `ci_skip_entry` (Batch 5, `:ci_skip_entry`'s own `~find_entry.py`
+staging failure), `determine_entry` (Batch 3, `:determine_entry`'s first of its two per-run calls).
+All four emit the SAME literal id, `self.die_emit_fallthrough`, with `details.scenario` as the
+discriminator -- matches `self.exe.build.xfail`'s own established multi-scenario precedent (see
+`docs/agent-lessons-learned.md`'s "A multi-scenario PowerShell test's NDJSON `id` must stay a
+literal string" entry for why a per-scenario id computed into a shared variable would silently
+break `tools/check_ndjson_registry.py`'s static scan).
+
+New hook: `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` (`run_setup.bat`, `:emit_from_base64`) fails ONE
+specific embedded-helper write deterministically (matched against the subroutine's own `%VAR%`
+argument, e.g. `HP_CONDARC` or `HP_FIND_ENTRY`) without touching any other payload emitted in the
+same run -- used by `condarc`/`ci_skip_entry`/`determine_entry`. `missing_python` instead reuses
+the already-existing `HP_TEST_FORCE_CONDA_MISSING_PYTHON` hook (see `self.cascade.conda_create_
+fail`'s own header comment), just without any cascade env vars set.
+
+Three of the four (`condarc`/`ci_skip_entry`/`determine_entry`) set `HP_SKIP_ENTRY_SMOKE=1` /
+`HP_SKIP_EXE_SMOKERUN=1` -- purely about setup-flow fall-through, not a full PyInstaller build/run
+cycle. `missing_python` deliberately does NOT set these: the point is letting `:run_entry_smoke`
+actually run so CLAUDE.md Active Backlog Item 45's own "if not exist `%HP_PY%`" guard (already
+proven by `self.entrysmoke.no_interpreter_guard` for a different trigger) gets a chance to catch
+the broken-but-defined interpreter and confirms no PyInstaller build is attempted against it.
+
+`ci_skip_entry` documents a real, pre-existing, NOT-fixed-by-this-change quirk found while writing
+its own assertions: `:after_env_skip` (the label `:after_env_bootstrap` routes to under
+`HP_CI_SKIP_ENV=1`) calls `call :write_status ok 0 %PYCOUNT%` unconditionally -- it does not read
+`HP_BOOTSTRAP_STATE`, so this scenario's own status file reads `state=ok` even though a real
+`call :die` fired earlier in the same run. This is not a regression from the Batch 5 fix (the OLD,
+unfixed fall-through already reached this same unconditional-ok write further downstream, just
+after more wasted work) -- asserted as the known, unchanged behavior, not silently ignored. Near-
+zero real-world exposure either way (`HP_CI_SKIP_ENV` is test-infrastructure-only, never set by a
+real user or the default bootstrap path).
+
+Lane: `conda-full` only for `missing_python`/`condarc`/`determine_entry` (real conda create
+needed, gated on `steps.conda_avail.outputs.available == 'true'`, same gate 28+ other conda-full-
+only self-tests use); every lane for `ci_skip_entry` (no conda/uv dependency at all, matches
+`selfapps_isolation.ps1`'s own sibling `HP_CI_SKIP_ENV`-based steps). Gating from first landing --
+deterministic and self-contained, same reasoning as `self.entrysmoke.no_interpreter_guard`'s own
+precedent.
+
+```
+self.die_emit_fallthrough
+```
+
+---
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (CLAUDE.md Active Backlog Item 38, `tests/selfapps_

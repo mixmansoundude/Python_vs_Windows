@@ -727,6 +727,41 @@ SEPARATE, unconditional check (`command_pattern`) untouched by this fix.
 
 ---
 
+## `"$var:text"` inside a double-quoted PowerShell string is a scope-qualified-variable parse error, not string interpolation followed by a literal colon
+
+**Real bug that shipped and broke ALL 8 CI lanes of a PR (2026-08-28, `tests/selfapps_die_emit_
+fallthrough.ps1`, PR #469).** `"die-emit-fallthrough $scenario: run_setup.bat not found"` looks
+like ordinary interpolation ("the value of `$scenario`, then a literal colon") but PowerShell's
+tokenizer instead reads `$scenario:` as an attempt at a SCOPE-QUALIFIED variable reference
+(`$scope:name`, the same syntax as `$env:VAR`/`$global:VAR`) -- any bare `$name` immediately
+followed by `:` and non-identifier text is a `ParserError`: "Variable reference is not valid. ':'
+was not followed by a valid variable name character. Consider using ${} to delimit the name."
+This is a PARSE-time error, so the entire `.ps1` FILE fails to load -- not a runtime exception in
+one function, every test/row in the file silently never runs (an NDJSON row this file emits was
+simply ABSENT from the CI artifact, not failing -- easy to misdiagnose as "the row wasn't wired
+up" instead of "the file never parsed").
+
+**Fix: `${scenario}:` (curly-brace delimiting), not `$scenario` + string concatenation.** Same
+rule applies to ANY interpolated variable immediately followed by `:` in a double-quoted string.
+
+**Why this passed local review and the sanity sweep before shipping: the sweep's own PS parse
+check was silently discarding parse errors.** `[System.Management.Automation.Language.Parser]::
+ParseFile($path, [ref]$tokens, [ref]$errors)` reports parse errors via the **`$errors`
+out-parameter**, not via a thrown/catchable exception -- passing `[ref]$null` for that parameter
+(as both `CLAUDE.md`'s inline sanity-sweep block and `tools/run_sanity_sweep.sh`'s
+`check_ps_parse_sweep()` did) silently discards every parse error, and a `try/catch` around the
+call does NOT catch them (only a catastrophic failure like a missing file throws). The sweep
+reported "ALL CLEAN" on a file that could not actually be loaded by PowerShell. **Fixed in both
+places**: capture into `[ref]$errs`, then check `$errs.Count -gt 0` after the call and print each
+error. `tools/ps-compileall.ps1` (a separate, older tool in this repo) already did this correctly
+via `[ref]$parseErrs` -- it was never the bug, only the two sanity-sweep copies were.
+
+**Rule: any future `[...]::ParseFile(...)` call in this repo's tooling must capture and check the
+errors out-parameter -- never pass `[ref]$null` for it.** If a third copy of this pattern is ever
+added, apply the same fix immediately rather than trusting `try/catch` alone.
+
+---
+
 ## Windows `move` onto an existing destination: atomic replace for FILES, silent NESTING for DIRECTORIES -- do not assume the same post-check works for both
 
 Requirement 9's swap-verification fix (`:offer_optimized_build`, own section below) established a
