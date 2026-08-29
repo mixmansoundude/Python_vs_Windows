@@ -4905,7 +4905,12 @@ rem the EXE's own stdout/stderr to the console as it arrives (docs/plan-cli-inte
 rem and is invoked DIRECTLY (no for /f/backtick stdout capture), reading its exit-code result back
 rem from a static file instead -- capturing this script's own stdout would swallow the teed output
 rem and corrupt result parsing (see that doc's Finding 6). Kill()-after-30s is unchanged.
-set "HP_SMOKERUN_EXE=dist\%ENVNAME%.exe"
+rem CodeRabbit review, PR #470: resolve to an absolute path, matching :try_fast_exe_probe's own
+rem defensive precedent -- .NET Process.Start's FileName resolution is a different mechanism from
+rem cmd.exe's own relative launch, so keep this unambiguous rather than relying on the child
+rem process inheriting the right CWD to resolve it, in case a future change alters how/where this
+rem is invoked from.
+set "HP_SMOKERUN_EXE=%CD%\dist\%ENVNAME%.exe"
 rem [REQ-026]: the EXE is self-contained (no separate entry-file argv needed), so Arguments is
 rem exactly the forwarded extra args, or empty -- HP_APP_ARGS is already a pre-quoted, ready
 rem Windows Arguments string by construction.
@@ -5053,7 +5058,9 @@ if errorlevel 1 (
   rem so the findstr checks below simply find nothing and fall through to the generic hint.
   call :log "[WARN] EXE hint rerun: could not emit ~exe_hint_rerun.ps1; skipping hint capture."
 ) else (
-  set "HP_HINT_RERUN_EXE=dist\%ENVNAME%.exe"
+  rem CodeRabbit review, PR #470: absolute path, same reasoning as :run_exe_smokerun's own
+  rem HP_SMOKERUN_EXE assignment above.
+  set "HP_HINT_RERUN_EXE=%CD%\dist\%ENVNAME%.exe"
   rem derived requirement: set explicitly rather than relying on the helper's own default --
   rem an inherited/leaked HP_HINT_RERUN_OUT from elsewhere in the environment would otherwise
   rem make the helper write somewhere other than what HP_HINT_FILE, below, reads and deletes.

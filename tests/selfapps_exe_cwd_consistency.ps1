@@ -36,8 +36,13 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-# Non-Windows skip
-if (-not $IsWindows) {
+# Non-Windows skip. derived requirement (CodeRabbit review, PR #470; matches this repo's own
+# established convention -- see selfapps_lineending_check.ps1/selfapps_console_tiering.ps1):
+# $IsWindows is unavailable under Windows PowerShell 5.1 (real CI's dispatch shell), where an
+# undefined variable evaluates falsy in a boolean context -- "-not $IsWindows" would then be
+# ALWAYS true, silently skipping this test on every real Windows run. Use OSVersion.Platform,
+# which works under both pwsh and Windows PowerShell 5.1.
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'self.exe.smokerun.cwd_consistency'
@@ -92,9 +97,18 @@ function Invoke-Bootstrap {
 
 $run1Log = '~exe_cwd_consistency_run1.log'
 $run2Log = '~exe_cwd_consistency_run2.log'
+$runOutPath = Join-Path $workDir '~run.out.txt'
+$run1OutSnapshotPath = Join-Path $workDir '~run1.out.txt'
 
 try {
     $run1Exit = Invoke-Bootstrap -LogName $run1Log
+    # derived requirement (CodeRabbit review, PR #470): snapshot run 1's own ~run.out.txt BEFORE
+    # run 2 overwrites it -- run 2 writes the SAME filename, so reading it only after both runs
+    # complete would silently examine run 2's output for both checks, making run 1's own data
+    # assertion not actually independent of run 2.
+    if (Test-Path -LiteralPath $runOutPath) {
+        Copy-Item -LiteralPath $runOutPath -Destination $run1OutSnapshotPath -Force
+    }
     $run2Exit = Invoke-Bootstrap -LogName $run2Log
 } finally {
     if ($null -eq $prev) {
@@ -108,13 +122,12 @@ $run1LogPath = Join-Path $workDir $run1Log
 $run2LogPath = Join-Path $workDir $run2Log
 $run1Text = if (Test-Path $run1LogPath) { Get-Content -LiteralPath $run1LogPath -Raw -Encoding ASCII } else { '' }
 $run2Text = if (Test-Path $run2LogPath) { Get-Content -LiteralPath $run2LogPath -Raw -Encoding ASCII } else { '' }
-$runOutPath = Join-Path $workDir '~run.out.txt'
 
 # Run 1: a fresh build via :run_exe_smokerun. Must succeed -- config.json sits at the app root,
 # and :run_exe_smokerun now verifies from the app root too (CLAUDE.md Item 38).
 $run1SmokerunFired  = $run1Text -match [regex]::Escape('EXE smokerun: exited')
 $run1SmokerunPassed = $run1Text -match [regex]::Escape('EXE smokerun: exited 0 (ok)')
-$run1OutText  = if (Test-Path $runOutPath) { Get-Content -LiteralPath $runOutPath -Raw -Encoding ASCII } else { '' }
+$run1OutText  = if (Test-Path $run1OutSnapshotPath) { Get-Content -LiteralPath $run1OutSnapshotPath -Raw -Encoding ASCII } else { '' }
 $run1DataSeen = $run1OutText -match 'hello-data'
 $run1Pass = $run1SmokerunFired -and $run1SmokerunPassed -and $run1DataSeen
 
