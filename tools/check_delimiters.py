@@ -321,7 +321,16 @@ class DelimiterChecker:
             # has been this exact bug. Blunt on purpose (no attempt to distinguish a
             # version-guarded reference from a bare one) -- flag any live, non-commented
             # reference and point at the one correct replacement.
-            iswindows_re = re.compile(r"\$IsWindows\b")
+            #
+            # derived requirement (CodeRabbit review, PR #470, third round): PowerShell variable
+            # names are case-insensitive ($ISWINDOWS/$iswindows are the SAME variable as
+            # $IsWindows) and a braced reference (${IsWindows}) is equally live, valid PowerShell
+            # syntax anywhere a bare variable reference is -- not only inside an interpolated
+            # string. re.IGNORECASE plus an explicit braced alternative closes both gaps; the
+            # trailing \b on the bare form still rejects a longer identifier like
+            # "IsWindowsFoo", and the braced form's own closing "}" already bounds the match
+            # without needing \b (which would incorrectly require a following word character).
+            iswindows_re = re.compile(r"\$(?:IsWindows\b|\{IsWindows\})", re.IGNORECASE)
             for line_no, column, _token in find_live_ps1_matches(lines, iswindows_re):
                 self.add_issue(
                     line_no,

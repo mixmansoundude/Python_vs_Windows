@@ -133,6 +133,60 @@ def test_braced_scoped_variable_interpolation_is_not_flagged(tmp_path, capsys):
     assert "No delimiter issues found." in captured.out
 
 
+# derived requirement (CodeRabbit review, PR #470, third round): PowerShell variable
+# names are case-insensitive -- $ISWINDOWS/$iswindows are the SAME undefined-under-PS-5.1
+# automatic variable as $IsWindows, not a different, safe identifier.
+def test_iswindows_lowercase_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("if (-not $iswindows) {\n    Write-Host 'skip'\n}\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470, third round): ${IsWindows} (braced) is
+# valid PowerShell syntax referencing the exact same automatic variable as bare
+# $IsWindows, live anywhere a bare reference is -- not just inside an interpolated
+# string -- so it carries the identical undefined-under-PS-5.1 bug.
+def test_iswindows_braced_bare_reference_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("if (-not ${IsWindows}) {\n    Write-Host 'skip'\n}\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement: the braced form must also be caught when genuinely interpolated
+# inside a double-quoted string, mirroring the earlier bare-$IsWindows interpolation
+# test -- both the sanitizer's VAR_INTERP_RE and iswindows_re itself must agree on the
+# braced shape.
+def test_iswindows_braced_interpolated_in_double_quoted_string_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "Platform: ${IsWindows}"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement: a braced reference inside a SINGLE-quoted string stays inert,
+# same as the bare-form single-quote test -- single-quoted strings never interpolate,
+# under any circumstance, braced or not.
+def test_iswindows_braced_in_single_quoted_string_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host 'Platform: ${IsWindows}'\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
 # derived requirement: these four tests are a regression guard for a real bug that
 # shipped in run_setup.bat and was only caught on real Windows CI (see
 # docs/agent-lessons-learned.md's "rem needs a space after it" entry) -- a "rem"
