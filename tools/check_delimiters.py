@@ -125,6 +125,27 @@ def sanitize_ps1_line(line: str) -> Tuple[str, List[int]]:
     return ("".join(sanitized), mapping)
 
 
+def find_live_ps1_matches(
+    lines: Sequence[str], pattern: "re.Pattern[str]"
+) -> Iterable[Tuple[int, int, str]]:
+    """Yield (1-based line, 1-based column, matched text) for PATTERN matches in the LIVE
+    (non-string, non-#-comment) portion of each PowerShell line.
+
+    Built on sanitize_ps1_line's quote/comment stripping so a match sitting inside a quoted
+    string literal is never reported, and a '#' that is itself inside a quoted string can
+    never suppress a later live match on the same line -- both were real gaps in an earlier
+    version of this scan that searched raw, un-sanitized line text directly (CodeRabbit
+    review, PR #470). Does not track here-strings/block comments across lines -- callers
+    scanning a whole file before the main per-line loop starts already accepted that
+    limitation.
+    """
+    for line_no, raw_line in enumerate(lines, start=1):
+        sanitized, mapping = sanitize_ps1_line(raw_line)
+        for match in pattern.finditer(sanitized):
+            raw_column = mapping[match.start()] + 1
+            yield line_no, raw_column, match.group(0)
+
+
 def iter_files(paths: Sequence[pathlib.Path]) -> Iterable[pathlib.Path]:
     for path in paths:
         if path.is_file():
@@ -247,22 +268,18 @@ class DelimiterChecker:
         lines = text.splitlines()
         lower_suffix = self.path.suffix.lower()
         if lower_suffix == ".ps1":
+            # derived requirement (CodeRabbit review, PR #470): both scans below use
+            # find_live_ps1_matches (built on sanitize_ps1_line) rather than a whole-text
+            # regex, so a match sitting inside a quoted string literal (e.g.
+            # `Write-Host '$IsWindows'`) is never reported, and a '#' that is itself inside a
+            # quoted string earlier on the same line can never suppress a later genuine live
+            # match -- both were real gaps in an earlier version of these two checks that
+            # searched raw `text` directly and approximated comment-skipping with a bare
+            # `line_text.find("#")`.
             bad = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*:")
             allow = re.compile(r"\$(?:script|global|local|private|env|using):", re.IGNORECASE)
-            for match in bad.finditer(text):
-                token = match.group(0)
+            for line_no, column, token in find_live_ps1_matches(lines, bad):
                 if allow.fullmatch(token):
-                    continue
-                prefix = text[: match.start()]
-                line_no = prefix.count("\n") + 1
-                last_newline = prefix.rfind("\n")
-                column = match.start() + 1 if last_newline == -1 else match.start() - last_newline
-                line_text = lines[line_no - 1] if line_no - 1 < len(lines) else ""
-                stripped_line = line_text.lstrip()
-                if stripped_line.startswith("#"):
-                    continue
-                comment_index = line_text.find("#")
-                if comment_index != -1 and comment_index <= column - 1:
                     continue
                 # derived requirement: catching `$var:` early prevents the Windows PowerShell parser
                 # from treating it as a scoped lookup and crashing the gate pipeline again.
@@ -285,18 +302,7 @@ class DelimiterChecker:
             # version-guarded reference from a bare one) -- flag any live, non-commented
             # reference and point at the one correct replacement.
             iswindows_re = re.compile(r"\$IsWindows\b")
-            for match in iswindows_re.finditer(text):
-                prefix = text[: match.start()]
-                line_no = prefix.count("\n") + 1
-                last_newline = prefix.rfind("\n")
-                column = match.start() + 1 if last_newline == -1 else match.start() - last_newline
-                line_text = lines[line_no - 1] if line_no - 1 < len(lines) else ""
-                stripped_line = line_text.lstrip()
-                if stripped_line.startswith("#"):
-                    continue
-                comment_index = line_text.find("#")
-                if comment_index != -1 and comment_index <= column - 1:
-                    continue
+            for line_no, column, _token in find_live_ps1_matches(lines, iswindows_re):
                 self.add_issue(
                     line_no,
                     column,

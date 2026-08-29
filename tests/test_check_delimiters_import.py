@@ -42,6 +42,37 @@ def test_commented_iswindows_mention_is_not_flagged(tmp_path, capsys):
     assert "No delimiter issues found." in captured.out
 
 
+# derived requirement (CodeRabbit review, PR #470): the $IsWindows scan used to search raw
+# whole-file text with re.finditer, so a QUOTED occurrence (data, not a live reference) was
+# indistinguishable from a real one. Fixed by routing the scan through
+# find_live_ps1_matches/sanitize_ps1_line, the same quote/comment-stripping machinery the
+# boolean-operator checker already relies on.
+def test_quoted_iswindows_string_literal_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host '$IsWindows'\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement (CodeRabbit review, PR #470): the old comment-skip logic was a bare
+# `line_text.find("#")` against the RAW line -- a '#' inside an earlier quoted string on the
+# same line was misread as the start of a real comment, silently suppressing a genuine LIVE
+# $IsWindows reference appearing later on that same line. sanitize_ps1_line strips quoted
+# content (and the '#' inside it) before comment detection, so this no longer happens.
+def test_iswindows_after_quoted_hash_on_same_line_is_still_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host '#not a comment'; if (-not $IsWindows) { 1 }\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "$IsWindows" in captured.out
+    assert "OSVersion.Platform" in captured.out
+
+
 # derived requirement: these four tests are a regression guard for a real bug that
 # shipped in run_setup.bat and was only caught on real Windows CI (see
 # docs/agent-lessons-learned.md's "rem needs a space after it" entry) -- a "rem"

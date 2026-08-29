@@ -63,11 +63,13 @@ actually broken, but it's the scenario that makes the skip branch exist at all, 
 likely to make a future agent reach for `$IsWindows` again without realizing case (1)/(2) exist.
 
 **The fix, proven correct across every real usage in this repo**:
+
 ```powershell
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     # genuinely not Windows -- skip
 }
 ```
+
 Works identically under `pwsh` (Windows or Linux) and Windows PowerShell 5.1, since
 `OSVersion.Platform` is a .NET API that has existed since .NET 1.0, not a PowerShell-edition
 automatic variable.
