@@ -95,6 +95,18 @@ class LineCursor:
         return self.index + 1
 
 
+# derived requirement (CodeRabbit review, PR #470): a PowerShell DOUBLE-quoted string
+# interpolates an embedded $variable reference at runtime -- "$IsWindows" or
+# "$script:someVar" inside a "..." string is a genuine LIVE reference, not inert text,
+# unlike a single-quoted string (PowerShell never interpolates those, no exceptions).
+# Stripping the variable token along with the rest of the quoted text (the original
+# behavior) silently hid this class of live reference from find_live_ps1_matches --
+# sanitize_ps1_line now preserves just the variable token itself (bare $name, an
+# optional :scope-style suffix, or braced ${name}) into the sanitized output/mapping;
+# everything else inside the string is still stripped exactly as before.
+VAR_INTERP_RE = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_:]*")
+
+
 def sanitize_ps1_line(line: str) -> Tuple[str, List[int]]:
     """Strip comments/strings for heuristic scanning while tracking raw indexes."""
 
@@ -109,6 +121,14 @@ def sanitize_ps1_line(line: str) -> Tuple[str, List[int]]:
             if quote == '"' and ch == '`' and i + 1 < length:
                 i += 2
                 continue
+            if quote == '"' and ch == '$':
+                match = VAR_INTERP_RE.match(line, i)
+                if match:
+                    for j in range(match.start(), match.end()):
+                        sanitized.append(line[j])
+                        mapping.append(j)
+                    i = match.end()
+                    continue
             if ch == quote:
                 quote = None
             i += 1
@@ -126,7 +146,7 @@ def sanitize_ps1_line(line: str) -> Tuple[str, List[int]]:
 
 
 def find_live_ps1_matches(
-    lines: Sequence[str], pattern: "re.Pattern[str]"
+    lines: Sequence[str], pattern: re.Pattern[str]
 ) -> Iterable[Tuple[int, int, str]]:
     """Yield (1-based line, 1-based column, matched text) for PATTERN matches in the LIVE
     (non-string, non-#-comment) portion of each PowerShell line.

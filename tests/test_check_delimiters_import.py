@@ -73,6 +73,66 @@ def test_iswindows_after_quoted_hash_on_same_line_is_still_flagged(tmp_path, cap
     assert "OSVersion.Platform" in captured.out
 
 
+# derived requirement (CodeRabbit review, PR #470, follow-up round): a DOUBLE-quoted
+# PowerShell string interpolates an embedded $variable at runtime -- "$IsWindows" is a
+# genuine live reference, not inert text, unlike a single-quoted string (which never
+# interpolates). sanitize_ps1_line used to strip ALL quoted content uniformly, so this
+# shape was silently missed. Now the variable token itself survives sanitization inside
+# a double-quoted string.
+def test_iswindows_interpolated_in_double_quoted_string_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "Platform: $IsWindows"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "$IsWindows" in captured.out
+    assert "OSVersion.Platform" in captured.out
+
+
+# derived requirement: the SINGLE-quoted counterpart of the test above must stay clean --
+# PowerShell single-quoted strings never interpolate, under any circumstance, so
+# '$IsWindows' in single quotes is genuinely inert text, same as the pre-existing
+# test_quoted_iswindows_string_literal_is_not_flagged case.
+def test_iswindows_in_single_quoted_string_is_still_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text("Write-Host 'Platform: $IsWindows'\n", encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
+# derived requirement: the same interpolation fix must correctly resolve the scoped-
+# variable ($var:) check too -- "$myModule:someVar" inside a double-quoted string is the
+# exact live scoped-lookup this check exists to catch (a scope-shaped prefix that is NOT
+# one of the known-safe script/global/local/private/env/using scopes), not just a bare
+# $IsWindows shape.
+def test_scoped_variable_interpolated_in_double_quoted_string_is_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "value is $myModule:someVar here"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "scoped variable token" in captured.out
+
+
+# derived requirement: this exact real bug in run_setup.bat was already using
+# ${...}-braced interpolation as its OWN escape hatch (per docs/agent-lessons-learned.md's
+# "PowerShell adjacent traps" -- wrap with ${...} or use -f formatting) -- confirm the
+# interpolation fix does not misfire on the correctly-escaped form.
+def test_braced_scoped_variable_interpolation_is_not_flagged(tmp_path, capsys):
+    ps1 = tmp_path / "sample.ps1"
+    ps1.write_text('Write-Host "value is ${script:someVar} here"\n', encoding="ascii")
+    result = check_delimiters.main([str(ps1)])
+    captured = capsys.readouterr()
+
+    assert result == 0
+    assert "No delimiter issues found." in captured.out
+
+
 # derived requirement: these four tests are a regression guard for a real bug that
 # shipped in run_setup.bat and was only caught on real Windows CI (see
 # docs/agent-lessons-learned.md's "rem needs a space after it" entry) -- a "rem"

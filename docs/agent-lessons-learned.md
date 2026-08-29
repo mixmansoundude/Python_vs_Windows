@@ -74,6 +74,20 @@ Works identically under `pwsh` (Windows or Linux) and Windows PowerShell 5.1, si
 `OSVersion.Platform` is a .NET API that has existed since .NET 1.0, not a PowerShell-edition
 automatic variable.
 
+**Building the mechanical check itself (`tools/check_delimiters.py`) needed a second CodeRabbit
+round to close a real double-quote-interpolation gap.** The checker's own PowerShell line
+sanitizer (`sanitize_ps1_line`, used to strip comments/strings before heuristic scanning) used to
+strip a double-quoted string's content uniformly, same as a single-quoted one -- but PowerShell
+DOUBLE-quoted strings interpolate an embedded `$variable` at runtime (`"$IsWindows"` is a genuine
+live reference), while single-quoted strings never do, under any circumstance. Stripping both the
+same way silently hid a live `$IsWindows`/`$var:` reference sitting inside a double-quoted string
+from the checker. Fixed by preserving just the variable token itself (`$name`, an optional
+`:scope`-style suffix, or braced `${name}`) when scanning inside a double-quoted string, while
+still stripping everything else in the string exactly as before -- single-quoted strings are
+untouched by this, since they can never legitimately contain a live reference. **Rule for any
+future PowerShell-line sanitizer in this repo: double-quoted content is not uniformly inert --
+check whether a `$` inside it should survive the strip.**
+
 ---
 
 ## CodeRabbit review requires a manual trigger on every PR (repo has fewer than 10 stars)
