@@ -150,8 +150,14 @@ check_ps_parse_sweep() {
 \$ErrorActionPreference = 'Stop'
 \$fail = 0
 Get-ChildItem '$repo_root/tests/*.ps1', '$repo_root/tools/*.ps1' | ForEach-Object {
-  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$null) | Out-Null }
-  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1 }
+  \$errs = \$null
+  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$errs) | Out-Null }
+  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1; return }
+  if (\$errs.Count -gt 0) {
+    Write-Host \"PARSE FAIL: \$(\$_.FullName):\"
+    \$errs | ForEach-Object { Write-Host \"  \$_\" }
+    \$fail = 1
+  }
 }
 if (\$fail -eq 0) { Write-Host 'PS PARSE SWEEP DONE - ALL CLEAN' }
 exit \$fail

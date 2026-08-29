@@ -374,6 +374,27 @@ jobs:
         run: |
           & tests\selfapps_isolation.ps1
 
+      # CLAUDE.md Active Backlog Item 46 Bucket A Batch 5: :ci_skip_entry's own
+      # ~find_entry.py staging failure used to fall through call :die into a redundant second
+      # call :die ("find_entry helper syntax error") for the same root cause. Cheap
+      # (HP_CI_SKIP_ENV path, no conda/uv needed) so runs in every lane, matching the
+      # HP_CI_SKIP_ENV-based steps directly above.
+      # derived requirement: per-step continue-on-error, not just the job-level one -- see the
+      # identical note above the PEP 723 write-back steps (this same file, "REQ-005.11: PEP 723
+      # header write-back") for why: without it, a genuine failure here silently skips every
+      # later step in the SAME job on a non-gating lane. Scoped to non-gating lanes only
+      # (matches matrix.mode != 'real' && matrix.mode != 'conda-full', the complement of the
+      # job-level continue-on-error list on the job definition itself) -- a real failure on the
+      # two gating lanes must still fail the job.
+      - name: "Self-test: die-emit-fallthrough ci_skip_entry (CI-only)"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        continue-on-error: ${{ matrix.mode != 'real' && matrix.mode != 'conda-full' }}
+        env:
+          DIE_EMIT_SCENARIO: ci_skip_entry
+        shell: pwsh
+        run: |
+          & tests\selfapps_die_emit_fallthrough.ps1
+
       - name: "Self-test: env-name sanitization (leading hyphen)"
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
@@ -1104,6 +1125,46 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_entrysmoke_no_interpreter.ps1
+
+      # CLAUDE.md Active Backlog Item 46 Bucket A Batch 2: :conda_create_done's own
+      # "python.exe missing" check (the NON-cascade path, distinct from selfapps_cascade_
+      # conda_create_fail.ps1's own missing_python scenario) used to fall through call :die into
+      # the rest of its body, logging a misleading "[BOOT] ... Selected Python provider: Conda
+      # (Portable)." success line right after the error. Self-contained (own
+      # HP_FORCE_CONDA_ONLY=1 + HP_TEST_FORCE_CONDA_MISSING_PYTHON=1), gating from first landing
+      # (same reasoning as the step directly above).
+      - name: "Self-test: die-emit-fallthrough missing_python (conda-full only)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        env:
+          DIE_EMIT_SCENARIO: missing_python
+        shell: pwsh
+        run: |
+          & tests\selfapps_die_emit_fallthrough.ps1
+
+      # CLAUDE.md Active Backlog Item 46 Bucket A Batch 4: :conda_create_done's own .condarc
+      # staging failure used to fall through call :die into a doomed copy attempt, triggering a
+      # SECOND, redundant call :die plus the same misleading success line as the scenario above.
+      # New hook: HP_TEST_FORCE_EMIT_FAIL=<VARNAME> (run_setup.bat, :emit_from_base64) fails one
+      # specific embedded-helper write deterministically.
+      - name: "Self-test: die-emit-fallthrough condarc (conda-full only)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        env:
+          DIE_EMIT_SCENARIO: condarc
+        shell: pwsh
+        run: |
+          & tests\selfapps_die_emit_fallthrough.ps1
+
+      # CLAUDE.md Active Backlog Item 46 Bucket A Batch 3: :determine_entry runs twice per normal
+      # bootstrap; a genuine failure on the FIRST call used to fall through call :die into the
+      # entire dependency-install/pipreqs/warnfix block (real work, not just a redundant message)
+      # before reproducing the identical failure at the second call site.
+      - name: "Self-test: die-emit-fallthrough determine_entry (conda-full only)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        env:
+          DIE_EMIT_SCENARIO: determine_entry
+        shell: pwsh
+        run: |
+          & tests\selfapps_die_emit_fallthrough.ps1
 
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
@@ -2280,6 +2341,30 @@ jobs:
             tests\~selftest_entrysmoke_no_interpreter\~setup.log
             tests/~selftest_entrysmoke_no_interpreter/~bootstrap.status.json
             tests\~selftest_entrysmoke_no_interpreter\~bootstrap.status.json
+            tests/~selftest_die_emit_missing_python/~die_emit_missing_python_bootstrap.log
+            tests\~selftest_die_emit_missing_python\~die_emit_missing_python_bootstrap.log
+            tests/~selftest_die_emit_missing_python/~setup.log
+            tests\~selftest_die_emit_missing_python\~setup.log
+            tests/~selftest_die_emit_missing_python/~bootstrap.status.json
+            tests\~selftest_die_emit_missing_python\~bootstrap.status.json
+            tests/~selftest_die_emit_condarc/~die_emit_condarc_bootstrap.log
+            tests\~selftest_die_emit_condarc\~die_emit_condarc_bootstrap.log
+            tests/~selftest_die_emit_condarc/~setup.log
+            tests\~selftest_die_emit_condarc\~setup.log
+            tests/~selftest_die_emit_condarc/~bootstrap.status.json
+            tests\~selftest_die_emit_condarc\~bootstrap.status.json
+            tests/~selftest_die_emit_ci_skip_entry/~die_emit_ci_skip_entry_bootstrap.log
+            tests\~selftest_die_emit_ci_skip_entry\~die_emit_ci_skip_entry_bootstrap.log
+            tests/~selftest_die_emit_ci_skip_entry/~setup.log
+            tests\~selftest_die_emit_ci_skip_entry\~setup.log
+            tests/~selftest_die_emit_ci_skip_entry/~bootstrap.status.json
+            tests\~selftest_die_emit_ci_skip_entry\~bootstrap.status.json
+            tests/~selftest_die_emit_determine_entry/~die_emit_determine_entry_bootstrap.log
+            tests\~selftest_die_emit_determine_entry\~die_emit_determine_entry_bootstrap.log
+            tests/~selftest_die_emit_determine_entry/~setup.log
+            tests\~selftest_die_emit_determine_entry\~setup.log
+            tests/~selftest_die_emit_determine_entry/~bootstrap.status.json
+            tests\~selftest_die_emit_determine_entry\~bootstrap.status.json
             tests/extracted/**
           if-no-files-found: ignore
           include-hidden-files: true

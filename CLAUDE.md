@@ -135,10 +135,17 @@ pwsh -c "
 \$ErrorActionPreference = 'Stop'
 \$fail = 0
 Get-ChildItem /home/user/Python_vs_Windows/tests/*.ps1, /home/user/Python_vs_Windows/tools/*.ps1 | ForEach-Object {
-  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$null) | Out-Null }
-  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1 }
+  \$errs = \$null
+  try { [System.Management.Automation.Language.Parser]::ParseFile(\$_.FullName, [ref]\$null, [ref]\$errs) | Out-Null }
+  catch { Write-Host \"PARSE FAIL: \$(\$_.FullName): \$_\"; \$fail = 1; return }
+  if (\$errs.Count -gt 0) {
+    Write-Host \"PARSE FAIL: \$(\$_.FullName):\"
+    \$errs | ForEach-Object { Write-Host \"  \$_\" }
+    \$fail = 1
+  }
 }
 if (\$fail -eq 0) { Write-Host 'PS PARSE SWEEP DONE - ALL CLEAN' }
+exit \$fail
 "
 python -m pytest /home/user/Python_vs_Windows/tests/test_*.py -q 2>&1 | tail -5
 ```
@@ -1128,6 +1135,21 @@ way (no live Windows execution available here), that is noted explicitly rather 
   Same EXTREME CAUTION discipline as every other high-risk change in this file: one batch lands at
   a time, full 8-lane matrix CI proof to completion before the next batch starts, no blanket sweep
   across every remaining site in one PR.
+
+  **Batch 1 merged 2026-08-28 (PR #468). Batches 2/3/5 and one site of Batch 4 landed as a
+  follow-on PR stacked on Batch 1, same session.** Batch 4's scope corrected from 7 sites to 1
+  (the `Could not stage ~condarc` site only -- the other 6 traced individually and found to fall
+  through into benign, silently-degraded continuations, not a redundant-`:die` cascade;
+  reclassified alongside the "Active Python interpreter not resolved" sink, not fixed). Batch 6
+  traced further (a second `:try_conda_install` call site found inside `:cascade_acquire_conda`)
+  and remains deferred -- Batch 1's own fix already shrinks its residual value to "one fewer
+  redundant pause in an already-rare scenario." New shared test hook
+  `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` added to `:emit_from_base64` itself. New test file
+  `tests/selfapps_die_emit_fallthrough.ps1` (4 scenarios:
+  `missing_python`/`condarc`/`ci_skip_entry`/`determine_entry`) also surfaced a genuine, pre-
+  existing, unfixed quirk: `:after_env_skip` writes `state=ok` unconditionally regardless of an
+  earlier `call :die` in the same run (near-zero exposure, `HP_CI_SKIP_ENV` is test-infrastructure-
+  only). Full detail: `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
