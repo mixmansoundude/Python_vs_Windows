@@ -1,7 +1,12 @@
 # NDJSON Surface -- Python_vs_Windows
 
-This file is loaded automatically by Claude Code via the `@docs/agent-ndjson.md`
-import in CLAUDE.md. It lists all known NDJSON rows by lane and test source.
+**This file is NOT auto-loaded into every session's context** (unlike
+`docs/agent-lessons-learned.md` and `docs/agent-interconnect.md`, which CLAUDE.md's own `@import`
+lines pull in automatically -- moved out of auto-load 2026-08-30, ~17k tokens of pure registry
+content with no forward-looking guidance most sessions need). Read it on demand: when adding,
+renaming, or removing an NDJSON row, or debugging why a row is missing from a CI artifact.
+
+It lists all known NDJSON rows by lane and test source.
 
 The diagnostics site is the authoritative source of truth for live row counts:
 https://mixmansoundude.github.io/Python_vs_Windows/

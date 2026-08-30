@@ -9,11 +9,13 @@ working in this repository. It summarizes structure, workflows, and conventions.
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** -- Fork/branch/PR workflow and iteration priorities
 
 **Supplemental context loaded automatically by Claude Code:**
-@docs/agent-ndjson.md
 @docs/agent-interconnect.md
 @docs/agent-lessons-learned.md
 
 **Reference-only, NOT auto-loaded -- read on demand, not every session:**
+- `docs/agent-ndjson.md` -- the NDJSON row registry by lane. Read it when adding/renaming/removing
+  a row, or debugging why a row is missing from a CI artifact. Moved out of auto-load 2026-08-30
+  (~17k tokens of pure registry content with no forward-looking guidance most sessions need).
 - `docs/agent-cold-storage.md` -- shelved ideas gated on a specific, checkable trigger.
 - `docs/agent-closed-backlog.md` -- the full historical record of completed work, plus any
   Active Backlog item below that was later fully closed (see that file's own header).
@@ -24,7 +26,8 @@ appending):
 - `docs/agent-interconnect.md` -- cross-component dependencies ("touch A, must understand B").
 - `docs/agent-lessons-learned.md` -- standalone hazards, rules, budgets, procedures. Most are
   batch/CMD syntax quirks and Windows shell gotchas; record those here.
-- `docs/agent-ndjson.md` -- the NDJSON row registry (add/rename/remove rows here too).
+- `docs/agent-ndjson.md` -- the NDJSON row registry (add/rename/remove rows here too; NOT
+  auto-loaded, read it on demand when touching this).
 - When an Active Backlog item is fully resolved, move it out of this file entirely into
   `docs/agent-closed-backlog.md`'s "Closed Active Backlog Items" section (keep its original
   number). Do not let a closed item linger here -- this file's size is a per-session cost.
@@ -82,7 +85,7 @@ tools/
 docs/
   agent-interconnect.md        Cross-component dependency map (loaded via @ import)
   agent-lessons-learned.md     Standalone hazards/rules/quirks/procedures (loaded via @ import)
-  agent-ndjson.md              NDJSON row registry by lane (loaded via @ import)
+  agent-ndjson.md              NDJSON row registry by lane (NOT auto-loaded)
   agent-closed-backlog.md      Full historical record of completed work (NOT auto-loaded)
   agent-cold-storage.md        Shelved ideas gated on a trigger (NOT auto-loaded)
   agent-scratchlog.md          Internal working notes, freely prunable (NOT auto-loaded)
@@ -638,39 +641,6 @@ but several represent real gaps worth closing before calling the path fully rele
   TWICE with `state:"repaired"` in one run. One confirmed run is not yet the "several consecutive
   runs" Item 35's process requires before considering promotion -- that decision is a live next
   step for a future loop.
-
-- **Item 42: console verbosity (lever 1) is CLOSED (2026-08-24); the two fresh-build Y/N prompts
-  (lever 2) remain open, tracked in `docs/open-questions.md`.** Two independent, separately-
-  implementable levers, deliberately not conflated: (1) tier `:log`'s console output so a beginner
-  isn't shown `[DEBUG]`/`[TRACE]` noise alongside genuinely actionable `[WARN]`/`[ERROR]` text; (2)
-  reduce/reword the two elective Y/N prompts every successful fresh interactive build shows (the
-  post-execution checkpoint, and the optimized-build upsell whose failure hint references "Visual
-  Studio Build Tools" -- meaningless to the target audience).
-
-  **Lever 1, shipped**: `:log` now suppresses `[DEBUG]`/`[TRACE]`/`[INSTALL]` from the LIVE console
-  by default (a substring-slice check inside `:log` itself, not `findstr`/piping -- message text
-  can legally contain `&`); `[INFO]`/`[BOOT]`/`[WARN]`/`[ERROR]`/`[STATUS]`/`[REPAIR]`/`[HINT]`
-  stay visible (`[STATUS]` is the "did my code work" readout; `[REPAIR]` explains why a build is
-  taking longer without looking stuck; `[HINT]` is the most actionable post-failure text in the
-  file). `~setup.log` is untouched -- suppression is console-only. New opt-in `HP_VERBOSE_CONSOLE=1`
-  restores all three suppressed tags (REQ-019-compliant additive opt-in), documented in README.md.
-  A companion `[INFO] Installing dependencies -- this may take a few minutes...` progress line was
-  added for what was previously the single longest silent stretch in a fresh build (no prior
-  `[INFO]`-tier line existed for the dependency-install phase at all).
-  Four test dependencies on the OLD console-redirected-capture behavior were found and fixed in the
-  same change (`tests/selfapps_pvw_overrides.ps1`'s two `PVW_WORKSPACE` scenarios,
-  `tests/selftest.ps1`'s `self.stub.conda_perpkg`/`self.stub.conda_retry`) -- the last one caught
-  only by a real CI failure after an initial grep-for-brackets sweep missed it, since its own
-  assertion matches a bracket-free phrase. A follow-up exhaustive sweep (every real `[DEBUG]`/
-  `[TRACE]`/`[INSTALL]` message body grepped bracket-free against the full `tests/` tree) confirmed
-  no fifth dependency remains -- the correct methodology for this class of check going forward is
-  searching by message body, not by tag string. New regression coverage:
-  `tests/selfapps_console_tiering.ps1` (`self.console.tiering`, `uv` lane, non-gating).
-
-  **Lever 2, still open** -- this is user-facing copy and interaction-flow work needing a
-  maintainer call (reword only vs. also combine the two prompts into one), not a unilaterally-
-  correct technical fix like lever 1 was. See `docs/open-questions.md`'s open item for the two
-  concrete sub-questions still needing an answer before this can move.
 
 - **Item 46: `:die`'s `exit /b` lets most call sites continue executing afterward, producing
   repeated `pause` prompts and further doomed work instead of a single clear stop -- batched,
