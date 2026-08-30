@@ -572,6 +572,33 @@ but several represent real gaps worth closing before calling the path fully rele
   itself would otherwise remove the only signal. Consolidate down to just the aggregate check
   later, once its own reliability is separately proven across more runs.
 
+  **Reverted to advisory (`continue-on-error: true`) the same day, on PR #471, after its own
+  first two real activations both hard-failed on a genuine, reproducible, pre-existing condition
+  unrelated to that PR's diff.** The pre-gating re-verification above checked only that the three
+  simulated-failure lanes (`contract-uv`/`contract-uv-fail`/`uv-dl-fallback`) don't false-positive
+  -- it never checked whether `cache`/`uv` had a CURRENTLY-real failure of their own, which they
+  did: two separate runs, hours apart, produced byte-identical failing rows --
+  `self.exe.smokerun` (`cache`, `exitCode:1`) and `self.cascade.exec` +
+  `self.exe.warnfix.venv_repair` (`uv` -- cascade falls through to embed instead of stopping at
+  conda; the warnfix repair-install precondition never fires). Identical detail payloads twice
+  rules out flake. Neither PR touched `run_setup.bat`/any selfapps script, so this predates PR
+  #471 and is a genuine, currently-open regression in the bootstrapper or its test scripts, not a
+  CI-mechanism bug -- but since this gate is what first turned an already-non-gating lane's
+  failure into a repo-wide merge blocker, leaving it hard-failing would have blocked every PR
+  until someone separately root-causes and fixes it. `continue-on-error: true` keeps the step's
+  own red result visible in the PR checks UI without failing the job. **Re-remove
+  `continue-on-error` only after both root causes below are fixed and the mechanism has re-soaked
+  per the process discipline already stated below** (it was not, in fact, fully met before this
+  first gating attempt -- the sample only covered the 3 simulated-failure lanes, not all 8).
+
+  **New, still-open sub-item spun out of this finding**: root-cause and fix (a) `self.cascade.exec`
+  (`uv` lane) -- why the provider cascade currently falls through conda to embed
+  (`condaToEmbed:1`) instead of stopping at conda, and (b) `self.exe.warnfix.venv_repair` (`uv`
+  lane) -- why the forced-missing-xlrd precondition no longer triggers warnfix's repair-install
+  path (`installedXlrd:false`) under venv mode. Both reproduced identically on 2026-08-30 across
+  two separate `uv`-lane runs (workflow runs `33288809538` and `33293648911`); start there rather
+  than re-deriving reproduction steps from scratch.
+
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
   completion several consecutive times before treating it as proven, only then take the gating
