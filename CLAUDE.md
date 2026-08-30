@@ -504,6 +504,33 @@ but several represent real gaps worth closing before calling the path fully rele
   empirically (not just by reading the YAML) the first time `selftest-gate` actually goes red in
   practice.
 
+  **A DIFFERENT, more specific gap in this same guarantee was found and fixed 2026-08-30, prompted
+  by a maintainer question about whether Pages publishing was truly guaranteed.** Job-level
+  `if: always()` only makes the JOB start regardless of `needs:` outcomes -- it does NOT make every
+  STEP inside the job run regardless of an earlier step's failure (GitHub Actions gives every step
+  an implicit `if: success()` unless it declares its own condition, which a genuine, not just
+  skipped, prior-step failure turns false). Two of `publish_diag`'s own early steps -- "Checkout
+  repository" and "Prep site directories" (the step that actually creates the `_site`/`.nojekyll`
+  skeleton) -- had no explicit `if:` at all. Had either genuinely failed, everything downstream
+  would still have attempted to run (nearly every later step in this job already carries its own
+  `if: always()`, and the deploy steps' own `event_name`/`outcome`-gated conditions already bypass
+  the default `success()` chaining too), but `_site` itself would never have been created, so
+  "Upload Pages artifact" would fail for real (path doesn't exist) rather than the deploy simply
+  being skipped or attempted against a thinner site. Fixed by adding `if: always()` to those two
+  steps plus three more found lacking it for consistency ("Record iterate artifact status",
+  "Fetch batch-check artifacts", "Append job summary" -- lower-stakes, since everything after them
+  already had `always()`, but leaving them inconsistent was pointless risk). **Clarifying the
+  causal story, since it wasn't quite what was suspected**: the widespread `continue-on-error`/
+  `exit 0` patterns scattered across the OTHER jobs in this file (the non-gating matrix lanes, a
+  handful of optional sub-steps) are NOT what protects Pages publishing -- `publish_diag`'s own
+  `if: always()` at the job level already guarantees it starts regardless of whether `selftest`/
+  `selftest-gate`/`model-quick-fix` succeed OR fail, with no dependency on those jobs being lenient
+  with themselves. Those other patterns exist for unrelated reasons already documented under this
+  repo's own CI lane policy (see "CI Overview" and the "CI lane gating maturity" periodic check).
+  One inherent, unfixable-via-YAML platform limit remains: `always()` does not run a job if the
+  whole workflow run itself is cancelled or the runner dies outright -- accepted as an unavoidable
+  GitHub Actions characteristic, not a gap in this repo's own control.
+
   **"Gating" is a GitHub branch-protection setting, not a YAML edit.** This repo's actual merge
   gate is GitHub's native required-status-checks list on the default branch's protection rule
   (`pr-automerge.yml` delegates entirely to it, no custom required-check logic lives in this repo's

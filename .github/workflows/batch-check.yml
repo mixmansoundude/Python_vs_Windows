@@ -4125,11 +4125,26 @@ jobs:
           df -h || true
 
       - name: Checkout repository
+        # derived requirement: this job's own if: always() at the job level only guarantees
+        # the JOB starts regardless of needs' outcomes -- it does NOT make every step run
+        # regardless of an earlier step's failure (GitHub Actions gives every step an implicit
+        # `if: success()` unless it declares its own condition). Checkout is the first step that
+        # can genuinely fail (network/auth), and its failure would otherwise skip every
+        # following default-condition step, starting with "Prep site directories" -- which is
+        # what actually creates _site. Explicit always() here closes that gap.
+        if: ${{ always() }}
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Prep site directories
+        # derived requirement: must run even if Checkout above failed -- it only touches
+        # $PWD/github context, not repo content, so it can still lay down the _site/.nojekyll
+        # skeleton "Upload Pages artifact" needs later. Without always() here, a checkout
+        # hiccup would leave _site never created at all, and the deploy steps further down
+        # (which DO already have their own always()-equivalent override via their explicit
+        # event_name condition) would fail for real instead of just publishing a thinner site.
+        if: ${{ always() }}
         id: prep
         shell: pwsh
         run: |
@@ -4441,6 +4456,7 @@ jobs:
           Set-Content -LiteralPath $summaryPath -Value $entries -Encoding Ascii
 
       - name: Record iterate artifact status
+        if: ${{ always() }}
         shell: pwsh
         run: |
           $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
@@ -4458,6 +4474,7 @@ jobs:
           }
 
       - name: Fetch batch-check artifacts
+        if: ${{ always() }}
         id: fetch_batch
         shell: pwsh
         env:
@@ -4945,6 +4962,7 @@ jobs:
             --out-dir "_site"
 
       - name: Append job summary
+        if: ${{ always() }}
         shell: pwsh
         run: |
           $Run = "${{ github.run_id }}"
