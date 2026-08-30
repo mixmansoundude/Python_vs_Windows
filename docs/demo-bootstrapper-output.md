@@ -467,12 +467,12 @@ below is unmodified real capture):
 
 ```
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 Tue 07/28/2026  4:55:59.91 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 Tue 07/28/2026  4:55:59.94 [INFO] Optimized build: declined.
 
 ============================================================
@@ -579,7 +579,7 @@ sees:
 
 ```
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -592,7 +592,7 @@ continues to the second prompt:
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
   Build the optimized version now? [Y/N] _
 ```
 
@@ -2450,7 +2450,7 @@ hello-from-stub
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -2465,7 +2465,7 @@ the final panel:
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -2599,7 +2599,7 @@ Creating Python environment '<env>' -- this may take several minutes...
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -2611,7 +2611,7 @@ Branch]` for this specific re-entry, not a separate real capture) reaches the sa
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -2725,7 +2725,7 @@ longer silent on success; everything else in this panel is the original, unmodif
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -2737,7 +2737,7 @@ final panel:
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -2844,7 +2844,7 @@ print('colorama via importlib ok:', _mod.__name__)
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -2856,7 +2856,7 @@ Declining (same provider-agnostic building blocks as Scenario 32's own ending, s
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -3028,7 +3028,7 @@ The system cannot find the drive specified.
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 ```
 
@@ -3170,7 +3170,7 @@ code path that announces either one, so both are omitted below (see 38a's note f
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 [INFO] REQ-018: post-execution checkpoint (interpreter): declined (run footprint stays at one execution).
 ```
 
@@ -3247,12 +3247,12 @@ The system cannot find the drive specified.
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
 [INFO] Optimized build succeeded and verified: dist\<env>.exe now uses the fallback build system.
 ```
@@ -3281,7 +3281,7 @@ five failure branches fired; the rest of this capture is real,
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
 [WARN] Optimized build did not complete; your app is still ready to use as-is.
 [INFO] REQ-016: Post-flight briefing printed.
@@ -3298,7 +3298,7 @@ since this scenario has passed on every run so far):
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
 [WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
 ```
@@ -3310,7 +3310,7 @@ Real, verbatim console dump (`~selftest_optbuild_decline\~optbuild_decline_boots
 ```
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: declined.
 [INFO] REQ-016: Post-flight briefing printed.
 ```
@@ -3689,12 +3689,12 @@ With every gap now resolved, the EXE finally verifies clean and the run complete
 [STATUS] Run Status: SUCCESS (Exit Code: 0)
 
 *** Verification finished -- see the Run Status above. ***
-*** You can run your program again now via the interpreter as an extra diagnostic check. ***
+*** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 [INFO] REQ-018: post-execution checkpoint (exe): declined (run footprint stays at one execution).
 
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-*** but it starts up more reliably on Windows and runs faster once it is built. ***
+*** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 [INFO] Optimized build: declined.
 
 ============================================================

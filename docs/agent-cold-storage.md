@@ -1,8 +1,7 @@
 # Agent Cold Storage -- Python_vs_Windows
 
 **This file is NOT auto-loaded into every session's context** (unlike
-`docs/agent-lessons-learned.md`, `docs/agent-interconnect.md`, and
-`docs/agent-ndjson.md`, which CLAUDE.md's own
+`docs/agent-lessons-learned.md` and `docs/agent-interconnect.md`, which CLAUDE.md's own
 `@import` lines pull in automatically). Read it on demand: when CLAUDE.md's own pointer below
 sends you here, or when you're about to propose something that might already be a deliberately-
 shelved idea worth checking against first.

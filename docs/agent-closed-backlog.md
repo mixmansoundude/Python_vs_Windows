@@ -1,9 +1,9 @@
 # Agent Closed Backlog -- Python_vs_Windows
 
 **This file is NOT auto-loaded into every session's context** (unlike
-`docs/agent-lessons-learned.md`, `docs/agent-interconnect.md`, and
-`docs/agent-ndjson.md`, which CLAUDE.md's own
-`@import` lines pull in automatically). Read it on demand: when CLAUDE.md's own pointer sends you
+`docs/agent-lessons-learned.md` and `docs/agent-interconnect.md`, which CLAUDE.md's own
+`@import` lines pull in automatically -- `docs/agent-ndjson.md` joined this file in that regard
+2026-08-30). Read it on demand: when CLAUDE.md's own pointer sends you
 here, when you need the full resolution history behind a specific PR/item cited by number, or
 when investigating something that "feels like it was already done" and you want the receipt.
 
@@ -3201,6 +3201,55 @@ subroutine is touched.
 
 Confirmed via PR #470's own green CI run and merge -- `self.exe.smokerun.cwd_consistency` and the
 updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
+
+### Item 42 (lever 1 closed 2026-08-24; lever 2 closed 2026-08-30; moved here 2026-08-30)
+
+- **Console verbosity (lever 1) and the two fresh-build Y/N prompts' wording (lever 2) are both
+  CLOSED.** Two independent, separately-implementable levers, deliberately not conflated: (1) tier
+  `:log`'s console output so a beginner isn't shown `[DEBUG]`/`[TRACE]` noise alongside genuinely
+  actionable `[WARN]`/`[ERROR]` text; (2) reduce/reword the two elective Y/N prompts every
+  successful fresh interactive build shows (the post-execution checkpoint, and the optimized-build
+  upsell whose failure hint references "Visual Studio Build Tools" -- meaningless to the target
+  audience).
+
+  **Lever 1, shipped**: `:log` now suppresses `[DEBUG]`/`[TRACE]`/`[INSTALL]` from the LIVE console
+  by default (a substring-slice check inside `:log` itself, not `findstr`/piping -- message text
+  can legally contain `&`); `[INFO]`/`[BOOT]`/`[WARN]`/`[ERROR]`/`[STATUS]`/`[REPAIR]`/`[HINT]`
+  stay visible (`[STATUS]` is the "did my code work" readout; `[REPAIR]` explains why a build is
+  taking longer without looking stuck; `[HINT]` is the most actionable post-failure text in the
+  file). `~setup.log` is untouched -- suppression is console-only. New opt-in `HP_VERBOSE_CONSOLE=1`
+  restores all three suppressed tags (REQ-019-compliant additive opt-in), documented in README.md.
+  A companion `[INFO] Installing dependencies -- this may take a few minutes...` progress line was
+  added for what was previously the single longest silent stretch in a fresh build (no prior
+  `[INFO]`-tier line existed for the dependency-install phase at all).
+  Four test dependencies on the OLD console-redirected-capture behavior were found and fixed in the
+  same change (`tests/selfapps_pvw_overrides.ps1`'s two `PVW_WORKSPACE` scenarios,
+  `tests/selftest.ps1`'s `self.stub.conda_perpkg`/`self.stub.conda_retry`) -- the last one caught
+  only by a real CI failure after an initial grep-for-brackets sweep missed it, since its own
+  assertion matches a bracket-free phrase. A follow-up exhaustive sweep (every real `[DEBUG]`/
+  `[TRACE]`/`[INSTALL]` message body grepped bracket-free against the full `tests/` tree) confirmed
+  no fifth dependency remains -- the correct methodology for this class of check going forward is
+  searching by message body, not by tag string. New regression coverage:
+  `tests/selfapps_console_tiering.ps1` (`self.console.tiering`, `uv` lane, non-gating).
+
+  **Lever 2, shipped (maintainer decision 2026-08-30)**: keep the two prompts SEPARATE (matching
+  each prompt's own distinct consent-gate mechanism and existing test coverage --
+  `self.checkpoint.accept`/`.decline`, `self.optbuild.offer`'s 4 scenarios) rather than combine
+  them into one ask, resolving both of `docs/open-questions.md`'s former sub-questions (entry now
+  removed -- answered, not just re-scoped). The fix was exactly as small as the "is the remaining
+  ask as small as adding an explicit (optional) cue" sub-question floated: `:run_postexec_
+  checkpoint`'s existing one-line rationale now ends "...as an extra diagnostic check. (Optional)";
+  `:offer_optimized_build`'s now ends "...runs faster once it is built. (Optional, safe to skip)".
+  Neither prompt's own Y/N line changed (`Run again via the interpreter now? [Y/N]` /
+  `Build the optimized version now? [Y/N]` were already exactly this wording). `:run_postexec_
+  checkpoint`'s header comment also gained an explanation of WHY this diagnostic is worth offering
+  even after a reported SUCCESS: the first run's exit code 0 is not 100% confirmation the app
+  actually worked correctly -- a frozen EXE can differ from source in bundled resources, DLL
+  binding, etc. (see "Honest ambiguous-exit messaging" in `docs/agent-interconnect.md`) -- so the
+  interpreter path is generally the more reliable one to catch a real problem the EXE's own exit
+  code alone would not surface. No test depended on the exact old wording (only substring matches
+  on `Verification finished...`/`Want to build an optimized version too?`, both untouched by this
+  change); `docs/demo-bootstrapper-output.md`'s transcript excerpts were updated to match.
 
 ## Known Findings (diagnosed, no action warranted)
 

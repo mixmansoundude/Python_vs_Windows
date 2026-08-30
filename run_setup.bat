@@ -3310,8 +3310,13 @@ exit /b 0
 rem REQ-018 (2b-C): post-execution checkpoint. The FIRST run (EXE smoke or no-EXE interpreter
 rem run) has already happened and its [STATUS] telemetry has already been printed by the time
 rem this is called -- this offers an ELECTIVE second run via the interpreter as a diagnostic
-rem tool, never forced. Declining (the default, and the only outcome in CI/automation) leaves
-rem the run footprint at exactly one execution. Called unconditionally after every verification
+rem tool, never forced. Worth offering even after a reported SUCCESS: the first run's exit code 0
+rem is not 100% confirmation the app actually worked correctly -- a frozen EXE can differ from
+rem source in bundled resources, DLL binding, etc., see "Honest ambiguous-exit messaging" in
+rem docs/agent-interconnect.md. The interpreter path is generally the more reliable one to catch a
+rem real problem the EXE's own exit code alone would not surface. Declining (the default and only
+rem outcome in CI/automation) leaves the run footprint at exactly one execution. Called
+rem unconditionally after every verification
 rem telemetry point (never after :try_fast_exe's fast-path reuse, which stays zero-friction by
 rem design -- see docs/agent-interconnect.md). %1 is a short site tag ('exe'|'interpreter') used
 rem only for the log lines below, so a reader can tell which verification path preceded this.
@@ -3331,7 +3336,7 @@ rem learned.md "Accepted gap"), would hang on set /p with no console input avail
 set "HP_CHECKPOINT_SITE=%~1"
 echo.
 echo *** Verification finished -- see the Run Status above. ***
-echo *** You can run your program again now via the interpreter as an extra diagnostic check. ***
+echo *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 set "HP_CHECKPOINT_RAW="
 if defined HP_TEST_CHECKPOINT_ANSWER (
   set "HP_CHECKPOINT_RAW=%HP_TEST_CHECKPOINT_ANSWER%"
@@ -3407,7 +3412,7 @@ if not "%HP_EXE_EXIT%"=="0" exit /b 0
 echo.
 echo *** Your app is ready. ***
 echo *** Want to build an optimized version too? It takes a bit longer to build right now, ***
-echo *** but it starts up more reliably on Windows and runs faster once it is built. ***
+echo *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
 set "HP_OPTBUILD_RAW="
 if defined HP_TEST_OPTBUILD_ANSWER (
   set "HP_OPTBUILD_RAW=%HP_TEST_OPTBUILD_ANSWER%"
