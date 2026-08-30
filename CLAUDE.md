@@ -646,12 +646,21 @@ but several represent real gaps worth closing before calling the path fully rele
      directories built to mimic `actions/download-artifact@v6`'s own output layout -- verified
      directly with a local `pwsh` run before ever reaching real CI (this script has no Windows-
      specific dependency, unlike its `ci_cache_selfheal.ps1` sibling, so local verification on a
-     non-Windows sandbox was actually possible here). Still open: confirm the new gating test
-     passes on the real `real`-lane run, and re-verify `selftest-gate`'s own "Append gate summary"
-     step still renders correctly with the report's new `lane_check` section. The actual
-     `exit 1`-on-`has_failures` step for `selftest-gate` itself (the change that makes this job's
-     own conclusion fail for real) is a SEPARATE, not-yet-taken next step -- this slice is scoped
-     to the precondition only, per the item's own "one lane or row per slice" discipline.
+     non-Windows sandbox was actually possible here). Confirmed via several consecutive real `real`
+     -lane runs since (`self.ci.aggregate_selftest_verdicts.*`, `diag.selftest_gate.verdict` both
+     green every time).
+
+  **Actual gating step implemented (2026-08-30, maintainer added the branch-protection required
+  check the same day): "Enforce aggregate self-test verdict" now exits 1 when
+  `steps.aggregate.outputs.has_failures == 'true'`, mirroring the identical, already-proven
+  "Enforce NDJSON failures for gated lanes" per-lane pattern.** Re-verified before adding, per
+  caveat 2 below: `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` (each intentionally simulates a
+  failure/fallback scenario) had reported a clean, non-`has_failures` verdict on every real run
+  observed this far -- their own simulated condition is a correctly-handled recovery, not a real
+  failure, so gating on the aggregate does not turn them into permanent false blockers. Per
+  process rule 1 (added alongside the existing per-lane `real`/`conda-full` required checks, not
+  replacing them, per caveat 1) -- confirm this holds across a few more real runs before
+  considering consolidating down to the aggregate check alone.
 
   **Process discipline -- read this before touching anything:**
   1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.

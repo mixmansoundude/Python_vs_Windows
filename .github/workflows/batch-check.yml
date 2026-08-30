@@ -3674,6 +3674,24 @@ jobs:
           # this step's own exit code.
           exit 0
 
+      # derived requirement (CLAUDE.md Active Backlog Item 35): the precondition slice above
+      # (fail-closed per-lane set comparison, proven via tests/test_aggregate_selftest_
+      # verdicts.ps1's fixtures on every real CI run since) deliberately left this job's own
+      # conclusion always-success. This step is the actual gating step -- mirrors the identical,
+      # already-proven "Enforce NDJSON failures for gated lanes" 3-line pattern used per-lane for
+      # `real`/`conda-full` (this file, ~line 1430), just reading the AGGREGATE verdict instead of
+      # one lane's own. Re-verified before adding: contract-uv/contract-uv-fail/uv-dl-fallback
+      # (each intentionally simulates a failure/fallback scenario) have reported a clean, non-
+      # has_failures verdict on every real run observed to date -- their own simulated condition
+      # is a correctly-handled recovery, not a real failure, so this check does not turn them into
+      # permanent false blockers.
+      - name: Enforce aggregate self-test verdict
+        if: ${{ !cancelled() && steps.aggregate.outputs.has_failures == 'true' }}
+        shell: bash
+        run: |
+          echo "Aggregated self-test verdicts indicate a failure in one or more lanes; failing this check."
+          exit 1
+
       - name: Append gate summary
         if: ${{ always() }}
         shell: pwsh
