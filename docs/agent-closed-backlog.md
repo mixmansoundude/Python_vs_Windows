@@ -6047,8 +6047,9 @@ Items completed and shipped:
 
 ## Interconnect Narrative Archive
 
-Added 2026-08-30 during the large-scale compaction of the three auto-loaded docs (CLAUDE.md's own
-Active Backlog, `docs/agent-interconnect.md`, `docs/agent-lessons-learned.md`, `docs/agent-ndjson.md`).
+Added 2026-08-30 during the large-scale compaction of the three auto-loaded docs plus CLAUDE.md's
+own Active Backlog (`docs/agent-interconnect.md`, `docs/agent-lessons-learned.md`,
+`docs/agent-ndjson.md`, and CLAUDE.md's own Active Backlog section).
 Each subsection below preserves the "how we found this out" detail -- which review round caught it,
 which fix attempt was wrong first, the confirming CI run -- that was trimmed from
 `docs/agent-interconnect.md`'s current-state entries of the same name. Read on demand only when the

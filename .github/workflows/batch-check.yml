@@ -4131,8 +4131,11 @@ jobs:
         # `if: success()` unless it declares its own condition). Checkout is the first step that
         # can genuinely fail (network/auth), and its failure would otherwise skip every
         # following default-condition step, starting with "Prep site directories" -- which is
-        # what actually creates _site. Explicit always() here closes that gap.
-        if: ${{ always() }}
+        # what actually creates _site. `!cancelled()` (not `always()`, per CodeRabbit review and
+        # GitHub's own documented guidance) closes that gap while still bypassing this and every
+        # later `!cancelled()` step outright if the WORKFLOW RUN itself is cancelled, instead of
+        # `always()`'s risk of hanging a checkout mid-teardown until it times out.
+        if: ${{ !cancelled() }}
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -4140,11 +4143,11 @@ jobs:
       - name: Prep site directories
         # derived requirement: must run even if Checkout above failed -- it only touches
         # $PWD/github context, not repo content, so it can still lay down the _site/.nojekyll
-        # skeleton "Upload Pages artifact" needs later. Without always() here, a checkout
+        # skeleton "Upload Pages artifact" needs later. Without this here, a checkout
         # hiccup would leave _site never created at all, and the deploy steps further down
         # (which DO already have their own always()-equivalent override via their explicit
         # event_name condition) would fail for real instead of just publishing a thinner site.
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         id: prep
         shell: pwsh
         run: |
@@ -4456,10 +4459,20 @@ jobs:
           Set-Content -LiteralPath $summaryPath -Value $entries -Encoding Ascii
 
       - name: Record iterate artifact status
-        if: ${{ always() }}
+        # derived requirement (CodeRabbit review, PR #471): if "Prep site directories" itself
+        # failed before writing its outputs, $Artifacts below would be empty, and Join-Path
+        # throws on an empty/null Path argument (confirmed directly) rather than degrading
+        # gracefully -- this step would then fail for real instead of recording the sentinel
+        # it exists to write. Fall back to a scratch directory under the workspace so this
+        # step still completes even in that scenario. `!cancelled()`, not `always()`, per
+        # CodeRabbit review and GitHub's own documented guidance (see "Checkout repository"'s
+        # own comment above for why).
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
+          if (-not $Artifacts) { $Artifacts = Join-Path $PWD '_site_prep_failed' }
+          New-Item -ItemType Directory -Path $Artifacts -Force | Out-Null
           $Iter = Join-Path $Artifacts 'iterate'
           $sentinel = Join-Path $Artifacts 'MISSING.txt'
           $iterSentinel = Join-Path $Artifacts 'iterate.MISSING.txt'
@@ -4474,13 +4487,16 @@ jobs:
           }
 
       - name: Fetch batch-check artifacts
-        if: ${{ always() }}
+        # !cancelled(), not always() -- see "Checkout repository"'s own comment above.
+        if: ${{ !cancelled() }}
         id: fetch_batch
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ArtifactsRoot = "${{ steps.prep.outputs.ARTIFACTS }}"
+          if (-not $ArtifactsRoot) { $ArtifactsRoot = Join-Path $PWD '_site_prep_failed' }
+          New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
           $BatchRoot = Join-Path $ArtifactsRoot 'batch-check'
           New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
           $statusPath = Join-Path $BatchRoot 'STATUS.txt'
@@ -4962,7 +4978,8 @@ jobs:
             --out-dir "_site"
 
       - name: Append job summary
-        if: ${{ always() }}
+        # !cancelled(), not always() -- see "Checkout repository"'s own comment above.
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $Run = "${{ github.run_id }}"

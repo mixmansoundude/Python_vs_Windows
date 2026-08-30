@@ -485,10 +485,16 @@ but several represent real gaps worth closing before calling the path fully rele
   a partial truth for any lane or row this repo ships.
 
   **Known inventory to work through (re-derive against current state at slice time)**: non-gating
-  lanes -- `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` (the
-  last three are explicitly load-bearing as non-gating, since they simulate failure/contract
-  scenarios that intentionally diverge from a normal run -- re-verify that reasoning still holds
-  before excluding them, don't just carry the text forward); `ndjson-registry-check` (a separate
+  lanes at the PER-LANE level -- `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`,
+  `uv-dl-fallback` (the last three are explicitly load-bearing as non-gating, since they simulate
+  failure/contract scenarios that intentionally diverge from a normal run -- re-verify that
+  reasoning still holds before excluding them, don't just carry the text forward) still have no
+  required-status-check of their OWN -- but since the "Enforce aggregate self-test verdict" gate
+  below now aggregates all 8 lanes, a real failure in any of them (including a genuine one already
+  observed in `cache`/`uv`, unrelated to any of this item's own changes) DOES block a merge via the
+  aggregate check even though the individual lane still shows non-required in the PR checks UI.
+  Do not read "non-gating" below as "cannot block a merge" post-aggregate-gate; it means "has no
+  required check of its own." `ndjson-registry-check` (a separate
   advisory doc/code/log sync job, needs several more clean-PASS runs before even considering
   gating); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
   `docs/agent-ndjson.md` -- `self.dll_bundle.recover` (see Item 37), `self.failfast.probe`,
