@@ -490,11 +490,14 @@ but several represent real gaps worth closing before calling the path fully rele
   failure/contract scenarios that intentionally diverge from a normal run -- re-verify that
   reasoning still holds before excluding them, don't just carry the text forward) still have no
   required-status-check of their OWN -- but since the "Enforce aggregate self-test verdict" gate
-  below now aggregates all 8 lanes, a real failure in any of them (including a genuine one already
-  observed in `cache`/`uv`, unrelated to any of this item's own changes) DOES block a merge via the
-  aggregate check even though the individual lane still shows non-required in the PR checks UI.
-  Do not read "non-gating" below as "cannot block a merge" post-aggregate-gate; it means "has no
-  required check of its own." `ndjson-registry-check` (a separate
+  below aggregates all 8 lanes, a real failure in any of them (including a genuine one already
+  observed in `cache`/`uv`, unrelated to any of this item's own changes) is DESIGNED to block a
+  merge via the aggregate check even though the individual lane still shows non-required in the PR
+  checks UI -- currently, that enforcement step itself carries `continue-on-error: true` (see the
+  "Reverted to advisory" note below), so today it does NOT actually block; this is the intended
+  end-state once cache/uv are fixed and `continue-on-error` is removed. Do not read "non-gating"
+  below as "cannot ever block a merge" post-aggregate-gate; it means "has no required check of its
+  own." `ndjson-registry-check` (a separate
   advisory doc/code/log sync job, needs several more clean-PASS runs before even considering
   gating); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
   `docs/agent-ndjson.md` -- `self.dll_bundle.recover` (see Item 37), `self.failfast.probe`,
@@ -536,6 +539,22 @@ but several represent real gaps worth closing before calling the path fully rele
   One inherent, unfixable-via-YAML platform limit remains: `always()` does not run a job if the
   whole workflow run itself is cancelled or the runner dies outright -- accepted as an unavoidable
   GitHub Actions characteristic, not a gap in this repo's own control.
+
+  **A WIDER, pre-existing version of this same class of gap remains open, out of scope for the
+  2026-08-30 fix above (CodeRabbit review, PR #471).** The fix above closed the reachability gap
+  for the 5 specific steps this PR's diff touches. Several OTHER `publish_diag` steps this PR never
+  touched -- `Package iterate logs archive`, `Mirror iterate logs into site bundle`, `Normalize
+  iterate artifact layout`, `Publish diagnostics index` (all pre-existing `if: always()`, confirmed
+  absent from this PR's own diff) -- consume `steps.prep.outputs.ARTIFACTS`/`DIAG`/`SITE` directly,
+  unguarded, the same way the 2 fixed steps did before their fix; if `Prep site directories` itself
+  fails before writing those outputs (as opposed to merely being skipped because an earlier step
+  failed), these steps would resolve to a malformed path (e.g. bash's `"${EMPTY}/iterate"` becomes
+  `/iterate`) rather than the graceful scratch-directory fallback the 2 fixed steps now have.
+  Auditing and fixing every such consumer across the whole job is a real, separate, larger
+  undertaking (a full pass over `publish_diag`'s ~20+ steps) -- deliberately not folded into this
+  PR, which is scoped to the reachability gap alone. A future slice should generalize the
+  `_site_prep_failed`-style fallback to a single shared early step (writing a fallback env var or
+  step output once) rather than repeating the guard at every consumer site.
 
   **"Gating" is a GitHub branch-protection setting, not a YAML edit.** This repo's actual merge
   gate is GitHub's native required-status-checks list on the default branch's protection rule
