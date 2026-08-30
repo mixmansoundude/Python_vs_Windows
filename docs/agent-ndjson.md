@@ -10,13 +10,11 @@ https://mixmansoundude.github.io/Python_vs_Windows/
 update this file in the same commit. Row IDs listed here act as a registry to catch
 accidental removal or unexpected additions.**
 
-**House rule: distill to the load-bearing rule; move the narrative to
-`docs/agent-closed-backlog.md`.** This file's job is the registry itself (row id -> emitting
-test/lane/mechanism) -- keep annotations to what a row means and how it's gated, not a retelling
-of the bug that motivated adding it. If a row's own mechanism is already documented at length in
-`docs/agent-interconnect.md` or `docs/agent-lessons-learned.md`, point there instead of
-re-explaining it here. See CLAUDE.md's Active Backlog Item 34 for the restructuring pass this
-principle is driving.
+**House rule: this file is the registry itself (row id -> emitting test/lane/mechanism), not a
+narrative.** Keep annotations to what a row means and how it's gated. A row's own MECHANISM
+(why the underlying feature works the way it does) belongs in `docs/agent-interconnect.md` or
+`docs/agent-lessons-learned.md` -- point there instead of re-explaining it here. The "how this
+row was found/fixed" bug-hunt detail belongs in `docs/agent-closed-backlog.md`.
 
 ---
 
@@ -160,15 +158,10 @@ helpers.decode.~print_pyver.py, helpers.decode.~detect_visa.py,
 helpers.decode.~find_entry.py
 ```
 
-**Backfilled 2026-07 via `tools/check_ndjson_registry.py`'s new AST-based Python scan.** The 7
-`helpers.*`/`bootstrap.status` rows above were always emitted (`ensure_extracted()`'s payload-decode
-loop and `main()`'s status-file read at the top of `tests/dynamic_tests.py`) but were invisible to
-this registry until the scanner learned to parse Python. `helpers.run_setup` fires only on the rare
-`run_setup.bat missing` guard clause (a hard `SystemExit(1)` before any other row); `bootstrap.status`
-fires exactly once per `dynamic_tests.py` run (pass/fail depending on whether `~bootstrap.status.json`
-parses); the 5 `helpers.decode.*` rows fire once per embedded helper payload
-(`~detect_python.py`/`~prep_requirements.py`/`~print_pyver.py`/`~detect_visa.py`/`~find_entry.py`)
-decoded out of `run_setup.bat`.
+The `helpers.*`/`bootstrap.status` rows fire from `tests/dynamic_tests.py`'s own
+`ensure_extracted()` payload-decode loop and `main()`'s status-file read: `helpers.run_setup`
+only on the rare `run_setup.bat missing` guard; `bootstrap.status` once per run; the 5
+`helpers.decode.*` rows once per embedded helper payload decoded out of `run_setup.bat`.
 
 ## Test-logs NDJSON (harness/selftest, additional rows)
 
@@ -240,120 +233,33 @@ self.corrupt.uv.detect,
 diag.conda.available, diag.conda.available.gate
 ```
 
-`self.corrupt.conda.override_exit` (CLAUDE.md Active Backlog item 12) covers the
-`PVW_CONDA_EXE` super-user-override's corrupt-conda path (`:corrupt_override_exit`, distinct
-"fix manually, do not self-heal" messaging) -- unlike its three `self.corrupt.conda.*` siblings
-above, this scenario is NOT gated on Miniconda already being on disk: setting `PVW_CONDA_EXE`
-(to any path, real or not) unconditionally sets `CONDA_BAT=%PVW_CONDA_EXE%` in `run_setup.bat`
-before the Miniconda install-if-missing block even runs, so the corruption-check gate
-(`if defined CONDA_BAT ...`) fires regardless of whether Miniconda was ever installed anywhere
-in the job -- self-contained by construction, no CI-ordering dependency (unlike
-`self.conda.bothfail`, above).
+`self.corrupt.conda.override_exit` covers the `PVW_CONDA_EXE` super-user-override's corrupt-conda
+path (`:corrupt_override_exit`, distinct "fix manually, do not self-heal" messaging) -- unlike its
+three `self.corrupt.conda.*` siblings, NOT gated on Miniconda already being on disk (setting
+`PVW_CONDA_EXE` unconditionally sets `CONDA_BAT` before the install-if-missing block runs).
 
-`self.dll_bundle.recover` (inline `run_setup.bat`'s `:emit_dll_bundle_row`, called from all 7
-outcome points inside `:dll_bundle_recover` -- CLAUDE.md Item 24 / `docs/prd-conda-native-dll-
-bundling.md`) is a CodeRabbit review finding on PR #414: the native-DLL bundling repair loop's
-detected/skipped/repaired/unlocatable/failed outcomes previously only reached `:log`'s console
-text, with no machine-readable record. `details.state` is one of `skipped_nuitka` (a Nuitka-built
-EXE, repair not attempted), `skipped_non_conda` (a non-conda provider, repair not attempted),
-`repaired` (rebuild genuinely succeeded), `unlocatable` (detected but the named DLL was never
-found under the conda env's `Library\bin`), `exhausted` (CLAUDE.md Item 25 -- the 3-iteration
-cap was reached with a real, locatable candidate still pending, so at least one native-DLL
-dependency remains unbundled; distinct from `repaired` so a partial fix is never reported as a
-clean completion), `failed_rebuild` (PyInstaller rebuild itself failed),
-or `failed_missing_exe` (rebuild reported success but `dist\<env>.exe` was not produced) --
-`pass` is `false` only for the two `failed_*` states (`exhausted` is `pass:true`, same treatment
-as `unlocatable` -- both are informational: the bootstrap itself did not fail, only the repair was
-incomplete). `details.dll`/`details.provider`/
-`details.iteration` are pulled inside the emitting PowerShell command via
-`[Environment]::GetEnvironmentVariable(...)` rather than `%VAR%` cmd.exe substitution into the
-`-Command` text, for the same reason the sibling `HP_DLL_DETECTED_SAFE`/`HP_NEXT_DLL_SAFE`
-display-only sanitization exists (see `docs/agent-interconnect.md`'s DLL-bundling section) --
-a DLL basename can legally contain `&`/`|`, which are metacharacters to cmd.exe's own
-command-line parsing even inside a quoted argument, not just inside `:log`'s unquoted echo.
+`self.dll_bundle.recover` (`:emit_dll_bundle_row`, all 7 outcome points inside
+`:dll_bundle_recover`) is the machine-readable record of the conda native-DLL bundling repair
+loop -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
+full mechanism. `details.state` is one of `skipped_nuitka`, `skipped_non_conda`, `repaired`,
+`unlocatable`, `exhausted`, `failed_rebuild`, or `failed_missing_exe`; `pass` is `false` only for
+the two `failed_*` states. Now wired for real observation and confirmed via real CI (CLAUDE.md
+Item 37, PR #452): `selfapps_layered_e2e.ps1` explicitly sets `HP_NDJSON` for its own
+sub-bootstrap (the opposite of most other isolated-sub-bootstrap tests, which deliberately unset
+it) so this row fires for real, recorded as an informational (non-gating) detail on
+`self.layered_e2e.chain`'s own row rather than folded into that test's pass/fail. One confirmed
+run is not yet enough for Item 35's promotion-out-of-`continue-on-error` bar.
 
-**Now wired for real observation AND CONFIRMED via real CI (CLAUDE.md Item 37, PR #452, merge
-commit `f50ccd6`, `cache`-lane run `32561652643`).** Previously never observed in any real CI
-artifact: `run_setup.bat`'s own `HP_NDJSON` auto-detection (`if not defined HP_NDJSON if exist
-"%CD%\tests" set "HP_NDJSON=..."`) only fires when the bootstrapped app directory has its own
-`tests\` subfolder, and `tests/selfapps_layered_e2e.ps1` (the one test that genuinely triggers the
-`repaired` state, via `pygrib`/`eccodes.dll`) runs its sub-bootstrap from a bare scratch directory
-with no `tests\` subfolder -- so `:emit_dll_bundle_row`'s own `if not defined HP_NDJSON exit /b 0`
-guard meant this row was never actually written. Fixed by having that test explicitly set
-`HP_NDJSON` to the SAME shared file its own `Write-NdjsonRow` already writes to, right before the
-sub-bootstrap call, restored in its `finally` block -- the opposite of `tests/selfapps_postexec_
-checkpoint.ps1` / `selfapps_failfast_probe.ps1` / `selfapps_exefastpath.ps1`'s established
-convention of deliberately `Remove-Item Env:HP_NDJSON` around an isolated sub-bootstrap to keep
-its rows OUT of the shared stream -- this test's whole Item 37 goal is getting this specific row
-IN. The test also now diffs `~test-results.ndjson` before/after its own sub-bootstrap call and
-records whether a `self.dll_bundle.recover` row with `state:"repaired"` appeared, as informational
-`details` fields (`dllBundleRowSeen`/`dllBundleRowRepaired`) on its own `self.layered_e2e.chain`
-row -- deliberately NOT folded into `chainPass`/`mech4Pass` itself, since `mech4Pass`'s existing
-log-text assertions already prove the underlying repair happened; a wiring hiccup in the NDJSON
-emission specifically should not turn this already-proven, closely-watched test red on its first
-real run under the new wiring. **Confirmed by pulling the real published diagnostics artifact
-directly** (`tests/~test-results.ndjson` from that run's `cache`-lane job):
-`self.dll_bundle.recover` fired TWICE with `state:"repaired"` (`eccodes.dll` and `impi.dll`, both
-`iteration:1`, `provider:"conda"`), and `self.layered_e2e.chain`'s own `details` show
-`dllBundleRowSeen:true, dllBundleRowRepaired:true` alongside `mech1Pass`-`mech4Pass` all `true`.
-One confirmed run is not yet the "several consecutive runs" Item 35's own process discipline
-requires before considering promotion out of `continue-on-error` -- that decision is still a live
-next step for a future loop, not taken here. `batch.dll_bundle.ndjson` (`tests/harness.ps1`,
-static) remains
-the SEPARATE, always-on coverage for this row regardless of the above: it verifies the
-`:emit_dll_bundle_row` subroutine exists, the row id string is present, and all 7
-`call :emit_dll_bundle_row <state>` sites are wired (including the `exhausted` state added for
-CLAUDE.md Item 25) -- the same "static wiring guard, not runtime execution" pattern already used
-for `batch.failfast.probe`/`batch.postexec.checkpoint` above. Runtime coverage for the other 6
-states (Nuitka-used, non-conda provider, a genuine PyInstaller rebuild failure, a missing
-post-rebuild EXE, a detected-but-unlocatable DLL, the 3-iteration cap hit with a candidate still
-pending) each needs its own scaffolding beyond what `self.layered_e2e.chain`'s real `pygrib`
-trigger provides for the `repaired` state alone -- still a candidate for future, dedicated tests,
-not pursued now.
-
-`batch.dll_bundle.pct_sanitizer` (`tests/harness.ps1`, gating) is a SEPARATE static check, not a
-sibling of the above -- it live-executes a real cmd.exe + PowerShell fixture proving the `_SAFE`
-sanitization's `%`/`^`-stripping mechanism (and the `call`-based second-expansion-pass security
-property) actually works, rather than statically checking `run_setup.bat`'s own wiring. See
-`docs/agent-interconnect.md`'s DLL-bundling section for the real bug this fixture caught (a first
-implementation attempt used a cmd.exe `%VAR:%%=_%` substitution that CI proved silently produced an
-empty string) and `docs/agent-lessons-learned.md`'s corresponding entry.
-
-`batch.dll_bundle.second_pass` (`tests/harness.ps1`, CLAUDE.md Item 29) is a THIRD, separate static
-check in the same family -- unlike `batch.dll_bundle.ndjson`'s 7-state wiring guard and
-`batch.dll_bundle.pct_sanitizer`'s live-executed sanitization fixture, this one guards the
-second `:dll_bundle_recover` pass that runs after `:hidden_import_recover` (a hidden-import
-rebuild's own `--collect-submodules=X` can surface a native-DLL warning the FIRST
-`:dll_bundle_recover` call, which only ever ran before any hidden-import rebuild, could never
-have seen -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section
-for the full mechanism and its real `pyproj`/`proj_9.dll` trigger). Asserts: both `call
-:dll_bundle_recover` and `call :hidden_import_recover` appear at least twice in the file (the
-original call plus the new second-pass call), the DLL rebuild command threads the hidden-import
-flags, `HP_DLL_REPAIRED` is both set (on genuine repair) and checked (gating the extra
-`:hidden_import_recover` pass), the second `:dll_bundle_recover` call is itself gated on a new
-`HP_HIDDEN_REPAIRED` flag, `HP_LOG_SIZE_BEFORE` advances immediately before
-`:hidden_import_recover`'s own rebuild (scoped to that subroutine's own body via a regex
-extraction bounded by the next label, not a whole-file match -- a whole-file match would stay
-true even if this specific line were deleted, since the identical text already exists in
-`:run_entry_smoke`'s initial snapshot and in `:dll_bundle_loop`), and -- specifically to catch a
-REINTRODUCED per-call reset regressing the two cross-call state-leak bugs this same fix had to
-close -- the bare `set "HP_PYI_DLLBIND="` line appears EXACTLY twice in the file (the
-fresh-build-attempt reset plus `:run_entry_smoke`'s own pre-existing end-of-pass trailer) and the
-bare `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT` resets appear EXACTLY once each. Static wiring
-guard only, same as `batch.dll_bundle.ndjson` -- runtime proof is `self.layered_e2e.chain`'s own
-`chainPass` (`cache` lane, non-gating), CONFIRMED `true` for the first time via real CI (PR #421
-merge commit `dcfce1d`, `cache`-lane run `31264219121`) -- see `docs/agent-closed-backlog.md`'s
-Item 29 entry for the full trace.
-
-`batch.dll_bundle.caveat_hint` (`tests/harness.ps1`, static, docs/open-questions.md's former item
-1, answered yes) is a FOURTH, separate static check in the same family -- guards the post-flight
-caveat panel's DLL-specific hint (`HP_DLL_HINT_STATE`/`:pfb_dll_hint`, see
-`docs/agent-interconnect.md`'s DLL-bundling section for the full mechanism): the reset once per
-fresh build attempt, the capture happening before `:emit_dll_bundle_row`'s own `HP_NDJSON`
-early-return, the caveat panel's conditional call site, and all 3 wording buckets
-(skipped/failed/repaired) existing. Static wiring guard only, same as its three siblings --
-verified directly against the real `run_setup.bat` content via a standalone `pwsh` run of the
-same regex logic before landing (not just reasoned about).
+`batch.dll_bundle.ndjson`/`.pct_sanitizer`/`.second_pass`/`.caveat_hint` (`tests/harness.ps1`) are
+four SEPARATE static wiring/fixture checks in the same family, none of which prove runtime
+correctness by themselves: `.ndjson` verifies the label/row-id/all-7-call-sites exist;
+`.pct_sanitizer` (gating) live-executes a real cmd.exe+PowerShell fixture proving the `%`/`^`
+sanitization actually works (see `docs/agent-lessons-learned.md`'s "`:log` echoes UNQUOTED" entry
+for the fixture's own history); `.second_pass` guards the second `:dll_bundle_recover` pass that
+runs after `:hidden_import_recover` (see the interconnect doc's same DLL-bundling section); and
+`.caveat_hint` guards the postflight caveat panel's DLL-specific hint wording. Runtime proof for
+all of these is `self.layered_e2e.chain`'s own `chainPass`/`mech4Pass` (`cache` lane, non-gating),
+confirmed `true` via real CI (PR #421).
 
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
@@ -370,25 +276,17 @@ self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.ove
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
 
-`self.ux.gitattributes.migrate` (CLAUDE.md Item 60) is a SEPARATE scratch-dir scenario from
-`.merge`/`.idem` above -- those two start with NO `.gitattributes` at all; this one pre-seeds a
-`.gitattributes` already carrying the HP_GA_SIG signature AND the disproven `*.bat eol=crlf`/
-`*.cmd eol=crlf` rule (what an OLDER copy of this bootstrapper would have already written),
-simulating a user re-running a newer copy. `:merge_git_config`'s idempotency guard gates on the
-signature alone, so without this fix a stale rule would never be touched again. The new
-`HP_MIGRATE_GITATTRIBUTES` payload (`tools/migrate_gitattributes.ps1`) replaces ONLY lines that
-EXACTLY match one of the two known-stale strings, in place -- every other line (including any
-user hand-edit elsewhere in the file) passes through byte-identical; asserts both `-text` lines
-are now present, both `eol=crlf` lines are gone, and unrelated pre-existing content survives.
+`self.ux.gitattributes.migrate` (CLAUDE.md Item 60) is a separate scratch-dir scenario from
+`.merge`/`.idem` -- pre-seeds a `.gitattributes` already carrying the signature AND the disproven
+`eol=crlf` rule (simulating a user re-running a newer bootstrapper copy), asserting the new
+`HP_MIGRATE_GITATTRIBUTES` payload replaces only the exact stale lines in place.
 
 ## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
 
-Eight scenarios (`PEP723_SCENARIO` env var; see the file's own header comment for the full
-setup/assertion table). `fresh`/`idempotent`/`skipflag` are Loop 1 (the simplest, most
-load-bearing cases); `malformed`/`trailing_ws_malformed`/`existing_lockfile`/`non_utf8`/`warnfix`
-are Loop 2's adversarial-input scenarios (see `docs/plan-pep723-writeback.md` Part 2.3 / Part 4).
-Each row emits `skip=true, reason=provider_not_uv` when `HP_ENV_MODE` did not resolve to uv
-(e.g. a conda-only run), mirroring the established `Get-CondaBatPath` skip pattern.
+Eight scenarios (`PEP723_SCENARIO`); `fresh`/`idempotent`/`skipflag` are the simplest,
+load-bearing cases, `malformed`/`trailing_ws_malformed`/`existing_lockfile`/`non_utf8`/`warnfix`
+are adversarial-input scenarios (see `docs/plan-pep723-writeback.md`). Each row emits
+`skip=true, reason=provider_not_uv` when `HP_ENV_MODE` did not resolve to uv.
 
 ```
 self.pep723.writeback.fresh, self.pep723.writeback.idempotent, self.pep723.writeback.skipflag,
@@ -399,13 +297,9 @@ self.pep723.writeback.warnfix
 
 ## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
 
-Two scenarios (`QUICKSTART_SCENARIO` env var). A dry-run test for README's "PVW QuickStart"
-copy-paste commands (standalone uv/autopep723 usage, no `run_setup.bat` involved) -- see that
-file's own header comment for the full setup/assertion detail. Both scenarios include their own
-`irm https://astral.sh/uv/install.ps1 | iex` uv-acquisition line (copied from README), so this
-test is self-contained and does not depend on any other CI step's PATH state. Skips with
-`skip=true, reason=non-windows-host` on non-Windows (mirrors this suite's usual convention, even
-though the underlying uv/autopep723 CLI mechanics are cross-platform in principle).
+Two scenarios (`QUICKSTART_SCENARIO`) -- a dry-run test for README's "PVW QuickStart" copy-paste
+commands (standalone uv/autopep723 usage, no `run_setup.bat` involved), self-contained (own uv
+acquisition line). Skips with `skip=true, reason=non-windows-host` on non-Windows.
 
 ```
 self.pvw_quickstart.check, self.pvw_quickstart.run
@@ -413,17 +307,10 @@ self.pvw_quickstart.check, self.pvw_quickstart.run
 
 ## selfapps-autopep-discovery NDJSON rows (selfapps_autopep_discovery.ps1, uv lane only)
 
-Single deterministic scenario (REQ-005.12, Tier 1 of `docs/plan-autopep723-two-tier.md`): proves
-the bootstrapper-integrated `autopep723 check`-and-merge block (`run_setup.bat` ~line 1294,
-`:after_pipreqs_run`) actually populates `requirements.txt` and the app builds/runs from it
-alone. `HP_SKIP_PIPREQS=1` isolates Tier 1's own contribution from pipreqs's overlapping
-discovery -- with pipreqs skipped and no other requirements source present, the only way the
-stub app's `requests` import ends up installed is via this new merge step. Unlike
-`selfapps_pvw_quickstart.ps1`, this test DOES run `run_setup.bat` (copies it into a scratch dir,
-same pattern as `selfapps_pep723_writeback.ps1`), so it relies on the coarser full-tree
-`diag-selftest-*` artifact capture rather than per-path `upload-artifact` wiring, matching that
-file's own Loop-1 scratch dirs (`~selftest_pep723_fresh` etc.), which also have no individual
-wiring.
+Single deterministic scenario (REQ-005.12, Tier 1): proves the bootstrapper-integrated
+`autopep723 check`-and-merge block (`:after_pipreqs_run`) actually populates `requirements.txt`
+and the app builds/runs from it alone. `HP_SKIP_PIPREQS=1` isolates Tier 1's own contribution from
+pipreqs's overlapping discovery.
 
 ```
 self.autopep_discovery.merge
@@ -431,20 +318,12 @@ self.autopep_discovery.merge
 
 ## selfapps-pvw-idempotent NDJSON rows (selfapps_pvw_idempotent.ps1, uv lane only)
 
-Single deterministic scenario (REQ-005.13, Tier 2 of `docs/plan-autopep723-two-tier.md`): proves
-`HP_PVW_KNOWN_IDEMPOTENT` actually runs the entry file live via `uvx autopep723 <entry>` (the
-`:pvw_known_idempotent_run` subroutine, `run_setup.bat` ~line 3289, hooked in right after
-`:determine_entry` returns -- earlier than Tier 1's own insertion point), persists what it
-needed via `uv add --script`, and the app builds/runs from it afterward. `HP_SKIP_PIPREQS=1` is
-test-level isolation only (matching `selfapps_autopep_discovery.ps1`'s own technique) -- it is
-NOT how Tier 2 behaves by default in production; pipreqs runs normally alongside Tier 2 there.
-Also asserts the stub app's own `print()` output appears directly in the bootstrap log, proving
-the execute-mode discovery run's stdout was genuinely inherited/passed through live rather than
-captured or suppressed -- the specific design point `tools/pvw_known_idempotent.py`'s helper
-exists to preserve (see its module docstring: result markers print to stderr specifically so
-they never collide with the passed-through script's own stdout). Same scratch-dir/coarser
-full-tree-artifact-capture pattern as `selfapps_autopep_discovery.ps1` -- no individual
-`upload-artifact` wiring.
+Single deterministic scenario (REQ-005.13, Tier 2): proves `HP_PVW_KNOWN_IDEMPOTENT` actually runs
+the entry file live via `uvx autopep723 <entry>`, persists via `uv add --script`, and the app
+builds/runs from it afterward. Also asserts the stub app's own `print()` output appears directly
+in the bootstrap log, proving the execute-mode discovery run's stdout was genuinely inherited/
+passed through live (see `docs/agent-interconnect.md`'s Tier 2 section for the stderr-marker
+design this depends on).
 
 ```
 self.pvw_idempotent.discovery
@@ -452,39 +331,14 @@ self.pvw_idempotent.discovery
 
 ## selfapps-pvw-overrides NDJSON rows (selfapps_pvw_overrides.ps1, uv lane only, non-gating)
 
-CLAUDE.md former Active Backlog item 10: `PVW_PYTHON_EXE` and `PVW_WORKSPACE` had ZERO test
-coverage of any kind, unlike the other three PVW_* super-user overrides (`PVW_UV_EXE`,
-`PVW_TARGET_PY`, `PVW_CONDA_EXE`), and ALL FIVE had zero coverage of their invalid-value
-behavior. Four scenarios: valid- and invalid-value paths for both variables (2-3 representative
-invalid-value cases, not the full 5x2 combinatorial matrix, per the backlog item's own suggested
-shape).
-
-`self.pvw.python_exe.valid` is a two-stage test: stage 1 does an ordinary uv bootstrap purely to
-materialize a real, working interpreter on disk; stage 2 is a genuinely fresh scratch directory
-(so `:try_fast_exe`'s EXE-cache fast path cannot short-circuit past `:after_env_mode_selection`,
-where the override actually applies) running a different stub app with `PVW_PYTHON_EXE` pointed
-at stage 1's interpreter -- asserts the `[INFO] Python host: using super-user override
-PVW_PYTHON_EXE.` log line fires and the app actually runs successfully via the borrowed
-interpreter. `self.pvw.workspace.valid` runs a single fresh bootstrap with `PVW_WORKSPACE` set to
-a custom directory, asserting the `[DEBUG] Using super-user override for PVW_WORKSPACE:` log
-line fires, `Scripts\python.exe` exists at the CUSTOM path (not the default `.uv_env`), the
-default `.uv_env` was never created, and the app still runs successfully from the relocated venv.
-
-`self.pvw.python_exe.invalid` sets `PVW_PYTHON_EXE` to a nonexistent path and confirms the
-pre-existing interpreter smoke test right after the override (`"%HP_PY%" -c "print('py_ok')" ...
-|| (... [WARN] Interpreter smoke test failed (continuing). ...)`) absorbs the broken value
-gracefully rather than an uncontrolled crash. `self.pvw.workspace.invalid` sets `PVW_WORKSPACE`
-to a path already occupied by a plain file (uv cannot create a venv "inside" a file) and confirms
-the failure cascades to the SAME already-established `:uv_venv_fail` -> conda-create fallback
-every other uv-venv-creation failure in this file already goes through (`falling back to conda
-create` in the log) -- does NOT require the conda fallback to actually succeed, only that it's
-reached; a real Miniconda download in this lane is an already-accepted cost (see
-`self.conda.bothfail`'s own precedent).
-
-All four skip with `skip=true` in the conda-full lane (uv is never the provider there, so none of
-these overrides' own effects are reachable). Non-gating for its first landing, matching this
-repo's established graduation pattern for a new PowerShell scenario not yet proven stable across
-several real runs (see CLAUDE.md's "CI lane gating maturity" periodic check).
+`PVW_PYTHON_EXE`/`PVW_WORKSPACE` had zero prior coverage of any kind, and all five `PVW_*`
+overrides had zero coverage of their invalid-value behavior. Four scenarios: valid/invalid for
+both variables. `self.pvw.python_exe.valid`/`self.pvw.workspace.valid` prove the override is
+genuinely honored (log line fires, the app runs via the borrowed/relocated interpreter/venv, the
+default path is never created). `self.pvw.python_exe.invalid`/`self.pvw.workspace.invalid` prove
+the failure absorbs gracefully (a smoke-test warning, or a fallthrough into the already-established
+`:uv_venv_fail` -> conda-create chain) rather than crashing uncontrolled. All four skip with
+`skip=true` in the conda-full lane (uv is never the provider there).
 
 ```
 self.pvw.python_exe.valid, self.pvw.workspace.valid,
@@ -493,25 +347,13 @@ self.pvw.python_exe.invalid, self.pvw.workspace.invalid
 
 ## selfapps-cascade-timed NDJSON rows (selfapps_cascade_timed.ps1, conda-full lane only)
 
-CLAUDE.md item 9 / docs/open-questions.md item 1 follow-up: `:cascade_consent_gate` previously used
-an unbounded `set /p` for a real interactive user, unlike sibling prompts such as
-`:pick_entry_interactive`'s own `choice /T` timed prompt -- an unattended real user (not physically
-present when the prompt appeared) would hang the whole bootstrap forever. Now uses the same
-`choice /T` pattern (default 30s, mirrors `:pick_entry_interactive`'s HP_PICK_T convention),
-defaulting to N (decline) on timeout so an unattended run still tries the current build once rather
-than hanging. `HP_TEST_FORCE_INTERACTIVE_CASCADE=1` forces the timed-choice branch to be reached
-even under `HP_CI_LANE` (mirrors `HP_TEST_FORCE_PICKER`'s own established pattern for
-`:pick_entry_interactive`, see `tests/selfapps_entry_picker.ps1`) and shrinks the timeout to 2s.
-With no interactive console and no `HP_TEST_CASCADE_ANSWER` override, `choice` degrades to its
-default (N) within ~2s, proving the mechanism reaches the prompt and resolves without hanging.
-
-Also proves the companion "dependencies may be incomplete" note (`HP_DEP_MAYBE_INCOMPLETE`, set
-only when a cascade candidate was detected but NOT approved) fires at both its injection points
-(the decline-time WARN in `:warnfix_cascade_detect` and the pre-launch reminder in
-`:warn_user_code_launch`), and that the postexec-offers-skip message (proven positively by
-`self.cascade.exec`'s approved-cascade path, below) correctly does NOT fire here, since only
-cascade *approval* -- not detection alone -- skips the elective postexec checkpoint/optimized-build
-offers.
+Proves `:cascade_consent_gate`'s real-interactive-user branch uses a TIMED `choice /T` prompt
+(default 30s, `/D N` on timeout) rather than an unbounded `set /p` that would hang an unattended
+run forever -- `HP_TEST_FORCE_INTERACTIVE_CASCADE=1` forces the branch under `HP_CI_LANE` with a
+2s timeout. Also proves the companion "dependencies may be incomplete" note
+(`HP_DEP_MAYBE_INCOMPLETE`) fires at both its injection points when a cascade candidate was
+detected but not approved, and that the postexec-offers-skip behavior correctly does NOT fire here
+(only cascade approval, not mere detection, skips those elective offers).
 
 ```
 self.cascade.timed
@@ -519,82 +361,26 @@ self.cascade.timed
 
 ## selfapps-layered-e2e NDJSON rows (selfapps_layered_e2e.ps1, cache lane only, non-gating)
 
-Implements `docs/agent-closed-backlog.md`'s Item 22 (closed 2026-08-03, confirmed by real CI run
-`30779274430`, cache-lane job `91580880846` -- passed on its first real execution, no iteration
-needed): a real, non-simulated end-to-end test originally proving three
-distinct mechanisms fire for real in ONE run, replacing Part VII Scenario 33's
-`[Extrapolated Branch]` splice with genuine evidence -- the uv-to-conda provider cascade
-(REQ-009/REQ-005.10 slice 3), warnfix repair (REQ-007, both a genuine success AND a genuine
-failure in the same repair round), and `--hidden-import` auto-recovery (REQ-016 Slice 2). No
-`HP_TEST_FORCE_*`/`HP_SKIP_*`/`HP_DISABLE_*` flags are used beyond the unavoidable
-`HP_TEST_CASCADE_ANSWER=Y` (accepting an interactive consent prompt deterministically in CI) --
-every failure and repair is a genuine, unflagged consequence of three real packages' own
-availability on PyPI vs. conda-forge: `pygrib` (zero Windows wheels on PyPI, confirmed via a
-direct PyPI JSON API query -- macOS/Linux wheels exist for every recent CPython, Windows was
-deliberately excluded, and the sdist needs the ecCodes/GRIB-API C library a bare CI runner does
-not have -- but real conda-forge win-64 builds exist, verified via the anaconda.org API), `xlrd`
-(a real PyPI wheel, so warnfix's per-module install genuinely succeeds for it in the same round
-pygrib genuinely fails), and `colorama` (imported only via `importlib.import_module`, invisible
-to PyInstaller's static analysis, so never touched by warnfix -- installs fine once cascaded to
-conda but the frozen EXE still needs `--hidden-import` to actually bundle it).
+The repo's flagship real, non-simulated end-to-end test: proves FOUR distinct mechanisms fire
+together in ONE run, no `HP_TEST_FORCE_*`/`HP_SKIP_*` flags beyond the unavoidable
+`HP_TEST_CASCADE_ANSWER=Y` -- the uv-to-conda provider cascade, warnfix repair (a genuine success
+AND a genuine failure in the same repair round), `--hidden-import` auto-recovery, and the conda
+native-DLL bundling repair loop. Every failure/repair is a genuine, unflagged consequence of three
+real packages' actual availability on PyPI vs. conda-forge: `pygrib` (no Windows PyPI wheels, real
+conda-forge win-64 builds exist), `xlrd` (a real PyPI wheel, installs fine under warnfix), and
+`colorama` (imported only via `importlib.import_module`, invisible to PyInstaller's static
+analysis, needs `--hidden-import` even after cascading to conda). See `docs/agent-interconnect.md`'s
+DLL-bundling section for the full mechanism trace and why GDAL (the original candidate) was
+rejected as the trigger package (see `docs/agent-closed-backlog.md`'s Item 22 for that research).
 
-**GDAL was the original candidate for the cascade trigger, researched and rejected.** GDAL's
-Python bindings live under the `osgeo` namespace (`from osgeo import gdal`), and PyInstaller's
-warn file always records the top-level import name ("osgeo"), not the actual PyPI distribution
-name ("gdal"/"GDAL"). PyPI hosts a real, always-succeeding dummy package literally named `osgeo`
-(a deliberate typosquat-protection placeholder maintained specifically to catch people who
-mistakenly `pip install osgeo` instead of `pip install gdal`) -- so warnfix's own per-module
-repair attempt for GDAL would install that harmless dummy instead of genuinely failing, silently
-defeating `:warnfix_cascade_detect`'s Signal B (a REAL recorded install failure, gated on
-`~warnfix_repair_failed.flag`, set only by a genuine per-module install failure). `pygrib`'s
-top-level import name IS its own correct PyPI/conda-forge package name (no namespace
-indirection, no decoy package), so this same trap cannot occur. See `docs/agent-closed-backlog.md`'s
-Item 22 for the full research trail.
+`$chainPass` requires all 4 mechanism sub-checks (`mech1Pass`-`mech4Pass`); confirmed `true` for
+the first time via PR #421's merge (`cache`-lane run `31264219121`). Counts are checked against
+`~setup.log` alone, not the stdout+log concatenation, to avoid double-counting every `:log`-emitted
+line (which is written to both).
 
-**Extended 2026-08-04 with a 4th mechanism (CLAUDE.md Active Backlog Item 24,
-`docs/prd-conda-native-dll-bundling.md`): the conda native-DLL bundling repair loop
-(`:dll_bundle_recover`).** `pygrib`'s conda-forge build genuinely triggers the exact
-`eccodes.dll`-not-bundled failure this loop exists to repair, so this same test (no new flags,
-no new fixtures) is also this loop's Requirement 4 regression test -- see
-`docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the full
-mechanism trace. `$mech4Pass` (`dllWarningSeen`/`dllBundling`/`dllBundleComplete`) is required for
-`$chainPass`, alongside the original three mechanisms. Item 24 (this mechanism's own first
-confirmation, `eccodes.dll`) and its two successors, Item 28 (`--collect-submodules` pairing) and
-Item 29 (a second `:dll_bundle_recover`/`:hidden_import_recover` pass for a DLL gap a hidden-import
-rebuild surfaces later), are all closed in `docs/agent-closed-backlog.md` -- `chainPass` was
-finally confirmed `True` for the first time via PR #421's merge (`cache`-lane run `31264219121`),
-closing the last of the three.
-
-Asserts, mostly against `$combined` (the bootstrap stdout log plus `~setup.log`, concatenated) --
-except the exact cascade COUNT (`$uvToConda`) and the warnfix-round evidence (`$warnfixRoundCount`/
-`$warnfixRoundText`, both derived below), which are checked against `$setupText` (`~setup.log`
-alone) so a genuine occurrence is never double-counted: every `:log`-emitted line (`run_setup.bat`'s
-`:log` subroutine) is written to BOTH stdout (captured into the bootstrap log) AND `~setup.log`
-(`%LOG%`), so counting matches against the concatenation of both would silently double every
-occurrence -- matching `self.cascade.exec`'s own single-source-for-counts convention: the initial
-`uv pip install -r requirements.txt` genuinely failed; the REQ-009 cascade candidate was detected
-and approved and executed exactly once (uv to conda); conda was selected as the new provider;
-warnfix's per-module loop both attempted AND failed to install `pygrib`, and both attempted AND
-succeeded at installing `xlrd` -- proven to have happened in the SAME repair round (not merely
-somewhere in the run), by scoping the `pygrib`/`xlrd` checks to the substring between the round's
-own `[REPAIR] missing modules detected; installing and rebuilding.` start marker and its
-`[REPAIR] rebuild complete after warnfix.` end marker (required explicitly -- an incomplete round
-with no completion marker does NOT fall back to "everything to end of log," it counts as no
-evidence at all), plus a `$warnfixRoundCount -eq 1` check proving exactly one such round exists in
-the run (so that slice cannot itself straddle two rounds) -- see Item 21's `[INFO] Attempting to
-install:`/`[INFO] Installed:` lines for where those
-per-module log lines originate; `--hidden-import=colorama` was added and the EXE was verified
-after hidden-import recovery; the final EXE (built under conda, the tier the cascade lands on)
-genuinely exists, exits 0, and writes a token file combining evidence from all three packages; and
-`~bootstrap.status.json` reads `state=ok`.
-
-Lane: `cache` only (uv-first, and the only lane that already caches Miniconda across runs to
-amortize the one-time download this test's own cascade triggers -- unlike adding it fresh to
-`real`). Non-gating for its first landing (the `cache` job is `continue-on-error` at the job
-level) -- promote once proven stable across several real runs, matching this repo's established
-graduation pattern (see CLAUDE.md's "CI lane gating maturity" periodic check). Wired
-immediately after the `uv` lane's own `self.cascade.exec` step in `batch-check.yml` (thematically
-grouped, no ordering dependency between them -- different lanes).
+Lane: `cache` only (already caches Miniconda across runs, amortizing the one-time download this
+test's own cascade triggers). Non-gating for its first landing -- promote once proven stable
+across several real runs (CLAUDE.md's "CI lane gating maturity" periodic check).
 
 ```
 self.layered_e2e.chain
@@ -602,60 +388,18 @@ self.layered_e2e.chain
 
 ## selfapps-gribapi-hook-probe NDJSON rows (selfapps_gribapi_hook_probe.ps1, conda-full lane only, non-gating)
 
-CLAUDE.md Active Backlog Item 24 / `docs/prd-conda-native-dll-bundling.md` Requirement 1: a
-one-off empirical experiment testing whether forcing `--hidden-import=gribapi` on a `pygrib`
-PyInstaller build makes `pyinstaller-hooks-contrib`'s existing `hook-gribapi.py` bundle
-`eccodes.dll` for free, without building any new bootstrapper mechanism. See the PRD's Finding 1
-for the full research trail on why this is now expected to come back negative (pygrib and gribapi
-are architecturally independent bindings to the same C library) but is still worth the real CI
-evidence per explicit owner instruction.
-
-**Deliberately standalone -- does NOT invoke `run_setup.bat` or the REQ-009 provider cascade at
-all.** Creates its own scratch conda env directly (`gribapi_probe_env`, removed after every exit
-path including early ones, per a CodeRabbit review finding that the original version leaked it on
-one guard) with `python pygrib eccodes python-eccodes pyinstaller pip --override-channels -c
-conda-forge`, then runs PyInstaller twice from that env's own interpreter against a trivial
-`import pygrib` stub: once as a control (no extra flags), once with `--hidden-import gribapi`
-added. **Builds use `--onedir`, not `--onefile`** (fixed from the first version, another
-CodeRabbit finding) -- `--onefile` embeds bundled support files, DLLs included, inside the
-compressed EXE itself, extracting them only to a runtime-only `_MEIxxxxxx` temp directory that
-never touches disk under the dist path, which would have made the DLL-bundling scan structurally
-unable to ever detect a positive result regardless of whether the hidden-import worked. `--onedir`
-writes bundled files under `dist_$Variant\probe_$Variant\`, where the scan can actually see them.
-For each build, checks whether the `could not resolve 'eccodes.dll'` build-time warning still
-appears, whether any `eccodes*.dll` landed anywhere under that directory (recursive --
-`hook-gribapi.py`'s own directory-preservation logic nests it under an `eccodes` subfolder on
-Windows, not the dist root), and whether the resulting EXE actually runs clean (exits 0 and prints
-its own success token, as opposed to failing with `DLL load failed`).
-
-**`pass` reflects whether the experiment ran to completion and produced conclusive evidence, NOT
-whether the hidden-import "worked" -- there is no `pass`/`fail` on the actual research question
-itself, only a recorded finding.** `details.hiddenImportHelped` (`true`/`false`/`null`) is the
-actual answer, determined from `bundledDll` (a structural, build-output fact -- did the DLL
-actually land on disk), NOT from `ranClean` (a runtime-behavior fact kept only as supplementary
-per-variant evidence) -- a review finding correctly pointed out these are two distinct questions
-that a runtime-only signal would have conflated. `null` when the experiment was inconclusive
-(either variant's observation was incomplete), otherwise `true` only if the control build did NOT
-bundle the DLL AND the experiment build did. An "observation" requires BOTH the build itself
-(launched, completed within its 600s budget, output fully captured, exited 0) AND the resulting
-EXE (launched, completed within its 30s budget, output fully captured) to be complete --
-`buildObservationComplete`/`observationComplete` are both explicit, checkable per-variant facts
-(not inferred from `dist\*.exe` merely existing on disk) precisely so a timed-out or partially-
-written build/run can never masquerade as real evidence. `pass=false` covers a genuine infra
-failure (conda env create failed, or python.exe missing from the created env) that prevented the
-probe from running at all -- distinct from `pass=true, hiddenImportHelped=null`, which means the
-probe ran but the builds themselves were inconclusive.
-
-Lane: `conda-full` only, gated on `steps.conda_avail.outputs.available == 'true'` (same gate the
-27 other conda-full-only self-tests already use) -- guarantees real Miniconda is present without
-any step-ordering placement constraint. Non-gating in practice, though NOT via `continue-on-error`
-alone (a review finding on this PR's first commit correctly caught that this does not, by itself,
-exempt a row from `batch-check.yml`'s separate NDJSON-verdict enforcement step, which fails the
-`conda-full` lane job on any raw `pass=false` regardless of which step emitted it) -- every exit
-path in the test script emits `pass=true` unconditionally, with `skip`/`details.conclusive`
-carrying the real outcome instead. Exploratory by design: the conda-forge solve for
-`pygrib`+`eccodes`+`python-eccodes`+`pyinstaller` together in one env is unproven as of this
-test's first landing.
+A one-off empirical experiment (`docs/prd-conda-native-dll-bundling.md` Requirement 1) testing
+whether forcing `--hidden-import=gribapi` on a `pygrib` PyInstaller build makes
+`pyinstaller-hooks-contrib`'s existing hook bundle `eccodes.dll` for free -- expected negative
+(pygrib and gribapi are architecturally independent bindings to the same C library) but run for
+real evidence per owner instruction. Deliberately standalone (own scratch conda env, no
+`run_setup.bat`/cascade involvement); builds `--onedir` not `--onefile` (a onefile build would make
+the DLL-bundling scan structurally unable to observe a positive result, since bundled files only
+ever land in a runtime-only `_MEIxxxxxx` temp dir). `pass` reflects whether the experiment ran to
+completion, NOT whether the hidden-import "worked" -- the actual finding is
+`details.hiddenImportHelped` (`true`/`false`/`null`), determined from a structural build-output
+fact (`bundledDll`), not a runtime-behavior fact. Gated on `steps.conda_avail.outputs.available ==
+'true'`, same as the other conda-full-only self-tests.
 
 ```
 self.gribapi_hook_probe.hidden_import
@@ -663,33 +407,15 @@ self.gribapi_hook_probe.hidden_import
 
 ## selfapps-conda-bothfail NDJSON rows (selfapps_conda_bothfail.ps1, uv lane only, non-gating)
 
-Closes CLAUDE.md Active Backlog item 10: `:tci_both_failed` (both Miniconda AllUsers and JustMe
-install types fail) previously had zero CI coverage. New hook `HP_TEST_FORCE_JUSTME_FAIL=1`
-(`run_setup.bat`, `:tci_justme`) deterministically skips the real JustMe `start "" /wait` call and
-forces a nonzero result; combined with `HP_TEST_NOT_ELEVATED=1` (already reaches `:tci_justme` by
-skipping straight past the AllUsers attempt), the sub-bootstrap reaches `:tci_both_failed ->
-:die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."` without depending on a
-genuinely broken installer/ACL environment.
-
-**Placement is load-bearing, not arbitrary.** Miniconda installs to the SHARED, machine-wide
-`%PUBLIC%\Documents\Miniconda3` path, not a per-test-directory location -- if Miniconda was
-already installed by an EARLIER step in the same CI job (the main "Bootstrap environment" step,
-or an earlier selfapps script that forces conda), `:try_conda_install`'s own top-level gate
-(`if not defined CONDA_BAT (...)`) would find `conda.bat` already present and skip the install
-block entirely, so this test's hooks would never fire. Wired into `batch-check.yml` immediately
-BEFORE the provider-cascade-exec step (`self.cascade.exec`, which cascades uv -> conda and would
-install Miniconda for real if it ran first) -- the `uv` lane's own main bootstrap step normally
-succeeds via uv alone (no Miniconda installed), so by the time this step runs, conda.bat
-genuinely does not exist yet on the runner. If a future CI change reorders steps within the `uv`
-lane, re-verify this ordering constraint still holds.
-
-Asserts: the `HP_TEST_NOT_ELEVATED` skip line, the `HP_TEST_FORCE_JUSTME_FAIL` hook-fired line,
-the exact `:tci_both_failed` `[ERROR]` message, and `~bootstrap.status.json` reading `state=error`
-(not silently overwritten back to `ok` -- see `docs/agent-lessons-learned.md`'s `:die` entry).
-Does NOT assert process exit code -- `:success`'s own `exit /b 0` runs unconditionally regardless
-of `HP_BOOTSTRAP_STATE`, matching this repo's established "graceful stop" contract for this
-failure class (see `selfapps_pyinstaller_fail.ps1`'s sibling reasoning). Non-gating: the
-CI-ordering assumption above needs to soak before considering gating-lane promotion.
+Covers `:tci_both_failed` (both Miniconda AllUsers and JustMe install types fail), previously zero
+CI coverage. `HP_TEST_FORCE_JUSTME_FAIL=1` + `HP_TEST_NOT_ELEVATED=1` deterministically reaches
+`:tci_both_failed -> :die` without depending on a genuinely broken installer/ACL environment.
+**Placement is load-bearing**: wired immediately BEFORE the provider-cascade-exec step in the `uv`
+lane, so Miniconda genuinely does not exist on the runner yet when this test's own install attempt
+runs (Miniconda installs to a shared, machine-wide path -- an earlier step installing it first
+would make this test's hooks never fire). Asserts `state=error` in `~bootstrap.status.json` (not
+silently overwritten back to `ok`); does not assert process exit code (this repo's established
+"graceful stop" contract).
 
 ```
 self.conda.bothfail
@@ -697,71 +423,21 @@ self.conda.bothfail
 
 ## selfapps-cascade-conda-create-fail NDJSON rows (selfapps_cascade_conda_create_fail.ps1, uv lane only, non-gating)
 
-Closes CLAUDE.md Active Backlog Item 23: a genuine (non-`HP_TEST_FORCE_CONDA_FAIL`-simulated)
-conda-create failure reached during a REQ-009 cascade re-entry (`:cascade_from_uv ->
-:try_conda_create`) previously fell through `:die` into `:conda_create_done`'s own success-path
-continuation instead of routing through `:after_cascade_decision` like every other cascade-target
-failure -- see `docs/agent-interconnect.md`'s "Provider cascade execution re-enters env-create"
-and `CLAUDE.md`'s Item 23 entry for the full trace. Fixed by adding `if defined
-HP_CASCADE_SAVED_PY goto :cascade_conda_create_failed` at both `:conda_create_failed` fall-through
-sites, plus a new `:cascade_conda_create_failed` label mirroring the existing
-`:cascade_conda_unavailable` / `:cascade_embed_unavailable` / `:cascade_venv_unavailable` /
-`:cascade_system_unavailable` template (log a `[WARN] ... keeping current build.` line, restore
-`HP_CASCADE_SAVED_PY` via `:after_cascade_decision`, deliberately never call `:die`).
-
-Two scenarios (`CASCADE_CCF_SCENARIO` env var; unset defaults to `create_fails`), covering the
-fix's two distinct call sites -- both fall through the SAME `if defined HP_CASCADE_SAVED_PY goto
-:cascade_conda_create_failed` pattern, but are reached via genuinely different real-code-path
-triggers:
-
-- **`create_fails`** (default): new hook `HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1`
-  (`run_setup.bat`, `:try_conda_create`) forces a GENUINE failure through the real create/retry
-  code path -- unlike the existing `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL` (fails the first
-  attempt only, then clears itself so the retry can genuinely succeed), this flag persists through
-  the retry too, so both the initial attempt and the retry fail deterministically without
-  depending on real network conditions. Exercises `:conda_create_failed`'s own call site.
-- **`missing_python`** (PR #413 CodeRabbit review finding -- the original scenario above never
-  exercised the fix's OTHER call site): new hook `HP_TEST_FORCE_CONDA_MISSING_PYTHON=1`
-  (`run_setup.bat`, `:conda_create_done`) lets the real `conda create` command run and succeed for
-  real, then deletes the `python.exe` it just produced -- a genuine successful create followed by
-  a genuinely missing interpreter, not a simulated create failure. `HP_TEST_FORCE_CONDA_CREATE_
-  BOTH_FAIL` is deliberately unset in this scenario (create must succeed for real to reach
-  `:conda_create_done` at all). Exercises the `if not exist "%HP_PY%"` block's own call site
-  inside `:conda_create_done`.
-
-Both scenarios: `HP_TEST_FORCE_EMBED_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`, and
-`HP_TEST_SYSCON_ANSWER=N` exhaust `:handle_conda_failure`'s own embed/venv/system fallback chain
-deterministically, so `HP_ENV_READY` never gets set and the fix's own new check is actually
-reached rather than short-circuited by an unrelated fallback tier succeeding. The app imports a
-nonexistent module (`fake_pkg_cascade_xyz`, same trick as `selfapps_cascade.ps1`) so warnfix
-genuinely fails to resolve it under uv, marking a cascade candidate and driving the uv-to-conda
-cascade with `HP_TEST_CASCADE_ANSWER=Y`.
-
-**Placement is load-bearing for both scenarios.** Each must run AFTER `selfapps_cascade.ps1`'s own
-step (`self.cascade.exec`) in the same `uv`-lane job -- that step already downloads and installs
-Miniconda for real, so by the time either scenario's step runs `CONDA_BAT` is already cached and
-`:cascade_acquire_conda`'s own real-install branch is skipped. Same CI-ordering reasoning as
-`selfapps_conda_bothfail.ps1`'s own placement note above, just the opposite direction: that test
-needs Miniconda NOT yet installed, these want it already installed. `missing_python` additionally
-needs a real (not simulated-failure) conda create to complete, so its own step runs slower than
-`create_fails`'s immediate simulated failure.
-
-Asserts, both scenarios: the cascade reached conda exactly once (`REQ-009: cascading provider uv
-to conda`, single occurrence against `~setup.log` alone, matching `self.cascade.exec`'s own
-single-source-for-counts convention), the new `[WARN] REQ-009: cascade target conda create failed;
-keeping current build.` line fired, the scenario's own hard-failure message
-(`[ERROR] conda env create failed.` for `create_fails`, `[ERROR] python.exe missing from conda
-environment.` for `missing_python`) appears exactly ONCE in `~setup.log` -- not twice, since
-`:handle_conda_failure` always logs its message once before attempting any fallback regardless of
-outcome, so a SECOND occurrence (from `:die`'s own separate echo, if the old bug were still
-present) is the actual fall-through-regression signal, not the message's mere presence -- the
-bootstrap exited 0, and -- the key behavioral proof of the fix -- `~bootstrap.status.json` reads
-`state=ok` (not `error`) since `HP_BOOTSTRAP_STATE`'s own default is `ok` at this point in the run
-and `:after_cascade_decision` preserves whatever it already was. `create_fails` additionally
-asserts both the simulated initial-attempt and retry-attempt failure signatures are PRESENT;
-`missing_python` additionally asserts they are ABSENT (proving the real create genuinely
-succeeded, not a simulated-failure path in disguise). Non-gating: depends on
-`selfapps_cascade.ps1` having already run in the same job.
+Covers a genuine (non-simulated) conda-create failure reached during a REQ-009 cascade re-entry,
+which previously fell through `:die` into `:conda_create_done`'s success-path continuation instead
+of routing through `:after_cascade_decision` like every other cascade-target failure -- see
+`docs/agent-interconnect.md`'s "Provider cascade execution re-enters env-create" section for the
+fix (`:cascade_conda_create_failed`). Two scenarios (`CASCADE_CCF_SCENARIO`): `create_fails`
+(default, `HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1` forces a genuine create+retry failure, exercises
+`:conda_create_failed`'s call site) and `missing_python` (`HP_TEST_FORCE_CONDA_MISSING_PYTHON=1`
+lets a real `conda create` succeed then deletes the produced `python.exe`, exercising the sibling
+`if not exist "%HP_PY%"` call site inside `:conda_create_done`). **Placement is load-bearing**:
+both must run AFTER `selfapps_cascade.ps1` in the same job, so Miniconda is already
+installed/cached (opposite ordering need from `self.conda.bothfail` above). Asserts the cascade
+reached conda exactly once, the new `keeping current build` WARN fired, the scenario's own
+hard-failure message appears exactly once (not twice -- a second occurrence would be the
+fall-through regression signature), and `~bootstrap.status.json` reads `state=ok` (the key
+behavioral proof the fix works).
 
 ```
 self.cascade.conda_create_fail
@@ -769,33 +445,15 @@ self.cascade.conda_create_fail
 
 ## selfapps-console-tiering NDJSON rows (selfapps_console_tiering.ps1, uv lane only, non-gating)
 
-CLAUDE.md Active Backlog Item 42 (lever 1): proves the `:log` console-output tiering mechanism
-actually behaves at runtime -- `[DEBUG]`/`[TRACE]`/`[INSTALL]`-tagged lines are suppressed from
-the live console by default (always still written to `~setup.log`, unaffected by tiering) and
-restorable via the new `HP_VERBOSE_CONSOLE=1` opt-in flag. See `docs/agent-lessons-learned.md`'s
-`:log` UNQUOTED-echo entry for why the suppression check itself is a plain `%VAR:~start,len%`
-substring slice rather than `findstr`/piping (message text can legally contain `&`).
-
-Two scenarios (`CONSOLE_TIER_SCENARIO` env var; unset defaults to `default`): `default` asserts
-all three tags are ABSENT from the redirected console capture but PRESENT in `~setup.log`;
-`verbose` (`HP_VERBOSE_CONSOLE=1`) asserts all three are present in BOTH. Forces
-`HP_FORCE_CONDA_ONLY=1` -- conda is the only provider with a real `[INSTALL]`-tagged dependency-
-install call site (`uv`/`venv`/`embed`'s own install branches carry no `[INSTALL]` tag at all,
-see `docs/agent-interconnect.md`'s uv-First Provider Architecture section); a trivial `six`
-requirement keeps the real conda solve/install fast. `HP_SKIP_PIPREQS` is deliberately left UNSET
-so pipreqs runs normally and fires its own `[DEBUG]` line (`[DEBUG] pipreqs (direct) rc=...`);
-`[TRACE] dep install phase: start` fires unconditionally once the dependency-install phase is
-reached, giving all three tags a genuine, unflagged trigger in one run.
-
-**Placement is load-bearing.** Wired into the `uv` lane immediately after
-`selfapps_cascade_conda_create_fail.ps1`'s two steps, so Miniconda is already installed/cached
-from `selfapps_cascade.ps1`'s own earlier real download -- this test's own `HP_FORCE_CONDA_ONLY=1`
-conda-create then reuses the already-installed Miniconda rather than triggering a second fresh
-download, same CI-ordering reasoning as `selfapps_cascade_conda_create_fail.ps1`'s own placement
-note.
-
-Non-gating for its first landing (`uv` lane is `continue-on-error` at the job level) -- promote
-once proven stable across several real runs, matching this repo's established graduation pattern.
+Proves the `:log` console-output tiering mechanism (CLAUDE.md Item 42, lever 1 -- see
+`docs/agent-lessons-learned.md`'s "`:log` echoes UNQUOTED" entry for the suppression mechanism)
+behaves at runtime: `[DEBUG]`/`[TRACE]`/`[INSTALL]` are suppressed from the live console by default
+(still written to `~setup.log`) and restorable via `HP_VERBOSE_CONSOLE=1`. Two scenarios
+(`CONSOLE_TIER_SCENARIO`): `default` and `verbose`. Forces `HP_FORCE_CONDA_ONLY=1` (conda is the
+only provider with a real `[INSTALL]`-tagged install call site) and leaves pipreqs running
+normally so all three tags get a genuine, unflagged trigger in one run. **Placement is
+load-bearing**: wired immediately after the conda-create-fail steps, reusing their already-cached
+Miniconda.
 
 ```
 self.console.tiering
@@ -803,33 +461,16 @@ self.console.tiering
 
 ## selfapps-pyinstaller-fail NDJSON rows (selfapps_pyinstaller_fail.ps1, real/conda-full lanes)
 
-Three scenarios (`PYI_FAIL_SCENARIO` env var: `execfail` / `output_vanish` /
-`execfail_runtimefail`), all emitting the same row id. XFAIL-style, mirroring
-`selfapps_exefail.ps1`'s sibling pattern but testing the PyInstaller BUILD step failing outright
-(not a successfully-built EXE crashing at runtime). `execfail_runtimefail` (added for [REQ-027]
-P2 honest messaging) is `execfail` plus a stub app that ALSO exits non-zero via the interpreter
-fallback, asserting the `HP_NOEXE_VERIFY_FAILED`-gated caveat panel text appears instead of the
-other two scenarios' plain "your code ran successfully" text -- see the Closed Backlog entry for
-the real, pre-existing dishonest-claim bug this closes.
-Regression test for a real bug found 2026-07-20 while scoping the AV-Safe Build Path PRD's
-requirement-1 failure-simulation tests (`docs/prd-av-safe-build-path.md`): a genuine PyInstaller
-build failure previously fell through `:die`'s call-frame-only `exit /b` (it never halts the
-process) all the way to `:after_cascade_decision`, which unconditionally overwrote
-`~bootstrap.status.json` back to `state=ok` and exited 0 -- silently masking the failure. Fixed
-by setting `HP_BOOTSTRAP_STATE=error` at the build call site. This test asserts the fix:
-`~bootstrap.status.json` genuinely reads `state=error` (not overwritten). It does NOT assert a
-non-zero process exit code -- `:success`'s own `exit /b 0` runs unconditionally regardless of
-`HP_BOOTSTRAP_STATE`, matching this repo's established "graceful stop" contract for this failure
-class (see `selfapps_preflight.ps1`'s sibling test, which likewise never checks exit code). See
-`docs/agent-lessons-learned.md`'s `:die` entry for the
-full trace of why the pre-fix behavior was wrong. No individual `upload-artifact` wiring, same
-as `selfapps_exefail.ps1` -- covered by the coarser full-tree `diag-selftest-*` capture.
-
-**Updated when Tier A shipped**: also sets `HP_TEST_FORCE_NUITKA_FAIL=1` so the new
-`:try_nuitka_tier_a` fallback is deterministically forced to fail too -- once Tier A existed, a
-real Nuitka build against this test's trivial stub app would likely succeed on a Windows CI
-runner with MSVC, silently turning this "everything fails" test into a fallback-success case
-(a different scenario, covered separately by `self.exe.build.tiera` below).
+Three scenarios (`PYI_FAIL_SCENARIO`: `execfail`/`output_vanish`/`execfail_runtimefail`), XFAIL-
+style, testing the PyInstaller BUILD step failing outright. `execfail_runtimefail` (REQ-027 P2)
+additionally has the interpreter fallback ALSO exit non-zero, asserting the honest
+`HP_NOEXE_VERIFY_FAILED`-gated caveat text appears instead of a false "your code ran successfully"
+claim. Asserts `~bootstrap.status.json` genuinely reads `state=error` (the fix this test guards:
+a genuine build failure used to fall through `:die` all the way to a `state=ok` overwrite); does
+NOT assert process exit code. Also sets `HP_TEST_FORCE_NUITKA_FAIL=1` so Tier A's own fallback is
+deterministically forced to fail too (otherwise a real Nuitka build could silently succeed here,
+turning this "everything fails" test into a fallback-success case, covered separately by
+`self.exe.build.tiera`).
 
 ```
 self.exe.build.xfail
@@ -837,17 +478,10 @@ self.exe.build.xfail
 
 ## selfapps-nuitka-tiera NDJSON rows (selfapps_nuitka_tiera.ps1, uv lane only, non-gating)
 
-Proves AV-Safe Build Path requirements 2-4 (Tier A) work end to end: `HP_TEST_FORCE_PYINSTALLER_
-FAIL=1` forces the primary build to "fail" deterministically, `HP_TEST_FORCE_NUITKA_FAIL` is
-deliberately left unset so a REAL Nuitka build runs in the same environment (no reprovisioning),
-and asserts the fallback succeeds, `dist\<env>.exe` exists, the stub app's own stdout came
-through the existing (unmodified) EXE smoke-test path, and the final `~bootstrap.status.json`
-reads `state=ok` (a successful fallback is bootstrap SUCCESS, distinct from `self.exe.build.xfail`
-where every tier failing is the error case). Deliberately non-gating for its first landing --
-unlike `self.exe.build.xfail`, this exercises genuine Nuitka CLI flags and MSVC/compiler
-availability that could not be verified locally (no Windows machine in this sandbox); promote to
-a gating lane once proven stable across several real runs, matching this repo's established
-graduation pattern (see `CLAUDE.md`'s "CI lane gating maturity" periodic check).
+Proves AV-Safe Build Path Tier A end to end: `HP_TEST_FORCE_PYINSTALLER_FAIL=1` forces the primary
+build to fail, a REAL (unforced) Nuitka build runs in the same environment, and the fallback
+succeeds with `state=ok`. Non-gating -- exercises genuine Nuitka CLI/MSVC availability that could
+not be verified locally.
 
 ```
 self.exe.build.tiera
@@ -855,31 +489,13 @@ self.exe.build.tiera
 
 ## selfapps-nuitka-tiera-hidden-skip NDJSON rows (selfapps_nuitka_tiera_hidden_skip.ps1, uv lane only, non-gating)
 
-Regression test for a real bug found via a refinement pass on the shipped Tier A code:
-`:hidden_import_recover` (the `--hidden-import` auto-recovery loop, REQ-016 Slice 2)
-unconditionally rebuilt via PyInstaller on a recoverable missing-import failure, with no check
-for whether `dist\<env>.exe` was actually built by Nuitka (Tier A, `HP_NUITKA_FALLBACK_USED=1`)
-rather than PyInstaller -- PyInstaller's `--hidden-import` flag does not apply to a
-Nuitka-produced EXE, so silently rebuilding via PyInstaller there risked reproducing the very
-failure Tier A exists to route around, or clobbering a working Nuitka build with a broken
-PyInstaller one. Fixed with an early-skip guard at the top of `:hidden_import_recover`.
-
-Same `HP_TEST_FORCE_PYINSTALLER_FAIL=1` technique as `selfapps_nuitka_tiera.ps1` to force Tier A,
-with a real (unforced) Nuitka build. The stub app deliberately prints a fabricated, exact-format
-`ModuleNotFoundError: No module named 'nuitka'` to stderr and exits 1 -- `nuitka` itself is
-guaranteed to be pip-installed into the same build interpreter Tier A just used, so
-`~hidden_import_scan.py`'s `find_spec` gate would treat this as a genuinely fixable target if the
-recovery loop were mistakenly attempted; since the scanner is a pure text-based regex match
-against captured process output (not real Python introspection), this fabricated signal
-deterministically constructs the exact trigger condition the skip guard must catch, without
-depending on genuine (fragile, non-deterministic) Nuitka missing-import behavior.
-
-Asserts: Tier A succeeds (same checks as `self.exe.build.tiera`), the EXE genuinely runs and
-exits non-zero, the new skip log line fires, the OLD `[REPAIR][HIDDEN_IMPORT]` PyInstaller-rebuild
-log line does NOT fire, and `~bootstrap.status.json` still reads `state=ok` (the user program's
-own non-zero exit is not a bootstrapper failure -- see CLAUDE.md's "User-code exit-code semantics"
-Known Finding). Same non-gating reasoning as `self.exe.build.tiera` (depends on a real Nuitka
-build succeeding).
+Regression test: `:hidden_import_recover` used to unconditionally rebuild via PyInstaller even
+when `dist\<env>.exe` was actually Nuitka-built (Tier A), risking reproducing the very failure Tier
+A exists to route around. Same `HP_TEST_FORCE_PYINSTALLER_FAIL=1` technique as
+`self.exe.build.tiera`, with a real Nuitka build; the stub app prints a fabricated exact-format
+`ModuleNotFoundError: No module named 'nuitka'` (deterministically constructing the trigger
+condition, since `nuitka` really is installed in Tier A's own build interpreter) and asserts the
+new skip guard fires and the OLD PyInstaller-rebuild log line does not.
 
 ```
 self.exe.tiera.hidden_skip
@@ -887,41 +503,15 @@ self.exe.tiera.hidden_skip
 
 ## selfapps-optimized-build NDJSON rows (selfapps_optimized_build.ps1, uv lane only, non-gating)
 
-Proves AV-Safe Build Path requirement 9 (P1): after a NORMAL, verified-successful PyInstaller
-build (never after Tier A -- gated on `HP_NUITKA_FALLBACK_USED` being unset), `:offer_optimized_
-build` offers an elective, human-only, auto-declined-in-CI upsell to also build a Nuitka-optimized
-version. Unlike Tier A (free to delete-then-rebuild since the original build already failed),
-this feature builds to a distinct temp filename, verifies the new build actually runs, and only
-then swaps it into `dist\<env>.exe` -- on any failure at any stage the original, already-working
-EXE is left completely untouched.
-
-Four scenarios (`OPTBUILD_SCENARIO` env var), all in this one file/lane:
-- `accept` (`HP_TEST_OPTBUILD_ANSWER=Y`, no forced failure): a REAL Nuitka build runs, is
-  verified, and is swapped into place. Same non-gating reasoning as `self.exe.build.tiera` --
-  depends on a real Nuitka build succeeding, which could not be verified locally.
-- `forcefail` (`HP_TEST_OPTBUILD_ANSWER=Y` + `HP_TEST_FORCE_OPTBUILD_FAIL=1`): the optimized
-  build is forced to fail deterministically (no real Nuitka attempt); asserts the original
-  PyInstaller-built `dist\<env>.exe` is left completely untouched and still runs (re-executed
-  directly by the test after the bootstrap completes, not just checked for existence).
-- `swapfail` (`HP_TEST_OPTBUILD_ANSWER=Y` + `HP_TEST_FORCE_OPTBUILD_SWAP_FAIL=1`): a REAL Nuitka
-  build runs and verifies successfully (same as `accept`), but the final move-into-place step is
-  forced to fail. Regression test for a real bug found via a refinement-pass code review (see
-  Closed Backlog): the original "did the swap succeed" check tested whether `dist\<env>.exe` (the
-  destination) existed -- but that file already exists BEFORE the move (it's the already-working
-  original), so a genuinely failed `move /y` (e.g. an AV/indexer lock on the destination -- the
-  same hazard class already documented for `:try_embed_fallback`'s own swap in
-  `docs/agent-lessons-learned.md`) was silently misreported as success. Asserts the original EXE
-  is left completely untouched and still runs, the leftover temp file is cleaned up (also part of
-  the fix -- the old failure branch never routed through the shared `:optbuild_cleanup` label),
-  and the "succeeded and verified" message is never logged.
-- `decline` (neither env var set): falls through to the ambient `HP_CI_LANE` auto-decline, the
-  same mechanism `selfapps_postexec_checkpoint.ps1`'s own `self.checkpoint.decline` scenario
-  relies on; asserts the prompt is shown but no build is ever attempted.
-
-All four deliberately kept in one file/lane rather than split across gating/non-gating lanes by
-determinism, matching this repo's established multi-scenario pattern (e.g.
-`selfapps_pyinstaller_fail.ps1`'s `PYI_FAIL_SCENARIO`) -- promote once proven stable, matching
-this repo's established graduation pattern.
+Proves AV-Safe Build Path requirement 9 (`:offer_optimized_build`, see
+`docs/agent-interconnect.md`'s dedicated section): after a normal, verified-successful PyInstaller
+build, an elective Nuitka-optimized-build upsell builds to a temp file, verifies it, and only then
+swaps it into place -- any failure leaves the original untouched. Four scenarios
+(`OPTBUILD_SCENARIO`): `accept` (real build+swap succeeds), `forcefail` (forced build failure,
+original untouched), `swapfail` (forced swap failure -- regression test for a real bug where the
+old "did the swap succeed" check tested the DESTINATION, which exists before the move regardless
+of outcome; fixed by checking the SOURCE is gone instead), `decline` (ambient CI auto-decline, no
+build attempted).
 
 ```
 self.optbuild.offer
@@ -929,25 +519,14 @@ self.optbuild.offer
 
 ## selfapps-interactive-stdin NDJSON rows (selfapps_interactive_stdin.ps1, uv lane only, non-gating)
 
-Closes the remaining gap in `docs/plan-cli-interactive-verification.md`'s live-echo redesign
-(P0 requirement 1 shipped the tee mechanism; this test proves the full real-Windows nesting a
-double-clicked `run_setup.bat` actually uses -- `cmd.exe -> :run_exe_smokerun -> the emitted
-~exe_smokerun.ps1 helper -> the built EXE` -- carries genuine interactive stdin all the way
-through, not just that output is teed). Builds a real PyInstaller EXE from a multi-round
-`input()`-driven stub app (the owner's actual target program shape: no launch args, ask setup
-questions, loop on stdin until a quit command) and pipes a scripted sequence of answers into
-`cmd.exe`'s own stdin. Provider-agnostic by construction (`:run_exe_smokerun`/`~exe_smokerun.ps1`
-run identically regardless of which REQ-009 tier built the environment), so one passing run in
-one lane is representative of the mechanism working across all lanes -- a per-provider repeat
-would not exercise any different code path. Asserts ORDERING (each answer consumed by the right
-prompt in the right round via `IndexOf` comparisons on the bootstrap log), not just presence of
-expected substrings, plus that the EXE was genuinely built and the bootstrap reports `state=ok`.
-
-Does NOT prove a live human's own typing timing (impossible to automate) -- it proves the
-plumbing does not silently drop or reorder stdin/stdout, which was the genuinely unconfirmed
-part. See `docs/plan-cli-interactive-verification.md` requirement 2 for what remains open (a
-Windows-CI-only stdin confirmation was exactly what this test set out to provide; it is not a
-substitute for a human's own interactive session).
+Proves the full real-Windows nesting a double-clicked `run_setup.bat` uses (`cmd.exe ->
+:run_exe_smokerun -> ~exe_smokerun.ps1 -> the built EXE`) carries genuine interactive stdin all the
+way through, not just that output is teed -- builds a real PyInstaller EXE from a multi-round
+`input()`-driven stub app and pipes a scripted answer sequence into `cmd.exe`'s own stdin,
+asserting ORDERING via `IndexOf`, not just presence. Provider-agnostic by construction, so one
+passing lane represents all lanes. Does NOT prove a live human's own typing timing -- proves the
+plumbing doesn't silently drop or reorder stdin/stdout (see `docs/agent-interconnect.md`'s
+"Live-echo redesign" section).
 
 ```
 self.interactive.stdin.roundtrip
@@ -955,38 +534,14 @@ self.interactive.stdin.roundtrip
 
 ## selfapps-gui-timeout-hint NDJSON rows (selfapps_gui_timeout_hint.ps1, uv lane only, non-gating)
 
-CLAUDE.md Active Backlog Item 41: `:run_exe_smokerun`'s activity-aware kill (`~exe_smokerun.ps1`,
-its own `$sawOutput` gate -- see `docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill"
-section) only force-stops a verification run that has produced ZERO stdout/stderr bytes by the
-~30s deadline -- exactly the shape a correctly-behaving GUI app (tkinter/PyQt, a `mainloop()`
-with no console output) also produces, indistinguishable at that point from a genuinely hung
-program. `run_setup.bat` now records `HP_EXE_TIMEDOUT_SILENT` at the same point
-`HP_EXE_VERIFY_FAILED` is set (`HP_EXE_EXIT=="-1"` already implies `$sawOutput` was false, since
-the kill is gated on it -- no new runtime signal needed), and `:print_postflight_briefing`'s
-`:pfb_caveat` branch calls a new `:pfb_gui_hint` subroutine when it is defined, printing a note
-that distinguishes this case from a genuine crash/hang instead of leaving the generic caveat text
-to imply something is broken.
-
-This test does not launch a real GUI (no display on a headless Windows CI runner) -- it
-reproduces the exact SIGNAL the mechanism reacts to instead: a real, PyInstaller-built EXE
-(`import time; time.sleep(600)`, zero output of any kind) verified with `HP_SMOKERUN_KILL_MS`
-shortened to 12000ms (a pre-existing test-only override `~exe_smokerun.ps1` already reads from
-its own inherited process environment -- see `tests/test_exe_smokerun.py` for the identical
-technique at the Python-unit-test level; no `run_setup.bat` code change was needed to support
-this). 12000ms was chosen with margin above typical PyInstaller onefile cold-start extraction
-time (documented as commonly 1-3+ seconds even on an idle machine, see
-`docs/agent-lessons-learned.md`'s "widened to 10000ms" entry for the sibling fail-fast-probe
-window) so a slow-but-genuinely-silent extraction cannot be misclassified, while staying far
-below the real 30000ms production default to keep the test fast.
-
-Asserts: `[STATUS] Run Status: TIMED OUT` appears in the log, the caveat panel's header
-(`SETUP COMPLETE -- WITH A CAVEAT`) appears, the new GUI-hint text appears, and `dist\` genuinely
-exists (proving the EXE was really built -- otherwise this would exercise the unrelated
-`:print_no_exe_briefing` path instead of `:pfb_caveat`). Non-gating for its first landing --
-first time `HP_SMOKERUN_KILL_MS` is exercised from a full-bootstrap selfapps test against a real
-PyInstaller-frozen EXE's own cold-start behavior, so it could not be verified against real
-Windows locally -- matches this repo's established graduation pattern (see CLAUDE.md's "CI lane
-gating maturity" periodic check).
+Proves `:run_exe_smokerun`'s activity-aware kill correctly distinguishes "zero output by the
+deadline" (which a correctly-behaving silent GUI app also produces) from a genuine hang, by
+printing a GUI-specific hint instead of implying something is broken (see
+`docs/agent-interconnect.md`'s "Activity-aware EXE-smoke kill" section). Uses a real
+zero-output-forever EXE with `HP_SMOKERUN_KILL_MS` shortened to 12000ms (a pre-existing test-only
+override) rather than a real GUI (no display on a headless CI runner). Asserts the TIMED OUT
+status, the caveat header, the new GUI-hint text, and that `dist\` genuinely exists (proving a
+real build, not the no-EXE briefing path).
 
 ```
 self.exe.timeout_gui_hint
@@ -994,36 +549,15 @@ self.exe.timeout_gui_hint
 
 ## selfapps-warnfix-venv-repair NDJSON rows (selfapps_warnfix_venv_repair.ps1, uv lane only, non-gating)
 
-CLAUDE.md's former Active Backlog Item 36 (closed, see `docs/agent-closed-backlog.md`): the
-warnfix repair-install dispatch used to have only `uv`/`CONDA_BAT` branches, silently no-opping
-under venv/embed/system while still logging as if the repair succeeded -- see
-`docs/agent-interconnect.md`'s "Standalone Python-download tier" section for the full mechanism
-and fix. This test proves the new `venv`-mode branch genuinely installs the missing module, not
-just that the EXE eventually builds -- the exact coverage gap the original finding called out
-(every existing `self.exe.warnfix.*` scenario runs on `real`/`conda-full`, both of which land in
-the `uv` or `CONDA_BAT` branch, so the broken branch was unreachable from any prior test).
-
-Forces venv mode via `HP_OFFLINE_MODE=1` + `HP_TEST_FORCE_CONDA_FAIL=1` in a fresh scratch
-directory -- the same established technique `self.venv.fallback` (`selfapps_ux_hardening.ps1`)
-already uses (see `docs/agent-interconnect.md`'s "HP_UV_BIN locality" section): a fresh directory
-has no cached `~uv_bin` so uv is unavailable, `HP_OFFLINE_MODE` blocks a fresh uv download, and
-`HP_TEST_FORCE_CONDA_FAIL` forces conda to fail too, so the provider chain falls through
-uv -> conda -> embed -> venv and lands on venv (embed is not forced real, so it's never reachable
-here). Uses the same `xlrd`-importing stub app as `selfapps_warnfix.ps1`'s own `real_warnfix`
-scenario (xlrd is not covered by any heuristic, so warnfix is the only repair path), with the
-same `HP_SKIP_PIPREQS=1` + `HP_SKIP_AUTOPEP_DISCOVERY=1` isolation flags to keep warnfix the sole
-install mechanism.
-
-Asserts: the `[BOOT] REQ-009: Selected Python provider: Local venv (fallback).` line (proving
-venv mode was genuinely selected, not conda/embed unexpectedly succeeding instead), both warnfix
-phase-marker lines (`[REPAIR] missing modules detected; installing and rebuilding.` /
-`[REPAIR] rebuild complete after warnfix.`), and -- the core Item 36 assertion -- `[INFO]
-Installed: xlrd` (the line that was NEVER emitted under venv mode before the fix, even though the
-rebuild-complete line fired unconditionally regardless), plus the absence of `[WARN] Repair
-failed:`, no infra-error signature, and a clean EXE run with its token file written. Skips with
-`skip=true` on non-Windows and in the conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all
-non-conda fallbacks unconditionally there, matching `self.venv.fallback`'s own skip reasoning).
-Non-gating for its first landing, matching this repo's established graduation pattern.
+Closes CLAUDE.md's former Item 36: the warnfix repair-install dispatch used to have only
+`uv`/`CONDA_BAT` branches, silently no-opping under venv/embed/system while still logging as if
+the repair succeeded (see `docs/agent-interconnect.md`'s "Standalone Python-download tier"
+section). Forces venv mode via the established `HP_OFFLINE_MODE=1` + `HP_TEST_FORCE_CONDA_FAIL=1`
+technique in a fresh scratch dir, using the same `xlrd`-importing stub app as
+`selfapps_warnfix.ps1`'s `real_warnfix` scenario. Asserts venv mode was genuinely selected AND
+`[INFO] Installed: xlrd` actually appears -- the line NEVER emitted under venv mode before the fix,
+even though the rebuild-complete marker fired unconditionally regardless. Skips on non-Windows and
+in the conda-full lane.
 
 ```
 self.exe.warnfix.venv_repair
@@ -1031,31 +565,14 @@ self.exe.warnfix.venv_repair
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
-CLAUDE.md's former Active Backlog Item 39 (closed): the EXE fast path's freshness check (`HP_FAST_CHECK`,
-`tools/fast_check.ps1`) switched from mtime-only over `*.py` files to a content-hash
-comparison over the same file set, extended to `requirements.txt`/`pyproject.toml`/
-`runtime.txt`. Closes two exposures: (a) a timestamp-preserving delivery method (a ZIP,
-xcopy, robocopy) carrying a genuinely changed file whose mtime still predates the built
-EXE was previously silently treated as fresh; (b) a dependency-file-only change was
-previously invisible to the scan regardless of mtime. `:write_fast_hash` (called from
-`:success`, gated on `HP_FRESH_BUILD_OK` being defined -- set only in the genuine
-build-success branches, so the already-fast reuse case never pays a redundant re-hash
-pass) writes the stored hash after a genuine fresh build attempt.
-
-This test is the coverage-gap Item 39 itself named ("no scenario backdates a source file's
-mtime below the EXE's to test this"): run 1 builds the EXE from an entry file printing a V1
-token; entry.py is then rewritten to print a V2 token and its mtime is set to 2001-09-09
-(well before `dist\<env>.exe`'s own mtime) before run 2. Asserts run 2's captured EXE
-stdout (`~run.out.txt`, written by both the fast-path-reuse launch and the fresh-build
-smokerun) shows the V2 token, not V1 -- direct evidence a genuine rebuild happened, not
-just that some log line says "rebuilding" -- and that the "Fast path: reusing" log line is
-absent. The isolated `tools/fast_check.ps1` script itself is unit-tested directly via real
-`pwsh` in `tests/test_fast_check.py` (6 scenarios: no stored hash, write-then-fresh,
-backdated-mtime content change, dependency-file-only change, rewrite-after-change, missing
-EXE) -- this selfapps test is what proves the full `:try_fast_exe -> :run_entry_smoke ->
-:success -> :write_fast_hash` cycle wires correctly end-to-end on real Windows CI, which
-`test_fast_check.py` alone cannot. Non-gating for its first landing, matching this repo's
-established graduation pattern (see CLAUDE.md's "CI lane gating maturity" periodic check).
+Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to
+a content-hash comparison (see `docs/agent-interconnect.md`'s "EXE fast path vs env-state fast
+path" section for the `HP_FRESH_BUILD_OK`-gated write side). This test backdates a rewritten entry
+file's mtime below the built EXE's own mtime (the exact scenario mtime-only checking would miss)
+and asserts run 2's captured EXE stdout shows the NEW token, not the old one -- direct evidence a
+genuine rebuild happened. `tools/fast_check.ps1` itself is unit-tested directly in
+`tests/test_fast_check.py`; this selfapps test proves the full cycle wires correctly end-to-end on
+real Windows CI.
 
 ```
 self.fastpath.hash.backdated_mtime
@@ -1063,16 +580,14 @@ self.fastpath.hash.backdated_mtime
 
 ## selfapps-cache-selfheal NDJSON rows (test_ci_cache_selfheal.ps1, `real` lane only, GATING)
 
-Item 19 follow-on (docs/agent-closed-backlog.md): the cache-lane self-heal logic
-(`tools/ci_cache_selfheal.ps1`) previously had no deterministic CI coverage -- the ambient
-`cache` lane only reaches it when GitHub's own cache happens to be organically corrupted, and
-that lane is entirely informational (job-level `continue-on-error`) besides, so a regression in
-the self-heal logic itself would ship silently. This test exercises all 4 branches of that
-script directly against a scratch temp directory with fake `condabin\conda.bat` stand-ins (no
-real conda/network dependency), wired into `real` -- a GATING lane -- so a regression actually
-fails CI. Windows-only (the script under test shells out to `conda.bat` via `cmd.exe`, and the
-locked-directory scenario needs Windows file-locking semantics); skips with `skip=true` on
-non-Windows via the bare `self.ci.cache_selfheal` row.
+The cache-lane self-heal logic (`tools/ci_cache_selfheal.ps1`, see
+`docs/agent-lessons-learned.md`'s cache-corruption entry) previously had no deterministic CI
+coverage at all -- the ambient `cache` lane only reaches it when GitHub's cache happens to be
+organically corrupted, and that lane is itself non-gating. This test exercises all 4 branches
+directly against a scratch temp directory with fake `conda.bat` stand-ins, wired into `real` (a
+GATING lane) so a regression actually fails CI. Windows-only (shells out to `conda.bat` via
+`cmd.exe`; needs Windows file-locking semantics for one scenario) -- skips on non-Windows via the
+bare row.
 
 ```
 self.ci.cache_selfheal,
@@ -1081,53 +596,28 @@ self.ci.cache_selfheal.exact_hit_corrupted, self.ci.cache_selfheal.prefix_heal_f
 self.ci.cache_selfheal.no_binary
 ```
 
-`self.cache.selfheal.fired` (inline `batch-check.yml`, `cache` lane, `HP_CACHE_SELFHEAL_ATTEMPTED`-gated)
-is the companion VISIBILITY row -- unlike the deterministic test above, this
-fires only when the AMBIENT `cache` lane's own restored cache is organically corrupted on a
-restore-keys prefix match, and records whether that real self-heal attempt actually succeeded
-(`details.healed`). Always `pass:true` (informational, matching `self.cache.corrupted`'s own
-convention) -- its purpose is to make an organic occurrence queryable on the diagnostics site
-over time instead of requiring a raw-log dig to notice it happened at all, not to gate.
+`self.cache.selfheal.fired` (inline `batch-check.yml`, `cache` lane) is the companion VISIBILITY
+row -- fires only when the ambient `cache` lane's own restored cache is organically corrupted,
+recording whether that real self-heal attempt succeeded. Always `pass:true` (informational).
 
 ---
 
 ## selfapps-aggregate-selftest-verdicts NDJSON rows (test_aggregate_selftest_verdicts.ps1, `real` lane only, GATING)
 
-CLAUDE.md Active Backlog Item 35's own "Precondition" caveat: the `selftest-gate` job's
-"Aggregate verdicts" step previously only treated a TOTAL absence of `lane_verdict.json` files
-(zero lanes reporting) as a failure signal -- a single lane's own verdict artifact silently
-missing (upload glitch, artifact-service hiccup) while the other 7 lanes' artifacts landed fine
-was invisible, and an unexpected or duplicate lane landing alongside a genuinely missing one could
-make a raw file-COUNT check pass even with one real lane's evidence absent. The aggregation logic
-was extracted to `tools/aggregate_selftest_verdicts.ps1` (mirroring `tools/ci_cache_selfheal.ps1`'s
-own extraction, see the section directly above) so this test can exercise it deterministically
-against fixture directories built to mimic exactly what `actions/download-artifact@v6` produces
-(each artifact under its own `<VerdictsDir>/selftest-verdict-<lane>/lane_verdict.json`
-subdirectory), with no dependency on a real 8-lane matrix run. Wired into `real` -- a GATING lane
--- so a regression in the aggregation logic itself fails CI on every run, not just when a real
-artifact happens to go missing/duplicated/unexpected that day.
+Proves the fail-closed fix to `selftest-gate`'s own verdict aggregation (CLAUDE.md Item 35's
+"Precondition" -- see that item for the full mechanism: comparing the SET of expected lane IDs
+against the SET observed, rather than only detecting a total absence of files). Extracted to
+`tools/aggregate_selftest_verdicts.ps1`, exercised via 8 fixture scenarios mimicking
+`actions/download-artifact@v6`'s own output layout, no dependency on a real 8-lane matrix run.
+Wired into `real` (GATING) so a regression in the aggregation logic itself fails CI on every run.
 
-Eight scenarios: `healthy` (all 8 expected lanes present once, none failing -> pass; one lane's
-own record deliberately omits the `lane` field entirely, proving the artifact-directory-name
-fallback path -- added after a CodeRabbit review round on PR #454 pointed out the original 6
-scenarios never exercised that fallback), `lane_failed` (a genuine per-lane `has_failures:true`
-is still detected -- regression guard for the pre-existing, unchanged union behavior),
-`missing_lane` (7 of 8 lanes present -- the actual gap this item closes, since the ORIGINAL
-inline logic had no way to detect a partial miss at all), `unexpected_lane` (an extra lane not in
-the matrix's own mode list), `duplicate_lane` (one lane's verdict uploaded twice under two
-differently-named artifact directories, both claiming the same `lane` field inside their JSON),
-`empty_fallback` (zero verdict files with `FallbackResult='success'` -- proves the new lane-set
-check fires independent of the fallback result, unlike the OLD behavior which only fired here
-when the fallback result was NOT `'success'`), `malformed_json` (one lane's `lane_verdict.json`
-is not valid JSON at all), and `missing_field` (one lane's record is valid JSON but has no
-`has_failures` field). The last two (also added via the same PR #454 review round) close a
-second real gap: a parse failure or a missing `has_failures` value previously only added a
-`parse_warning` annotation without ever setting `has_failures=true` -- silently treated as
-passing evidence instead of "we don't have confirmed-good evidence for this lane." Deliberately
-NOT gated on `$IsWindows` (unlike `test_ci_cache_selfheal.ps1`'s own Windows-only skip) -- the
-script under test is pure PowerShell (JSON parsing and file I/O only, no `cmd.exe`/
-Windows-specific calls), so it runs identically under `pwsh` on Linux or Windows and was directly
-verified locally before ever reaching real CI.
+Scenarios: `healthy` (all 8 lanes present, including one whose record omits the `lane` field
+entirely, proving the artifact-directory-name fallback), `lane_failed` (a genuine per-lane failure
+still detected), `missing_lane` (7 of 8 present -- the actual gap this closes), `unexpected_lane`,
+`duplicate_lane`, `empty_fallback` (proves the lane-set check fires independent of the fallback
+result), `malformed_json`, `missing_field` (a parse failure or missing field must count as
+`has_failures=true`, not silently pass). Pure PowerShell (no Windows-specific calls), verified
+locally before reaching real CI.
 
 ```
 self.ci.aggregate_selftest_verdicts.healthy, self.ci.aggregate_selftest_verdicts.lane_failed,
@@ -1137,69 +627,27 @@ self.ci.aggregate_selftest_verdicts.malformed_json, self.ci.aggregate_selftest_v
 diag.selftest_gate.verdict
 ```
 
-`diag.selftest_gate.verdict` (inline `batch-check.yml`, the `selftest-gate` job's own "Aggregate
-verdicts" step) is the companion VISIBILITY row for the AMBIENT gate's own real outcome each run
--- unlike the deterministic fixture-based test above, this fires exactly once per real CI run and
-records whether `tools/aggregate_selftest_verdicts.ps1` found `has_failures=true` against that
-run's own genuine 8-lane artifacts (`details.has_failures`/`details.exit_code`/
-`details.fallback_result`). Uploaded as its own artifact
-(`ci_test_results-selftest-gate-<run>-<attempt>`), named to match the `ci_test_results-*`
-wildcard `publish_diag`'s "Download CI NDJSON artifacts" step already uses (see
-`ndjson-registry-check`'s own identical precedent), so it reaches the diagnostics site with no
-new download-step wiring. Added the same PR #454 review round, closing this repo's own coding
-guideline ("New observable logs, files, artifacts, or behavior require an NDJSON row") for the
-gate's own verdict, which previously was observable only via the ephemeral job-summary page.
+`diag.selftest_gate.verdict` (inline `batch-check.yml`, `selftest-gate`'s own "Aggregate verdicts"
+step) is the companion VISIBILITY row for the AMBIENT gate's real outcome each run -- fires once
+per real CI run, recording whether the aggregation found `has_failures=true` against that run's
+genuine 8-lane artifacts.
 
 ---
 
 ## selfapps-lineending-check NDJSON rows (selfapps_lineending_check.ps1, real/conda-full lanes, GATING)
 
-CLAUDE.md Active Backlog Item 44's own "Known gap": the line-ending self-check at the top of
-`run_setup.bat` (before any goto/call in the file -- see the file's own header comment) had zero
-CI coverage of its three failure branches, since a normal `actions/checkout` always normalizes to
-CRLF, so CI could exercise only the happy path on real cmd.exe, never the failure branches. Three
-new `HP_TEST_FORCE_*` hooks close this: `HP_TEST_FORCE_NO_POWERSHELL` forces a synthetic nonzero
-errorlevel right after the real `where powershell` call (no PATH tampering); `HP_TEST_FORCE_LF_
-ONLY` and `HP_TEST_FORCE_PS_CHECK_FAIL` both redirect `HP_SELF_PATH` at something other than the
-running copy of `run_setup.bat` (a synthetic pure-LF sentinel file, or a path that does not exist)
-rather than corrupting the file actually executing -- the running copy must stay healthy CRLF to
-reliably reach and execute the hook logic at all. Pointing at a nonexistent path makes the real,
-unmodified PowerShell command genuinely throw (`FileNotFoundException`) and hit its own
-`catch{exit 2}` branch, exercising the real failure path rather than a simulated one. All three
-hooks and the underlying PowerShell command's exact behavior for each case (nonexistent path ->
-exit 2; pure-LF file -> exit 1; genuine CRLF file -> exit 0) were verified directly against a real
-PowerShell 7 binary before being wired into `run_setup.bat`, not just reasoned about.
+The line-ending self-check at the top of `run_setup.bat` (before any goto/call) had zero CI
+coverage of its failure branches, since a normal checkout always normalizes to CRLF. Three
+`HP_TEST_FORCE_*` hooks close this by redirecting `HP_SELF_PATH` at a synthetic sentinel rather
+than corrupting the actually-running copy: `HP_TEST_FORCE_NO_POWERSHELL`, `HP_TEST_FORCE_LF_ONLY`,
+`HP_TEST_FORCE_PS_CHECK_FAIL`. Gating from first landing -- a cheap, provider-agnostic, pure-batch
+preflight check verified directly against a real PowerShell binary.
 
-Lane: `real` and `conda-full` only, gating from first landing -- matches `self.preflight.syntax`'s
-own precedent for a cheap, provider-agnostic, pure-batch preflight check (no environment or
-dependency work is ever reached in any of these scenarios, unlike the Nuitka/MSVC-dependent
-tests elsewhere in this registry that start non-gating specifically because they could not be
-verified locally).
-
-**Extended for CLAUDE.md Active Backlog Item 48 (`self.preflight.cwd_not_writable`).** The
-writable-CWD preflight sits right after these three checks in `run_setup.bat` (before
-`:merge_git_config`'s own first write to the app folder) and is the same class of "can this even
-run here at all" precondition, so its regression coverage lives in this same file, reusing the
-same `Test-PreflightScenario` helper. Its hook, `HP_TEST_FORCE_CWD_NOT_WRITABLE`, skips the real
-`type nul > ~wtest.tmp` write attempt entirely (rather than revoking filesystem permissions on a
-shared CI runner), producing the same "not found" signal a genuine write failure would.
-
-**Extended again for CLAUDE.md Active Backlog Item 47 (`self.preflight.ps_capability_fail`).**
-Bare PowerShell presence (checked by `self.preflight.no_powershell` above) only proves
-`powershell.exe` exists on PATH, not that it can perform the operations this bootstrapper
-actually needs -- `Convert.FromBase64String` plus `IO.File.WriteAllBytes` (used by
-`:emit_from_base64` to write every embedded helper) and `System.Diagnostics.ProcessStartInfo`
-(used by the failfast-probe/exe-smokerun helpers), any of which a locked-down corporate image
-(AppLocker, WDAC, Constrained Language Mode) can block even with PowerShell itself present. The
-new preflight, sitting right after the CWD-writable check so a real folder-permission failure is
-diagnosed by that check first rather than misattributed to this one, probes all three
-capabilities together in one PowerShell command and fails with one clear, named diagnostic
-instead of five-plus later opaque "Could not write ~x" failures. Its hook,
-`HP_TEST_FORCE_PS_CAPABILITY_FAIL`, redirects the probe's write target at a nonexistent directory
-so the real `WriteAllBytes` call genuinely throws and hits its own `catch{exit 1}` branch --
-matching `HP_TEST_FORCE_PS_CHECK_FAIL`'s established real-failure technique rather than faking an
-exit code externally. Verified directly against a real PowerShell binary before being wired into
-`run_setup.bat`, not just reasoned about.
+Extended for `self.preflight.cwd_not_writable` (the writable-CWD preflight right after these three
+checks, before `:merge_git_config`'s first write) and `self.preflight.ps_capability_fail` (probes
+`Convert.FromBase64String`/`WriteAllBytes`/`ProcessStartInfo` together, since bare PowerShell
+presence doesn't prove a locked-down corporate image -- AppLocker, WDAC, Constrained Language Mode
+-- allows the operations this bootstrapper actually needs).
 
 ```
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
@@ -1210,65 +658,20 @@ self.preflight.cwd_not_writable, self.preflight.ps_capability_fail
 
 ## selfapps-entrysmoke-no-interpreter NDJSON rows (selfapps_entrysmoke_no_interpreter.ps1, conda-full lane only, GATING)
 
-CLAUDE.md Active Backlog Item 45: `:die` uses `exit /b` (a subroutine return, not a process halt),
-so a genuine first-attempt conda-create failure can fall through into `:conda_create_done`, which
-unconditionally sets `HP_PY` to the conda env's expected `python.exe` path even though conda
-create just failed and that file was never produced. Deep tracing while implementing this item
-found the build/warnfix/repair block was already structurally protected in every reachable
-scenario -- `:after_env_mode_selection`'s own interpreter smoke test (added for CLAUDE.md's
-former Active Backlog item 14, closed) already sets `HP_NO_INTERPRETER` whenever `HP_PY` fails to
-execute, and `:preflight_compile` already bails out on that flag before `:run_entry_smoke` ever
-reaches the PyInstaller build call -- but this exact call path (a genuine, non-cascade,
-non-`HP_TEST_FORCE_CONDA_FAIL`-bypassed first-attempt exhaustion reaching `:conda_create_done`
-with a nonexistent `HP_PY`) had no direct regression test of its own; item 14's own regression
-test (`self.embed.fallback.decline`, `selfapps_ux_hardening.ps1`) uses the `HP_TEST_FORCE_
-CONDA_FAIL` bypass, which never reaches `:conda_create_done`'s `HP_PY`-setting line at all, and
-`self.cascade.conda_create_fail`'s two scenarios are both REQ-009 cascade RE-ENTRIES (`HP_CASCADE_
-SAVED_PY` defined), which route through `:cascade_conda_create_failed` instead, also never
-touching this line. The fix itself is a direct, explicit guard at the top of `:run_entry_smoke`
-(`if not exist "%HP_PY%" set "HP_NO_INTERPRETER=1"`, before `:preflight_compile` is even called)
--- a backstop at the actual point of use, not a fix for a previously-unmitigated hole, so the
-build/warnfix/repair block cannot be reached against a nonexistent `HP_PY` even if some future
-change removes or bypasses the upstream smoke test; it also fixes a latent message-framing bug
-(without it, a broken `HP_PY` bypassing the upstream smoke test would instead fail
-`:preflight_compile`'s own `py_compile` call and get misreported as a syntax error in the user's
-code, not a missing interpreter).
+Covers a genuine, non-cascade, non-bypassed first-attempt total-tier-exhaustion path reaching
+`:run_entry_smoke` with a nonexistent `HP_PY` -- see `docs/agent-interconnect.md`'s "Genuine
+(non-cascade) conda-create exhaustion" section for the full trace. The fix is a direct guard at
+the top of `:run_entry_smoke` (`if not exist "%HP_PY%" set "HP_NO_INTERPRETER=1"`), a backstop at
+the actual point of use rather than relying solely on an earlier smoke test. `HP_FORCE_CONDA_ONLY=1`
+makes embed/venv/system fallback attempts a no-op, and `HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1`
+forces the REAL conda create/retry path to fail both attempts. Asserts the honest "No Python
+interpreter is available" message, the absence of the old fabricated "syntax error" message, and
+that no PyInstaller build is ever attempted.
 
-`HP_FORCE_CONDA_ONLY=1` (self-contained, matching `selfapps_pipgap.ps1`'s own established
-pattern) makes both `:handle_conda_failure` calls in this path a no-op (embed/venv/system
-fallback attempts are skipped by design for this lane), so total tier exhaustion is reached
-deterministically without needing embed/venv/system-specific forced-failure hooks.
-`HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL=1` forces the REAL conda create/retry code path to fail
-both attempts deterministically, matching CLAUDE.md's former Active Backlog item 23's own
-established convention that the `HP_TEST_FORCE_CONDA_FAIL` bypass alone is not sufficient
-evidence for this class of gap.
-
-Asserts: both the simulated initial-attempt and retry-attempt failure signatures fired, the
-honest "No Python interpreter is available" message appears, the old fabricated "syntax
-error" message (CLAUDE.md's former Active Backlog item 14) does not, no PyInstaller build is
-ever attempted ("Building standalone executable" absent -- the key Item 45 assertion),
-`~bootstrap.status.json` reads `state=error`, and the process still exits 0 (this repo's
-established "graceful stop" contract -- see `self.conda.bothfail`'s sibling reasoning).
-
-**Updated for CLAUDE.md Active Backlog Item 46 (Bucket A slice 1, closed):**
-`:conda_create_failed`'s own `call :die` now `goto`s straight to `:after_env_mode_selection`
-instead of falling through into `:conda_create_done`'s body -- before this fix, that fall-through
-unconditionally set `HP_PY` to a nonexistent path, then its own "if not exist" guard called
-`:handle_conda_failure` a SECOND time (not just wasted CPU: a real user would have watched the
-embed/venv attempts and the REQ-014 system-Python consent prompt replay a second time right
-after already answering them once). The test now asserts the OLD "`:conda_create_done`'s
-'python.exe missing from conda environment'" message is genuinely ABSENT (proving that block is
-skipped entirely), and that the NEW site's message, "Active Python interpreter not resolved."
-(`:after_env_mode_selection`'s own "if not defined HP_PY" check, reached here since `HP_PY` was
-never set this run), appears instead. This slice does NOT reduce the bootstrap to a single pause
-for a real interactive user -- that check has the identical non-halting `:die` shape and is a
-separate, not-yet-addressed follow-up (see CLAUDE.md's Item 46 entry).
-
-Lane: `conda-full` only, gated on `steps.conda_avail.outputs.available == 'true'` (same gate 28+
-other conda-full-only self-tests already use) -- guarantees real Miniconda is already present,
-since `HP_FORCE_CONDA_ONLY=1` makes this test's own conda-create attempt the first thing reached
-rather than triggering a fresh Miniconda download itself. Deterministic and self-contained, so
-gating from first landing (same reasoning as `self.preflight.lf_only`'s own precedent).
+Updated for Item 46 Bucket A slice 1: also asserts the old `:conda_create_done`-specific message
+is genuinely absent (proving that block is skipped) and the new `:after_env_mode_selection` sink
+message appears instead -- this fix relocates the second pause to an already-precedented site, it
+does not eliminate it (see CLAUDE.md's Item 46 entry).
 
 ```
 self.entrysmoke.no_interpreter_guard
@@ -1278,49 +681,24 @@ self.entrysmoke.no_interpreter_guard
 
 ## selfapps-die-emit-fallthrough NDJSON rows (selfapps_die_emit_fallthrough.ps1, mixed lanes, GATING)
 
-CLAUDE.md Active Backlog Item 46 Bucket A, Batches 2/3/4/5 (`docs/plan-die-fatal-remediation.md`'s
-"Batch Roadmap" -- the full 20-site trace). Four scenarios (`DIE_EMIT_SCENARIO` env var):
-`missing_python` (Batch 2, `:conda_create_done`'s own "python.exe missing" check, the NON-cascade
-path -- distinct from `self.cascade.conda_create_fail`'s own `missing_python` scenario, a REQ-009
-cascade RE-ENTRY that never reaches this site at all), `condarc` (Batch 4, the same subroutine's
-`.condarc`-staging failure), `ci_skip_entry` (Batch 5, `:ci_skip_entry`'s own `~find_entry.py`
-staging failure), `determine_entry` (Batch 3, `:determine_entry`'s first of its two per-run calls).
-All four emit the SAME literal id, `self.die_emit_fallthrough`, with `details.scenario` as the
-discriminator -- matches `self.exe.build.xfail`'s own established multi-scenario precedent (see
-`docs/agent-lessons-learned.md`'s "A multi-scenario PowerShell test's NDJSON `id` must stay a
-literal string" entry for why a per-scenario id computed into a shared variable would silently
-break `tools/check_ndjson_registry.py`'s static scan).
+Covers Item 46 Bucket A Batches 2/3/4/5 (`docs/plan-die-fatal-remediation.md`'s "Batch Roadmap").
+Four scenarios (`DIE_EMIT_SCENARIO`): `missing_python` (Batch 2, `:conda_create_done`'s own
+non-cascade "python.exe missing" check), `condarc` (Batch 4, the same subroutine's `.condarc`-
+staging failure), `ci_skip_entry` (Batch 5, `:ci_skip_entry`'s own staging failure),
+`determine_entry` (Batch 3, the first of `:determine_entry`'s two per-run calls). All four emit
+the SAME literal id with `details.scenario` as the discriminator (see
+`docs/agent-lessons-learned.md`'s "NDJSON `id` must stay a literal string" entry for why).
 
-New hook: `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` (`run_setup.bat`, `:emit_from_base64`) fails ONE
-specific embedded-helper write deterministically (matched against the subroutine's own `%VAR%`
-argument, e.g. `HP_CONDARC` or `HP_FIND_ENTRY`) without touching any other payload emitted in the
-same run -- used by `condarc`/`ci_skip_entry`/`determine_entry`. `missing_python` instead reuses
-the already-existing `HP_TEST_FORCE_CONDA_MISSING_PYTHON` hook (see `self.cascade.conda_create_
-fail`'s own header comment), just without any cascade env vars set.
+New hook `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` (`:emit_from_base64`) fails one specific embedded-
+helper write deterministically, used by `condarc`/`ci_skip_entry`/`determine_entry`;
+`missing_python` reuses the existing `HP_TEST_FORCE_CONDA_MISSING_PYTHON` hook without any cascade
+env vars set. `ci_skip_entry` also documents a known, unfixed, near-zero-exposure quirk:
+`:after_env_skip` writes `state=ok` unconditionally regardless of an earlier `call :die` in the
+same run (`HP_CI_SKIP_ENV` is test-infrastructure-only).
 
-Three of the four (`condarc`/`ci_skip_entry`/`determine_entry`) set `HP_SKIP_ENTRY_SMOKE=1` /
-`HP_SKIP_EXE_SMOKERUN=1` -- purely about setup-flow fall-through, not a full PyInstaller build/run
-cycle. `missing_python` deliberately does NOT set these: the point is letting `:run_entry_smoke`
-actually run so CLAUDE.md Active Backlog Item 45's own "if not exist `%HP_PY%`" guard (already
-proven by `self.entrysmoke.no_interpreter_guard` for a different trigger) gets a chance to catch
-the broken-but-defined interpreter and confirms no PyInstaller build is attempted against it.
-
-`ci_skip_entry` documents a real, pre-existing, NOT-fixed-by-this-change quirk found while writing
-its own assertions: `:after_env_skip` (the label `:after_env_bootstrap` routes to under
-`HP_CI_SKIP_ENV=1`) calls `call :write_status ok 0 %PYCOUNT%` unconditionally -- it does not read
-`HP_BOOTSTRAP_STATE`, so this scenario's own status file reads `state=ok` even though a real
-`call :die` fired earlier in the same run. This is not a regression from the Batch 5 fix (the OLD,
-unfixed fall-through already reached this same unconditional-ok write further downstream, just
-after more wasted work) -- asserted as the known, unchanged behavior, not silently ignored. Near-
-zero real-world exposure either way (`HP_CI_SKIP_ENV` is test-infrastructure-only, never set by a
-real user or the default bootstrap path).
-
-Lane: `conda-full` only for `missing_python`/`condarc`/`determine_entry` (real conda create
-needed, gated on `steps.conda_avail.outputs.available == 'true'`, same gate 28+ other conda-full-
-only self-tests use); every lane for `ci_skip_entry` (no conda/uv dependency at all, matches
-`selfapps_isolation.ps1`'s own sibling `HP_CI_SKIP_ENV`-based steps). Gating from first landing --
-deterministic and self-contained, same reasoning as `self.entrysmoke.no_interpreter_guard`'s own
-precedent.
+Lane: `conda-full` for `missing_python`/`condarc`/`determine_entry` (real conda create needed);
+every lane for `ci_skip_entry` (no conda/uv dependency). Gating from first landing --
+deterministic and self-contained.
 
 ```
 self.die_emit_fallthrough
@@ -1330,136 +708,56 @@ self.die_emit_fallthrough
 
 ## Key facts for debugging missing rows
 
-- `self.exe.smokerun.cwd_consistency` (CLAUDE.md Active Backlog Item 38, `tests/selfapps_
-  exe_cwd_consistency.ps1`, real/conda-full lanes) is a POSITIVE proof, not an xfail like its
-  `self.exe.smokerun.exedata.xfail` sibling immediately above it -- it split out of that file's
-  former "plain" scenario once the underlying CWD mismatch was fixed (see
-  `docs/agent-interconnect.md`'s "Single-verification smoke model" section for the full
-  mechanism). Runs `run_setup.bat` TWICE against a stub app that opens a CWD-relative
-  `config.json` sitting at the app root: run 1 (`:run_exe_smokerun`, a fresh build) and run 2
-  (`:try_fast_exe`, the cached-EXE fast path) must BOTH succeed, from the same current working
-  directory (CWD) -- proving the two verification points no longer disagree.
-- `self.exe.hidden_import.exhaust` (CLAUDE.md Active Backlog item 11, `tests/selfapps_
-  hidden_import_exhaust.ps1`, real/conda-full lanes) proves `--hidden-import` auto-recovery
-  reaches its 3-attempt cap for real, unlike its sibling `self.exe.hidden_import` (one-shot
-  success only). The stub app rotates through 3 distinct, always-installed
-  (`colorama`/`six`/`certifi`, all declared in `requirements.txt`) fabricated
-  `ModuleNotFoundError` messages via a small state file next to the EXE that survives across the
-  recovery loop's own rebuilds -- a REPEATED module name would be rejected by
-  `~hidden_import_scan.py`'s own tried-list exclusion and stop the loop early via "no next hidden
-  import found", never reaching the iteration cap this test needs to exercise.
-- `diag.conda.available` (inline `.github/workflows/batch-check.yml`, the "Check Miniconda
-  availability" step -- see `docs/agent-closed-backlog.md`'s Active Backlog item 7 entry for the
-  full `conda_avail` history) is always
-  `pass: true` (this step itself never fails the job, by design -- it only reports the observed
-  fact) and carries `details.available` (`true`/`false`) reflecting whether Miniconda was found at
-  the shared `%PUBLIC%\Documents\Miniconda3` path at that point in the job. Added on PR #394 per a
-  CodeRabbit finding: the step's own `Write-Host`/output had been observable since PR #390 with no
-  NDJSON row. Present in every non-`HP_CACHE_CORRUPTED` lane run regardless of `matrix.mode`, since
-  the step itself has no lane restriction.
-- `diag.conda.available.gate` (inline `.github/workflows/batch-check.yml`, the "Enforce Miniconda
-  availability" step immediately after `diag.conda.available`'s own step) is the ENFORCED judgment
-  that gates 27 `conda-full`-only self-test steps and, unlike its sibling above, DOES fail the job
-  when it reads `pass: false` (`Write-Host '::error::...'` + `exit 1`, no `continue-on-error`).
-  `skip: true, reason: 'not-conda-full'` in every lane except `conda-full`, where it re-reads the
-  same `steps.conda_avail.outputs.available` value and requires exactly `'true'` -- anything else
-  (including a never-set/empty value) fails loud, deliberately without distinguishing "Miniconda
-  genuinely failed to install" from "a bug in this gating mechanism itself" (both are surfaced the
-  same way, per an explicit owner decision to prefer a loud failure over any risk of a silent one
-  recurring -- see `docs/agent-closed-backlog.md`'s Active Backlog item 7 entry for the full
-  PR #390 incident this protects against and the risk/benefit assessment behind this design). On
-  failure it also prints the tail
-  of `tests\~envsmoke\~envsmoke_bootstrap.log` inline for immediate root-cause visibility.
-- A row absent from the diag site means the test script either was not reached, threw
-  before the `Write-NdjsonRow` call, or the lane skipped that selfapps file.
-- Rows gated by `pyFileCount` (e.g. `entry.single.direct`) will be absent whenever the
-  bootstrapper repo itself is the test target (pyFiles != 1 in the main repo).
-- Check the CI step log for `[INFO] ... skipped:` messages before assuming a test regressed.
-- `self.failfast.probe` (bare row, distinct from `self.failfast.probe.fastfail`/`.alive`) is
-  emitted inline by `run_setup.bat`'s `:run_failfast_probe`, gated on `HP_NDJSON`. The current CI
-  lane that forces the interactive branch (`HP_TEST_FORCE_INTERACTIVE_PROBE=1`, in
-  `selfapps_failfast_probe.ps1`) unsets or never populates `HP_NDJSON` for that sub-bootstrap, so
-  this row does not currently appear in a real CI artifact -- same situation as `self.exe.smokerun`
-  and other inline-emitted rows. It is registered above so its id is not mistaken for an
-  unexpected/typo'd addition if a future lane change makes it fire.
-- **Backfilled 2026-07 via `tools/check_ndjson_registry.py`'s first real run.** Twelve rows were
-  genuinely emitted but never registered: `conda.url` and `env.mode` (inline `run_setup.bat`,
-  `HP_NDJSON`-gated -- the Miniconda download-probe outcome and the REQ-009 selected-provider
-  log, respectively), `self.warnfix.platform_filter` (inline `run_setup.bat`, confirms the
-  warnfix POSIX-module filter ran), `self.exe.smokerun` (inline `run_setup.bat`'s
-  `:smokerun_ndjson`, the EXE smoke exit-code row -- already referenced by the bullet above but
-  never formally registered), `helper.find_entry.syntax` (inline `run_setup.bat`, HP_FIND_ENTRY
-  payload compile-probe result) and `entry.helper.ok` (`harness.ps1` re-emits the same
-  pass/fail under this id), `entry.single.direct` (`selfapps_single.ps1`, REQ-002 -- already
-  referenced two bullets above but never formally registered), `entry.expected` and
-  `helper.invoke` (both `selfapps_single.ps1`, REQ-002 companion failure-detail rows --
-  `helper.invoke` is the same passive failure-detector documented for
-  `self.entry.helper.invoke.absent` above, just the underlying row itself), `envsmoke.run`
-  (`selfapps_envsmoke.ps1`, REQ-003 failure-detail row), and `self.cache.corrupted` (`harness.ps1`,
-  see `docs/agent-lessons-learned.md`'s cache-lane corruption-handling entry for the full
-  mechanism). This pass also caught the tool's own scope gap: `.github/workflows/*.yml` inline
-  PowerShell/Python was not scanned at all, which produced two kinds of error simultaneously --
-  three ALREADY-registered rows (`self.heuristics.pytest`, `self.parse_warn.pytest`,
-  `self.pytest.unit`, all emitted from `batch-check.yml` steps) were misreported as stale, and at
-  least two genuinely emitted rows (`self.cache.bootstrap.failed`, the sibling of
-  `self.cache.corrupted` documented in the same lessons-learned entry; `meta.env.mode`, the
-  per-lane "matrix mode meta row" step that fires unconditionally at the end of every selftest
-  matrix lane) were invisible to the tool entirely -- they never appeared in either the doc_only
-  or code_only list on the first run, because the tool didn't scan the file that emits them. A
-  fourth PowerShell/JSON emission convention was also found and added to the scanner: a raw
-  JSON-string literal (`'{"id":"...",...}'`), used by the "Catch cache lane bootstrap failure"
-  step instead of the `id = '...'` hashtable-literal form the other three conventions use.
-  `tools/check_ndjson_registry.py` now scans `.github/workflows/*.yml`/`*.yaml` in addition to
-  `tests/*.ps1` and `run_setup.bat`, and recognizes all four conventions. `workflow.lint` (from
-  the separate, dormant `workflow-lint.yml` -- `workflow_dispatch`-only, not run automatically;
-  see AGENTS.md/CLAUDE.md for why) was registered too for the same completeness reason, even
-  though that workflow rarely executes in practice.
-- `pipreqs.install` and `pipreqs.run` (backfilled into the registry 2026-07; both already
-  existed in code before this) were emitted but undocumented gaps in this registry.
-  `pipreqs.install` is emitted inline by `run_setup.bat` (gated on `HP_NDJSON`) right after the
-  pipreqs package-install attempt, with `pass`/`reason` reflecting `success`,
-  `install_failed`, `pep723_active`, or `skip_preexisting`. `pipreqs.run` is emitted by a
-  `Check-PipreqsFailure` helper duplicated across `selfapps_entry.ps1`, `selfapps_envsmoke.ps1`,
-  and `selfapps_single.ps1` -- it is a *passive* detector that only fires (and fails) if an
-  *unexpected* real pipreqs failure (matching `No module named pipreqs\.__main__`) is found in
-  a test's bootstrap log; it is not an active failure-injection hook. Contrast with
-  `self.stub.pipreqs_version_fail` (Test-logs NDJSON, below), which *deliberately* forces
-  pipreqs's own install to fail via `HP_PIPREQS_VERSION=99.99.99` (a version that has never
-  existed on PyPI, chosen for determinism over pipreqs 0.5.0's real `<3.13` cap -- the cap alone
-  does not reliably fail on every lane's ambient Python) to prove the warnfix fallback
-  recovers gracefully.
-- `self.embed.fallback.decline` and `self.embed.fallback.real` (REQ-009 Tier 5, the standalone
-  embeddable-Python download fallback -- see `docs/agent-interconnect.md` "Standalone
-  Python-download tier") are emitted by `selfapps_ux_hardening.ps1`. Since the provider-chain
-  reorder (`uv -> conda -> embed -> venv -> system`), embed is reached directly after conda fails
-  -- `HP_TEST_FORCE_CONDA_FAIL=1` alone is enough to reach it, the same way a real user with no
-  reachable uv/conda (but a working venv/system fallback still available) would reach it.
-  `.decline` ALSO forces `HP_TEST_FORCE_VENV_FAIL=1` and `HP_TEST_SYSCON_ANSWER=N` -- not to
-  reach embed (unnecessary now), but so the run doesn't silently recover through venv/system
-  after embed's forced failure (`HP_TEST_FORCE_EMBED_FAIL=1`), which would defeat the point of
-  proving tier EXHAUSTION reaches a clean `:die` (state=error, non-zero exit) instead of a hang
-  or false success. It additionally asserts the embed-attempt log line appears BEFORE the
-  venv-fallback log line, proving the new order actually executes. `.real` sets
-  `HP_TEST_FORCE_EMBED_REAL=1` (a narrow hole through the `HP_OFFLINE_MODE=1` gate for this tier
-  only) and exercises the real download-verify-extract-patch-pip-bootstrap-canary-build-run path
-  end-to-end -- `HP_TEST_FORCE_VENV_FAIL`/`HP_TEST_SYSCON_ANSWER` are NOT needed here since embed
-  succeeding short-circuits the chain before venv is ever attempted; it instead asserts the
-  venv-fallback log line is ABSENT, proving that short-circuit. Both skip with `skip=true` in the
-  conda-full lane (`HP_FORCE_CONDA_ONLY=1` blocks all non-conda fallbacks).
-- `self.embed.dl.retry` (former CLAUDE.md Active Backlog item 12, `selfapps_ux_hardening.ps1`)
-  closes the gap that `.real` above does not cover: `:embed_dl_retry`'s genuine mid-download-
-  failure-then-retry-once path. Combines `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1` (deterministically
-  fails ONLY the first download attempt, no network touched, cleared immediately after firing)
-  with `HP_TEST_FORCE_EMBED_REAL=1` so the second, real attempt genuinely succeeds -- asserts
-  both the `[TEST] HP_TEST_FORCE_EMBED_DL_FAIL_ONCE:` hook-fired line and the
-  `[WARN] embed fallback: download failed; retrying once.` line appear, AND that the tier still
-  succeeds end-to-end afterward. Skips with `skip=true` in the conda-full lane, same reasoning.
+- `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
+  lanes) is a POSITIVE proof (not an xfail) that split out of `selfapps_exedata_fail.ps1`'s former
+  "plain" scenario once CLAUDE.md Item 38's CWD-mismatch fix landed -- see
+  `docs/agent-interconnect.md`'s "Single-verification smoke model" section. Runs `run_setup.bat`
+  TWICE against a stub app with a CWD-relative `config.json`: a fresh build and a fast-path reuse
+  must BOTH succeed from the same CWD.
+- `self.exe.hidden_import.exhaust` (`tests/selfapps_hidden_import_exhaust.ps1`, real/conda-full
+  lanes) proves `--hidden-import` auto-recovery reaches its 3-attempt cap for real (unlike its
+  one-shot-success sibling `self.exe.hidden_import`) -- the stub app rotates through 3 distinct,
+  always-installed fabricated `ModuleNotFoundError`s via a state file surviving the recovery loop's
+  own rebuilds (a REPEATED module name would be rejected by the tried-list exclusion instead).
+- `diag.conda.available` (inline `batch-check.yml`, "Check Miniconda availability") is always
+  `pass:true` (reports the observed fact only) and carries `details.available`. Present in every
+  non-`HP_CACHE_CORRUPTED` lane run regardless of `matrix.mode`.
+- `diag.conda.available.gate` ("Enforce Miniconda availability," the step right after) is the
+  ENFORCED judgment gating 27+ `conda-full`-only self-test steps -- DOES fail the job on
+  `pass:false`, `skip:true` in every other lane. Deliberately does not distinguish "Miniconda
+  genuinely failed" from "a bug in this gating mechanism itself" -- both fail loud, per an
+  explicit owner decision (see `docs/agent-closed-backlog.md`'s Active Backlog item 7 entry for the
+  PR #390 incident this protects against).
+- A row absent from the diag site means the test script either was not reached, threw before its
+  `Write-NdjsonRow` call, or the lane skipped that selfapps file. Rows gated by `pyFileCount` (e.g.
+  `entry.single.direct`) are absent whenever the bootstrapper repo itself is the test target.
+  Check the CI step log for `[INFO] ... skipped:` messages before assuming a test regressed.
+- `self.failfast.probe` (bare row, distinct from its `.fastfail`/`.alive` siblings) is emitted
+  inline, gated on `HP_NDJSON` -- the current CI lane forcing the interactive branch doesn't
+  populate `HP_NDJSON` for that sub-bootstrap, so this row does not currently appear in any real CI
+  artifact. Registered here so its id isn't mistaken for an unexpected/typo'd addition.
+- `pipreqs.install` is emitted inline right after the pipreqs package-install attempt (`pass`/
+  `reason` reflecting `success`/`install_failed`/`pep723_active`/`skip_preexisting`). `pipreqs.run`
+  is a PASSIVE detector (a `Check-PipreqsFailure` helper across 3 test files) that only fires and
+  fails on an UNEXPECTED real pipreqs failure -- contrast with `self.stub.pipreqs_version_fail`,
+  which deliberately forces the failure to prove warnfix recovers gracefully.
+- `self.embed.fallback.decline`/`.real` (REQ-009 Tier 5, `selfapps_ux_hardening.ps1` -- see
+  `docs/agent-interconnect.md`'s "Standalone Python-download tier" section) are reached directly
+  after a forced conda failure, since embed sits right after conda in the provider order.
+  `.decline` additionally forces venv/system failure so the run doesn't silently recover past
+  embed's own forced failure, proving genuine tier EXHAUSTION reaches `:die` cleanly. `.real` sets
+  `HP_TEST_FORCE_EMBED_REAL=1` (a narrow hole through `HP_OFFLINE_MODE`) and exercises the real
+  download-verify-extract-patch-pip-canary-build-run path end-to-end. Both skip in the conda-full
+  lane.
+- `self.embed.dl.retry` closes the remaining gap: `:embed_dl_retry`'s genuine mid-download-
+  failure-then-retry-once path (`HP_TEST_FORCE_EMBED_DL_FAIL_ONCE=1` fails only the first attempt,
+  combined with `HP_TEST_FORCE_EMBED_REAL=1` so the second genuinely succeeds).
 
 **NDJSON files and who owns them:**
-- `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the
-  CI run. The selfapps scripts APPEND rows to this file. The CI "Verdict from NDJSON" step
-  reads it immediately after upload. Later, `harness.ps1` DELETES it and REWRITES it with
-  harness static check rows. The final artifact content is harness rows only.
-- `ci_test_results.ndjson` -- parallel aggregator written by selfapps scripts; used as
-  fallback by the "Verdict from NDJSON" step if `tests/~test-results.ndjson` is empty/missing.
-  `harness.ps1` does NOT read this file.
+- `tests/~test-results.ndjson` -- written by every `selfapps_*.ps1` test script during the CI run
+  (APPENDED to). The CI "Verdict from NDJSON" step reads it immediately after upload. Later,
+  `harness.ps1` DELETES it and REWRITES it with harness static check rows -- the final artifact
+  content is harness rows only.
+- `ci_test_results.ndjson` -- parallel aggregator written by selfapps scripts; used as fallback by
+  the "Verdict from NDJSON" step if `tests/~test-results.ndjson` is empty/missing. `harness.ps1`
+  does NOT read this file.
