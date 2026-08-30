@@ -3674,6 +3674,40 @@ jobs:
           # this step's own exit code.
           exit 0
 
+      # derived requirement (CLAUDE.md Active Backlog Item 35): the precondition slice above
+      # (fail-closed per-lane set comparison, proven via tests/test_aggregate_selftest_
+      # verdicts.ps1's fixtures on every real CI run since) deliberately left this job's own
+      # conclusion always-success. This step is the actual gating step -- mirrors the identical,
+      # already-proven "Enforce NDJSON failures for gated lanes" 3-line pattern used per-lane for
+      # `real`/`conda-full` (this file, ~line 1430), just reading the AGGREGATE verdict instead of
+      # one lane's own. Re-verified before adding: contract-uv/contract-uv-fail/uv-dl-fallback
+      # (each intentionally simulates a failure/fallback scenario) have reported a clean, non-
+      # has_failures verdict on every real run observed to date -- their own simulated condition
+      # is a correctly-handled recovery, not a real failure, so this check does not turn them into
+      # permanent false blockers.
+      #
+      # derived requirement (2026-08-30, PR #471): reverted to advisory (continue-on-error) after
+      # this step's very first two real activations both hard-failed the job on a genuine,
+      # reproducible (not flaky) pre-existing condition -- byte-identical failure-detail payloads
+      # on two separate runs hours apart -- in the `cache` (self.exe.smokerun, exitCode 1) and
+      # `uv` (self.cascade.exec falling through to embed instead of stopping at conda;
+      # self.exe.warnfix.venv_repair's repair-install precondition never firing) lanes. Neither
+      # lane's own test script nor run_setup.bat was touched by this PR (a CI-YAML/docs-only
+      # diff), so the underlying condition predates this PR and is unrelated to it -- but because
+      # THIS gate is what first turned an already-non-gating lane's failure into a repo-wide merge
+      # blocker, leaving it hard-failing would block every PR until the underlying cascade/warnfix
+      # bug is separately root-caused and fixed (its own real investigation, out of scope here).
+      # continue-on-error keeps this step's own red result visible in the PR checks UI (so the
+      # regression is not silently lost) without failing the job. Re-remove continue-on-error once
+      # cache/uv are fixed and the mechanism has re-soaked per this item's own process discipline.
+      - name: Enforce aggregate self-test verdict
+        if: ${{ !cancelled() && steps.aggregate.outputs.has_failures == 'true' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "Aggregated self-test verdicts indicate a failure in one or more lanes; failing this check."
+          exit 1
+
       - name: Append gate summary
         if: ${{ always() }}
         shell: pwsh
@@ -4107,11 +4141,29 @@ jobs:
           df -h || true
 
       - name: Checkout repository
+        # derived requirement: this job's own if: always() at the job level only guarantees
+        # the JOB starts regardless of needs' outcomes -- it does NOT make every step run
+        # regardless of an earlier step's failure (GitHub Actions gives every step an implicit
+        # `if: success()` unless it declares its own condition). Checkout is the first step that
+        # can genuinely fail (network/auth), and its failure would otherwise skip every
+        # following default-condition step, starting with "Prep site directories" -- which is
+        # what actually creates _site. `!cancelled()` (not `always()`, per CodeRabbit review and
+        # GitHub's own documented guidance) closes that gap while still bypassing this and every
+        # later `!cancelled()` step outright if the WORKFLOW RUN itself is cancelled, instead of
+        # `always()`'s risk of hanging a checkout mid-teardown until it times out.
+        if: ${{ !cancelled() }}
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Prep site directories
+        # derived requirement: must run even if Checkout above failed -- it only touches
+        # $PWD/github context, not repo content, so it can still lay down the _site/.nojekyll
+        # skeleton "Upload Pages artifact" needs later. Without this here, a checkout
+        # hiccup would leave _site never created at all, and the deploy steps further down
+        # (which DO already have their own always()-equivalent override via their explicit
+        # event_name condition) would fail for real instead of just publishing a thinner site.
+        if: ${{ !cancelled() }}
         id: prep
         shell: pwsh
         run: |
@@ -4423,9 +4475,20 @@ jobs:
           Set-Content -LiteralPath $summaryPath -Value $entries -Encoding Ascii
 
       - name: Record iterate artifact status
+        # derived requirement (CodeRabbit review, PR #471): if "Prep site directories" itself
+        # failed before writing its outputs, $Artifacts below would be empty, and Join-Path
+        # throws on an empty/null Path argument (confirmed directly) rather than degrading
+        # gracefully -- this step would then fail for real instead of recording the sentinel
+        # it exists to write. Fall back to a scratch directory under the workspace so this
+        # step still completes even in that scenario. `!cancelled()`, not `always()`, per
+        # CodeRabbit review and GitHub's own documented guidance (see "Checkout repository"'s
+        # own comment above for why).
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $Artifacts = "${{ steps.prep.outputs.ARTIFACTS }}"
+          if (-not $Artifacts) { $Artifacts = Join-Path $PWD '_site_prep_failed' }
+          New-Item -ItemType Directory -Path $Artifacts -Force | Out-Null
           $Iter = Join-Path $Artifacts 'iterate'
           $sentinel = Join-Path $Artifacts 'MISSING.txt'
           $iterSentinel = Join-Path $Artifacts 'iterate.MISSING.txt'
@@ -4440,12 +4503,16 @@ jobs:
           }
 
       - name: Fetch batch-check artifacts
+        # !cancelled(), not always() -- see "Checkout repository"'s own comment above.
+        if: ${{ !cancelled() }}
         id: fetch_batch
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ArtifactsRoot = "${{ steps.prep.outputs.ARTIFACTS }}"
+          if (-not $ArtifactsRoot) { $ArtifactsRoot = Join-Path $PWD '_site_prep_failed' }
+          New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
           $BatchRoot = Join-Path $ArtifactsRoot 'batch-check'
           New-Item -ItemType Directory -Path $BatchRoot -Force | Out-Null
           $statusPath = Join-Path $BatchRoot 'STATUS.txt'
@@ -4927,6 +4994,8 @@ jobs:
             --out-dir "_site"
 
       - name: Append job summary
+        # !cancelled(), not always() -- see "Checkout repository"'s own comment above.
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           $Run = "${{ github.run_id }}"

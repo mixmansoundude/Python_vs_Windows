@@ -7,27 +7,7 @@ here and fold the outcome into wherever it actually belongs (CLAUDE.md's Active/
 answered questions accumulate here as history; that's what the other docs' own Closed Backlog /
 changelog-style sections are for.
 
-## 1. CLAUDE.md Active Backlog Item 35: does the agent have (or can it get) the GitHub repo-admin access needed to actually flip a check to gating?
-
-Item 35's real mechanism (an aggregate `selftest-gate` check that could cover every lane with one
-required-check entry) is implemented and its precondition has landed, but "gating" in this repo is
-a GitHub branch-protection setting, not a YAML edit (confirmed by reading `pr-automerge.yml` -- it
-delegates entirely to GitHub's own branch-protection evaluation). Promoting a lane or the aggregate
-check to actually block merges needs someone with repo-admin access to add its exact check name to
-the required-status-checks list.
-
-Two sub-questions:
-- Does this session's GitHub access include repo-admin/branch-protection scope, or does that need
-  to be granted separately?
-- If not, do you want to make that specific branch-protection edit yourself once a slice is proven
-  ready (the agent would flag "ready to gate: `<check name>`" at that point), or is there another
-  path to get it done?
-
-Without an answer, Item 35's own soak-then-promote slices can get PREPARED (implemented, tested,
-several green runs) but never actually CLOSED -- the last step structurally can't happen without
-this.
-
-## 2. CLAUDE.md Active Backlog Item 42, lever 2: is the two-prompt fresh-build flow still worth changing, and if so, reword only or also combine the two prompts?
+## 1. CLAUDE.md Active Backlog Item 42, lever 2: is the two-prompt fresh-build flow still worth changing, and if so, reword only or also combine the two prompts?
 
 Lever 1 (console-output tiering) shipped and merged 2026-08-24 (PR #466). Lever 2 -- the two
 elective Y/N prompts every successful fresh interactive build shows (`:run_postexec_checkpoint`'s

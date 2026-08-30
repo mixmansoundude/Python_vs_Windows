@@ -480,669 +480,232 @@ but several represent real gaps worth closing before calling the path fully rele
 
 - **Item 35: systematically promote non-gating CI lanes/checks and inert NDJSON rows to real
   gating status -- EXTREME CAUTION, one lane/row per slice, diagnostics-site publish must never
-  be blocked.** Prompted by the same review, which found several genuinely "false green"
-  situations: a lane reporting no failures because it's non-gating (so a real regression there
-  cannot block a PR), or an NDJSON row that is REGISTERED but structurally never fires in any real
-  CI configuration (indistinguishable from "always passes" when it has in fact never run at all).
-  Goal: audit every candidate, and for each one that is genuinely real (not a placeholder) and
-  demonstrably non-flaky, make it capable of turning CI red for real -- so "CI is green" stops
-  being a partial truth for any lane or row this repo currently ships.
+  be blocked.** Goal: for every lane/row that is genuinely real (not a placeholder) and
+  demonstrably non-flaky, make it capable of turning CI red for real, so "CI is green" stops being
+  a partial truth for any lane or row this repo ships.
 
-  **Known inventory to work through (starting point, not exhaustive -- re-derive against current
-  state at slice time):**
-  - Non-gating lanes (currently `continue-on-error` at the job level, per CLAUDE.md's CI Overview
-    and Periodic Maintenance Checks' "CI lane gating maturity" section): `cache`, `justme-test`,
-    `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`.
-  - `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` are documented as "explicitly load-bearing,
-    not provisional" for staying non-gating -- **re-verify this reasoning still holds
-    structurally (they simulate failure/contract scenarios that intentionally diverge from a
-    normal run) before excluding them; do not just carry the existing text forward without
-    re-checking it.**
-  - `ndjson-registry-check`: a separate advisory job (not a matrix lane), `continue-on-error:
-    true`, "needs several more real-CI runs at clean PASS before even considering gating" per the
-    same section.
-  - Inert/never-fired NDJSON rows (structurally never observed in any real CI artifact, confirmed
-    via `docs/agent-ndjson.md`'s own notes and the review's independent check against a real run's
-    cache/conda-full snapshots): `self.dll_bundle.recover` (6 of 7 outcome states have zero
-    runtime coverage; see Item 37 below for the dedicated item), `self.failfast.probe` (bare row,
-    distinct from its `.fastfail`/`.alive` siblings), `self.exe.smokerun`. Audit for others --
-    these three are the ones already confirmed, not necessarily the complete set.
-  - The `set /p` prompt lines (real interactive prompts a genuine double-click user reads) never
-    execute in any CI configuration at all -- `docs/demo-bootstrapper-output.md` Scenario 5
-    already labels this `[Extrapolated Branch]` honestly. Not a "lane" to promote, but the same
-    underlying problem: no CI signal exists for this text today. Consider whether a scripted-stdin
-    test (mirroring `tests/selfapps_interactive_stdin.ps1`'s existing pattern for the EXE's own
-    live-tee output) could exercise the prompt WORDING itself, even if "did a human read this and
-    understand it" stays out of scope.
-  - The double-click trigger's own interactivity signals (`HP_INTERACTIVE_RUN`) are never in their
-    natural, un-forced state in any gating-lane run -- every gating lane sets `HP_CI_LANE`, which
-    clears `HP_INTERACTIVE_RUN` via `:compute_interactive_run`. The interactive branches ARE
-    covered, but only via `HP_TEST_FORCE_INTERACTIVE_PROBE`/`HP_TEST_CHECKPOINT_ANSWER`-style
-    forcing, never the ambient real-user condition. Lower priority (already mitigated, not
-    unmitigated) but worth a line in whatever audit doc this work produces.
-  - `pause` at `:success` (`if not defined HP_CI_LANE`) -- the terminal-retention behavior every
-    real double-click user experiences -- is never exercised in CI either. Same category as above.
+  **Known inventory to work through (re-derive against current state at slice time)**: non-gating
+  lanes at the PER-LANE level -- `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`,
+  `uv-dl-fallback` (the last three are explicitly load-bearing as non-gating, since they simulate
+  failure/contract scenarios that intentionally diverge from a normal run -- re-verify that
+  reasoning still holds before excluding them, don't just carry the text forward) still have no
+  required-status-check of their OWN -- but since the "Enforce aggregate self-test verdict" gate
+  below aggregates all 8 lanes, a real failure in any of them (including a genuine one already
+  observed in `cache`/`uv`, unrelated to any of this item's own changes) is DESIGNED to block a
+  merge via the aggregate check even though the individual lane still shows non-required in the PR
+  checks UI -- currently, that enforcement step itself carries `continue-on-error: true` (see the
+  "Reverted to advisory" note below), so today it does NOT actually block; this is the intended
+  end-state once cache/uv are fixed and `continue-on-error` is removed. Do not read "non-gating"
+  below as "cannot ever block a merge" post-aggregate-gate; it means "has no required check of its
+  own." `ndjson-registry-check` (a separate
+  advisory doc/code/log sync job, needs several more clean-PASS runs before even considering
+  gating); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
+  `docs/agent-ndjson.md` -- `self.dll_bundle.recover` (see Item 37), `self.failfast.probe`,
+  `self.exe.smokerun` (audit for others, these three are only the confirmed set); the real
+  interactive `set /p` prompts and `pause`/`HP_INTERACTIVE_RUN`'s natural un-forced state, neither
+  ever exercised in any CI configuration at all (lower priority -- already mitigated via forced-
+  branch tests, just not the ambient real-user condition).
 
   **Non-negotiable constraint: the diagnostics-site-publish job must never be blocked or skipped
-  by this work.** The `publish_diag` job (`.github/workflows/batch-check.yml`, "Publish
-  diagnostics to Pages") already guards against this deliberately: `if: ${{ always() }}` at the
-  job level, with `needs: [selftest, selftest-gate, model-quick-fix]` -- the `always()` override
-  means it runs regardless of those jobs' pass/fail conclusion, not just on success (confirmed by
-  reading the job directly). **Any change to the job graph as part of this item (new required
-  jobs, restructured lanes, a lane split into its own job) must re-verify `publish_diag`'s
-  `needs:` list still covers the right jobs and that `if: always()` still applies** -- a change
-  that silently narrows this guard would be the exact "false green masks a real gap" failure mode
-  this item exists to close, just inverted (diagnostics visibility breaking instead of a real
-  regression going unblocked).
+  by this work.** `publish_diag`'s `if: ${{ always() }}` / `needs: [selftest, selftest-gate,
+  model-quick-fix]` guard already covers this -- any change to the job graph as part of this item
+  must re-verify that `needs:` list still covers the right jobs and `if: always()` still applies,
+  empirically (not just by reading the YAML) the first time `selftest-gate` actually goes red in
+  practice.
 
-  **Reducing the required-checks maintenance burden -- a genuine aggregation point already
-  exists, unused (verified against `.github/workflows/batch-check.yml` source 2026-08-10).** The
-  owner's actual root-cause observation: most lanes drifted non-gating not by deliberate policy
-  but because they were added AFTER the original required-status-checks list was set on branch
-  protection and never retrofitted in -- so promoting lanes one at a time (this item's own
-  process) still leaves a standing maintenance task ("did we remember to add lane N's check name
-  to branch protection") for every future lane too. The owner asked whether ONE step could be set
-  as the sole required check so this stops recurring. `ndjson-registry-check` is NOT the right
-  candidate: it's a doc/code/log SYNC checker (does `docs/agent-ndjson.md`'s row registry match
-  what the code emits and what a real log shows), not a test-pass/fail aggregator -- even at a
-  clean, stable PASS it answers "is the documentation accurate," not "did any test fail."
+  **A DIFFERENT, more specific gap in this same guarantee was found and fixed 2026-08-30, prompted
+  by a maintainer question about whether Pages publishing was truly guaranteed.** Job-level
+  `if: always()` only makes the JOB start regardless of `needs:` outcomes -- it does NOT make every
+  STEP inside the job run regardless of an earlier step's failure (GitHub Actions gives every step
+  an implicit `if: success()` unless it declares its own condition, which a genuine, not just
+  skipped, prior-step failure turns false). Two of `publish_diag`'s own early steps -- "Checkout
+  repository" and "Prep site directories" (the step that actually creates the `_site`/`.nojekyll`
+  skeleton) -- had no explicit `if:` at all. Had either genuinely failed, everything downstream
+  would still have attempted to run (nearly every later step in this job already carries its own
+  `if: always()`, and the deploy steps' own `event_name`/`outcome`-gated conditions already bypass
+  the default `success()` chaining too), but `_site` itself would never have been created, so
+  "Upload Pages artifact" would fail for real (path doesn't exist) rather than the deploy simply
+  being skipped or attempted against a thinner site. Fixed by adding `if: always()` to those two
+  steps plus three more found lacking it for consistency ("Record iterate artifact status",
+  "Fetch batch-check artifacts", "Append job summary" -- lower-stakes, since everything after them
+  already had `always()`, but leaving them inconsistent was pointless risk). **Clarifying the
+  causal story, since it wasn't quite what was suspected**: the widespread `continue-on-error`/
+  `exit 0` patterns scattered across the OTHER jobs in this file (the non-gating matrix lanes, a
+  handful of optional sub-steps) are NOT what protects Pages publishing -- `publish_diag`'s own
+  `if: always()` at the job level already guarantees it starts regardless of whether `selftest`/
+  `selftest-gate`/`model-quick-fix` succeed OR fail, with no dependency on those jobs being lenient
+  with themselves. Those other patterns exist for unrelated reasons already documented under this
+  repo's own CI lane policy (see "CI Overview" and the "CI lane gating maturity" periodic check).
+  One inherent, unfixable-via-YAML platform limit remains: `always()` does not run a job if the
+  whole workflow run itself is cancelled or the runner dies outright -- accepted as an unavoidable
+  GitHub Actions characteristic, not a gap in this repo's own control.
 
-  The right existing piece is the `selftest-gate` job (display name "Aggregate self-test
-  verdicts", `needs: [selftest]`, `if: always()`, `batch-check.yml` ~line 3312). It ALREADY
-  downloads a `lane_verdict.json` from EVERY one of the 8 matrix lanes unconditionally (the
-  "Upload iterate gate verdict" step at ~line 1295 has no `matrix.mode` restriction) and
-  aggregates them into one `has_failures` output -- `true` if ANY lane's own "Verdict from
-  NDJSON" step (~line 1206) found a `pass:false` row, a `status:failed` row, or a
-  `bootstrap.state`/`self.bootstrap.state` outside the allowed-states list. This is a real,
-  already-built, all-8-lanes aggregation mechanism, not something that needs inventing --
-  **but its missing-artifact fallback is coarser than that sentence implies: re-verified directly
-  against the "Aggregate verdicts" step's own source, it only sets `has_failures=true` for a
-  missing-artifact reason when the downloaded set is EMPTY ACROSS ALL LANES (`-not $files`) AND
-  the overall matrix job's own result wasn't `success` -- there is no PER-LANE check.** If 7 of 8
-  lanes' `lane_verdict.json` files land fine and exactly one lane's upload silently fails while
-  that lane's own job conclusion still happens to read `success`, the aggregation loop only ever
-  sees the 7 present files and never notices the missing 8th -- `has_failures` can read `false`
-  with zero evidence from that lane. See the fail-closed caveat below; this gap must be fixed
-  before this mechanism is trustworthy as a required check, not just before it's convenient.
+  **A WIDER, pre-existing version of this same class of gap remains open, out of scope for the
+  2026-08-30 fix above (CodeRabbit review, PR #471).** The fix above closed the reachability gap
+  for the 5 specific steps this PR's diff touches. Several OTHER `publish_diag` steps this PR never
+  touched -- `Package iterate logs archive`, `Mirror iterate logs into site bundle`, `Normalize
+  iterate artifact layout`, `Publish diagnostics index` (all pre-existing `if: always()`, confirmed
+  absent from this PR's own diff) -- consume `steps.prep.outputs.ARTIFACTS`/`DIAG`/`SITE` directly,
+  unguarded, the same way the 2 fixed steps did before their fix; if `Prep site directories` itself
+  fails before writing those outputs (as opposed to merely being skipped because an earlier step
+  failed), these steps would resolve to a malformed path (e.g. bash's `"${EMPTY}/iterate"` becomes
+  `/iterate`) rather than the graceful scratch-directory fallback the 2 fixed steps now have.
+  Auditing and fixing every such consumer across the whole job is a real, separate, larger
+  undertaking (a full pass over `publish_diag`'s ~20+ steps) -- deliberately not folded into this
+  PR, which is scoped to the reachability gap alone. A future slice should generalize the
+  `_site_prep_failed`-style fallback to a single shared early step (writing a fallback env var or
+  step output once) rather than repeating the guard at every consumer site.
 
-  **The gap: `selftest-gate`'s own job never fails when `has_failures=true`.** Today that output
-  is consumed ONLY by `model-quick-fix`'s auto-patch trigger steps (the
-  `needs['selftest-gate'].outputs.has_failures == 'true'` conditions at ~lines
-  3538/3544/3554/3560/3592/3690/3764) -- never by anything that would make `selftest-gate`'s own
-  check conclusion "failure." Contrast with the two currently-required lanes (`real`/
-  `conda-full`): each already has its own per-lane hard gate, the "Enforce NDJSON failures for
-  gated lanes" step (~line 1256, `exit 1` when THAT lane's own `has_failures=='true'`), which is
-  what actually makes those two matrix-job instances report failure today -- the same underlying
-  "Verdict from NDJSON" data `selftest-gate` already aggregates, just enforced separately
-  per-lane instead of once in aggregate.
+  **"Gating" is a GitHub branch-protection setting, not a YAML edit.** This repo's actual merge
+  gate is GitHub's native required-status-checks list on the default branch's protection rule
+  (`pr-automerge.yml` delegates entirely to it, no custom required-check logic lives in this repo's
+  own workflow code). Removing a job's `continue-on-error: true` is a necessary prerequisite but
+  NOT sufficient -- someone with repo-admin access must also add the check's exact name to that
+  list. Each slice's real deliverable is prove-readiness-then-flag-for-the-branch-protection-
+  change (or make it directly, if the acting agent has that access) -- a YAML edit alone is never
+  "done."
 
-  **Concrete fix, sized as its own Item 35 slice**: add a step to `selftest-gate` mirroring the
-  exact 3-line pattern already proven at line 1256-1261 (`if has_failures=='true': echo "...";
-  exit 1`), reading `steps.aggregate.outputs.has_failures` instead of a single lane's own output.
-  Once that step exists and has soaked (full-matrix runs, several consecutive, per process rule 1
-  below), "Aggregate self-test verdicts" becomes a job whose OWN conclusion is failure whenever
-  ANY lane -- gated or not -- reports a real test failure, and adding just that one check name to
-  branch protection's required-status-checks list would transitively cover every present AND
-  future lane without a further branch-protection edit per lane added. A genuine answer to the
-  maintenance-treadmill problem, not just a rephrasing of "add more required checks."
+  **Aggregate-check mechanism: implemented and now the primary path for closing the required-
+  checks maintenance treadmill (most lanes drifted non-gating simply because they were added AFTER
+  the original required-checks list was set and never retrofitted in, not by deliberate policy).**
+  `selftest-gate` ("Aggregate self-test verdicts") already downloads and aggregates every one of
+  the 8 matrix lanes' `lane_verdict.json` files unconditionally via `tools/aggregate_selftest_
+  verdicts.ps1`, comparing the SET of expected lane IDs against the SET of observed ones -- a
+  missing, unexpected, or duplicate lane counts as `has_failures=true` on its own, independent of
+  the overall job's own `success`/`failure` result (this fail-closed precondition was itself a
+  real fix: the original mechanism only caught a TOTAL absence of verdict files, missing a single
+  lane's silently-missing upload as long as the rest landed). Confirmed via
+  `tests/test_aggregate_selftest_verdicts.ps1`'s fixtures (8 scenarios covering missing/
+  unexpected/duplicate lanes, malformed JSON, and a missing `has_failures` field, none of which
+  depend on a real Windows host) and several consecutive green real `real`-lane runs.
 
-  **Caveats before flipping this on -- still governed by the process discipline below, do not
-  skip them just because the mechanism itself is simple:**
-  1. Recommend ADDING "Aggregate self-test verdicts" as a required check ALONGSIDE the current
-     per-lane `real`/`conda-full` required checks at first, not replacing them -- collapsing to
-     one aggregate check loses today's per-lane visibility in the PR checks UI (one red X instead
-     of "real failed, conda-full passed"), and keeping both means a bug in `selftest-gate` itself
-     (e.g. its artifact-download step failing) doesn't remove your only signal. Consolidate down
-     to just the aggregate check later, once ITS OWN reliability is separately proven.
-  2. `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` simulate FAILURE/download-fallback
-     scenarios on purpose (already flagged above as needing re-verification before excluding from
-     gating) -- before this aggregate check goes live, explicitly re-confirm each of those lanes'
-     own selfapps tests reports `pass:true` for a correctly-handled SIMULATED failure (the row
-     asserts "did the fallback recover," not "did the simulated failure not happen") -- otherwise
-     this aggregate check would make those three intentionally-adversarial lanes into permanent,
-     incorrect PR blockers the moment their simulated condition fires, which is every run.
-  3. Re-verify the `publish_diag` `needs: [selftest, selftest-gate, model-quick-fix]` /
-     `if: always()` guard (see above) is unaffected the first time `selftest-gate` actually goes
-     red in practice, not just by reading the YAML -- `if: always()` should make this a non-issue
-     structurally, but confirm it empirically once, since this item exists precisely because
-     "should be fine by reading the YAML" has been wrong before in this repo.
-  4. Same one-slice-at-a-time, full-matrix-to-completion discipline as every other candidate in
-     this item -- do not treat "the mechanism is simple" as license to skip the soak period.
-  5. **Precondition, not optional polish: fix `selftest-gate`'s missing-artifact fallback to fail
-     CLOSED per lane before adding the `exit 1` step above, or the new step inherits an existing
-     blind spot.** Per the corrected mechanism description above, today's aggregation only treats
-     a TOTAL absence of verdict files (zero lanes reporting) as a failure signal -- a single
-     lane's `lane_verdict.json` silently missing (upload glitch, artifact-service hiccup, a step
-     skipped for a reason that doesn't also flip that lane's own job conclusion to failure) is
-     invisible as long as at least one other lane's artifact is present. **A raw file-count
-     comparison is not sufficient either** -- each artifact's name already encodes its lane
-     (`selftest-verdict-${{ matrix.mode }}` at the upload site; the aggregation step's own
-     `lane_verdict.json` also stamps `lane = '${{ matrix.mode }}'` at write time), so an
-     unexpected or duplicate artifact landing alongside a genuinely missing lane could still make
-     the total COUNT match the expected lane count while one real lane's evidence is absent. Fix:
-     compare the SET of expected lane IDs (the matrix's own `mode` list) against the SET of
-     observed lane IDs (read from each downloaded `lane_verdict.json`'s own `lane` field, or the
-     artifact/subdirectory name) and treat any expected ID that's missing -- or any
-     unexpected/duplicate ID present -- as `has_failures=true`, regardless of what
-     `needs.selftest.result` reports for the run as a whole. Add test coverage for all three
-     shapes (a missing lane, an unexpected extra lane, a duplicate lane) before trusting the fix
-     -- this is exactly the kind of gap Item 35 exists to close, and shipping the aggregate-gate
-     promotion without closing it first would just relocate a false-green risk instead of
-     removing one.
+  **Actual gating step implemented 2026-08-30 (maintainer added the matching branch-protection
+  required check the same day): a new "Enforce aggregate self-test verdict" step `exit 1`s when
+  `steps.aggregate.outputs.has_failures == 'true'`**, mirroring the identical, already-proven
+  "Enforce NDJSON failures for gated lanes" per-lane pattern. Re-verified first that
+  `contract-uv`/`contract-uv-fail`/`uv-dl-fallback`'s own simulated-failure scenarios report a
+  clean (non-`has_failures`) verdict on every real run observed to date, so gating on the
+  aggregate does not turn them into permanent false blockers. Added ALONGSIDE the existing
+  per-lane `real`/`conda-full` required checks, not replacing them -- collapsing to one aggregate
+  check would lose today's per-lane visibility in the PR checks UI, and a bug in `selftest-gate`
+  itself would otherwise remove the only signal. Consolidate down to just the aggregate check
+  later, once its own reliability is separately proven across more runs.
 
-     **Implemented, NOT YET CONFIRMED via a real CI run.** The aggregation logic was extracted
-     from `selftest-gate`'s inline "Aggregate verdicts" step into `tools/aggregate_selftest_
-     verdicts.ps1` (mirroring `tools/ci_cache_selfheal.ps1`'s own extraction, Item 19), which now
-     compares the SET of expected lane IDs (hardcoded to match the matrix's own 8-mode `include:`
-     list, alongside its two pre-existing duplications there) against the SET of observed lane
-     IDs (each verdict record's own `lane` field, falling back to the containing artifact
-     directory's name when absent) and flags any missing, unexpected, or duplicate lane as
-     `has_failures=true` -- independent of `needs.selftest.result`, closing the exact blind spot
-     described above. A new regression test, `tests/test_aggregate_selftest_verdicts.ps1`
-     (wired into `real`, a GATING lane, mirroring `test_ci_cache_selfheal.ps1`'s own precedent),
-     exercises all three required shapes plus three more (a genuine per-lane failure still
-     detected, the original healthy case, and the "zero files with a `success` fallback" case
-     that proves the new check no longer depends on the fallback result at all) against fixture
-     directories built to mimic `actions/download-artifact@v6`'s own output layout -- verified
-     directly with a local `pwsh` run before ever reaching real CI (this script has no Windows-
-     specific dependency, unlike its `ci_cache_selfheal.ps1` sibling, so local verification on a
-     non-Windows sandbox was actually possible here). Still open: confirm the new gating test
-     passes on the real `real`-lane run, and re-verify `selftest-gate`'s own "Append gate summary"
-     step still renders correctly with the report's new `lane_check` section. The actual
-     `exit 1`-on-`has_failures` step for `selftest-gate` itself (the change that makes this job's
-     own conclusion fail for real) is a SEPARATE, not-yet-taken next step -- this slice is scoped
-     to the precondition only, per the item's own "one lane or row per slice" discipline.
+  **Reverted to advisory (`continue-on-error: true`) the same day, on PR #471, after its own
+  first two real activations both hard-failed on a genuine, reproducible, pre-existing condition
+  unrelated to that PR's diff.** The pre-gating re-verification above checked only that the three
+  simulated-failure lanes (`contract-uv`/`contract-uv-fail`/`uv-dl-fallback`) don't false-positive
+  -- it never checked whether `cache`/`uv` had a CURRENTLY-real failure of their own, which they
+  did: two separate runs, hours apart, produced byte-identical failing rows --
+  `self.exe.smokerun` (`cache`, `exitCode:1`) and `self.cascade.exec` +
+  `self.exe.warnfix.venv_repair` (`uv` -- cascade falls through to embed instead of stopping at
+  conda; the warnfix repair-install precondition never fires). Identical detail payloads twice
+  rules out flake. Neither PR touched `run_setup.bat`/any selfapps script, so this predates PR
+  #471 and is a genuine, currently-open regression in the bootstrapper or its test scripts, not a
+  CI-mechanism bug -- but since this gate is what first turned an already-non-gating lane's
+  failure into a repo-wide merge blocker, leaving it hard-failing would have blocked every PR
+  until someone separately root-causes and fixes it. `continue-on-error: true` keeps the step's
+  own red result visible in the PR checks UI without failing the job. **Re-remove
+  `continue-on-error` only after both root causes below are fixed and the mechanism has re-soaked
+  per the process discipline already stated below** (it was not, in fact, fully met before this
+  first gating attempt -- the sample only covered the 3 simulated-failure lanes, not all 8).
 
-  **Process discipline -- read this before touching anything:**
-  1. **One lane or row per slice.** Do not attempt a blanket "flip everything to gating" change.
-     Each slice: (a) confirm the underlying mechanism is genuinely real and demonstrably
-     non-flaky (a stable-history check, not a hopeful one), (b) let the full 8-lane matrix run to
-     completion in full at least several consecutive times with the change in place before
-     treating it as proven, (c) only then take the actual gating step.
-  2. **"Gating" is a GitHub branch-protection setting, not a YAML edit.** This repo's actual merge
-     gate is GitHub's native "required status checks" on the default branch's protection rule
-     (confirmed by reading `.github/workflows/pr-automerge.yml`: it only calls
-     `enablePullRequestAutoMerge`/checks `pr.mergeable`, both of which delegate entirely to
-     GitHub's own branch-protection evaluation -- no custom required-check logic lives in this
-     repo's own workflow code). Removing a job's `continue-on-error: true` in `batch-check.yml` is
-     a NECESSARY prerequisite (so the job's own conclusion actually reports failure instead of
-     always succeeding) but is NOT SUFFICIENT on its own -- someone with repo admin access must
-     also add the check's exact name to the branch protection rule's required-status-checks list
-     for it to actually block a merge. Each slice's real deliverable is: prove readiness, then
-     flag explicitly for the owner to make that branch-protection change (or make it directly if
-     the acting agent has that access) -- do not report a slice "done" after only the YAML edit.
-  3. **No shortcuts on the "let CI run to completion" requirement.** Do not merge, promote, or
-     declare a slice validated based on a partial run, a cancelled run, or "the lanes that matter
-     looked fine so far." Wait for the full matrix.
-  4. Cross-references: `docs/agent-ndjson.md`'s own notes on
-     `self.dll_bundle.recover`/`self.failfast.probe`/`self.exe.smokerun` already diagnose WHY each
-     is inert -- read those before assuming a fix; the mechanism is documented even though the fix
-     and the gating decision are not. `docs/agent-closed-backlog.md`'s Item 19 entry (cache-lane
-     self-healing) is relevant prior art specifically for the `cache` lane's own non-gating
-     history.
+  **New, still-open sub-item spun out of this finding**: root-cause and fix (a) `self.cascade.exec`
+  (`uv` lane) -- why the provider cascade currently falls through conda to embed
+  (`condaToEmbed:1`) instead of stopping at conda, and (b) `self.exe.warnfix.venv_repair` (`uv`
+  lane) -- why the forced-missing-xlrd precondition no longer triggers warnfix's repair-install
+  path (`installedXlrd:false`) under venv mode. Both reproduced identically on 2026-08-30 across
+  two separate `uv`-lane runs (workflow runs `33288809538` and `33293648911`); start there rather
+  than re-deriving reproduction steps from scratch.
 
-- **Item 37: `:dll_bundle_recover`'s own regression coverage is entirely non-gating, on the
-  newest code on the golden path.** Confirmed against `.github/workflows/batch-check.yml`,
-  `tests/harness.ps1`, and `docs/agent-ndjson.md`. This is a specific, concrete instance of Item
-  35's own scope -- filed separately since it names an exact fix, but implement it as one of Item
-  35's slices, not independently.
+  **Process discipline for every future slice in this item**: (1) one lane/row at a time --
+  confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
+  completion several consecutive times before treating it as proven, only then take the gating
+  step; (2) no shortcuts on "let CI run to completion" -- a partial or cancelled run never counts.
+  `docs/agent-ndjson.md`'s own notes on each currently-inert row already diagnose why it's inert;
+  `docs/agent-closed-backlog.md`'s Item 19 entry is relevant prior art for the `cache` lane's own
+  non-gating history.
 
-  The DLL-bundling repair loop (CLAUDE.md's former Items 24/28/29,
-  `docs/prd-conda-native-dll-bundling.md`) shipped 2026-08-07/08 -- the youngest subroutine on the
-  default fresh-build path, called unconditionally from `:run_entry_smoke` on every build plus a
-  second pass from `:run_exe_smokerun`. Its coverage:
-  - `self.dll_bundle.recover` (7 outcome states) is emitted behind `if not defined HP_NDJSON exit
-    /b 0`. `docs/agent-ndjson.md` already documents that the one test exercising it
-    (`tests/selfapps_layered_e2e.ps1`) runs its sub-bootstrap from a bare scratch directory with
-    `HP_NDJSON` unset -- so the row is NEVER actually written in any real CI run. Confirmed
-    independently against a real run's NDJSON snapshot: no `dll`-prefixed id present.
-  - `batch.dll_bundle.ndjson`/`batch.dll_bundle.second_pass` (`tests/harness.ps1`) are static
-    source-text regex checks -- they prove the label and all 7 call sites exist, not that the
-    behavior is correct at runtime.
-  - The only genuine runtime exercise, `self.layered_e2e.chain`, covers exactly 1 of the 7 states
-    (`repaired`, via a real `pygrib`/`eccodes.dll` trigger) and runs on the `cache` lane only --
-    non-gating twice over (the lane itself is `continue-on-error` at the job level, AND the step
-    itself carries its own `continue-on-error: true`).
+- **Item 37: `self.dll_bundle.recover`'s visibility fix is confirmed via real CI (PR #452); its
+  promotion out of `continue-on-error` (or the whole `cache` lane's) remains open, tracked as an
+  Item 35 slice, not implemented independently.** The DLL-bundling repair loop's own NDJSON row
+  previously never fired in any real CI run at all -- `selfapps_layered_e2e.ps1`'s sub-bootstrap
+  ran with `HP_NDJSON` unset. Fixed by setting `HP_NDJSON` there (pointed at the same shared
+  `~test-results.ndjson` the test's own rows already use, restored in `finally`) and diffing the
+  file before/after to record, as an informational `details` field on `self.layered_e2e.chain`
+  (deliberately NOT folded into that test's own pass/fail, so a wiring hiccup can't turn an
+  already-proven test red). Confirmed via a real published diagnostics artifact: the row fired
+  TWICE with `state:"repaired"` in one run. One confirmed run is not yet the "several consecutive
+  runs" Item 35's process requires before considering promotion -- that decision is a live next
+  step for a future loop.
 
-  **Consequence**: a regression in the newest, most recently-landed golden-path subroutine cannot
-  block a PR today -- it would have to be caught by a human reading a non-gating lane's log. Fix
-  (cheapest first): set `HP_NDJSON` for `selfapps_layered_e2e.ps1`'s own sub-bootstrap so
-  `self.dll_bundle.recover`'s `repaired` row actually fires and becomes queryable; then, once
-  proven stable, promote that one step (or the whole `cache` lane, depending on what Item 35's own
-  audit concludes) via Item 35's process.
+- **Item 42: console verbosity (lever 1) is CLOSED (2026-08-24); the two fresh-build Y/N prompts
+  (lever 2) remain open, tracked in `docs/open-questions.md`.** Two independent, separately-
+  implementable levers, deliberately not conflated: (1) tier `:log`'s console output so a beginner
+  isn't shown `[DEBUG]`/`[TRACE]` noise alongside genuinely actionable `[WARN]`/`[ERROR]` text; (2)
+  reduce/reword the two elective Y/N prompts every successful fresh interactive build shows (the
+  post-execution checkpoint, and the optimized-build upsell whose failure hint references "Visual
+  Studio Build Tools" -- meaningless to the target audience).
 
-  **Cheapest-first fix implemented AND CONFIRMED via real CI (PR #452, merge commit `f50ccd6`,
-  `cache`-lane run `32561652643`).** `selfapps_layered_e2e.ps1` now sets `HP_NDJSON` for its own
-  sub-bootstrap (pointing at the same shared `~test-results.ndjson` its own `Write-NdjsonRow`
-  already writes to, restored in its `finally` block) and diffs that file before/after to record,
-  as informational `details` fields on its own `self.layered_e2e.chain` row, whether a
-  `self.dll_bundle.recover` row with `state:"repaired"` actually appeared -- deliberately NOT
-  folded into `chainPass`/`mech4Pass` itself, so a wiring issue in the NDJSON emission
-  specifically cannot turn this already-proven, closely-watched test red on its own first run
-  under the new wiring. See `docs/agent-ndjson.md`'s corresponding entry for the full mechanism.
-  **Confirmed by pulling the real published diagnostics artifact directly** (`tests/
-  ~test-results.ndjson` from the `cache`-lane job of that run): `self.dll_bundle.recover` fired
-  TWICE with `state:"repaired"` in the same run (`eccodes.dll` and `impi.dll`, both `iteration:1`,
-  `provider:"conda"`), and `self.layered_e2e.chain`'s own `details` show
-  `dllBundleRowSeen:true, dllBundleRowRepaired:true` alongside every other mechanism passing
-  (`mech1Pass`-`mech4Pass` all `true`, `exePass:true`, `statusState:"ok"`, `runExit:0`). This is
-  the row's first-ever real-CI observation, confirming it after ONE run -- not yet the "several
-  consecutive runs" Item 35's own process discipline requires before considering promotion (moving
-  this step, or the whole `cache` lane, out of `continue-on-error`). That promotion decision
-  remains a live next step for a FUTURE loop, not taken here.
+  **Lever 1, shipped**: `:log` now suppresses `[DEBUG]`/`[TRACE]`/`[INSTALL]` from the LIVE console
+  by default (a substring-slice check inside `:log` itself, not `findstr`/piping -- message text
+  can legally contain `&`); `[INFO]`/`[BOOT]`/`[WARN]`/`[ERROR]`/`[STATUS]`/`[REPAIR]`/`[HINT]`
+  stay visible (`[STATUS]` is the "did my code work" readout; `[REPAIR]` explains why a build is
+  taking longer without looking stuck; `[HINT]` is the most actionable post-failure text in the
+  file). `~setup.log` is untouched -- suppression is console-only. New opt-in `HP_VERBOSE_CONSOLE=1`
+  restores all three suppressed tags (REQ-019-compliant additive opt-in), documented in README.md.
+  A companion `[INFO] Installing dependencies -- this may take a few minutes...` progress line was
+  added for what was previously the single longest silent stretch in a fresh build (no prior
+  `[INFO]`-tier line existed for the dependency-install phase at all).
+  Four test dependencies on the OLD console-redirected-capture behavior were found and fixed in the
+  same change (`tests/selfapps_pvw_overrides.ps1`'s two `PVW_WORKSPACE` scenarios,
+  `tests/selftest.ps1`'s `self.stub.conda_perpkg`/`self.stub.conda_retry`) -- the last one caught
+  only by a real CI failure after an initial grep-for-brackets sweep missed it, since its own
+  assertion matches a bracket-free phrase. A follow-up exhaustive sweep (every real `[DEBUG]`/
+  `[TRACE]`/`[INSTALL]` message body grepped bracket-free against the full `tests/` tree) confirmed
+  no fifth dependency remains -- the correct methodology for this class of check going forward is
+  searching by message body, not by tag string. New regression coverage:
+  `tests/selfapps_console_tiering.ps1` (`self.console.tiering`, `uv` lane, non-gating).
 
-- **Item 38: the same EXE is verified from two different working directories across run 1 vs.
-  every later run, so a CWD-relative-path app can flip its verdict between two consecutive
-  double-clicks.** Confirmed reasoned-from-source; the CWD split itself is already documented as
-  deliberate in `docs/agent-interconnect.md`: *"CWD is preserved per call site: both
-  `:try_fast_exe` and `:verify_no_exe_interpreter` run from the app root (no `pushd dist`), unlike
-  `:run_exe_smokerun`'s `pushd dist`... re-verify that test if these CWDs are ever unified."* The
-  MECHANISM was known; this specific consequence (a verdict flip a beginner would misread as "it
-  fixed itself") was not previously spelled out.
+  **Lever 2, still open** -- this is user-facing copy and interaction-flow work needing a
+  maintainer call (reword only vs. also combine the two prompts into one), not a unilaterally-
+  correct technical fix like lever 1 was. See `docs/open-questions.md`'s open item for the two
+  concrete sub-questions still needing an answer before this can move.
 
-  **Mechanism**: `:run_exe_smokerun` (the first-run build verification) runs `pushd dist` first,
-  so CWD = `dist\` during that verification. `:try_fast_exe`/`:try_fast_exe_probe` (every later
-  run's fast path) runs with CWD = the app root. For a program that opens a data file by relative
-  path -- a beginner-common pattern -- run 1 and run 2 can disagree about whether the program even
-  works, with zero code change in between.
+- **Item 46: `:die`'s `exit /b` lets most call sites continue executing afterward, producing
+  repeated `pause` prompts and further doomed work instead of a single clear stop -- batched,
+  proven-shape-at-a-time remediation, NOT a small slice.** See `docs/agent-lessons-learned.md`'s
+  `:die` entry for the core mechanism (execution continues past `call :die`; `HP_BOOTSTRAP_STATE`
+  is set at the source so the status file stays honest regardless).
 
-  **Realistic scenario**: `report.py` does `open("config.json")`, with `config.json` sitting next
-  to the script. Run 1: CWD = `dist\`, the file isn't there, EXE exits non-zero,
-  `:exe_smokerun_hints` fires. Run 2: same binary, CWD = app root, file IS found, exit
-  0, panel reads clean "SETUP COMPLETE". The user's natural conclusion -- "it fixed itself" -- is
-  suspect: per Microsoft's own `ShellExecute`/`CreateProcess` documentation, a launch with no
-  explicit working directory supplied defaults to the target EXE's own containing folder as CWD
-  -- which for `dist\<env>.exe` is `dist\`, the SAME CWD as run 1, so the program would still be
-  broken for that default launch path. This is NOT a universal fact, though: Explorer CAN be
-  handed an explicit working directory (e.g. a shortcut's own "Start in" field), which would
-  override the default -- and no CI lane launches via an actual double-click or shortcut either
-  way, so the real-launch consequence described here is reasoned from documented Windows
-  behavior, not confirmed against a genuine double-click.
+  **Maintainer decision (2026-08-21)**: continue the current approach -- goto-based stopgaps to the
+  nearest safe sink, batched by proven shape across several PRs -- rather than a global `HP_FATAL`
+  flag or converting `:die` itself to a genuinely process-halting `exit` (drop `/b`). The latter is
+  a plausible SEPARATE future effort once the batch inventory shrinks further, not folded into this
+  ongoing work -- see `docs/plan-die-fatal-remediation.md` for the full batch trace/risk
+  classification and `docs/agent-lessons-learned.md`'s `:die` entry for the one existing test
+  contract (`tests/selfapps_entrysmoke_no_interpreter.ps1:171`) that change would need to update
+  deliberately.
 
-  **Decision (owner-approved, 2026-08-29): Option A -- unify both verification points to the app
-  root, not `dist\`.** The bootstrapper's job is "make it run" for the way a real user actually
-  organizes files: adjacent data files sit next to the `.py` source at the app root, not inside a
-  `dist\` folder that does not even exist until after the build. Verifying from `dist\` was
-  matching an artifact of PyInstaller's own output layout, not how a beginner's code is actually
-  structured or how the interpreter itself already ran the code during development. Unifying to
-  the app root also means the EXE verification now shares the exact same current working
-  directory (CWD) the interpreter's own run always used, not merely "similar behavior" in some
-  general sense.
+  Two non-pausing treatments exist for different shapes of `:die` site: `:warn_build_incomplete`
+  (a genuinely NOT-doomed case -- real verification work still follows) and a straight `goto` to
+  the nearest safe re-entry point (a genuinely doomed chain, where nothing useful follows). Not
+  every `:die` site qualifies for either -- classify doomed-vs-not-doomed before converting a new
+  one.
 
-  **The hint-honesty half of option (b) is CLOSED 2026-08-23, independently of the CWD-mismatch
-  design decision above.** The hint previously compounded the problem for the common (no-override)
-  case: `--add-data` places the file inside `_MEIPASS` (the onefile extraction dir), which does
-  not satisfy a CWD-relative `open()` at all, yet the hint unconditionally suggested it regardless
-  of which kind of missing-file path was detected. Fixed by branching on whether the captured
-  missing-file path itself is already under a genuine `_MEIxxxxxx` folder (PyInstaller's own
-  onefile extraction-dir naming): when it is, `--add-data` genuinely is the fix and the original
-  advice is unchanged; when it is a bare/CWD-relative path (the `report.py`/`config.json` scenario
-  above), the hint now says `--add-data` will not fix it and suggests placing a copy next to the
-  built `.exe` instead, or reading it via a path relative to the script's own file. This is
-  independent of, and does not presuppose an answer to, the (a)-vs-(b) CWD-unification question
-  above -- the advice is honest either way that question is eventually resolved.
-
-  **First-shipped version used a plain `findstr /i "_MEI"` substring match -- a real false-positive
-  bug found by CodeRabbit's review of this same PR, fixed before landing.** A coincidental filename
-  containing `_MEI` anywhere (e.g. `config_MEI.json`) or a user-named folder called `_MEI` with no
-  digits (e.g. `C:\work\_MEI\data.txt`) would both wrongly match, misclassifying a genuine
-  CWD-relative failure as a bundled-resource one and giving the (still-wrong, for that case)
-  `--add-data` advice. Fixed by matching via PowerShell instead of `findstr`, anchored to the real
-  `_MEIxxxxxx` path-component shape (a path separator, then `_MEI`, then digits, then a path
-  separator) so a bare substring can never match; the value is read from the environment at
-  PowerShell runtime rather than substituted into the `-Command` text, so there is no cmd.exe
-  metacharacter risk either. Verified directly against both of CodeRabbit's own example strings
-  plus the real captured `_MEI41642` extraction path (`docs/demo-bootstrapper-output.md`'s
-  Scenario 31) via a standalone `pwsh` script before landing -- all five cases classify correctly.
-  Regression coverage: `tests/selfapps_exedata_fail.ps1` (`self.exe.smokerun.exedata.xfail`,
-  real/conda-full lanes) gained a second scenario (`EXEDATA_SCENARIO=mei_substring`, a stub app
-  opening `config_MEI99.json` -- CodeRabbit's own example shape) alongside the original `plain`
-  scenario (`config.json`), both asserting the honest wording fires and the corresponding
-  unconditional `--add-data` suggestion does not.
-
-  **Third scenario added same PR, closing a coverage gap CodeRabbit's review separately flagged:
-  neither scenario above ever exercises the OTHER branch (a genuine `_MEIxxxxxx` path, where
-  `--add-data` remains the correct, unchanged advice) -- nothing in the suite did, before this.**
-  `EXEDATA_SCENARIO=mei_genuine`'s stub app reads a file joined from `sys._MEIPASS` (PyInstaller's
-  own real, randomly-named onefile extraction directory at runtime), never bundled via
-  `--add-data`, so the failure genuinely surfaces a path rooted under a real `_MEIxxxxxx` folder.
-  Since the exact directory name is random per run, the test asserts the stable parts instead
-  (the `--add-data` advice text, the filename it names, and a genuine `_MEI<suffix>` path segment
-  actually present in the captured log) rather than the full line verbatim.
-
-  **Real bug this new scenario caught on its first real CI run, fixed same PR: the extraction
-  suffix is NOT always decimal digits.** The regex shipped as `_MEI[0-9]+` (digits only), matching
-  the one reference capture then available (`_MEI41642`, all-decimal). The `mei_genuine` scenario's
-  own first real run captured `_MEI00001a4c2` and `_MEI00001ee42` -- both containing hex letters --
-  so `[0-9]+` never matched, and the fix wrongly gave the CWD-relative advice for a genuine
-  extraction path (the exact failure mode this whole fix exists to prevent, just inverted). Widened
-  to `_MEI[^\\/]+` (any nonempty run of non-separator characters): the structural bounding (a real
-  path separator immediately before AND after `_MEI<suffix>`) is what actually distinguishes a
-  genuine extraction-directory component from a coincidental substring or a no-suffix folder name,
-  not the exact character class of the suffix -- verified via a standalone `pwsh` script against
-  all prior cases plus both newly-captured hex examples before landing.
-
-  **Implemented (2026-08-29): `:run_exe_smokerun` and `:exe_smokerun_hints` now both verify from
-  the app root.** `:run_exe_smokerun`'s `pushd dist`/`popd` were removed and `HP_SMOKERUN_EXE` is
-  now `dist\%ENVNAME%.exe` (a path, not a bare filename needing `dist\` as the current working
-  directory (CWD)); `~run.out.txt`/`~run.err.txt` default to plain, CWD-relative names in
-  `tools/exe_smokerun.ps1` since the caller's CWD is the app root now. `:exe_smokerun_hints`
-  (the diagnostic re-run explaining `:run_exe_smokerun`'s own failure) got the identical
-  treatment, since it must reproduce the exact same launch conditions as the run it explains --
-  see `docs/agent-interconnect.md`'s "Single-verification smoke model" section for the full
-  mechanism. Closes the coverage gap this item originally named: `selfapps_exedata_fail.ps1`'s
-  former "plain" scenario (an EXPECTED failure that depended on the old `dist\` CWD) is now
-  `tests/selfapps_exe_cwd_consistency.ps1`, a POSITIVE two-run proof that a fresh build
-  (`:run_exe_smokerun`) and a cached-EXE fast-path reuse (`:try_fast_exe`) agree on the same
-  CWD-relative app. `selfapps_exedata_fail.ps1`'s remaining `mei_substring`/`mei_genuine`
-  scenarios stay genuine XFAILs, unaffected by the CWD unification (a genuinely-absent file, and
-  a real `_MEIxxxxxx` extraction path, respectively -- see that file's own updated header).
-
-  **Deliberately deferred, two narrower-blast-radius `pushd dist\` sites, per this item's own
-  "EXTREME CAUTION" discipline (see the DLL-bundling/hidden-import repair loops elsewhere in this
-  backlog for the established precedent of scoping a widely-shared verification subroutine's fix
-  one slice at a time):** `:offer_optimized_build`'s internal Nuitka-optimized-build verification,
-  and `:hidden_import_recover`'s own diagnostic re-run. Neither has any existing test asserting
-  its specific CWD either way (the optimized-build stub app does no file I/O at all; the
-  hidden-import loop's own write and read-back already agree with each other regardless of which
-  CWD is chosen), so leaving them as-is does not reintroduce the inconsistency this item exists to
-  close for the PRIMARY, widely-hit verification path -- but re-derive whether to unify them too
-  the next time either subroutine is touched (each carries its own `run_setup.bat` comment naming
-  this deferral explicitly).
-
-  **Not yet closed out to `docs/agent-closed-backlog.md`** -- pending a green CI run confirming
-  `self.exe.smokerun.cwd_consistency` and the updated `self.exe.smokerun.exedata.xfail` scenarios
-  both pass for real, per this repo's own "verify before archiving" convention.
-
-- **Item 42: console output is verbose across all log levels, and every fresh build ends with two
-  unexplained Y/N prompts -- both plausibly overwhelming for the actual target audience
-  (beginners with no setup experience).** Confirmed reasoned-from-source and CI capture. New; not
-  found in Cold Storage or elsewhere during verification.
-
-  **Mechanism, part 1**: `:log` echoes every line to console unconditionally -- `[INFO]`,
-  `[DEBUG]`, `[TRACE]`, `[BOOT]`, each timestamped -- with no tiering. A first run shows lines
-  like `[DEBUG] pipreqs (direct) rc=0 size=9` and `[TRACE] dep source selected: pipreqs` alongside
-  genuinely actionable `[WARN]`/`[ERROR]` text, all visually equal weight.
-
-  **Mechanism, part 2**: every successful interactive FRESH build (not the repeat-run fast path,
-  which is correctly prompt-free, and not a CI/non-interactive run, which auto-declines both
-  without ever truly waiting on input) asks two Y/N questions before the final panel: the post-execution
-  checkpoint ("Run again via the interpreter now?") and the optimized-build upsell ("Want to
-  build an optimized version too?"). For someone told to double-click one file, "build an
-  optimized version" has no discoverable right answer, and accepting starts a multi-minute Nuitka
-  build whose own failure hint references Visual Studio Build Tools -- a term with zero meaning to
-  the target audience.
-
-  **High-level fix to weigh** (two independent, separately-implementable levers -- do not conflate
-  them into one change):
-  1. Tier the console view: keep full detail in `~setup.log` (already happens), but only echo
-     INFO/BOOT/WARN/ERROR-class lines to the LIVE console by default, suppressing DEBUG/TRACE from
-     the interactive view (a verbose opt-in flag could restore them for diagnosis). No loss of
-     diagnostic capability, since the full log is unaffected.
-  2. Reduce/reword the two fresh-build prompts: consider combining them into a single, clearly-
-     optional ask, and/or defaulting to plain, jargon-free language that makes "this is optional,
-     skip if unsure" the obvious reading rather than requiring domain knowledge to answer
-     confidently.
-
-  Needs its own design pass -- this item deliberately does not pre-decide the exact
-  wording/mechanism, only names the problem and the two levers.
-
-  **Mitigation step for lever 1, specifically -- audit tag coverage before suppressing anything
-  (partially done already, verified via source 2026-08-10; the rest is this item's own
-  precondition, not yet done).** `run_setup.bat` uses 10 distinct `:log`/`echo` tags, not the 4
-  lever 1's own wording names: `[INFO]` (208 uses), `[WARN]` (142), `[ERROR]` (55), `[STATUS]`
-  (16), `[DEBUG]` (9), `[TRACE]` (8), `[REPAIR]` (8), `[BOOT]` (7), `[HINT]` (5), `[INSTALL]` (4)
-  -- counted directly from source. Only two long-running phases currently have a harness assertion
-  proving a progress line precedes the slow operation (`batch.progress.conda_create`,
-  `batch.progress.pyi_build`, `tests/harness.ps1`) -- both confirmed `[INFO]`-tier
-  (`[INFO] Creating Python environment` before `conda ... create`; `[INFO] Building standalone
-  executable` before the PyInstaller call), so both stay visible under lever 1's proposed
-  INFO/BOOT/WARN/ERROR tier and tiering would not reintroduce a "looks stuck" gap for either.
-  **Dependency-install progress line: CLOSED 2026-08-23.** The dependency-install calls (`conda
-  install`/`pip install -r requirements.txt`/`uv pip install`, `run_setup.bat`'s dependency-install
-  dispatch, the straight-line block immediately after `:dep_check_done`) previously had no
-  `[INFO]`-tier progress line at all -- only `[TRACE] dep install phase: start` and `[INSTALL]`-
-  tagged lines (`[INSTALL] conda bulk from ~reqs_conda.txt`, etc.), for what is plausibly the
-  single longest silent stretch in a fresh build. Fixed by adding `[INFO] Installing dependencies
-  -- this may take a few minutes...` as the first statement inside the `if exist "requirements.txt"
-  (...)` block, firing unconditionally whenever real install work follows (including the always-run
-  pip gap-fill safety net, so it fires even on the dep-check fast-skip path where conda/uv's own
-  bulk install is skipped but pip's verify-and-fill call still runs) -- mirrors the existing
-  `batch.progress.conda_create`/`batch.progress.pyi_build` precedent exactly. New harness assertion
-  `batch.progress.dep_install` (`tests/harness.ps1`) proves the message precedes the first real
-  install-phase work, same ordering-check shape as its two siblings.
-  **Tag classification: CLOSED 2026-08-23.** Lever 1's own wording only ever named 4 of the 10
-  tags (`INFO`/`BOOT`/`WARN`/`ERROR` = visible); `[STATUS]`/`[REPAIR]`/`[HINT]`/`[INSTALL]` were
-  the remaining 4 left unclassified (`[DEBUG]`/`[TRACE]` were already implied suppressed by the
-  "suppressing DEBUG/TRACE" line above). Read every real call site for each (re-counted from
-  source 2026-08-23: `[INFO]` 216, `[WARN]` 151, `[ERROR]` 57, `[STATUS]` 16, `[DEBUG]` 9,
-  `[TRACE]` 9, `[REPAIR]` 8, `[BOOT]` 7, `[HINT]` 6, `[INSTALL]` 5 -- counts drift upward release
-  over release as features land; re-count before trusting these for a future slice) and classified
-  by what each tag is actually FOR, not just its name:
-  - **`[STATUS]`** -- the `Run Status: SUCCESS/FAILED/TIMED OUT` readout (`:smokerun_ndjson` and
-    its two siblings) is arguably the single most important line in the whole run for a beginner
-    user -- did MY code work. **Visible.**
-  - **`[REPAIR]`** -- warnfix/DLL-bundling/hidden-import auto-recovery activity
-    (`[REPAIR] missing modules detected; installing and rebuilding.`,
-    `[REPAIR][DLL_BUNDLE] Bundling native DLL dependency: ...`, etc.) explains why a build is
-    taking longer than expected and that the bootstrapper is actively fixing something, not stuck.
-    **Visible.**
-  - **`[HINT]`** -- the post-failure `:exe_smokerun_hints` guidance (`Missing data file
-    detected: ...`, `Consider adding: --hidden-import=...`) is the most directly actionable text
-    in the entire file for a user staring at a failure. **Visible.**
-  - **`[INSTALL]`** -- terse routing breadcrumbs for WHICH install path was taken (`conda bulk
-    from ~reqs_conda.txt`, `conda per-pkg fallback`, `pip gap fill from requirements.txt`) sit
-    strictly BENEATH the `[INFO] Installing dependencies -- this may take a few minutes...` line
-    the dependency-install-progress-line fix above already made visible -- that INFO line is
-    already the "something is happening" signal for this phase, so `[INSTALL]`'s own mechanism
-    detail is redundant for a live user and reads like `[TRACE]`'s own shape
-    (`run_setup.bat`'s own header comment at the `[INFO] Installing dependencies` call site
-    already anticipated this: "only `[TRACE]`/`[INSTALL]` lines, which a future console-tiering
-    change (lever 1) could suppress by default"). **Suppressed** (same tier as `DEBUG`/`TRACE`).
-
-  Final tier: **visible by default** -- `INFO`, `BOOT`, `WARN`, `ERROR`, `STATUS`, `REPAIR`,
-  `HINT` (7 tags). **Suppressed by default** -- `DEBUG`, `TRACE`, `INSTALL` (3 tags), restorable
-  via an opt-in verbose flag per lever 1's own original design.
-
-  **Real blast-radius finding from this audit, for whoever implements lever 1 next**: grepped
-  every test for a `[DEBUG]`/`[TRACE]`/`[INSTALL]` assertion to check what actually depends on
-  today's unconditional console echo (as opposed to the untouched-by-tiering `~setup.log`, or a
-  STATIC source-text scan like `tests/harness.ps1`'s `batch.progress.dep_install`, neither of
-  which tiering affects). Two real hits, one false alarm:
-  - `tests/selfapps_pipgap.ps1` reads `[INSTALL]` lines from `~setup.log` specifically (its own
-    header comment says so) -- unaffected by suppressing `[INSTALL]` from the LIVE console, since
-    the full log is untouched by design. Not a blocker.
-  - `tests/selfapps_pvw_overrides.ps1`'s `$wsDebugLogFound` (`self.pvw.workspace.valid`) DOES read
-    `[DEBUG] Using super-user override for PVW_WORKSPACE:` from `~ws_bootstrap.log` -- the
-    CONSOLE-redirected capture (`cmd /c "run_setup.bat > ~ws_bootstrap.log 2>&1"`), not
-    `~setup.log`. Suppressing `[DEBUG]` from console echo would silently break this assertion.
-    **Must be updated (read `~setup.log` instead, or in addition) in the same change that
-    implements lever 1's console suppression**, or this test goes red the moment tiering ships.
-  - No other test file references `[DEBUG]`/`[TRACE]`/`[INSTALL]` at all (confirmed via a
-    repo-wide grep across `tests/`) -- so this one test is the ENTIRE known blast radius, not an
-    example of a larger pattern still to be found. Re-grep before implementing, since new tests
-    land between this audit and whenever lever 1 is actually built.
-
-  **Lever 1 mechanism: CLOSED 2026-08-24.** `:log` now suppresses `[DEBUG]`/`[TRACE]`/`[INSTALL]`
-  from the LIVE console by default via a single suppress-list check inside `:log` itself (a plain
-  `if not defined HP_VERBOSE_CONSOLE (if "%MSG:~0,N%"=="[TAG]" set "HP_LOG_SUPPRESS=1")` block per
-  tag, using `%VAR:~start,len%` substring slicing rather than `findstr`/piping -- see
-  `docs/agent-lessons-learned.md`'s "Quote a variable before piping it into findstr" entry for why
-  a subprocess pipe on `MSG` would be hazardous here, since message text can legally contain `&`).
-  `~setup.log` is untouched -- `:log`'s own `>> "%LOG%" echo ...` line still fires unconditionally
-  regardless of suppression. New opt-in flag `HP_VERBOSE_CONSOLE=1` restores all three tags to the
-  console (REQ-019-compliant: a pure additive opt-in, never gates a Prime-Directive-required
-  behavior), documented in README.md's Advanced Environment Variables table. None of the file's
-  425 `call :log` call sites were touched -- only `:log`'s own body changed, so the blast radius
-  this precondition audit was worried about never materialized at the call-site level.
-
-  Both real dependencies the precondition audit found were fixed in the same change:
-  `tests/selfapps_pvw_overrides.ps1`'s `$wsDebugLogFound`/`$wsInvalidDebugLogFound` (both the
-  valid- and invalid-value `PVW_WORKSPACE` scenarios, not just the one the audit named) now read
-  `~setup.log` instead of the console-redirected capture. **A fresh re-grep (per the audit's own
-  "re-grep before implementing" instruction) found a THIRD dependency the original audit had
-  missed** -- `tests/selftest.ps1`'s `self.stub.conda_perpkg` scenario read the bracket-free
-  `conda per-pkg fallback` phrase (an `[INSTALL]`-tagged line) from its own console-redirected
-  capture too; fixed the same way (switched to `~setup.log`). Confirms the audit's own caution was
-  warranted: a test landed between the 2026-08-23 audit and this 2026-08-24 implementation that
-  the audit could not have seen.
-
-  **A FOURTH dependency was missed by that same re-grep and was caught only by a real CI failure**
-  (`self.stub.conda_retry`, `contract-uv` lane, non-gating but still investigated per this
-  session's own drive-to-green posture on a PR it opened): the re-grep searched for the literal
-  bracketed tag strings (`\[DEBUG\]|\[TRACE\]|\[INSTALL\]`), which finds a test only when the
-  test's OWN assertion text still contains the bracket -- but `self.stub.conda_retry` matches the
-  bracket-free phrase `'*conda bulk: transient failure detected*'` (the exact same
-  `-like`-treats-`[INSTALL]`-as-a-wildcard workaround already documented for `self.stub.
-  conda_perpkg`), so the bracket-only search never surfaced it. Fixed the same way (`~setup.log`
-  instead of the console-redirected capture). **Closed by a proper fix, not a workaround**: a
-  follow-up EXHAUSTIVE sweep -- every one of the 21 real `[DEBUG]`/`[TRACE]`/`[INSTALL]` message
-  bodies in `run_setup.bat` (extracted directly via `grep -oE 'call :log "\[(DEBUG|TRACE|INSTALL)
-  \][^"]*"'`), each grepped bracket-free against the full `tests/` tree -- confirmed no fifth
-  dependency remains. This is the correct methodology for this class of check going forward:
-  search by MESSAGE BODY, not by TAG STRING, since a test's own `-like` wildcard workaround
-  routinely strips the tag from its own match pattern.
-
-  New regression coverage: `tests/selfapps_console_tiering.ps1` (`self.console.tiering`, `uv`
-  lane, non-gating first landing) runs two scenarios (`default`/`verbose`) proving the suppression
-  and the opt-in restoration both work against a real bootstrap, not just that the source code
-  exists -- see `docs/agent-ndjson.md`'s own entry for the full mechanism and placement reasoning.
-
-  Lever 2 (the two Y/N prompts) is fully separate and remains untouched -- still open, its own
-  future slice.
-
-Items 45-52 below stem from a 2026-08-14 real Windows Sandbox debugging session (two independent
-external AI reviews plus direct verification against current source by the acting agent) chasing a
-garbled first run (repeated pauses, a PyInstaller build loop with no environment behind it, some
-files written and others not). The root cause (Item 44) turned out to be file corruption from the
-download method, not the runtime environment; the other items were either incidentally surfaced
-while tracing the false leads before that root cause was confirmed, or corroborated an
-already-tracked item (Item 40's dead trailing-backslash comparison -- independently re-derived by
-the same session, no new information, not re-filed). Each item below was checked against current
-source directly, not taken on the reviews' word alone; where a claim could not be confirmed this
-way (no live Windows execution available here), that is noted explicitly rather than stated as fact.
-
-- **Item 46: `:die`'s `exit /b` lets most of its ~31 call sites continue executing afterward,
-  producing repeated `pause` prompts and further doomed work instead of a single clear stop. NOT a
-  small slice -- needs its own careful, dedicated scoping pass before touching it.** Matches this
-  repo's own already-documented mechanism (`docs/agent-lessons-learned.md`'s `:die` entry: "a
-  caller with no halt/goto after `call :die` simply continues... `HP_BOOTSTRAP_STATE=error` [was
-  already fixed at the source so the status file stays honest], but nothing stops execution").
-
-  **Consequence, confirmed against the real sandbox session**: a chain like
-  `:conda_create_failed -> call :die (pause #1) -> falls through to :conda_create_done -> HP_PY set
-  to a python.exe that does not exist -> if not exist (call :die, pause #2) -> falls through ->
-  more code using the broken HP_PY -> call :die (pause #3) -> ...` produces exactly the "hit pause
-  several times" symptom reported, each pause looking like a fresh, unrelated failure rather than
-  one root cause cascading. **Item 45 (closed) already prevents this specific chain from reaching a
-  third pause** -- the `if not exist "%HP_PY%"` guard it added to `:run_entry_smoke` means a broken
-  `HP_PY` surviving past `:conda_create_done`'s own second `:die` call can no longer also trigger
-  the doomed PyInstaller build/warnfix/repair block's own `:die` sites afterward. The first two
-  pauses in that chain (both inside the conda-create-failure handling itself, before
-  `:after_env_mode_selection` is ever reached) are UNCHANGED by Item 45 and remain open scope here.
-
-  **Bucket B (closed 2026-08-17): the 3 PyInstaller-build-failure `:die` sites
-  (`reason=test_forced_fail`/`build_error`/`missing_output`) migrated to a new, non-pausing sibling
-  subroutine, `:warn_build_incomplete`.** These are a genuinely different, NOT-doomed case from the
-  chain above: by the time any of them is reached, both PyInstaller and the Nuitka fallback have
-  already failed, but the environment/dependencies are still valid and the interpreter-fallback
-  verification a few hundred lines below still genuinely runs and still genuinely decides
-  success/failure -- pausing here (before that verification even happens) misleadingly looks like
-  the terminal state when real work is still ahead. `:warn_build_incomplete` (defined right after
-  `:die` in `run_setup.bat`) still sets `HP_BOOTSTRAP_STATE=error` (so the eventual final report
-  stays honest, matching `selfapps_pyinstaller_fail.ps1`'s unchanged `state=='error'` assertions),
-  but skips `:die`'s pause, premature `:release_lock`, and premature `:write_status` -- see
-  `docs/agent-lessons-learned.md`'s `:die` entry for the full mechanism. The vestigial, now-doubly-
-  redundant `set "HP_BOOTSTRAP_STATE=error"` lines that used to follow each `call :die` at these 3
-  sites were removed in the same change (the subroutine itself sets it). Not every `:die` site
-  qualifies for this treatment -- only ones where genuinely useful, outcome-determining work still
-  follows; the two conda-create-failure pauses in the "Consequence" chain above are NOT one of
-  these (nothing useful follows a totally-exhausted provider chain with no valid interpreter at
-  all), so they remain candidates for Bucket A's `HP_FATAL` mechanism instead, not this pattern.
-
-  **Bucket A slice 1 (closed 2026-08-17): `:conda_create_failed`'s own `call :die` now `goto`s
-  straight to `:after_env_mode_selection` instead of falling through into `:conda_create_done`'s
-  body.** Targeted, not a general `HP_FATAL` mechanism -- reuses a pattern the file already
-  shipped and already tests (`:hp_test_conda_fail`, the `HP_TEST_FORCE_CONDA_FAIL` bypass sibling
-  a few thousand lines below `:conda_create_failed`, has carried the identical `goto` since before
-  this fix). **The actual bug this closes is more concrete than "an extra pause": without the
-  `goto`, falling through into `:conda_create_done` unconditionally sets `HP_PY` to a path that
-  provably does not exist, and that block's own `if not exist` guard then calls
-  `:handle_conda_failure` A SECOND TIME -- not just wasted CPU, but a real user re-watching the
-  embed/venv fallback attempts and being asked the REQ-014 system-Python consent prompt again
-  right after already answering it once.** Regression test: `self.entrysmoke.no_interpreter_guard`
-  (`tests/selfapps_entrysmoke_no_interpreter.ps1`, already-gating from Item 45) extended to assert
-  the old, now-dead `:conda_create_done`-specific message ("python.exe missing from conda
-  environment") is genuinely absent, proving that block is skipped entirely.
-
-  **Important finding from implementing this slice, corrects an earlier assumption in this same
-  entry: this does NOT by itself reduce the "Consequence" chain above to a single pause.**
-  `:after_env_mode_selection`'s own `if not defined HP_PY` check (a few dozen lines below that
-  label) has the IDENTICAL non-halting `:die` shape, and is exactly what the new `goto` now
-  reaches (since `HP_PY` was never set this run) -- so a real interactive user hitting total
-  first-attempt tier exhaustion still sees two pauses today, just at a different second call site
-  than before (`:after_env_mode_selection`'s check, not `:conda_create_done`'s). That check is a
-  separate, not-yet-addressed follow-up slice -- finding a safe `goto` target for it needs its own
-  careful trace (a large block of dependency-resolution/pipreqs/heuristics code sits between it
-  and `:run_entry_smoke`, none of it needed when there's no interpreter, but not yet verified safe
-  to skip wholesale).
-
-  **Bucket A decision (made 2026-08-21, maintainer call -- see `docs/plan-die-fatal-remediation.md`'s
-  "Batch Roadmap" section for the full reasoning and `docs/agent-lessons-learned.md`'s `:die` entry
-  for the choreography this decision preserves): continue (a) as a deliberate STOPGAP, batched by
-  proven shape rather than one site per PR; (c) (change `:die` itself to halt the process, `exit`
-  not `exit /b`) is the likely eventual target for a SEPARATE, later, dedicated effort once the
-  batches below shrink the remaining inventory -- not folded into the ongoing batch work. (b) (a
-  global `HP_FATAL` flag) remains a candidate for that later effort too but is not preferred over
-  (c) per the plan doc's own blast-radius-vs-structural-simplicity tradeoff writeup.** All 20
-  remaining sites (27 total minus the 7 already safe -- 2 with slice 1's own `goto`, 5 inside
-  `:conda_binary_corrupt`'s self-contained `exit /b` chain) are now individually traced and grouped
-  into 6 batches by shape and risk (`docs/plan-die-fatal-remediation.md`'s Finding 3), landing in
-  this order:
-  - **Batch 1 (next up): the conda-acquisition-probe chain, 5 sites** (`conda.bat not found after
-    bootstrap`, `'conda'`/`'python'`/`'python -V'` not-found-on-PATH, `Conda not found at:`) --
-    same proven shape as slice 1, can currently stack 4-5 redundant `[ERROR]`/pause pairs for one
-    root cause before reaching the real sink; existing test `tests/selfapps_conda_bothfail.ps1`
-    already reaches this exact chain via its `:try_conda_install`-failure setup, so no new test
-    hook is needed, only new assertions.
-  - **Batch 2**: `:conda_create_done`'s "python.exe missing" check (1 site) -- fixes a genuinely
-    misleading "[BOOT] ... Selected Python provider: Conda (Portable)." success-sounding message
-    that currently prints right after an `[ERROR]` was already reported.
-  - **Batch 4/5**: 7 embedded-helper-write-failure sites plus 2 CI-only-exposure sites -- low risk,
-    low urgency, mechanical once each is individually traced.
-  - **Batch 3**: the `:determine_entry` double-call (the first `call :die "[ERROR] Could not
-    determine entry point"` site, inside `:after_env_mode_selection`) -- `:determine_entry` runs
-    TWICE per normal bootstrap; falling through here wastes the entire
-    dependency-install/pipreqs/warnfix block (far more intervening work than Batch 1) before
-    reproducing the same failure at the second call site. MEDIUM risk (a real behavior change, not
-    just a redundant-pause removal) -- lands on its own, later.
-  - **Batch 6**: `:tci_both_failed`'s own two failure sites (inside `:try_conda_install`) -- MEDIUM
-    risk, needs a new caller-side coordination flag (not a drop-in goto, since these sites already
-    sit inside a `call`ed subroutine with their own `goto :eof`); deliberately deferred until after
-    Batch 1 lands, since Batch 1's own fix already shrinks this site's fall-through blast radius as
-    a side effect.
-  - **The "Active Python interpreter not resolved" sink** (inside `:after_env_mode_selection`,
-    every other batch's `goto` routes toward it) stays deferred indefinitely -- already
-    Item-45-backstopped for the one dangerous consequence, a fix here would only trim harmless
-    wasted work.
-  Same EXTREME CAUTION discipline as every other high-risk change in this file: one batch lands at
-  a time, full 8-lane matrix CI proof to completion before the next batch starts, no blanket sweep
-  across every remaining site in one PR.
-
-  **Batch 1 merged 2026-08-28 (PR #468). Batches 2/3/5 and one site of Batch 4 landed as a
-  follow-on PR stacked on Batch 1, same session.** Batch 4's scope corrected from 7 sites to 1
-  (the `Could not stage ~condarc` site only -- the other 6 traced individually and found to fall
-  through into benign, silently-degraded continuations, not a redundant-`:die` cascade;
-  reclassified alongside the "Active Python interpreter not resolved" sink, not fixed). Batch 6
-  traced further (a second `:try_conda_install` call site found inside `:cascade_acquire_conda`)
-  and remains deferred -- Batch 1's own fix already shrinks its residual value to "one fewer
-  redundant pause in an already-rare scenario." New shared test hook
-  `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` added to `:emit_from_base64` itself. New test file
-  `tests/selfapps_die_emit_fallthrough.ps1` (4 scenarios:
-  `missing_python`/`condarc`/`ci_skip_entry`/`determine_entry`) also surfaced a genuine, pre-
-  existing, unfixed quirk: `:after_env_skip` writes `state=ok` unconditionally regardless of an
-  earlier `call :die` in the same run (near-zero exposure, `HP_CI_SKIP_ENV` is test-infrastructure-
-  only). Full detail: `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
+  **Status**: Bucket B (3 PyInstaller-build-failure sites -> `:warn_build_incomplete`) and Bucket A
+  Batches 1/2/3/5 plus one Batch-4 site are merged (PR #468 and a same-session follow-on). **Still
+  open**: Batch 6 (`:tci_both_failed`'s two failure sites, inside `:try_conda_install` -- needs a
+  new caller-side coordination flag rather than a drop-in `goto` since they sit inside a `call`ed
+  subroutine with their own `goto :eof`; deliberately deferred, since Batch 1's own fix already
+  shrunk its remaining value to "one fewer redundant pause in an already-rare scenario"); the rest
+  of Batch 4 (6 sites, individually traced and reclassified as falling through into benign,
+  silently-degraded continuations rather than a redundant-`:die` cascade -- not fixed); and
+  candidate (c), converting `:die` to a genuine halt, deferred per the maintainer decision above. A
+  known, unfixed, near-zero-exposure quirk surfaced along the way: `:after_env_skip` writes
+  `state=ok` unconditionally regardless of an earlier `call :die` in the same run
+  (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
+  `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -20,7 +20,7 @@ likely be reorganized again as it grows. Treat a Part/Scenario citation here as 
 look," not a precise current coordinate; this file is an append-only historical record, so its own
 entries are not retroactively renumbered to track that doc's current structure.
 
-**Four sections below.** "Closed Active Backlog Items" holds items that were promoted out of
+**Five sections below.** "Closed Active Backlog Items" holds items that were promoted out of
 `CLAUDE.md`'s own "Active Backlog" section once fully resolved (each keeps its original item
 number for cross-reference stability -- other docs cite these by number). "Known Findings"
 (moved here verbatim from `CLAUDE.md`, 2026-08-09, Active Backlog Item 34 Loop 2) holds
@@ -31,7 +31,11 @@ pending). "Dependency Strategy Rationale" (moved here 2026-08-09, Active Backlog
 holds the full multi-paragraph justification behind standing CLAUDE.md rules (the pipreqs version
 pin, its invocation strategy, the warnfix `SKIP`-set) -- CLAUDE.md keeps only the load-bearing
 rule plus a pointer here. "Closed Backlog" is `CLAUDE.md`'s own pre-existing changelog-style
-record of completed feature/fix work, moved here verbatim.
+record of completed feature/fix work, moved here verbatim. "Interconnect Narrative Archive"
+(added 2026-08-30, the large-scale compaction pass on the three auto-loaded docs) holds the
+"how we found this out" bug-hunt histories that were trimmed out of `docs/agent-interconnect.md`
+and `docs/agent-lessons-learned.md` when those files were distilled to current-state-only rules --
+those two files' own entries point back here by section title when the provenance matters.
 
 ---
 
@@ -3155,6 +3159,49 @@ run of the same regex logic before landing, not just reasoned about).
   fix), so this closes a latent false-positive risk for future edits, not a live bug in the
   shipped file.
 
+### Item 38 (closed 2026-08-30; PR #470 merged)
+
+The same EXE was verified from two different working directories across run 1 (`:run_exe_
+smokerun`, `pushd dist`) vs. every later run (`:try_fast_exe`/`:verify_no_exe_interpreter`, app
+root) -- a CWD-relative-path app (e.g. `open("config.json")` next to the script, the way a
+beginner naturally organizes adjacent data files) could flip its verdict between two consecutive
+double-clicks with zero code change. Owner-approved decision (2026-08-29): unify both verification
+points to the app root, not `dist\`, since the bootstrapper's job is "make it run" for how a
+beginner's code is actually structured (adjacent data files at the app root), not an artifact of
+PyInstaller's own output layout.
+
+**Hint-honesty half closed first, independently (2026-08-23)**: `:exe_smokerun_hints` used to
+unconditionally suggest `--add-data` for a missing-file failure regardless of whether the file was
+genuinely bundled-but-missing (where `--add-data` helps) or CWD-relative (where it does nothing,
+since `--add-data` places files under `_MEIPASS`, not the CWD). Fixed by branching on whether the
+captured missing-file path is already under a genuine `_MEIxxxxxx` extraction folder. Went through
+two real bugs found by CodeRabbit before landing: a naive `findstr /i "_MEI"` substring match had
+false positives (a coincidental filename like `config_MEI.json`) -- fixed by anchoring to the real
+path-component shape (`_MEI[^\\/]+` bounded by real path separators) via PowerShell instead of
+`findstr`; and the extraction suffix is not always decimal digits (`_MEI00001a4c2`, hex letters
+observed on the new `mei_genuine` test's own first real run) -- the regex was widened from
+`_MEI[0-9]+` to `_MEI[^\\/]+` after this was caught.
+
+**CWD unification implemented 2026-08-29**: `:run_exe_smokerun`'s `pushd dist`/`popd` removed;
+`HP_SMOKERUN_EXE` is now a full `dist\%ENVNAME%.exe` path (not a bare filename needing `dist\` as
+CWD); `~run.out.txt`/`~run.err.txt` default to plain CWD-relative names since the caller's CWD is
+the app root now. `:exe_smokerun_hints` got identical treatment (must reproduce the exact launch
+conditions of the run it explains). `selfapps_exedata_fail.ps1`'s former "plain" scenario (an
+EXPECTED failure that depended on the old `dist\` CWD) became `tests/selfapps_exe_cwd_
+consistency.ps1`, a POSITIVE two-run proof that a fresh build and a fast-path reuse agree on the
+same CWD-relative app; the remaining `mei_substring`/`mei_genuine` XFAIL scenarios were unaffected
+by the CWD change (their missing files are absent or `_MEIPASS`-rooted regardless of CWD).
+
+**Deliberately deferred, unchanged**: two narrower-blast-radius `pushd dist\` sites --
+`:offer_optimized_build`'s internal Nuitka-build verification, and `:hidden_import_recover`'s own
+diagnostic re-run. Neither has a test asserting its specific CWD either way, so leaving them as-is
+does not reintroduce the inconsistency this item closed for the primary, widely-hit path -- each
+carries its own `run_setup.bat` comment naming the deferral, to be re-derived the next time either
+subroutine is touched.
+
+Confirmed via PR #470's own green CI run and merge -- `self.exe.smokerun.cwd_consistency` and the
+updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
@@ -5995,3 +6042,280 @@ Items completed and shipped:
   both live in AGENTS.md's "Runtime artifact paths" section -- not duplicated here. All three
   loops are complete and live in `run_setup.bat`. CLOSED (this entry condensed from a
   standalone top-level section during a 2026-07 documentation thinning pass).
+
+---
+
+## Interconnect Narrative Archive
+
+Added 2026-08-30 during the large-scale compaction of the three auto-loaded docs plus CLAUDE.md's
+own Active Backlog (`docs/agent-interconnect.md`, `docs/agent-lessons-learned.md`,
+`docs/agent-ndjson.md`, and CLAUDE.md's own Active Backlog section).
+Each subsection below preserves the "how we found this out" detail -- which review round caught it,
+which fix attempt was wrong first, the confirming CI run -- that was trimmed from
+`docs/agent-interconnect.md`'s current-state entries of the same name. Read on demand only when the
+provenance behind a rule actually matters (debugging a regression in the same area, or deciding
+whether a "fixed" claim is trustworthy) -- the rule itself lives in the auto-loaded file.
+
+### `:define_helper_payloads` call-order bug (Item 60, PR #455)
+
+Found via a real Windows CI failure that local `pwsh` testing could never have caught, since the
+bug depends purely on `call`-statement line order in `run_setup.bat`'s main flow, not on any
+runtime state a sandbox could vary. `:merge_git_config` (REQ-015) is called earlier than
+`:define_helper_payloads`, and had always been harmless -- until Item 60 added the first payload
+use (`HP_MIGRATE_GITATTRIBUTES`) inside it. Reproduced 100% deterministically on every single
+bootstrap run in the `real` lane across every scenario. Fixed by moving `call
+:define_helper_payloads` to run immediately before `call :merge_git_config`.
+
+### AV-Safe Build Path Tier A + hidden-import interplay (2026-07-21, same day Tier A shipped)
+
+Two separate, mirror-image gaps found the same day: (1) `:hidden_import_recover` had no
+`HP_NUITKA_FALLBACK_USED` check before its first real work, so it would unconditionally rebuild via
+PyInstaller and silently discard a Nuitka-built EXE -- fixed with an early-skip guard right after
+the existing `if not exist "dist\%ENVNAME%.exe"` check, regression-tested by
+`tests/selfapps_nuitka_tiera_hidden_skip.ps1` (a fabricated `ModuleNotFoundError: No module named
+'nuitka'`, since `nuitka` is guaranteed installed in Tier A's own build interpreter and would
+otherwise look like a genuinely fixable target). (2) The warnfix-triggered rebuild (a SECOND
+PyInstaller rebuild call site) had NO failure handling at all -- no `if errorlevel 1` check, the
+next line unconditionally logged "rebuild complete" regardless of outcome, and nothing re-checked
+the EXE existed. Fixed with the same nested if/else shape as other repair loops; on success it also
+clears `HP_NUITKA_FALLBACK_USED` (a stale flag from a Tier-A-rescued build earlier in the same run
+could otherwise survive and wrongly keep `:hidden_import_recover` skipping repair on an EXE that is
+now genuinely PyInstaller-built again). No dedicated CI test for (2) -- a review-pass correctness
+fix reusing an already-tested failure-handling shape.
+
+`--collect-submodules` pairing (Item 28, closed 2026-08-08, confirmed via real CI the same day):
+found via a real pygrib 2.1.8 failure where `--hidden-import=packaging` alone left
+`packaging.version` (a real submodule, never referenced by `packaging/__init__.py` itself) still
+missing. New `HP_PYI_HID_COLLECT` accumulator mirrors `HP_PYI_HIDDEN_IMPORTS`'s shape.
+
+### Conda native-DLL bundling repair loop (CLAUDE.md Item 24 and successors -- the longest bug chain in this repo)
+
+PR #414 shipped `:dll_bundle_recover` with the DLL-bundling repair loop for native (conda)
+dependencies like `pygrib`'s `eccodes.dll`. CodeRabbit's own review round on that same PR found
+FOUR real bugs before it ever reached real CI:
+1. **Detection itself was gated on `HP_ENV_MODE=conda`** -- a non-conda provider or Nuitka EXE got
+   ZERO detection and ZERO log line, not the documented "detected, repair skipped" state. Fixed by
+   restructuring so detection (a cheap `--detect`-mode call, log-parsing only) runs first and
+   unconditionally, with the Nuitka-guard and conda-gate each becoming a "detected but here's why
+   we can't act" log branch instead of a silent early exit before detection happened.
+2. **Tried-list was inline argv (`HP_DLL_TRIED`), not a file** -- a DLL basename can legally
+   contain a space or cmd.exe metacharacter (`&`/`|`/`^`), risking command-line injection when
+   expanded unquoted. Fixed with a tilde-prefixed file (`~dll_bundle_tried.txt`), appended via
+   `type ... >>` (pure byte-copy, never routed through `%VAR%` expansion).
+3. **`main()` stalled on the first untried-but-not-on-disk candidate** instead of continuing to try
+   successive candidates found later in the same log. Fixed with a small retry loop in `main()`.
+4. **The "bundling complete" log line could fire on a genuine rebuild failure** -- `HP_DLL_ITER`
+   increments BEFORE the rebuild attempt, so a naive `>= 1` check at the exit label read true on
+   both success AND failure paths. Fixed with an explicit `HP_DLL_FAILED` flag set only on a real
+   failure branch (also sets `HP_BOOTSTRAP_STATE=error`, mirroring the warnfix-rebuild precedent).
+
+A FIFTH bug (Item 25, found via a LATER CodeRabbit round on the same PR): `:dll_bundle_loop` found
+the next candidate BEFORE checking the 3-iteration cap, silently discarding a real, locatable 4th+
+DLL instead of reporting `exhausted`. Fixed with `HP_DLL_EXHAUSTED`, set at the cap-check branch
+and checked before the "repaired" branch at `:dll_bundle_recover_done`. Low real-world trigger rate
+(needs 4+ conda-forge packages each separately needing `--add-binary` in one build, never observed
+for a real package) -- covered only by `tests/harness.ps1`'s static wiring check, not a live
+trigger.
+
+An EIGHTH bug, found via the first real `cache`-lane run of the whole feature (2026-08-07):
+`HP_PY_DIR`'s single trailing backslash (from `%~dpI`) corrupted the argv passed to
+`~dll_bundle_scan.py` when immediately followed by another quoted argument -- Python's own
+Windows argv parser treated the trailing backslash as escaping the closing quote instead of
+closing it, silently merging two arguments into garbage. Confirmed directly against the real
+`eccodes-2.48.0-h3bec8ca_0` conda-forge package (genuinely ships `Library\bin\eccodes.dll`) and the
+real CI run's own `~environment.lock.txt` (confirmed installed) -- yet the loop still reported "could
+not locate." Deterministic on every conda-provider run (not flaky), and plausibly the reason
+`self.layered_e2e.chain`'s `chainPass`/`mech3Pass` had never been observed passing at all: the
+frozen EXE never got past the corrupted-DLL pygrib import to reach colorama's own separate
+hidden-import gap. Fixed with `HP_PY_DIR_ARG` (one extra backslash appended before quoting) at this
+one call site. Verified via a faithful Python simulation of the documented Windows argv-parsing
+algorithm (`tests/test_dll_bundle_scan.py`'s `HpPyDirArgvQuoting` class) rather than a real Windows
+subprocess repro, since Linux's `execve` has no equivalent re-tokenizing step to reproduce the
+hazard at all. **Confirmed fixed via real CI** (commit `45ec269`, `cache`-lane run `31208498606`):
+`eccodes.dll` genuinely located and bundled for the first time.
+
+Item 28's own fix (above) uncovered a DEEPER gap the same investigation session, closed as Item 29
+(2026-08-08, confirmed via real CI the same day): a `--collect-submodules=X` hidden-import fix can
+surface a BRAND NEW native-DLL warning that never existed in any earlier build (confirmed via a
+real `pyproj`/`proj_9.dll` failure -- once `--collect-submodules=pyproj` bundled `pyproj`'s own
+`.pyd` files, PyInstaller's build log showed 9 fresh "could not resolve 'proj_9.dll'" warnings).
+Fixed by running `:dll_bundle_recover` a SECOND time per fresh build, after
+`:hidden_import_recover`'s own loop finishes. Two independent cross-call state-leak bugs were found
+and fixed while wiring this up: (1) `:dll_bundle_recover` unconditionally reset `HP_PYI_DLLBIND` at
+its own top, which would silently wipe a FIRST call's accumulated `--add-binary` flags before a
+genuine second call's rebuild ran; (2) `:hidden_import_recover` had the identical bug for
+`HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT`, in TWO places (its own entry AND its own exit
+trailer). Both fixed by moving the resets out of the subroutines entirely, into
+`:run_entry_smoke`'s own once-per-fresh-build-attempt init block. A CodeRabbit review round on PR
+#421 found two more refinements needed: `:hidden_import_recover`'s own rebuild wasn't advancing
+`HP_LOG_SIZE_BEFORE` (widening the second DLL scan's window further than necessary, though not
+provably causing an actual false-positive for any real observed scenario); and a caller-side early
+`if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok` (right after the FIRST `:hidden_import_recover` call)
+could skip the entire second-pass block outright whenever the first rebuild happened to already
+pass its own smoke run -- defeating the whole point of build-time detection for exactly the case
+this feature exists to catch. Removed entirely. **Confirmed via real CI** (PR #421 merge commit
+`dcfce1d`, `cache`-lane run `31264219121`): the exact designed sequence played out end to end
+(numpy/pyproj hidden-imported, `proj_9.dll` located and bundled on the second pass, colorama fixed
+on the second hidden-import pass, EXE verified clean) -- `chainPass` read `true` for the first time
+across the whole feature's history.
+
+A NINTH sanitization-specific bug (the `%`/`^` display-safety mechanism, `HP_DLL_DETECTED_SAFE`
+etc.) went through THREE rounds of "fixed" before actually working, all confirmed only via a live
+`cmd.exe`-executed CI fixture (`tests/harness.ps1`'s `batch.dll_bundle.pct_sanitizer`), never by
+reasoning alone: attempt 1 (`set "VAR=%VAR:%%=_%"` doubled-percent substitution) silently produced
+an empty string instead of sanitized text; attempt 2 (shell out to PowerShell with a
+`-replace '%','_'` literal) put an unpaired literal `%` into the same cmd.exe logical line as a
+legitimate `%LOG%` reference, and cmd.exe's `%`-pairing scan (left-to-right, whole-line, no
+quote-awareness) paired the lone `%` with `%LOG%`'s own opening `%` instead, silently deleting
+everything between them (an even total `%` count is NOT proof of safety -- two lone `%`s can pair
+with EACH OTHER instead of each correctly pairing with the real reference). Attempt 3 (build the
+percent character via `[char]37` inside PowerShell, so no literal `%` ever appears in the
+cmd.exe-visible text) worked, but the final, load-bearing fix was to stop generating cmd.exe-unsafe
+`-Command` text at all: the sanitizer moved into a real emitted file
+(`tools/dll_pct_sanitize.ps1`, `HP_DLL_PCT_SANITIZE`), invoked via `-File` with env-var names and
+output paths as plain argv, removing cmd.exe's tokenizer from the equation entirely. See
+`docs/agent-lessons-learned.md`'s "`:log` echoes UNQUOTED" entry for the current-state rule this
+established (any future PowerShell one-liner needing a literal `%` should default to `-File`
+immediately, not re-attempt `-Command` reasoning).
+
+### `:offer_optimized_build` swap-verification bug (PR #370, fixed same day)
+
+First-shipped version checked `if not exist "dist\%ENVNAME%.exe"` after `move /y` to decide whether
+the swap succeeded -- but that's the DESTINATION, the already-working original EXE, which exists
+BEFORE the move regardless of outcome. A same-volume FILE `move /y` onto an existing destination is
+atomic (fully replaces or fully fails, source consumed only on success), so checking the
+destination can never detect a failure (e.g. an AV/indexer lock). Fixed by checking whether the
+SOURCE (the temp build) is gone instead, routed through the shared `:optbuild_cleanup` label (fixing
+a temp-file leak on the failure path too). New test hook `HP_TEST_FORCE_OPTBUILD_SWAP_FAIL` and the
+`swapfail` scenario in `tests/selfapps_optimized_build.ps1` prove the fix.
+
+The embed tier's own directory-swap (`:embed_swap_retry`) initially mirrored this exact "check
+whether the source is gone" pattern -- caught before shipping that a DIRECTORY `move` onto an
+existing destination silently NESTS the source instead of erroring, so neither "check destination"
+nor "check source gone" can detect a failed `rd` (an AV/indexer lock leaving the destination not
+fully cleared). Fixed by gating `move` itself on `rd` having genuinely cleared the destination
+first, making the subsequent move a pure rename (nesting structurally impossible). NOT CI-confirmed
+-- `self.embed.fallback.real` never requests a non-default version through this path, so this
+remains static reasoning about documented Windows semantics only.
+
+### Embed tier version-swap dead code (found in a later deep-dive, distinct from the above)
+
+The version-check-and-swap sequence was originally wrapped in one parenthesized
+`if not errorlevel 1 ( ... )` block, with a `for /f` loop inside setting `HP_EMBED_SWAP_DIR`/`_TAG`/
+`_MINOR` and later code in the SAME block reading `%HP_EMBED_SWAP_DIR%` -- CMD's parse-time `%VAR%`
+expansion substitutes using the value from BEFORE the block began, so the read was always empty and
+the swap body never actually ran. No test caught it (`self.embed.fallback.real` never requests a
+non-default version). Fixed via goto-based dispatch instead of the parenthesized block.
+
+### `runtime.txt` write-back poisoning a cascade re-entry (Item 24, found via real CI evidence 2026-08-07)
+
+Confirmed via a real `self.layered_e2e.chain` cache-lane run: uv resolved `python-3.14.7`,
+write-back wrote that to `runtime.txt` the moment uv's venv succeeded, then the uv->conda cascade
+(pygrib still failing under uv) re-derived `PYSPEC=python=3.14.7` from that freshly-written file
+and forwarded it verbatim to `conda create ... python=3.14.7` -- but conda-forge's own `python`
+package release cadence is a wholly separate index from CPython's/uv's and did not carry that exact
+patch, producing a hard `PackagesNotFoundInChannelsError` and cascading the run all the way through
+embed/venv without ever reaching a real conda environment (so Item 24's own DLL-bundling loop was
+never exercised at all in that run, regardless of its own correctness). Fixed same day with
+`HP_PYSPEC_WRITEBACK`. Refined the SAME day, before real CI ever confirmed the first version, in
+response to both a maintainer question (whether a plain SUBSEQUENT run had the same problem -- it
+did not, since `tools/detect_python.py`'s `read_runtime_spec()` already truncates any version
+string to major.minor before ever returning a constraint, so only the SAME-PROCESS in-memory
+`PYSPEC` reused during a cascade re-entry was ever actually exposed) and an independent CodeRabbit
+finding (unconditionally dropping to "no constraint" also discards a genuine user-authored
+pyproject/PEP 723 range). Added `HP_PYSPEC_ORIGINAL` (a snapshot taken immediately before each
+write-back reassignment) so a genuine range still reaches a cascade target's solver. A genuine,
+independent, pre-existing bug was found and fixed in the same pass: `%PYSPEC%` was used UNQUOTED on
+both `conda create` command lines -- a PEP 440 range containing live `<`/`>` would be parsed as
+real redirection operators by cmd.exe, corrupting the invocation (this predates the session
+entirely; a plain non-cascade first run with a ranged `requires-python` would already have hit it
+against the original, unmodified code). Fixed by quoting both call sites. Base drop-to-unconstrained
+behavior confirmed via real CI (PR #421 merge commit `dcfce1d`, `cache`-lane run `31264219121`,
+`pinDropped:true`); the `HP_PYSPEC_ORIGINAL` range-preservation half remains unconfirmed by any real
+range-constrained cascade run, since that test's own fixture uses a Tier 3/no-constraint
+pyproject.toml.
+
+### Cascade signal reliability investigation (no code change resulted)
+
+A maintainer asked how confident the `HP_CASCADE_CANDIDATE` signal actually is, and whether the
+cascade consent gate's default (decline) should change as a result -- specifically, whether the
+uv->conda hop deserved a different default than later hops, given conda-forge's real advantage for
+native-extension packages. The investigation built a full confidence table (Signal A: still
+unresolved after repair; Signal B: an install genuinely failed) with informed-estimate odds per
+combination, and reasoned through why only the uv->conda hop has a real mechanism-level
+justification (later hops -- embed/venv/system -- all resolve via the same plain PyPI pip uv
+already tried, so they mainly help only for environment-specific root causes). Despite this
+supporting a case for flipping the default specifically for that one hop, the maintainer decided to
+keep `:cascade_consent_gate` exactly as shipped -- the "tell the user their odds of a DIFFERENT tier
+helping" idea was considered too, and also not implemented. No code changed as a result of this
+investigation; it is recorded here (and pointed to from `docs/agent-interconnect.md`) purely so a
+future agent does not re-litigate the same question from scratch without knowing it was already
+asked and deliberately left as-is.
+
+### Live-tee async output: three superseded implementations (`~failfast_probe.ps1`/`~exe_smokerun.ps1`)
+
+Found via `tests/test_failfast_probe.py`'s `InteractiveRoundTrip` test (a scripted `input()`/
+`print()` conversation): 2/5 local runs showed a LATER round's output appearing BEFORE an EARLIER
+round's. Root cause: `Register-ObjectEvent` dispatches each event via
+`ThreadPool.QueueUserWorkItem` with no ordering guarantee between queued items (confirmed upstream:
+PowerShell/PowerShell#11937). Before that, Microsoft's own documented claim that calling the no-arg
+`WaitForExit()` after a timed one guarantees async output handling has completed was ALSO
+empirically false for `Register-ObjectEvent` -- a direct `pwsh` repro (5/5 deterministic) showed
+the final event (a line flushed only at process exit) firing after both `WaitForExit()` calls
+returned, silently truncating the buffer. Both were fixed by abandoning `Register-ObjectEvent`
+entirely for a single-in-flight-read polling loop (verified 20/20 clean vs. 2/5 before).
+
+A THIRD, later bug (found during a refinement pass, motivated by the owner independently hitting
+the same class of bug with progress dots delayed in a frozen EXE): `StreamReader.ReadLineAsync()`
+is line-buffered, so Python's `input(prompt)` -- which flushes its prompt WITHOUT a trailing
+newline -- produced zero completed reads for 2+ seconds even though the bytes were provably in the
+pipe (confirmed via `CanRead`). Neither prior test (both feed the ENTIRE scripted answer sequence
+through stdin essentially instantly) could ever have caught this, since both "surfaced instantly"
+and "surfaced only once something else flushed a line" produce the same final captured text --
+this is a structural blind spot of any timing-insensitive test. Fixed by switching to chunk-based
+`ReadAsync(char[], int, int)`. The NEW regression test built to catch this class of bug (driving
+stdin live via a test-controlled pipe, asserting readability before writing) itself then hit a
+FOURTH bug on its first real Windows CI run: `select.select()` on the pipe object passed every
+local Linux run but failed with `OSError: [WinError 10038]` on 4 separate Windows CI lanes (CPython
+`select.select()` on Windows only supports socket objects). Fixed with a background
+`threading.Thread` doing blocking `os.read()` into a `queue.Queue`. This whole chain -- 4 distinct
+real bugs across roughly a week of work on what looks like "just tee stdout to the console" -- is
+why `docs/agent-lessons-learned.md`'s current entry states the final rules bluntly rather than
+re-deriving them.
+
+### Paren-hazard in nested echo/rem prose: three real shipped regressions before the rule was fully generalized
+
+PR #408 (commit `fd52a3f`): a stray `(` on one `echo` line and its matching `)` on the NEXT `echo`
+line, inside an already-open `if (...)` block, silently closed the block early -- cmd.exe counts
+`(`/`)` characters in raw text with no concept of "this paren is just prose," and must do so before
+deciding whether to execute or skip the block, so corruption happens regardless of the block's own
+runtime condition. `check_delimiters.py` did not catch it (a stray same-file paren pair is
+individually balanced under a whole-file LIFO scan) -- fixed by teaching the checker to track
+"already nested, opened on an echo line, closes on a DIFFERENT line" specifically.
+
+PR #445 (Item 52): the identical hazard in `rem` comment text, not caught because
+`check_delimiters.py`'s own `.bat`/`.cmd` handling treated `rem` lines as fully opaque and skipped
+them from paren-scanning entirely (unlike the echo-line handling, which DID scan characters). Broke
+all 8 CI lanes simultaneously (a comment 3 levels deep inside real `if (...)` blocks). Fixed for
+the specific instance by rewording; the general gap in the checker was closed later as CLAUDE.md
+Item 61 (`prose_kind` generalized to cover `rem`, plus two more general fixes found only by running
+the extended checker against the real file: `^`-escaped brackets treated as literal, and `'`/`"` on
+prose lines treated as inert rather than opening a persistent fake string).
+
+The SAME PR #445 commit shipped a SECOND, independent paren bug in the code added alongside the
+rem-comment fix: a `(exit 3)` pair that opens AND closes on the SAME line, inside echo text nested
+FOUR levels deep. The prevailing assumption at the time (a same-line, self-contained pair is safe,
+per the PR #408 precedent and `check_delimiters.py`'s own `line != last.line` exemption) turned out
+to be WRONG for a NESTED same-line pair -- confirmed via a downloaded diagnostics artifact showing
+the identical corruption signature as PR #408's original incident. This was fixed by rewording, but
+the general question ("does a same-line pair nested inside a real block need the same treatment as
+a cross-line one?") stayed open until a dedicated live-`cmd.exe` probe (`tools/probe_paren_hazard.ps1`
++ a `workflow_dispatch`-only CI workflow, CLAUDE.md Item 61, dispatched manually by the maintainer
+after the acting agent's own GitHub integration hit a `403` trying to call the dispatch API itself)
+tested a full fixture matrix (nesting depth 1-4, with/without redirection prefixes) against real
+`cmd.exe` -- EVERY same-line fixture corrupted, including the simplest possible case (one level of
+nesting, no redirection). This confirmed the final, unconditional rule now stated in
+`docs/agent-lessons-learned.md`: nested is unsafe, full stop, regardless of same-line vs.
+cross-line or redirection. `check_delimiters.py`'s `line != last.line` exemption was removed
+entirely as a result, surfacing 63 further genuine findings in `run_setup.bat` (on top of the 26
+the `rem`-generalization pass had already found), all fixed by rewording with no functional change.
