@@ -2,8 +2,8 @@
 
 **This file is NOT auto-loaded into every session's context** (unlike
 `docs/agent-lessons-learned.md` and `docs/agent-interconnect.md`, which CLAUDE.md's own
-`@import` lines pull in automatically -- `docs/agent-ndjson.md` joined this file in that regard
-2026-08-30). Read it on demand: when CLAUDE.md's own pointer sends you
+`@import` lines pull in automatically; `docs/agent-ndjson.md` was removed from auto-load on
+2026-08-30). Read it on demand when CLAUDE.md's own pointer sends you
 here, when you need the full resolution history behind a specific PR/item cited by number, or
 when investigating something that "feels like it was already done" and you want the receipt.
 
