@@ -125,8 +125,8 @@ whole scan with no output. `encoding=None` uses the locale encoding; on Western-
 without UTF-8 mode that is cp1252, and ordinary UTF-8 text
 such as an emoji in a `print()` (very common in AI-written scripts) contains bytes cp1252 cannot
 decode (checked: `"\U0001F50D"` fails on byte 0x8D). The bootstrapper does not pass
-`--encoding`, and its result handling (the pipreqs result-handling block at `:pipreqs_direct_done`) deliberately treats
-"nonzero exit + no output file" as "zero requirements: no imports found", with a comment
+`--encoding`, and its result handling (the pipreqs result-handling block at
+`:pipreqs_direct_done`) deliberately treats "nonzero exit + no output file" as "zero requirements: no imports found", with a comment
 admitting a crash looks the same. The scan is already whole-folder (the 4th party is right that
 it is not "only main.py").
 
@@ -138,16 +138,22 @@ See open question Q4.
 **Fix shape**: (a) pass `--encoding utf-8` (or run the pipreqs call with `PYTHONUTF8=1`);
 (b) when pipreqs exits nonzero, look for its `Failed on file:` line in `~pipreqs_direct.log`,
 name that file in a `[WARN]`, and retry once with that file excluded rather than reporting zero
-imports; (c) change the summary note so a crash is never labeled "no imports found". The
+imports. `Failed on file:` is logged only for parse errors: the file is read before pipreqs'
+try block, so a decode error (for example a cp1252-encoded `.py` once (a) forces UTF-8) aborts
+with a bare traceback that names no file. So (b) also needs a pre-check that runs before
+pipreqs: a few lines of Python that try to decode each `.py` pipreqs would scan as UTF-8 and
+`ast.parse` it, name each failure in a `[WARN]`, and keep failures out of the scan. pipreqs'
+`--ignore` takes directories, so exclusion may need a staged copy of the good files. (c) Change
+the summary note so a crash is never labeled "no imports found". The
 `pipreqs.flags` CI gate locks invocation flags, so (a) must update that gate in the same change.
 This is the narrow fix; the shelved "pipreqs internalization" idea in
 `docs/agent-cold-storage.md` has a thaw trigger ("a real user run hits a pipreqs failure the
 warnfix safety net doesn't cleanly cover") that this arguably meets, but the narrow fix should
 come first.
 
-**CI proof**: a fixture app with a UTF-8 emoji in one file and a deliberately unparseable
-second `.py`, asserting the real imports still land in `requirements.auto.txt` and the WARN
-names the bad file.
+**CI proof**: a fixture app with a UTF-8 emoji in one file, a cp1252-encoded second `.py`
+(non-ASCII byte, not valid UTF-8), and a deliberately unparseable third `.py`, asserting the
+real imports still land in `requirements.auto.txt` and the WARNs name both bad files.
 
 ### Item 64 -- warnfix treats noise as required: stdlib names, non-PyPI names, and library-internal optional imports (Confirmed, medium)
 

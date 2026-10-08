@@ -690,8 +690,8 @@ the original symptom (see that doc's "CI-first testing policy").
   writes extracts zero deps on the next run ("PEP 723 block found but dependency list is empty").
 - **Item 63 (mechanism Confirmed, trigger Inferred, small)**: pipreqs 0.4.13 aborts the whole
   scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
-  that as "zero requirements: no imports found". Pass `--encoding utf-8`, name the bad file,
-  retry without it.
+  that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`
+  for UTF-8 decode and parse errors (a decode error names no file), warn by name, scan without it.
 - **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
