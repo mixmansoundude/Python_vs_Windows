@@ -707,7 +707,7 @@ the original symptom (see that doc's "CI-first testing policy").
 - **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
-  `unknown` at line 130).
+  `unknown` near the top of the file, right after the preflight self-check).
 - **Item 69 (Inferred, tiny)**: post-flight `"python.exe" "main.py"` fails in PowerShell, not
   Command Prompt; show both forms (Q5), keep the quotes.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has

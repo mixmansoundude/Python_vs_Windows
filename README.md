@@ -659,9 +659,10 @@ set lives in `run_setup.bat`.
   elective second run. No detection or heuristics are involved -- this is a documented, opt-in
   escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
   Finding 4/5 for why automatic detection was deliberately not attempted).
-- **When a cached EXE already exists, the entry-file argument is not checked.** The cached-EXE
-  fast path runs before entry selection, so `run_setup.bat <anything> arg1 arg2` launches the
-  existing `dist\<env>.exe` with `arg1 arg2`, whatever the first argument says. Something must
+- **When the cached-EXE fast path is eligible, the entry-file argument is not checked.** The fast
+  path runs before entry selection and reuses `dist\<env>.exe` only when that EXE exists and its
+  source and dependency hash is still fresh. On that path `run_setup.bat <anything> arg1 arg2`
+  launches the existing EXE with `arg1 arg2`, whatever the first argument says. Something must
   still be in that first position, because the extra arguments are always taken from the second
   position onward. Typing the real entry file there (`run_setup.bat myapp.py arg1 arg2`) is the
   form that behaves the same whether or not an EXE exists yet. (CLAUDE.md Item 67 may tighten

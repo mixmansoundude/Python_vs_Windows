@@ -26,8 +26,10 @@ if it is still unanswered when that item is picked up.
   provider that worked), or also add a `PVW_PROVIDER=conda` override. **Default: Item 66 only.**
 - **Q4 (Item 63) -- What else was in the Aug app folder?** Specifically: any `.py` files besides
   `main.py`/`adjacent.py` (for example files extracted from the shipped EXE, which would explain
-  `pyimod02_importers`), and any emoji or other non-English characters in the source. Either
-  would make pipreqs abort and report nothing. Not blocking; Item 63's fix is right either way.
+  `pyimod02_importers`), and any emoji or other non-English characters in the source. These are
+  hypotheses: extra `.py` files or non-English text are harmless on their own, but a file pipreqs
+  cannot read in the locale encoding, or one that fails to parse, aborts its whole scan so it
+  reports nothing. Not blocking; Item 63's fix is right either way.
 - **Q5 (Item 69) -- Where did you paste the post-flight "run it yourself" command that failed
   with quotes: Command Prompt or PowerShell / Windows Terminal?** If PowerShell, the fix is to
   also print a `& "..." "main.py"` form, not to drop the quotes. **Default: show both forms.**

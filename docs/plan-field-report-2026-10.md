@@ -67,7 +67,7 @@ policy" at the end).
 the next run printed `*** [WARN] PEP 723 block found but dependency list is empty or malformed;
 falling back`, and no `~requirements.pep723.txt` existed.
 
-**Root cause**: `:extract_pep723_requirements` (`run_setup.bat` ~line 3038) only accepts a
+**Root cause**: `:extract_pep723_requirements` in `run_setup.bat` only accepts a
 dependency line that starts with exactly `# "` (one space) and only strips a trailing `"`:
 
 ```
@@ -121,10 +121,11 @@ PyPDF2, pdfminer, etc.) produced no `requirements.txt`; `~pipreqs.diff.txt` said
 hard-codes `ignore_errors = False`, opens every `.py` under the folder with
 `open(file_name, "r", encoding=None)` OUTSIDE its try block, and re-raises any parse error. So
 ONE file in the folder that is not valid in the locale encoding or does not parse aborts the
-whole scan with no output. On Windows `encoding=None` means cp1252, and ordinary UTF-8 text
+whole scan with no output. `encoding=None` uses the locale encoding; on Western-locale Windows
+without UTF-8 mode that is cp1252, and ordinary UTF-8 text
 such as an emoji in a `print()` (very common in AI-written scripts) contains bytes cp1252 cannot
 decode (checked: `"\U0001F50D"` fails on byte 0x8D). The bootstrapper does not pass
-`--encoding`, and its result handling (`run_setup.bat` ~lines 1575-1605) deliberately treats
+`--encoding`, and its result handling (the pipreqs result-handling block at `:pipreqs_direct_done`) deliberately treats
 "nonzero exit + no output file" as "zero requirements: no imports found", with a comment
 admitting a crash looks the same. The scan is already whole-folder (the 4th party is right that
 it is not "only main.py").
@@ -199,7 +200,7 @@ still builds; a `test_parse_warn.py` table covering each new filter rule.
 fail-fast probe line, and nothing acted on it. "How are we supposed to capture the module not
 found error and fix the env?"
 
-**Root cause**: `:verify_no_exe_interpreter` (~line 4173) and the fast path record only the exit
+**Root cause**: `:verify_no_exe_interpreter` and the fast path record only the exit
 code; nothing parses `~run.err.txt`. Tkinter catches exceptions raised in callbacks, prints the
 traceback to stderr, and keeps running, so the process can exit 0 with the real answer sitting
 in stderr. `:exe_smokerun_hints` does parse `No module named` on the EXE side, but only as a
@@ -241,7 +242,7 @@ state is stale or the provider is missing. `HP_FORCE_CONDA_ONLY` stays CI/test-o
 **Symptom (2026-08-31)**: `run_setup.bat arg1 arg2` (entry file forgotten) gave "compile errors"
 for a file that runs fine, and the existing EXE was deleted.
 
-**Root cause**: `:determine_entry` (~line 3042) accepts `%1` as the entry if the path merely
+**Root cause**: `:determine_entry` accepts `%1` as the entry if the path merely
 EXISTS (any extension, so an input `.csv`/`.pdf` passed first becomes the "entry"), and silently
 falls back to auto-detection if it does not exist. Separately, `HP_APP_ARGS` always starts at
 `%2`, so the user's real first argument is dropped; the fast-path EXE then receives the wrong
@@ -258,14 +259,14 @@ EXE untouched), `%1` = a missing name (stops, EXE untouched).
 ### Item 68 -- Small honest-wording fixes (Confirmed, tiny, one PR)
 
 Each was checked against current text:
-- **Fail-fast probe line prints milliseconds**: `run_setup.bat` ~line 3288 prints `still running
+- **Fail-fast probe line prints milliseconds**: `:run_failfast_probe` prints `still running
   after %HP_FAILFAST_PROBE_MS%ms` (shows `10000ms`). Print seconds. The 4th party's "already
   fixed" is wrong: the default was fixed, the wording was not.
-- **Nuitka fallback says "this may take a minute or two"** (~line 5471) while a real build took
+- **Nuitka fallback says "this may take a minute or two"** (`:try_nuitka_tier_a`) while a real build took
   about an hour with output only in `~setup.log`. Say it can take a long time for large apps
   (tens of minutes or more) and that progress is in `~setup.log`. Same for the
-  optimized-build message (~line 3437).
-- **`~pipreqs.diff.txt` placeholder** (~line 1712) `(no diff: requirements files not both
+  optimized-build message in `:offer_optimized_build`.
+- **`~pipreqs.diff.txt` placeholder** (in `:after_pipreqs_run`) `(no diff: requirements files not both
   present)`: name which file was missing.
 - **Cascade prompt wording** (`:cascade_consent_gate`): say which provider is next ("Try conda
   instead of uv?") and that the current build will still be checked first. After an approved
@@ -277,8 +278,9 @@ Each was checked against current text:
 - **Silent rebuild when sources changed**: `:try_fast_exe` exits silently when the hash is not
   fresh. Print one line saying the EXE is being rebuilt because inputs changed (naming the
   changed file if `tools/fast_check.ps1` can report it cheaply).
-- **Dead pipreqs auto-detect WARN**: `DEP_SOURCE` is initialized to `unknown` at line 130, so
-  `if not defined DEP_SOURCE` (~line 1536) can never fire; the "Dependencies were auto-detected
+- **Dead pipreqs auto-detect WARN**: `DEP_SOURCE` is initialized to `unknown` near the top of the file
+  (right after the preflight self-check), so `if not defined DEP_SOURCE` in
+  `:after_env_mode_selection` can never fire; the "Dependencies were auto-detected
   via pipreqs / Consider adding requirements.txt" lines are unreachable and
   `dependency_source.txt` says `unknown` instead of `pipreqs`. (So the hint the maintainer
   remembers seeing with a `requirements.txt` present did not come from this line on current
@@ -300,8 +302,8 @@ Removing the quotes only worked because the path had no spaces. So do NOT remove
 ### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
 
 The `[HINT][DATA_FILE] Consider adding: --add-data X;.` and `[HINT][HIDDEN_IMPORT] Consider
-adding: --hidden-import=X` lines name PyInstaller flags, but every build command (~lines 3867,
-4000, 4653, 4825) builds from the `.py` with a fixed flag set, so there is nowhere for a user to
+adding: --hidden-import=X` lines name PyInstaller flags, but every PyInstaller build command (the
+fresh build, the warnfix rebuild, and the two repair-loop rebuilds) builds from the `.py` with a fixed flag set, so there is nowhere for a user to
 "add" them (an edited `.spec` is regenerated by `-y`). Either reword the hints into actions a
 user can take (the CWD-relative branch added in PR #470 already does this for data files), or
 add one supported way to pass extra PyInstaller flags (a `PVW_` super-user override, per
