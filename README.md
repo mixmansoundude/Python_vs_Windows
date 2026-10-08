@@ -653,16 +653,19 @@ set lives in `run_setup.bat`.
   shortcut with args added to its Target field, or is a positional argument in any other manual
   invocation -- a plain drag-and-drop of a single file still only ever passes that one argument
   (Windows Explorer's own behavior, not something this bootstrapper controls).
-- The extra arguments are forwarded VERBATIM to the target program at every real launch site
+- The extra arguments (positions 2 through 9) are forwarded to the target program at every real launch site
   during this bootstrap run: the EXE smoke verification, the cached-EXE fast-path reuse, the
   interpreter verification run (used when no EXE is built), and the post-execution checkpoint's
-  elective second run. No detection or heuristics are involved -- this is a documented, opt-in
+  elective second run. An argument that is explicitly empty (`""`) is dropped, and anything after
+  the ninth position is ignored. No detection or heuristics are involved -- this is a documented, opt-in
   escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
   Finding 4/5 for why automatic detection was deliberately not attempted).
-- **When the cached-EXE fast path is eligible, the entry-file argument is not checked.** The fast
-  path runs before entry selection and reuses `dist\<env>.exe` only when that EXE exists and its
+- **When the cached-EXE fast path is eligible, the entry-file argument is not used to pick the
+  entry.** It must still be a file in the bootstrapper's own folder, or the REQ-011 pre-flight
+  check stops the run with an error before anything else happens. The fast path runs after that
+  check but before entry selection and reuses `dist\<env>.exe` only when that EXE exists and its
   source and dependency hash is still fresh. On that path `run_setup.bat <anything> arg1 arg2`
-  launches the existing EXE with `arg1 arg2`, whatever the first argument says. Something must
+  launches the existing EXE with `arg1 arg2`, whatever file the first argument names. Something must
   still be in that first position, because the extra arguments are always taken from the second
   position onward. Typing the real entry file there (`run_setup.bat myapp.py arg1 arg2`) is the
   form that behaves the same whether or not an EXE exists yet. (CLAUDE.md Item 67 may tighten
@@ -1101,7 +1104,7 @@ above for why that distinction matters here specifically, not just as a generic 
 - **Implicit/plugin dependencies**: Dependencies that are not detected via static import analysis (for example, `pandas` needing `openpyxl` for `read_excel`) will surface as `ImportError` at runtime. See [Dependency strategy](#dependency-strategy) for detail.
 - **`requirements.txt` is input only**: The resolved conda environment may differ from the original author's intent. This is intentional -- getting the code to run takes priority over preserving outdated constraints.
 - **Windows only**: There is no macOS or Linux support.
-- **Self-modifying programs never reach the fast path**: the cached `dist\<env>.exe` is reused only while your `.py` files (and `requirements.txt`/`pyproject.toml`/`runtime.txt`) are unchanged since the last build. A program that rewrites one of its own `.py` files when it runs (for example, bumping a version string in a sibling module) changes those inputs every time, so every run rebuilds instead of reusing the EXE. This is accepted: the rebuild still works, it just takes longer.
+- **Self-modifying programs can get a stale cached EXE**: the cached `dist\<env>.exe` is reused only while your `.py` files (and `requirements.txt`/`pyproject.toml`/`runtime.txt`) match the hash recorded after the last build. That hash is recorded at the end of the build run, after the verification run of your program. A program that rewrites one of its own `.py` files when it runs (for example, bumping a version string in a sibling module) therefore gets the rewritten source recorded, so the next run can reuse an EXE built from the source as it was before the rewrite. Later runs may alternate between reusing and rebuilding. This is accepted; deleting `dist\<env>.exe` forces a fresh build.
 - **NI-VISA may require admin rights**: The NI-VISA optional install may require an elevated shell on machines where non-admin installs are blocked by policy.
 
 ---

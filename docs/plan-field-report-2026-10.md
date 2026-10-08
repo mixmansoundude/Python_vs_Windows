@@ -144,7 +144,10 @@ with a bare traceback that names no file. So (b) also needs a pre-check that run
 pipreqs: a few lines of Python that open each `.py` pipreqs would scan with its declared
 encoding (`tokenize.open`, which honors a PEP 263 coding cookie and defaults to UTF-8) and
 `ast.parse` it. pipreqs then scans a staged copy of the tree, not the original: every file that
-passed is written there as UTF-8, and every file that failed is left out. pipreqs' `--ignore`
+passed is written there as UTF-8, and every file that failed is replaced by an empty `.py` of
+the same name. pipreqs 0.4.13 treats any import that matches a `.py` filename in the scanned
+tree as local, so the empty stub keeps `import adjacent` from becoming a false requirement
+while contributing no imports of its own. pipreqs' `--ignore`
 takes directories, not files, so it cannot do this exclusion. Each left-out file is named in a
 `[WARN]` that also says the detected requirements may be incomplete. (c) Change the summary
 note so a crash is never labeled "no imports found". The
@@ -158,7 +161,8 @@ come first.
 `# -*- coding: cp1252 -*-`, contains a non-ASCII byte and imports a real package; a cp1252 `.py`
 with no coding cookie (not valid UTF-8); and a deliberately unparseable `.py`. Assert that the
 imports from the first two files land in `requirements.auto.txt`, and that the WARNs name the
-last two files.
+last two files. Have the entry file also `import` the unparseable file's module name, and
+assert that name is not in `requirements.auto.txt`.
 
 ### Item 64 -- warnfix treats noise as required: stdlib names, non-PyPI names, and library-internal optional imports (Confirmed, medium)
 
@@ -375,9 +379,11 @@ is a convenience, but it also makes Item 75's real-app scenarios cheaper.
 - **Fast path ignores `%1`**: confirmed and accepted by the maintainer (fast path runs before
   entry selection). Now documented in README REQ-026. Item 67 changes what happens when `%1`
   is not a real `.py`; see Q1 for how that interacts.
-- **Self-modifying programs never reach the fast path**: accepted limitation, now in README
-  Known Limitations. It also explains at least one "rebuilt even though I edited nothing" run,
-  since that app rewrites a sibling `.py` every time it runs.
+- **Self-modifying programs and the fast path**: accepted limitation, now in README Known
+  Limitations. The freshness hash is written at the end of a build run, after the verification
+  run has already rewritten the sibling `.py`, so the next run can reuse an EXE built from the
+  pre-rewrite source, and later runs can alternate between reuse and rebuild. That explains at
+  least one "rebuilt even though I edited nothing" run.
 - **Exe kept for `HP_SKIP_ENTRY_SMOKE` / `HP_TEST_FORCE_PYINSTALLER_FAIL` when `dist\<env>.exe`
   exists**: correct; those flags affect builds, and a fresh, cached EXE skips the build. The
   post-flight briefing already says to delete the EXE for a fresh build.
