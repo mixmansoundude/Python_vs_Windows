@@ -473,7 +473,7 @@ two paragraphs up, and if it documents a reusable procedure, give that procedure
 (`docs/agent-lessons-learned.md`, an existing process section) rather than leaving it implied only
 by a now-closed backlog entry.
 
-All items below stem from a 2026-08-09 Opus 5 release-readiness deep dive of `run_setup.bat`'s
+Items 35-46 below stem from a 2026-08-09 Opus 5 release-readiness deep dive of `run_setup.bat`'s
 default (zero-flag, double-click) Prime Directive path, scoped to the most common real user runs
 -- first run and every repeat run -- with findings cross-checked against real CI evidence and this
 repo's own docs before filing (see chat history for the full report). Overall verdict from that
@@ -676,6 +676,52 @@ but several represent real gaps worth closing before calling the path fully rele
   `state=ok` unconditionally regardless of an earlier `call :die` in the same run
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
+
+### Items 62-75: Aug-Sep 2026 real-user field report (filed 2026-10-08, planning only)
+
+Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
+the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
+starting any of these. Maintainer decisions they wait on are Q1-Q7 in `docs/open-questions.md`.
+The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
+the original symptom (see that doc's "CI-first testing policy").
+
+- **Item 62 (Confirmed, small)**: `:extract_pep723_requirements` only reads `# "pkg"` lines, so
+  the canonical `#     "pkg>=x",` header that REQ-005.11 write-back (`uv add --script`) itself
+  writes extracts zero deps on the next run ("PEP 723 block found but dependency list is empty").
+- **Item 63 (mechanism Confirmed, trigger Inferred, small)**: pipreqs 0.4.13 aborts the whole
+  scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
+  that as "zero requirements: no imports found". Pass `--encoding utf-8`, name the bad file,
+  retry without it.
+- **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
+  (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
+  optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
+  the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written.
+- **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
+  when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
+  (auto-install + rebuild) waits on Q2.
+- **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
+  cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
+- **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
+  (any existing file) or silently ignored, dropping the user's first real argument; this deleted
+  a working EXE on 2026-08-31. Validate and stop with a usage message (policy: Q1).
+- **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
+  "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
+  silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
+  `unknown` at line 130).
+- **Item 69 (Inferred, tiny)**: post-flight `"python.exe" "main.py"` fails in PowerShell, not
+  Command Prompt; show both forms (Q5), keep the quotes.
+- **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
+  no way to pass; reword or add a `PVW_` passthrough.
+- **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
+  override (Q6).
+- **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
+  first-launch experiment (`--onefile-tempdir-spec`).
+- **Item 73 (Confirmed, tiny)**: PEP 723 write-back discards uv's stderr, so `ERROR:uv_rc_1` has
+  no reason; log it.
+- **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
+  uses.
+- **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
+  second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

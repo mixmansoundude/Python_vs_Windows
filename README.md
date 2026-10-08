@@ -659,6 +659,13 @@ set lives in `run_setup.bat`.
   elective second run. No detection or heuristics are involved -- this is a documented, opt-in
   escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
   Finding 4/5 for why automatic detection was deliberately not attempted).
+- **When a cached EXE already exists, the entry-file argument is not checked.** The cached-EXE
+  fast path runs before entry selection, so `run_setup.bat <anything> arg1 arg2` launches the
+  existing `dist\<env>.exe` with `arg1 arg2`, whatever the first argument says. Something must
+  still be in that first position, because the extra arguments are always taken from the second
+  position onward. Typing the real entry file there (`run_setup.bat myapp.py arg1 arg2`) is the
+  form that behaves the same whether or not an EXE exists yet. (CLAUDE.md Item 67 may tighten
+  this; see `docs/open-questions.md` Q1.)
 - **This does not persist.** Forwarding only happens during the bootstrap run that received the
   arguments -- it does not change how a later plain double-click of `dist\<env>.exe` launches it
   (double-clicking never passes arguments to anything). To always launch the built EXE with the
@@ -1093,6 +1100,7 @@ above for why that distinction matters here specifically, not just as a generic 
 - **Implicit/plugin dependencies**: Dependencies that are not detected via static import analysis (for example, `pandas` needing `openpyxl` for `read_excel`) will surface as `ImportError` at runtime. See [Dependency strategy](#dependency-strategy) for detail.
 - **`requirements.txt` is input only**: The resolved conda environment may differ from the original author's intent. This is intentional -- getting the code to run takes priority over preserving outdated constraints.
 - **Windows only**: There is no macOS or Linux support.
+- **Self-modifying programs never reach the fast path**: the cached `dist\<env>.exe` is reused only while your `.py` files (and `requirements.txt`/`pyproject.toml`/`runtime.txt`) are unchanged since the last build. A program that rewrites one of its own `.py` files when it runs (for example, bumping a version string in a sibling module) changes those inputs every time, so every run rebuilds instead of reusing the EXE. This is accepted: the rebuild still works, it just takes longer.
 - **NI-VISA may require admin rights**: The NI-VISA optional install may require an elevated shell on machines where non-admin installs are blocked by policy.
 
 ---
