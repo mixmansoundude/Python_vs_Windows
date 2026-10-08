@@ -141,19 +141,24 @@ name that file in a `[WARN]`, and retry once with that file excluded rather than
 imports. `Failed on file:` is logged only for parse errors: the file is read before pipreqs'
 try block, so a decode error (for example a cp1252-encoded `.py` once (a) forces UTF-8) aborts
 with a bare traceback that names no file. So (b) also needs a pre-check that runs before
-pipreqs: a few lines of Python that try to decode each `.py` pipreqs would scan as UTF-8 and
-`ast.parse` it, name each failure in a `[WARN]`, and keep failures out of the scan. pipreqs'
-`--ignore` takes directories, so exclusion may need a staged copy of the good files. (c) Change
-the summary note so a crash is never labeled "no imports found". The
+pipreqs: a few lines of Python that open each `.py` pipreqs would scan with its declared
+encoding (`tokenize.open`, which honors a PEP 263 coding cookie and defaults to UTF-8) and
+`ast.parse` it. pipreqs then scans a staged copy of the tree, not the original: every file that
+passed is written there as UTF-8, and every file that failed is left out. pipreqs' `--ignore`
+takes directories, not files, so it cannot do this exclusion. Each left-out file is named in a
+`[WARN]` that also says the detected requirements may be incomplete. (c) Change the summary
+note so a crash is never labeled "no imports found". The
 `pipreqs.flags` CI gate locks invocation flags, so (a) must update that gate in the same change.
 This is the narrow fix; the shelved "pipreqs internalization" idea in
 `docs/agent-cold-storage.md` has a thaw trigger ("a real user run hits a pipreqs failure the
 warnfix safety net doesn't cleanly cover") that this arguably meets, but the narrow fix should
 come first.
 
-**CI proof**: a fixture app with a UTF-8 emoji in one file, a cp1252-encoded second `.py`
-(non-ASCII byte, not valid UTF-8), and a deliberately unparseable third `.py`, asserting the
-real imports still land in `requirements.auto.txt` and the WARNs name both bad files.
+**CI proof**: a fixture app with a UTF-8 emoji in one file; a cp1252 `.py` that declares
+`# -*- coding: cp1252 -*-`, contains a non-ASCII byte and imports a real package; a cp1252 `.py`
+with no coding cookie (not valid UTF-8); and a deliberately unparseable `.py`. Assert that the
+imports from the first two files land in `requirements.auto.txt`, and that the WARNs name the
+last two files.
 
 ### Item 64 -- warnfix treats noise as required: stdlib names, non-PyPI names, and library-internal optional imports (Confirmed, medium)
 

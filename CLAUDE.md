@@ -691,7 +691,8 @@ the original symptom (see that doc's "CI-first testing policy").
 - **Item 63 (mechanism Confirmed, trigger Inferred, small)**: pipreqs 0.4.13 aborts the whole
   scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
   that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`
-  for UTF-8 decode and parse errors (a decode error names no file), warn by name, scan without it.
+  (declared encoding, then parse; a decode error names no file), and scan a staged UTF-8 copy of
+  the files that pass, naming each one left out.
 - **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
