@@ -473,7 +473,7 @@ two paragraphs up, and if it documents a reusable procedure, give that procedure
 (`docs/agent-lessons-learned.md`, an existing process section) rather than leaving it implied only
 by a now-closed backlog entry.
 
-All items below stem from a 2026-08-09 Opus 5 release-readiness deep dive of `run_setup.bat`'s
+Items 35-46 below stem from a 2026-08-09 Opus 5 release-readiness deep dive of `run_setup.bat`'s
 default (zero-flag, double-click) Prime Directive path, scoped to the most common real user runs
 -- first run and every repeat run -- with findings cross-checked against real CI evidence and this
 repo's own docs before filing (see chat history for the full report). Overall verdict from that
@@ -676,6 +676,62 @@ but several represent real gaps worth closing before calling the path fully rele
   `state=ok` unconditionally regardless of an earlier `call :die` in the same run
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
+
+### Items 62-75: Aug-Sep 2026 real-user field report (filed 2026-10-08, planning only)
+
+Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
+the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
+starting any of these. No maintainer decisions are open. Q1-Q8 are decided or retired (see Items 63, 65, 66, 67, 69, 71 and 76).
+The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
+the original symptom (see that doc's "CI-first testing policy").
+
+- **Item 62 (Confirmed, small)**: `:extract_pep723_requirements` only reads `# "pkg"` lines, so
+  the canonical `#     "pkg>=x",` header that REQ-005.11 write-back (`uv add --script`) itself
+  writes extracts zero deps on the next run ("PEP 723 block found but dependency list is empty").
+- **Item 63 (mechanism Confirmed, trigger Inferred, small)**: pipreqs 0.4.13 aborts the whole
+  scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
+  that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`
+  (declared encoding, then parse; a decode error names no file), and scan a staged UTF-8 copy of
+  the files that pass, naming each one left out.
+- **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
+  (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
+  optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
+  the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written.
+- **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
+  when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
+  (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
+  install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
+- **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
+  cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
+  Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
+  and the memory-invalidation rules are in the plan doc. A failed forced solve stops; it does not cascade.
+- **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
+  (any existing file) or silently ignored, dropping the user's first real argument; this deleted
+  a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09: validate and stop; program arguments stay optional).
+- **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
+  "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
+  silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
+  `unknown` near the top of the file, right after the preflight self-check).
+- **Item 69 (Inferred, tiny)**: post-flight `"python.exe" "main.py"` fails in PowerShell, not
+  pasted into Command Prompt (Q5), so the PowerShell cause is unlikely; reproduce the printed line before changing anything; keep the quotes.
+- **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
+  no way to pass; reword or add a `PVW_` passthrough.
+- **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
+  override only, no prompt (decided 2026-10-09, Q6 = A).
+- **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
+  first-launch experiment (`--onefile-tempdir-spec`).
+- **Item 73 (Confirmed, tiny)**: PEP 723 write-back discards uv's stderr, so `ERROR:uv_rc_1` has
+  no reason; log it.
+- **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
+  uses.
+- **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
+  second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
+- **Item 76 (decided 2026-10-09, small)**: rename `dependency_source.txt` to `~dependency_source.txt`.
+  It is bootstrapper-internal tracking, never a file the user is told to read, so it takes the
+  tilde and gets git-ignored. Writer at `run_setup.bat` ~2188 (plus the log line at ~2189), and
+  three CI references in `batch-check.yml` (~1817, ~2926, ~3376) that collect it by exact name.
+  Implement in a coding agent, test first: add a CI check that the file is still collected under
+  its new name before the rename lands. Not implemented on the docs-only plan PR.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

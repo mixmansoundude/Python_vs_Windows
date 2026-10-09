@@ -473,6 +473,10 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
 - **Verifying a fresh build is activity-aware and announced.** When the bootstrapper builds or rebuilds the EXE, it runs it once to verify, preceded by a clear warning that this is a throwaway check so the user does not start real work in it. This run is only force-stopped if it stays completely silent for about 30 seconds; any output at all -- including a prompt waiting on input -- keeps it running for as long as needed, so an interactive program gets a real chance to be exercised. (A separate, narrower re-verification inside the `--hidden-import` auto-recovery loop remains unconditionally time-boxed at ~30 seconds, since it exists only to confirm one specific repair worked.) This is the only primary verification run that can be force-stopped at all.
 - **After a build, the real run is offered, not forced.** Following a successful build and verification, the bootstrapper offers to launch the app untimed for real, so a beginner need not launch it manually. The offer is consent-gated and names the side-effect/idempotency risk; declining leaves the verified EXE plus the post-flight guidance.
 - **Consent before any extra run.** Beyond the single automatic run, any further execution -- re-running, or running via the other launch method -- requires explicit consent that names the risk that the program may not be safe to run twice.
+- **Missing packages named at runtime (decided, not yet built).** If your program's own run
+  fails with `No module named X` for a package that is not installed, the bootstrapper asks once
+  before it installs X, edits `requirements.txt`, or rebuilds. A yes covers those steps and one
+  verification run of the rebuilt EXE. A no changes nothing and only names the missing package.
 - **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
 
 ---
@@ -533,6 +537,7 @@ blip or a temporary outage.
 - At bootstrap time, the bootstrapper appends standard `.gitignore` and `.gitattributes` entries to the working directory.
 - Uses a sentinel comment line to detect existing entries; never duplicates content already present.
 - `.gitignore` additions: tilde-prefix work files (`~*`), env directories (`.venv/`, `.uv/`, `.*_env/`, `.cache/`, `.conda/`), build artifacts (`dist/`, `build/`).
+- Tilde-prefixed files: a file the bootstrapper writes for its own bookkeeping shall start with `~`, and a file the user is meant to keep or share shall not. Tilde files are git-ignored, and deleting one shall not lose the user's work.
 - `.gitattributes` additions: `*.bat -text`, `*.cmd -text`, `*.exe binary`. (`-text`, not `eol=crlf`: `eol=crlf` only affects `git checkout`, never what a raw/GitHub-served download returns -- see this repo's own CRLF distribution fix.)
 - Silent if no changes needed; logs when appending.
 - Log contract:
@@ -653,12 +658,26 @@ set lives in `run_setup.bat`.
   shortcut with args added to its Target field, or is a positional argument in any other manual
   invocation -- a plain drag-and-drop of a single file still only ever passes that one argument
   (Windows Explorer's own behavior, not something this bootstrapper controls).
-- The extra arguments are forwarded VERBATIM to the target program at every real launch site
+- The extra arguments (positions 2 through 9) are forwarded to the target program at every real launch site
   during this bootstrap run: the EXE smoke verification, the cached-EXE fast-path reuse, the
   interpreter verification run (used when no EXE is built), and the post-execution checkpoint's
-  elective second run. No detection or heuristics are involved -- this is a documented, opt-in
+  elective second run. An argument that is explicitly empty (`""`) is dropped, and anything after
+  the ninth position is ignored. No detection or heuristics are involved -- this is a documented, opt-in
   escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
   Finding 4/5 for why automatic detection was deliberately not attempted).
+- **Program arguments are optional.** `run_setup.bat` with no arguments works as before, and
+  `run_setup.bat myapp.py` with no further arguments is the normal form. Extra arguments are only
+  for the rare case where your program needs them.
+- **When the cached-EXE fast path is eligible, the entry-file argument is not used to pick the
+  entry.** The fast path runs after the REQ-011 pre-flight check and before entry selection, and
+  reuses `dist\<env>.exe` only when that EXE exists and its source and dependency hash is still
+  fresh. Today, on that path, `run_setup.bat <anything> arg1 arg2` launches the existing EXE with
+  `arg1 arg2`, whatever the first argument says, and a first argument that is not a file in the
+  bootstrapper folder still passes the pre-flight check when the current folder is that folder.
+  Decided, not yet built (CLAUDE.md Item 67): a first argument that is not an existing `.py` will
+  stop the run with a usage message before the fast path runs, and the EXE is left alone. Until
+  that lands, type the real entry file first (`run_setup.bat myapp.py arg1 arg2`), which behaves
+  the same whether or not an EXE exists yet.
 - **This does not persist.** Forwarding only happens during the bootstrap run that received the
   arguments -- it does not change how a later plain double-click of `dist\<env>.exe` launches it
   (double-clicking never passes arguments to anything). To always launch the built EXE with the
@@ -1093,6 +1112,7 @@ above for why that distinction matters here specifically, not just as a generic 
 - **Implicit/plugin dependencies**: Dependencies that are not detected via static import analysis (for example, `pandas` needing `openpyxl` for `read_excel`) will surface as `ImportError` at runtime. See [Dependency strategy](#dependency-strategy) for detail.
 - **`requirements.txt` is input only**: The resolved conda environment may differ from the original author's intent. This is intentional -- getting the code to run takes priority over preserving outdated constraints.
 - **Windows only**: There is no macOS or Linux support.
+- **Self-modifying programs can get a stale cached EXE**: the cached `dist\<env>.exe` is reused only while your `.py` files (and `requirements.txt`/`pyproject.toml`/`runtime.txt`) match the hash recorded after the last build. That hash is recorded at the end of the build run, after the verification run of your program. A program that rewrites one of its own `.py` files when it runs (for example, bumping a version string in a sibling module) therefore gets the rewritten source recorded, so the next run can reuse an EXE built from the source as it was before the rewrite. Later runs may alternate between reusing and rebuilding. This is accepted; deleting `dist\<env>.exe` forces a fresh build.
 - **NI-VISA may require admin rights**: The NI-VISA optional install may require an elevated shell on machines where non-admin installs are blocked by policy.
 
 ---

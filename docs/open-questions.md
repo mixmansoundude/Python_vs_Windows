@@ -7,5 +7,8 @@ here and fold the outcome into wherever it actually belongs (CLAUDE.md's Active/
 answered questions accumulate here as history; that's what the other docs' own Closed Backlog /
 changelog-style sections are for.
 
-**No open questions right now.** (Last answered: CLAUDE.md Active Backlog Item 42 lever 2's
-prompt-wording question, 2026-08-30 -- see `docs/agent-closed-backlog.md`'s Item 42 entry.)
+## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
+
+Each question names the backlog item it blocks and the default an implementing agent should use
+
+No questions are open for this report. Q1-Q8 are decided or retired.
