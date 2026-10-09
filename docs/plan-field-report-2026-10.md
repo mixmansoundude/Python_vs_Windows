@@ -273,10 +273,20 @@ speed and fallbacks, and a conda solve failure is rarely fixed by a later tier.
    switch has no effect. The README must say so, the same way REQ-026 does for `%1`.
 8. `HP_FORCE_CONDA_ONLY` (CI) and `PVW_PROVIDER` set together: behave as `HP_FORCE_CONDA_ONLY`
    does (no fallbacks). The two must not conflict or double-log.
-9. Conda alive but the solve fails under the switch: open question Q8 in `docs/open-questions.md`
-   (stop, or allow the cascade with consent).
+9. Conda alive but the solve fails under the switch: stop with the conda error and a hint to run
+   without `PVW_PROVIDER` (decided 2026-10-09, Q8: stop, no silent cascade).
 10. Logging: the value is checked against a fixed list before any `:log` call, so nothing
    unsafe reaches the echo (see the `:log` lesson).
+11. Memory use is always visible: when a run starts at the remembered provider, the console says
+   so, names the provider, and says how to reset it (delete the state file, or set
+   `PVW_PROVIDER`). Nothing is picked from memory silently.
+
+**Memory invalidation (decided 2026-10-09):** the state file is replaced after a verified run,
+and it is cleared automatically when the same inputs that rebuild the EXE change
+(`requirements.txt`, `pyproject.toml`, `runtime.txt`, source `.py`), when the remembered provider
+is no longer available, and never by a failed or declined run. `PVW_PROVIDER` overrides it for one
+run and writes nothing. Deleting the file is always a valid manual reset. Users do not need to
+delete it in normal use.
 
 **CI proof**: a two-run test where run 1 is forced through the uv-to-conda cascade and run 2
 (after touching `requirements.txt`) must log the remembered provider and skip uv.

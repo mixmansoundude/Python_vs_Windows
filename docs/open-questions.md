@@ -11,23 +11,3 @@ changelog-style sections are for.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 if it is still unanswered when that item is picked up.
-
-- **Q8 (Item 66, `PVW_PROVIDER=conda`) -- When the forced conda solve fails, should the run stop, or
-  allow the normal cascade (embed, venv, system) with the usual consent?** Conda is the most capable
-  provider, so a conda solve failure is rarely fixed by a later tier. **Default: stop with the conda
-  error and a short "try without PVW_PROVIDER" hint; no silent cascade.**
-- **Q4 (Item 63) -- What else was in the Aug app folder?** Specifically: any `.py` files besides
-  `main.py`/`adjacent.py` (for example files extracted from the shipped EXE, which would explain
-  `pyimod02_importers`), and any emoji or other non-English characters in the source. These are
-  hypotheses: extra `.py` files or non-English text are harmless on their own, but a file pipreqs
-  cannot read in the locale encoding, or one that fails to parse, aborts its whole scan so it
-  reports nothing. Not blocking; Item 63's fix is right either way.
-- **Q5 (Item 69) -- Where did you paste the post-flight "run it yourself" command that failed
-  with quotes: Command Prompt or PowerShell / Windows Terminal?** If PowerShell, the fix is to
-  also print a `& "..." "main.py"` form, not to drop the quotes. **Default: show both forms.**
-- **Q6 (Item 71) -- Builder choice: super-user override only, or also a prompt?** **Default:
-  `PVW_BUILDER` override only**, no new prompt on the default double-click path.
-- **Q7 -- What did "Dep source should be ~?" mean?** Best guess: `dependency_source.txt` (and
-  maybe `requirements.auto.txt`) should get the `~` prefix like other generated files. Note that
-  on current code it always says `dependency_source=unknown` for pipreqs-only apps (Item 68).
-  **Default: no rename until answered.**
