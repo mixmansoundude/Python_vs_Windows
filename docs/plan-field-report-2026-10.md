@@ -422,8 +422,9 @@ is a convenience, but it also makes Item 75's real-app scenarios cheaper.
 The maintainer has almost no hands-on Windows time, so "it works on the first real run" has to
 be proven in CI. For every item above:
 
-1. Each fix lands with a Windows CI scenario that reproduces the ORIGINAL symptom first (red on
-   the old code, where practical) and then passes.
+1. Each fix lands with a Windows CI scenario that reproduces the ORIGINAL symptom first. The
+   test lands alone and must be proven red in CI, and blocking the PR, before the fix commit
+   follows; the rule is in AGENTS.md's "Test-first for bug fixes and new behavior" section.
 2. Prefer fixtures that copy real-world shape over sanitized ones: the exact bytes `uv` writes,
    CRLF line endings, a multi-file app, a GUI-style "swallow the exception and exit 0" app, a
    UTF-8 emoji in source.

@@ -68,6 +68,18 @@ When adding a new branch or fallback:
 - The diagnostics publisher expects the iterate job to upload a single artifact named `iterate-logs-${run_id}-${run_attempt}` that contains the `iterate/_temp/` payload plus the job summary. Missing that artifact yields '* Iterate logs: missing'.
 - The pre-flight iterate gate intentionally fails when NDJSON inputs are missing; do not "fix" that failure. The later NDJSON summary (cache+real) is the real verdict once results land.
 
+## Test-first for bug fixes and new behavior (mandatory)
+- Before changing run_setup.bat, tools/, or any payload for a bug fix or a new behavior, first add
+  a regression test (a Windows CI scenario, or a Python unit test where that is enough) that
+  reproduces the ORIGINAL symptom.
+- Push that test alone and prove it turns CI red on the real check it belongs to. A test that has
+  never failed proves nothing. Record the red run (run id) in the PR description.
+- Only then land the fix in a separate commit that turns the same check green.
+- A red regression test that is part of a gating lane blocks PR automerge, as it should. Do not
+  mark it non-gating, skip it, or weaken it to get past that block.
+- Exception: pure documentation changes, and fixes where no CI check can observe the symptom. For
+  the exception, say why in the PR description and name the check that would have caught it.
+
 ## Conda policy (mandatory)
 - Enforce conda-forge only.
 - Before any update/install:
