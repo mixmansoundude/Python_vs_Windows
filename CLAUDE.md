@@ -681,7 +681,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. Maintainer decisions they wait on are Q4-Q7 in `docs/open-questions.md` (Q1-Q3 and Q8 are decided, see Items 67, 65 and 66).
+starting any of these. Maintainer decisions they wait on are Q5-Q7 in `docs/open-questions.md` (Q1-Q4 and Q8 are decided, see Items 67, 65, 66 and 63).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 

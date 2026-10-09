@@ -133,7 +133,15 @@ it is not "only main.py").
 **Why Inferred**: the maintainer's exact files were not available. A non-cp1252 character or a
 non-parseable `.py` anywhere in the folder (the `pyimod02_importers` mention suggests files
 extracted from a PyInstaller EXE may have been present) would produce exactly these symptoms.
-See open question Q4.
+
+**Maintainer answer (Q4, 2026-10-09, resolved)**: no non-English text was knowingly in the folder.
+The folder probably held a `.pdf`, a `.xlsx`, and possibly one or two more `.py` files. Non-`.py`
+files do not affect pipreqs, since it only scans `.py`. The `.py` files are the only ones at risk,
+and the pre-check below covers them. The maintainer also asked that the bootstrapper report what
+it found, so the next failed run shows the likely cause in its log. **Added to the fix shape:**
+log one line per `.py` file scanned, giving its declared or detected encoding and whether it
+parsed, plus a count of other file types left out of the scan. This is informational only and
+does not change the scan result.
 
 **Fix shape**: (a) pass `--encoding utf-8` (or run the pipreqs call with `PYTHONUTF8=1`);
 (b) when pipreqs exits nonzero, look for its `Failed on file:` line in `~pipreqs_direct.log`,
