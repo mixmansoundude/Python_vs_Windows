@@ -619,7 +619,13 @@ but several represent real gaps worth closing before calling the path fully rele
   lane) -- why the forced-missing-xlrd precondition no longer triggers warnfix's repair-install
   path (`installedXlrd:false`) under venv mode. Both reproduced identically on 2026-08-30 across
   two separate `uv`-lane runs (workflow runs `33288809538` and `33293648911`); start there rather
-  than re-deriving reproduction steps from scratch.
+  than re-deriving reproduction steps from scratch. **Update 2026-10-09 (CI logs, run
+  `37733140007`)**: (b) is explained. `:venv_canary_ok` and the embed success path both reset
+  `HP_SKIP_PIPREQS` to empty, so the test's `HP_SKIP_PIPREQS=1` is discarded, pipreqs runs and
+  finds `xlrd`, and `requirements.txt` installs it up front (`~setup.log`: `Collecting xlrd~=2.0.2
+  (from -r requirements.txt (line 1))`); warnfix never has anything to repair. The test's
+  precondition is stale, not warnfix's venv branch, so the fix is test-side. (a) is NOT explained
+  by this and stays open.
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to

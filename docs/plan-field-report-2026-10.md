@@ -17,10 +17,16 @@ below are as of `0f088b4`; re-grep before editing). **Inferred** = the code make
 possible and it fits the notes, but the maintainer's exact files/logs were not available, so it
 is a strong hypothesis, not a proof.
 
-**Evidence gap**: this pass could not read CI job logs or the diagnostics site (the planning
-session's network policy blocked `mixmansoundude.github.io` and the Actions log blob store), so
-CI evidence comes from what CLAUDE.md/`docs/agent-ndjson.md` already record. No claim below
-depends on a log this pass did not see.
+**CI evidence (read 2026-10-09)**: the first planning pass could not reach the diagnostics site or
+the Actions log store. A second pass read the last complete runs (workflow run `37733140007` for the
+per-lane NDJSON and test logs, and run `37878641926` on the diagnostics site; both are docs-only
+heads of the planning PR, so they exercise the same bootstrapper code as `main`). `real`,
+`conda-full`, `justme-test`, `contract-uv`, `contract-uv-fail` and `uv-dl-fallback` are fully
+green; the only failing rows are the three already recorded under CLAUDE.md Item 35 (`cache`
+`self.exe.smokerun`; `uv` `self.cascade.exec` and `self.exe.warnfix.venv_repair`). Nothing in the
+CI results changes the ranking. Two items are confirmed by real CI logs (see "CI confirmation"
+under Items 62 and 64). Every claim below that is not marked "CI confirmation" still comes from
+reading code, not from a CI log.
 
 ---
 
@@ -106,6 +112,14 @@ per the lessons-learned rule about literal `"` in `-Command` text.
 endings, since Windows users' files are CRLF), asserting `DEP_SOURCE=pep723` and the extracted
 names; plus a genuine two-run test (run 1 writes the header via REQ-005.11, run 2 must read it
 back). Keep the existing one-space fixture as a regression case.
+
+**CI confirmation (2026-10-09)**: in the `real` (uv-first) lane of run `37733140007`, the second
+bootstrap in `selfapps_exefastpath` (`~exefastpath_run2.log`) and the rebuild in `selftest_depcheck`
+(`~depcheck_rebuild.log`) both print `PEP 723 block found but dependency list is empty or
+malformed; falling back` right after run 1 logged `REQ-005.11: PEP 723 header write-back succeeded
+via uv add --script`. So the defect already fires on every second run in CI; a regression test only
+needs to assert that line is absent after a write-back. It also means a header written by run 1 is
+ignored on run 2, so if pipreqs finds nothing on run 2 (Item 63) the recorded dependencies are lost.
 
 **Outside analyses**: the 4th party got this right. The 3rd party's causes (`Get-Content` array
 trap, `>=` eaten by cmd.exe, UTF-16 output) do not match the code: it is line-oriented by
@@ -211,6 +225,16 @@ heuristics as the curated way to pull in the optional extras that matter (openpy
 Watch the interaction with `selfapps_warnfix*.ps1` and `self.layered_e2e.chain`, which rely on
 real warnfix installs; and with the still-open Item 35 sub-item about `self.cascade.exec`
 falling through to embed, which this noise may also explain.
+
+**CI confirmation (2026-10-09)**: `tests/selfapps_collect.ps1` (a plotly-only app, `real` and
+`conda-full` lanes, `~selftest_collect/~setup.log` in run `37733140007`) shows the storm without
+any pandas or GUI code: warnfix installs pyarrow, polars, pandas, numpy, sqlframe, duckdb,
+pyspark, ibis, dask, modin, scikit-image, statsmodels, sphinx, kaleido, ipywidgets, anywidget and
+traitlets, and tries to build cupy and cudf (both fail), over about five minutes. They are plotly's
+lazy optional backends, surfaced because `--collect-submodules=plotly` makes PyInstaller import
+every plotly submodule. Every one is imported by `plotly.*`, not by the user's module, so the
+importer rule in the fix shape removes them. That scenario is also a ready place for the "small
+install count" assertion below.
 
 **CI proof**: a pandas app with no `requirements.txt` asserting no stdlib/never-installable name
 is attempted, total install attempts stay small, no cascade candidate is raised, and the EXE

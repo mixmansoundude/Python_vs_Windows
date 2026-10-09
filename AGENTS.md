@@ -97,23 +97,35 @@ When adding a new branch or fallback:
 
 ## CI Polling and Verification
 
-### 1. After every push, poll CI before proceeding
+### 1. Pushing cancels the running CI, so push once and wait
 
-After each `git push`, wait for CI to complete before making any further commits or opening a PR.
-Poll using the diagnostics site latest.txt:
+`batch-check.yml` runs with `concurrency: batch-check-<ref>` and `cancel-in-progress: true`, so every
+push to a branch cancels that branch's in-progress run. A full run (all 8 matrix lanes plus the
+diagnostics publish) takes about 90 minutes (see CLAUDE.md "CI wall-clock duration"). A cancelled
+run still publishes a near-empty page to the diagnostics site, which is not evidence of anything.
+
+- Real code change (anything that touches `run_setup.bat`, `tools/`, `tests/`, or `.github/`): push
+  once, then do not push again until that run has finished and the diagnostics site shows it.
+  Pushes to different branches do not cancel each other.
+- A test-first regression test (see "Test-first" above) is a code change: wait for its red run to
+  finish and record the run id before pushing the fix.
+- Docs-only follow-up commits may be pushed back to back once the last code change is green. Each
+  push cancels the previous docs-only run, which is fine because only the last one has to finish.
+  Never stack a docs push on a code push whose run is still going.
+
+How to tell a run has finished: the run for the pushed commit has `status: completed`, and
+`diag/latest.json` on the diagnostics site names that run id.
 
 ```bash
-for i in $(seq 1 9); do
-  LATEST=$(curl -s "https://mixmansoundude.github.io/Python_vs_Windows/diag/latest.txt" \
-    | tr -d '[:space:]')
-  RUN=$(echo "$LATEST" | grep -oE '[0-9]+-[0-9]+' | head -1)
-  [ -n "$RUN" ] && echo "Run: $RUN" && break
-  sleep 60
-done
+# status of the run for a pushed commit (REST works where GraphQL does not)
+gh api "repos/mixmansoundude/Python_vs_Windows/actions/runs?head_sha=<sha>" \
+  --jq '.workflow_runs[] | [.id, .name, .status, .conclusion] | @tsv'
+# which run the diagnostics site currently shows
+curl -s "https://mixmansoundude.github.io/Python_vs_Windows/diag/latest.json"
 ```
 
-Poll interval: 1-9 minutes. Max wait: under 10 minutes in practice.
-If CI is red, self-heal before proceeding to the next commit.
+Do not poll in a tight loop: check every 10 to 15 minutes, or rely on PR activity notifications
+where the environment provides them. If CI is red, self-heal before proceeding to the next commit.
 
 ### 2. After CI is green, verify outputs via the diag site
 
@@ -141,7 +153,8 @@ gh pr create --title "<descriptive title>" --body "<summary of changes>"
 No label is required. Auto-merge fires automatically for all non-draft PRs unless the
 'no-automerge' label is present.
 
-Do NOT open a PR before CI is green on the final commit.
+Do NOT open a PR before CI is green on the final commit. Exception: a test-first change opens
+its PR after the regression test's red run (so the red check blocks automerge), then pushes the fix.
 
 # Iteration Contract (Agent)
 
