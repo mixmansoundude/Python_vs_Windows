@@ -775,7 +775,7 @@ the original symptom (see that doc's "CI-first testing policy").
   plus a uv-lane row that round-trips a corpus written by real `uv add --script`; (2) port the
   extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
   `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
-  dependency source priority or REQ-004 precedence.** Starts after PR #475 (Item 62) has merged.
+  dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
   Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
   as a Python-version input) are in `docs/agent-cold-storage.md`.
 
