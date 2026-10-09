@@ -808,6 +808,13 @@ facts, consolidated here once:
 - **A genuinely new dependency's written form depends on the `uv` version** (bare name on one
   version, an auto-resolved lower bound on a later one) -- neither feature should assume or
   document one specific form.
+- **The reader of a PEP 723 header must accept the layout `uv add --script` writes** (`#` plus four
+  spaces, a trailing comma on every item, a `requires-python` line, CRLF on Windows) -- the
+  bootstrapper's own write-back produces the header its next run reads back. The old inline
+  PowerShell extractor accepted only `# "item"` (one space, no comma) and silently dropped every
+  dependency uv had just written (Item 62). `tools/pep723_extract.py` (`HP_PEP723_EXTRACT`) is the
+  single reader now; any test of a parser for a tool-written format needs a fixture copied
+  byte-for-byte from that tool's real output, not a hand-typed lookalike (`self.pep723.uvformat`).
 
 ---
 

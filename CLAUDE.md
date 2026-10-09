@@ -168,6 +168,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_HIDDEN_IMPORT_SCAN` | `~hidden_import_scan.py` | Slice 2 `--hidden-import` auto-recovery target selection for `:hidden_import_recover`; strict `ModuleNotFoundError` + installed-in-build-interpreter gate (a typo or `ImportError: cannot import name` costs zero rebuilds); capped at 3 rebuilds | `tools/hidden_import_scan.py` |
    | `HP_DLL_PCT_SANITIZE` | `~dll_pct_sanitize.ps1` | Strips `%`/`^` from env var values for `:log`'s UNQUOTED-echo safety in the native-DLL bundling loop; emitted as a real `.ps1` (invoked via `-File`) so cmd.exe's own tokenizer never parses its body -- see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry for why the earlier inline `-Command` version needed three separate fixes | `tools/dll_pct_sanitize.ps1` |
    | `HP_MIGRATE_GITATTRIBUTES` | `~migrate_gitattributes.ps1` | Item 60: replaces a pre-existing `.gitattributes`' stale `*.bat eol=crlf`/`*.cmd eol=crlf` lines with `-text`, in place, EXACT-line-match only so unrelated/user-hand-edited content is never touched; called unconditionally from `:merge_git_config` regardless of whether the append block ran or was skipped | `tools/migrate_gitattributes.ps1` |
+   | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
    byte-equality between the embedded base64 and the source file (see the Testing section
@@ -269,6 +270,7 @@ Test files and what they cover:
 | `test_hidden_import_scan.py` | `--hidden-import` auto-recovery strictness (ModuleNotFoundError + installed only), typo/ImportError/circular-import non-triggers, tried-list loop guard, HP_HIDDEN_IMPORT_SCAN payload sync |
 | `test_check_ndjson_registry.py` | NDJSON registry cross-check: brace expansion, all four code emission patterns, log-file parsing, pass/fail end-to-end paths |
 | `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
+| `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
