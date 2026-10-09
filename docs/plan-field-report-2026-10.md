@@ -360,14 +360,23 @@ command, and fails with "Unexpected token"; PowerShell needs `& "C:\...\python.e
 Removing the quotes only worked because the path had no spaces. So do NOT remove the quotes
 (both outside analyses' instincts there were half right).
 
+**Field-note wording (verbatim, late Aug)**: "The post-flight debriefing stated
+"C:\...\miniconda3\...\python.exe" "main.py" but it seems like the quotes are offending when I
+try to run it with both wrapped in quotes like that manually. ... If I drop all the quotes, then it
+works." The same note says the quotes around `python.exe` look like the problem and suggests the
+hint should say so.
+
 **Maintainer answer (Q5, 2026-10-09, resolved)**: the command was pasted into Command Prompt, not
-PowerShell. PowerShell was used only for the PEP 723 work. That makes the PowerShell explanation
-above unlikely to be the cause, since the quoted line is valid in Command Prompt. The cause is
-still unexplained, so this item is no longer "Inferred" and needs a fresh look before any fix.
-Do not assume the PowerShell cause. Next step for an implementing agent: reproduce the exact
-printed line in a Windows CI step (cmd.exe), with a path that contains spaces, and check the
-line the bootstrapper actually prints byte for byte. Showing a PowerShell form stays optional
-and only makes sense if the line itself is shown to fail there.
+PowerShell. PowerShell was used only for the PEP 723 work. So the PowerShell theory above does not
+fit the report.
+
+**What the printed line is**: `run_setup.bat` is ASCII-only (checked: zero non-ASCII lines), and the
+line printed at `:noexe_runapp` is `"%HP_PY%" "%HP_ENTRY%"` with straight quotes, which Command
+Prompt accepts as written. The field note itself uses curly quotes, which suggests the paste
+turned straight quotes into curly ones on the way in. Curly quotes make cmd fail exactly as
+reported ("drop the quotes and it works"). This is a hypothesis, not a confirmed cause. Before
+changing any code, reproduce with the printed line pasted as-is into Command Prompt, and a copy
+of it with curly quotes, on a path that contains spaces. Keep the straight-quote form.
 
 ### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
 
