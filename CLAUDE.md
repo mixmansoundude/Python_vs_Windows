@@ -681,7 +681,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. Maintainer decisions they wait on are Q3-Q7 in `docs/open-questions.md` (Q1 and Q2 are decided, see Items 67 and 65).
+starting any of these. Maintainer decisions they wait on are Q4-Q8 in `docs/open-questions.md` (Q1-Q3 are decided, see Items 67, 65 and 66).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
@@ -703,6 +703,8 @@ the original symptom (see that doc's "CI-first testing policy").
   install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
 - **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
+  Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
+  and open question Q8 are in the plan doc.
 - **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
   (any existing file) or silently ignored, dropping the user's first real argument; this deleted
   a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09, Kalen: validate and stop; program arguments stay optional).

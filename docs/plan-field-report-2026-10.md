@@ -246,8 +246,37 @@ env; nothing records "uv failed here, conda succeeded".
 **Fix shape**: write a small state file (keep it separate from `~env.state.json`) only when a
 cascade-reached provider produced a verified successful run; on the next run, start at that
 provider if it is still available, and log that it did so. Fall back to normal order if the
-state is stale or the provider is missing. `HP_FORCE_CONDA_ONLY` stays CI/test-only per REQ-019
-(see Q3). Items 63-64 should shrink how often this matters, so it ranks after them.
+state is stale or the provider is missing. `HP_FORCE_CONDA_ONLY` stays CI/test-only per REQ-019.
+Items 63-64 should shrink how often this matters, so it ranks after them.
+
+**Decided 2026-10-09 (Q3, option B): add a super-user switch `PVW_PROVIDER=conda`.** Unset means
+no change at all, so a double-click user never sees it. It is the only `PVW_` variable that picks
+a mode rather than a path; it follows the `PVW_CONDA_EXE` pattern (explicit variable, a `[DEBUG]`
+override log line). The value `conda` is the existing internal `HP_ENV_MODE` name, and conda is
+the most capable provider: the default order (uv, then conda, then embed, venv, system) is about
+speed and fallbacks, and a conda solve failure is rarely fixed by a later tier.
+
+**Edge cases the implementation must cover (each needs a CI row):**
+1. Unset: byte-for-byte the current behavior (REQ-019).
+2. Any value other than `conda` (typo, `Conda`, `miniconda`): stop with an `[ERROR]` that lists
+   the accepted value. Never silently fall back to the normal order.
+3. Forced conda with Miniconda not yet installed (a uv-first run skipped it): acquire Miniconda
+   through the normal conda path. Do not try uv first, even if uv is available.
+4. Forced conda while Item 66's memory says uv: the flag wins for that run. Memory changes only
+   after a verified run, so a failed forced run leaves memory alone.
+5. Forced conda with an existing `.uv_env` or a valid uv venv: do not reuse the uv venv. The run
+   must build or reuse a conda env.
+6. Forced conda with an exact patch pin from an earlier uv run (the runtime.txt write-back case
+   in `docs/agent-interconnect.md`): `HP_CONDA_PYSPEC_USE` must still drop the write-back pin, or
+   the solve fails for a reason the user cannot see.
+7. Cached EXE fast path: it runs before provider selection, so a valid cached EXE is reused and the
+   switch has no effect. The README must say so, the same way REQ-026 does for `%1`.
+8. `HP_FORCE_CONDA_ONLY` (CI) and `PVW_PROVIDER` set together: behave as `HP_FORCE_CONDA_ONLY`
+   does (no fallbacks). The two must not conflict or double-log.
+9. Conda alive but the solve fails under the switch: open question Q8 in `docs/open-questions.md`
+   (stop, or allow the cascade with consent).
+10. Logging: the value is checked against a fixed list before any `:log` call, so nothing
+   unsafe reaches the echo (see the `:log` lesson).
 
 **CI proof**: a two-run test where run 1 is forced through the uv-to-conda cascade and run 2
 (after touching `requirements.txt`) must log the remembered provider and skip uv.

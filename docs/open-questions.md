@@ -12,9 +12,10 @@ changelog-style sections are for.
 Each question names the backlog item it blocks and the default an implementing agent should use
 if it is still unanswered when that item is picked up.
 
-- **Q3 (Item 66) -- Should forcing conda become a supported super-user switch?**
-  `HP_FORCE_CONDA_ONLY` is CI scaffolding today (REQ-019). Options: rely on Item 66 (remember the
-  provider that worked), or also add a `PVW_PROVIDER=conda` override. **Default: Item 66 only.**
+- **Q8 (Item 66, `PVW_PROVIDER=conda`) -- When the forced conda solve fails, should the run stop, or
+  allow the normal cascade (embed, venv, system) with the usual consent?** Conda is the most capable
+  provider, so a conda solve failure is rarely fixed by a later tier. **Default: stop with the conda
+  error and a short "try without PVW_PROVIDER" hint; no silent cascade.**
 - **Q4 (Item 63) -- What else was in the Aug app folder?** Specifically: any `.py` files besides
   `main.py`/`adjacent.py` (for example files extracted from the shipped EXE, which would explain
   `pyimod02_importers`), and any emoji or other non-English characters in the source. These are
