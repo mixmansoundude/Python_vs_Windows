@@ -660,16 +660,19 @@ set lives in `run_setup.bat`.
   the ninth position is ignored. No detection or heuristics are involved -- this is a documented, opt-in
   escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
   Finding 4/5 for why automatic detection was deliberately not attempted).
+- **Program arguments are optional.** `run_setup.bat` with no arguments works as before, and
+  `run_setup.bat myapp.py` with no further arguments is the normal form. Extra arguments are only
+  for the rare case where your program needs them.
 - **When the cached-EXE fast path is eligible, the entry-file argument is not used to pick the
-  entry.** It must still be a file in the bootstrapper's own folder, or the REQ-011 pre-flight
-  check stops the run with an error before anything else happens. The fast path runs after that
-  check but before entry selection and reuses `dist\<env>.exe` only when that EXE exists and its
-  source and dependency hash is still fresh. On that path `run_setup.bat <anything> arg1 arg2`
-  launches the existing EXE with `arg1 arg2`, whatever file the first argument names. Something must
-  still be in that first position, because the extra arguments are always taken from the second
-  position onward. Typing the real entry file there (`run_setup.bat myapp.py arg1 arg2`) is the
-  form that behaves the same whether or not an EXE exists yet. (CLAUDE.md Item 67 may tighten
-  this; see `docs/open-questions.md` Q1.)
+  entry.** The fast path runs after the REQ-011 pre-flight check and before entry selection, and
+  reuses `dist\<env>.exe` only when that EXE exists and its source and dependency hash is still
+  fresh. Today, on that path, `run_setup.bat <anything> arg1 arg2` launches the existing EXE with
+  `arg1 arg2`, whatever the first argument says, and a first argument that is not a file in the
+  bootstrapper folder still passes the pre-flight check when the current folder is that folder.
+  Decided, not yet built (CLAUDE.md Item 67): a first argument that is not an existing `.py` will
+  stop the run with a usage message before the fast path runs, and the EXE is left alone. Until
+  that lands, type the real entry file first (`run_setup.bat myapp.py arg1 arg2`), which behaves
+  the same whether or not an EXE exists yet.
 - **This does not persist.** Forwarding only happens during the bootstrap run that received the
   arguments -- it does not change how a later plain double-click of `dist\<env>.exe` launches it
   (double-clicking never passes arguments to anything). To always launch the built EXE with the

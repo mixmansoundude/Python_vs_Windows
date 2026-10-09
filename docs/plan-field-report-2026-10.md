@@ -263,7 +263,7 @@ falls back to auto-detection if it does not exist. Separately, `HP_APP_ARGS` alw
 `%2`, so the user's real first argument is dropped; the fast-path EXE then receives the wrong
 arguments, can fail fast, and the discard-and-rebuild logic deletes a perfectly good EXE.
 
-**Fix shape** (see Q1 for the one policy choice): if `%1` is given, it must resolve to an
+**Fix shape** (policy decided 2026-10-09: validate and stop; program arguments are optional): if `%1` is given, it must resolve to an
 existing `.py` in the bootstrapper folder, either as typed or by appending `.py`. Otherwise stop
 before the fast path with a short usage message (`run_setup.bat <your_script.py> [args...]`)
 and change nothing on disk. Never fall back silently.
@@ -378,7 +378,7 @@ is a convenience, but it also makes Item 75's real-app scenarios cheaper.
   remaining `pushd dist` sites are deliberate and documented.
 - **Fast path ignores `%1`**: confirmed and accepted by the maintainer (fast path runs before
   entry selection). Now documented in README REQ-026. Item 67 changes what happens when `%1`
-  is not a real `.py`; see Q1 for how that interacts.
+  is not a real `.py`; the decided policy is in Item 67.
 - **Self-modifying programs and the fast path**: accepted limitation, now in README Known
   Limitations. The freshness hash is written at the end of a build run, after the verification
   run has already rewritten the sibling `.py`, so the next run can reuse an EXE built from the

@@ -12,11 +12,6 @@ changelog-style sections are for.
 Each question names the backlog item it blocks and the default an implementing agent should use
 if it is still unanswered when that item is picked up.
 
-- **Q1 (Item 67) -- When `%1` is not a real `.py`, should the bootstrapper stop even if a cached
-  EXE exists?** Today the fast path runs before `%1` is looked at, so any placeholder works. If
-  `%1` is validated first, `run_setup.bat firstArgIgnored a b` stops with a usage message instead
-  of launching the EXE. **Default: validate first and stop** (accept `main` for `main.py`), since
-  silently dropping the user's real first argument is what deleted a working EXE on 2026-08-31.
 - **Q2 (Item 65 slice 2) -- When your program's own run names a missing package (for example
   `No module named 'xlsxwriter'`), may the bootstrapper install it, add it to
   `requirements.txt`, and rebuild automatically?** It would NOT re-run your program unasked
