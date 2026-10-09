@@ -228,7 +228,7 @@ self.pipreqs.warn.gated,
 self.dep.diff.trace,
 self.warn.onedrive, self.warn.longpath, self.warn.path_negative, self.warn.sysdir,
 self.guardrail.g1, self.guardrail.g2, self.guardrail.g3,
-self.pep723.valid, self.pep723.malformed, self.pep723.pyproject.override,
+self.pep723.valid, self.pep723.uvformat, self.pep723.malformed, self.pep723.pyproject.override,
 self.pyproject.malformed,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
@@ -297,8 +297,12 @@ are adversarial-input scenarios (see `docs/plan-pep723-writeback.md`). Each row 
 self.pep723.writeback.fresh, self.pep723.writeback.idempotent, self.pep723.writeback.skipflag,
 self.pep723.writeback.malformed, self.pep723.writeback.trailing_ws_malformed,
 self.pep723.writeback.existing_lockfile, self.pep723.writeback.non_utf8,
-self.pep723.writeback.warnfix
+self.pep723.writeback.warnfix, self.pep723.writeback.roundtrip
 ```
+
+`idempotent` also emits `roundtrip` (Item 62): run 2 must accept, as the
+dependency source, the header the REAL uv wrote on run 1 (not a hand-typed fixture), so a uv layout
+change that the bootstrapper's extractor cannot read turns CI red. Same skip rules as the others.
 
 ## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
 

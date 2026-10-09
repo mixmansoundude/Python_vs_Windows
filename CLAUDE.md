@@ -168,6 +168,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_HIDDEN_IMPORT_SCAN` | `~hidden_import_scan.py` | Slice 2 `--hidden-import` auto-recovery target selection for `:hidden_import_recover`; strict `ModuleNotFoundError` + installed-in-build-interpreter gate (a typo or `ImportError: cannot import name` costs zero rebuilds); capped at 3 rebuilds | `tools/hidden_import_scan.py` |
    | `HP_DLL_PCT_SANITIZE` | `~dll_pct_sanitize.ps1` | Strips `%`/`^` from env var values for `:log`'s UNQUOTED-echo safety in the native-DLL bundling loop; emitted as a real `.ps1` (invoked via `-File`) so cmd.exe's own tokenizer never parses its body -- see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry for why the earlier inline `-Command` version needed three separate fixes | `tools/dll_pct_sanitize.ps1` |
    | `HP_MIGRATE_GITATTRIBUTES` | `~migrate_gitattributes.ps1` | Item 60: replaces a pre-existing `.gitattributes`' stale `*.bat eol=crlf`/`*.cmd eol=crlf` lines with `-text`, in place, EXACT-line-match only so unrelated/user-hand-edited content is never touched; called unconditionally from `:merge_git_config` regardless of whether the append block ran or was skipped | `tools/migrate_gitattributes.ps1` |
+   | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays), decodes TOML escapes in double-quoted items, and rejects an array with no closing bracket; a nonzero result leaves no output file (the batch subroutine deletes it); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
    byte-equality between the embedded base64 and the source file (see the Testing section
@@ -269,6 +270,7 @@ Test files and what they cover:
 | `test_hidden_import_scan.py` | `--hidden-import` auto-recovery strictness (ModuleNotFoundError + installed only), typo/ImportError/circular-import non-triggers, tried-list loop guard, HP_HIDDEN_IMPORT_SCAN payload sync |
 | `test_check_ndjson_registry.py` | NDJSON registry cross-check: brace expansion, all four code emission patterns, log-file parsing, pass/fail end-to-end paths |
 | `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
+| `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -509,6 +511,11 @@ but several represent real gaps worth closing before calling the path fully rele
   ever exercised in any CI configuration at all (lower priority -- already mitigated via forced-
   branch tests, just not the ambient real-user condition).
 
+  **Row added 2026-10-09 (Item 62)**: `self.pep723.writeback.roundtrip` (`selfapps_pep723_writeback.ps1`,
+  `uv` lane, real uv writes the header and the next run must read it back) was green on its first
+  full run (`37938844739`). Decision for now: leave it advisory and let it soak; promote it only
+  after several consecutive green full matrices, per the process discipline below.
+
   **Non-negotiable constraint: the diagnostics-site-publish job must never be blocked or skipped
   by this work.** `publish_diag`'s `if: ${{ always() }}` / `needs: [selftest, selftest-gate,
   model-quick-fix]` guard already covers this -- any change to the job graph as part of this item
@@ -683,22 +690,22 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 62-75: Aug-Sep 2026 real-user field report (filed 2026-10-08, planning only)
+### Items 63-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Item 62 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. No maintainer decisions are open. Q1-Q8 are decided or retired (see Items 63, 65, 66, 67, 69, 71 and 76).
+starting any of these. No maintainer decisions are open. Q1-Q9 are decided or retired (see Items 63, 65, 66, 67, 69, 71, 76 and 78).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-- **Item 62 (Confirmed, small)**: `:extract_pep723_requirements` only reads `# "pkg"` lines, so
-  the canonical `#     "pkg>=x",` header that REQ-005.11 write-back (`uv add --script`) itself
-  writes extracts zero deps on the next run ("PEP 723 block found but dependency list is empty").
-- **Item 63 (mechanism Confirmed, trigger Inferred, small)**: pipreqs 0.4.13 aborts the whole
+- **Item 63 (mechanism and trigger Confirmed, small)**: pipreqs 0.4.13 aborts the whole
   scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
   that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`
   (declared encoding, then parse; a decode error names no file), and scan a staged UTF-8 copy of
-  the files that pass, naming each one left out.
+  the files that pass, naming each one left out. Trigger confirmed 2026-10-09 on the maintainer's
+  folder: one valid UTF-8 file with no coding cookie holding U+201D (byte 0x9D, undefined in
+  cp1252) in smart-quote cleanup regexes; the regression fixture must contain U+201D. Also log
+  the crash reason in `~setup.log` (today only `~pipreqs.summary.txt` says it).
 - **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
@@ -718,8 +725,9 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
-- **Item 69 (Inferred, tiny)**: post-flight `"python.exe" "main.py"` fails in PowerShell, not
-  pasted into Command Prompt (Q5), so the PowerShell cause is unlikely; reproduce the printed line before changing anything; keep the quotes.
+- **Item 69 (re-checked 2026-10-09, no code change planned)**: the printed post-flight line works
+  pasted into Command Prompt; Q5 already ruled out PowerShell. Keep the quotes. Proposed to close
+  as a Known Finding once the maintainer agrees.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
@@ -738,6 +746,19 @@ the original symptom (see that doc's "CI-first testing policy").
   three CI references in `batch-check.yml` (~1817, ~2926, ~3376) that collect it by exact name.
   Implement in a coding agent, test first: add a CI check that the file is still collected under
   its new name before the rename lands. Not implemented on the docs-only plan PR.
+- **Item 77 (likely cause, runtime DLLs reported missing, small)**: `import pymupdf` fails with
+  `DLL load failed while importing _extra` in the env's own interpreter on a clean Windows image;
+  the wheel's `mupdfcpp64.dll` needs `msvcp140.dll` and `vcruntime140_1.dll` (Visual C++ runtime),
+  reported missing in System32. Not a PyInstaller bundling gap. Fix: detect and tell the user
+  with the download link, never install it automatically. CI cannot reproduce the real failure;
+  test the warning wiring with a test-only flag.
+- **Item 78 (Confirmed trigger, small, two slices)**: an `import visa` in an archived SUBFOLDER
+  started a real NI-VISA driver install for a program that does not use it; the elevated install
+  then failed (`-125202`). Slice 1: log `Elevated: yes|no` once per run, and print a console
+  `[WARN]` when the NI-VISA install fails. Slice 2 (decided 2026-10-09, scan scope): subfolder
+  scanning stays and is documented in README REQ-008; no call-chain tracing; log which file
+  triggered the install and prompt (default no, cascade timeout) only when every match is below a
+  subfolder. Separate PRs, each test first.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

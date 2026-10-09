@@ -539,7 +539,11 @@ pyproject.toml/PEP 723/pipreqs block even begins -- Tier 2's premise is "skip st
 execution instead." `HP_UVX_EXE` is recomputed independently here (Tier 2's gate is earlier in the
 file than Tier 1's, so it can't reuse Tier 1's copy). `uv add --script` only updates the PEP 723
 header, not `requirements.txt` -- `:extract_pep723_requirements` is reused to re-extract the
-just-updated header afterward. Deliberately does NOT set `HP_SKIP_PIPREQS` in production (additive
+just-updated header afterward. That subroutine runs the embedded `~pep723_extract.py`
+(`HP_PEP723_EXTRACT`, Item 62) via `%HP_PY%`, so it needs `HP_PY` and a prior
+`:define_helper_payloads`; it must accept the exact layout `uv add --script` writes (indented
+items, trailing commas, CRLF), because this feature's own write-back is what produces the header
+the next run reads back. Deliberately does NOT set `HP_SKIP_PIPREQS` in production (additive
 layering: Tier 2 anchors `requirements.txt`, pipreqs/Tier 1 still get their normal chance
 afterward). `tools/pvw_known_idempotent.py`'s `run_script()` leaves the child's stdio fully
 inherited (no `capture_output`) and prints its own `RAN:`/`ERROR:` marker to **stderr**, never

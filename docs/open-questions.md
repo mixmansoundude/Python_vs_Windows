@@ -11,4 +11,4 @@ changelog-style sections are for.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 
-No questions are open for this report. Q1-Q8 are decided or retired.
+No questions are open for this report. Q1-Q9 are decided or retired.
