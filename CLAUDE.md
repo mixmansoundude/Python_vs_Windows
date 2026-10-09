@@ -726,6 +726,12 @@ the original symptom (see that doc's "CI-first testing policy").
   uses.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
   second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
+- **Item 76 (decided 2026-10-09, small)**: rename `dependency_source.txt` to `~dependency_source.txt`.
+  It is bootstrapper-internal tracking, never a file the user is told to read, so it takes the
+  tilde and gets git-ignored. Writer at `run_setup.bat` ~2188 (plus the log line at ~2189), and
+  three CI references in `batch-check.yml` (~1817, ~2926, ~3376) that collect it by exact name.
+  Implement in a coding agent, test first: add a CI check that the file is still collected under
+  its new name before the rename lands. Not implemented on the docs-only plan PR.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
