@@ -1145,6 +1145,76 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pep723ValidFound -and $pep723ValidContinued) { $summary.Add('PEP 723 valid block: PASS') } else { $summary.Add('PEP 723 valid block: FAIL') }
 
+# --- PEP 723 block exactly as uv writes it (CLAUDE.md Item 62) ---
+# Arrange: a block byte-for-byte in the shape `uv add --script` produces: CRLF line endings, a
+#          `requires-python` line, items indented four spaces after the `# ` and a trailing comma
+#          after every item (the bootstrapper's own write-back and any user who ran uv write this shape).
+#          The sibling `self.pep723.valid` fixture (one space, no comma) is kept as the hand-written case.
+# Assert:  the block is accepted as the dependency source (no "no valid dependencies extracted" WARN)
+#          and `~requirements.pep723.txt` holds exactly the two bare specs, in order, with no quote,
+#          comma or leading whitespace left over.
+# derived requirement: the extractor previously accepted only `# "<item>"` (one space, no comma), so a
+# header uv had just written was reported as malformed and the dependencies were silently dropped.
+$pep723UvDir = Join-Path $TestsDir '~selftest_pep723_uvformat'
+if (Test-Path $pep723UvDir) { Remove-Item -Recurse -Force $pep723UvDir }
+New-Item -ItemType Directory -Force -Path $pep723UvDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $pep723UvDir -Force
+$pep723UvLines = @(
+  '# /// script',
+  '# requires-python = ">=3.9"',
+  '# dependencies = [',
+  '#     "packaging>=24.0",',
+  '#     "colorama>=0.4.6",',
+  '# ]',
+  '# ///',
+  'print("pep723-uvformat")'
+)
+# Written as raw ASCII bytes with explicit CRLF so the fixture is identical on every checkout.
+$pep723UvBytes = [System.Text.Encoding]::ASCII.GetBytes(($pep723UvLines -join "`r`n") + "`r`n")
+[System.IO.File]::WriteAllBytes((Join-Path $pep723UvDir 'app_pep723_uv.py'), $pep723UvBytes)
+$pep723UvLogName = '~pep723_uvformat_bootstrap.log'
+Push-Location $pep723UvDir
+try {
+  cmd /c "call run_setup.bat > $pep723UvLogName 2>&1"
+  $pep723UvExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+$pep723UvLogPath = Join-Path $pep723UvDir $pep723UvLogName
+$pep723UvLog = @()
+if (Test-Path $pep723UvLogPath) { $pep723UvLog = Get-Content -LiteralPath $pep723UvLogPath -Encoding ASCII }
+$pep723UvFound = ($pep723UvLog | Where-Object { $_ -like '*Using PEP 723 inline dependency metadata*' }).Count -gt 0
+$pep723UvEmptyWarn = ($pep723UvLog | Where-Object { $_ -like '*PEP 723 block found but no valid dependencies extracted*' }).Count -gt 0
+$pep723UvReqPath = Join-Path $pep723UvDir '~requirements.pep723.txt'
+$pep723UvExtracted = @()
+if (Test-Path $pep723UvReqPath) {
+  $pep723UvExtracted = @(Get-Content -LiteralPath $pep723UvReqPath -Encoding ASCII | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+}
+$pep723UvExpected = @('packaging>=24.0', 'colorama>=0.4.6')
+$pep723UvExtractedOk = (($pep723UvExtracted -join '|') -ceq ($pep723UvExpected -join '|'))
+$pep723UvStatusPath = Join-Path $pep723UvDir '~bootstrap.status.json'
+$pep723UvContinued = $false
+if (Test-Path $pep723UvStatusPath) {
+  try {
+    $pep723UvStatus = Get-Content -LiteralPath $pep723UvStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $pep723UvContinued = ($pep723UvStatus.exitCode -eq 0)
+  } catch { }
+}
+$pep723UvPass = ($pep723UvFound -and (-not $pep723UvEmptyWarn) -and $pep723UvExtractedOk -and $pep723UvContinued)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.pep723.uvformat'
+  pass = $pep723UvPass
+  desc = 'PEP 723 block in uv-written shape (CRLF, indented items, trailing commas) is accepted and its deps extracted'
+  details = [ordered]@{
+    metadataFound = $pep723UvFound
+    emptyWarn = $pep723UvEmptyWarn
+    extracted = ($pep723UvExtracted -join ' ; ')
+    extractedOk = $pep723UvExtractedOk
+    continued = $pep723UvContinued
+  }
+})
+if ($pep723UvPass) { $summary.Add('PEP 723 uv-written block: PASS') } else { $summary.Add('PEP 723 uv-written block: FAIL') }
+
 # --- PEP 723 malformed block test ---
 # Arrange: script with "# /// script" present but no valid dependencies block.
 # Assert:  bootstrap log contains "[WARN] PEP 723 block found but no valid" and exits 0 (pipreqs fallback).
