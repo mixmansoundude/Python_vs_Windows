@@ -125,7 +125,7 @@ ignored on run 2, so if pipreqs finds nothing on run 2 (Item 63) the recorded de
 trap, `>=` eaten by cmd.exe, UTF-16 output) do not match the code: it is line-oriented by
 design, the content never passes through cmd.exe, and it already writes `-Encoding ASCII`.
 
-### Item 63 -- pipreqs crashes are reported as "no imports found" (Inferred cause, Confirmed mechanism, small)
+### Item 63 -- pipreqs crashes are reported as "no imports found" (Confirmed mechanism, cause matched by a second real run, small)
 
 **Symptom (Aug)**: a `main.py` that imports a sibling `adjacent.py` (which imports pandas,
 PyPDF2, pdfminer, etc.) produced no `requirements.txt`; `~pipreqs.diff.txt` said
@@ -144,7 +144,7 @@ decode (checked: `"\U0001F50D"` fails on byte 0x8D). The bootstrapper does not p
 admitting a crash looks the same. The scan is already whole-folder (the 4th party is right that
 it is not "only main.py").
 
-**Why Inferred**: the maintainer's exact files were not available. A non-cp1252 character or a
+**Why Inferred (as of the August run)**: the maintainer's exact files were not available. A non-cp1252 character or a
 non-parseable `.py` anywhere in the folder (the `pyimod02_importers` mention suggests files
 extracted from a PyInstaller EXE may have been present) would produce exactly these symptoms.
 
@@ -156,6 +156,29 @@ it found, so the next failed run shows the likely cause in its log. **Added to t
 log one line per `.py` file scanned, giving its declared or detected encoding and whether it
 parsed, plus a count of other file types left out of the scan. This is informational only and
 does not change the scan result.
+
+**Second real run (maintainer, 2026-10-09, field evidence, supersedes "Inferred" above)**: on the
+maintainer's real folder `~pipreqs_direct.log` ends with `UnicodeDecodeError: 'charmap' codec can't
+decode byte 0x9d in position 6291: character maps to <undefined>`, raised from a bare `f.read()`
+inside pipreqs, with no file named. That is the mechanism above, and it is a decode error, so no
+`Failed on file:` line exists (checked in the 0.4.13 wheel: that line is logged only inside the
+`except` around `ast.parse`). The message text reproduces exactly with `b"\xe2\x80\x9d".decode(
+"cp1252")` (checked 2026-10-09). 0x9D is one of the five bytes cp1252 leaves undefined (0x81,
+0x8D, 0x8F, 0x90, 0x9D). The most common character that ends in 0x9D is U+201D, the right curly
+double quote (`E2 80 9D`) that word processors and chat assistants put in comments and strings.
+The other curly quotes decode silently as mojibake (`E2 80 98`, `99`, `9C` all map), so a file
+full of curly quotes can pass while one containing U+201D aborts the scan. Other UTF-8 characters
+that end in 0x9D (U+221D, U+1F49D) and the emoji case already above (0x8D) fail the same way.
+Because cp1252 cannot even represent 0x9D, the offending file is very probably valid UTF-8, not a
+cp1252 file. The cause is still not proven: nothing in the logs names the file, and the position
+only says that file is at least ~6.3 KB. Treat "a UTF-8 file containing U+201D" as the leading
+hypothesis and expect `--encoding utf-8` (a) to clear it. The per-file informational line above
+will name the file on the next run either way.
+
+**Visibility gap seen in the same run**: `no imports found` appears in `~pipreqs.summary.txt` but
+not in `~setup.log`. `~setup.log` only gets `[DEBUG] pipreqs (direct) rc=<n> size=missing` from
+`:pipreqs_direct_done`; the summary note text is written only by `:write_pipreqs_summary`. A user
+reading the setup log therefore never sees that pipreqs crashed. The fix shape below covers it.
 
 **Fix shape**: (a) pass `--encoding utf-8` (or run the pipreqs call with `PYTHONUTF8=1`);
 (b) when pipreqs exits nonzero, look for its `Failed on file:` line in `~pipreqs_direct.log`,
@@ -172,19 +195,31 @@ tree as local, so the empty stub keeps `import adjacent` from becoming a false r
 while contributing no imports of its own. pipreqs' `--ignore`
 takes directories, not files, so it cannot do this exclusion. Each left-out file is named in a
 `[WARN]` that also says the detected requirements may be incomplete. (c) Change the summary
-note so a crash is never labeled "no imports found". The
+note so a crash is never labeled "no imports found", and put the same words in `~setup.log` and
+on the console as a `[WARN]` that points at `~pipreqs_direct.log`, followed by the traceback's
+last line. That last line (for example `... character maps to <undefined>`) contains `<` and `>`,
+so it must reach the log through a file append (`findstr`/`type` into `%LOG%`), never through
+`:log "..."`, which echoes unquoted (see `docs/agent-lessons-learned.md`). The
 `pipreqs.flags` CI gate locks invocation flags, so (a) must update that gate in the same change.
 This is the narrow fix; the shelved "pipreqs internalization" idea in
 `docs/agent-cold-storage.md` has a thaw trigger ("a real user run hits a pipreqs failure the
 warnfix safety net doesn't cleanly cover") that this arguably meets, but the narrow fix should
 come first.
 
-**CI proof**: a fixture app with a UTF-8 emoji in one file; a cp1252 `.py` that declares
-`# -*- coding: cp1252 -*-`, contains a non-ASCII byte and imports a real package; a cp1252 `.py`
-with no coding cookie (not valid UTF-8); and a deliberately unparseable `.py`. Assert that the
-imports from the first two files land in `requirements.auto.txt`, and that the WARNs name the
-last two files. Have the entry file also `import` the unparseable file's module name, and
-assert that name is not in `requirements.auto.txt`.
+**CI proof**: a fixture app with a UTF-8 emoji in one file; a second UTF-8 file containing the
+right curly double quote U+201D in a comment or string (the 2026-10-09 field traceback, byte for
+byte: this one fails under cp1252 on 0x9D while the other curly quotes do not, so it must be its
+own fixture, not folded into the emoji one) and importing a real package; a cp1252 `.py` that
+declares `# -*- coding: cp1252 -*-`, contains a non-ASCII byte and imports a real package; a cp1252
+`.py` with no coding cookie (not valid UTF-8); and a deliberately unparseable `.py`. Assert that
+the imports from the first three files land in `requirements.auto.txt` and that no WARN names
+them, and that the WARNs name the last two files. Have the entry file also `import` the
+unparseable file's module name, and assert that name is not in `requirements.auto.txt`. Also
+assert that a crashed scan is never summarized as `no imports found` in either
+`~pipreqs.summary.txt` or `~setup.log`. Alongside the CI scenario, a cross-platform unit test of
+the pre-check helper (new `tests/test_pipreqs_precheck.py`) pins the same cases without needing a
+cp1252 Windows locale, including `b"\xe2\x80\x9d"` decoded under cp1252 raising and under UTF-8
+passing. The test lands first and must be red before the fix (rule in `AGENTS.md`).
 
 ### Item 64 -- warnfix treats noise as required: stdlib names, non-PyPI names, and library-internal optional imports (Confirmed, medium)
 
@@ -236,9 +271,24 @@ every plotly submodule. Every one is imported by `plotly.*`, not by the user's m
 importer rule in the fix shape removes them. That scenario is also a ready place for the "small
 install count" assertion below.
 
+**Second real run (maintainer, 2026-10-09)**: the same folder as Item 63's second run produced the
+same pattern. The PyInstaller warn-file copy (`~warnfile.txt`) held about 25 `missing module`
+lines and one `excluded module named frozen_importlib`; warnfix tried to install
+`pyimod02_importers` and `multiprocessing` (both failed) and succeeded for `future`, pandas,
+pdfminer, pymupdf and PyPDF2; the cascade prompt then timed out to "no" (its 30-second default).
+Reproduced without CI on 2026-10-09: `parse_warn_file` over sample lines in the 6.x format returns
+`multiprocessing`, `pyimod02_importers`, `tkinter` and `AppKit` as install targets, so point 1 is
+live on current code. The `excluded module named frozen_importlib` line needs no fix: both
+matchers in `parse_warn.py` look only for `W: no module named` or `missing module named`, so an
+`excluded module` line is never an install candidate (pin that with a table case so a future
+regex change cannot start installing it). The packages that did install (pandas, pdfminer,
+pymupdf, PyPDF2, `future`) are exactly the real dependencies that Item 63's crashed pipreqs scan
+should have written to `requirements.txt` up front, which is the chain in "The big picture".
+
 **CI proof**: a pandas app with no `requirements.txt` asserting no stdlib/never-installable name
 is attempted, total install attempts stay small, no cascade candidate is raised, and the EXE
-still builds; a `test_parse_warn.py` table covering each new filter rule.
+still builds; a `test_parse_warn.py` table covering each new filter rule, including the
+`excluded module named` negative case above.
 
 ### Item 65 -- Runtime `ModuleNotFoundError` is ignored when it does not change the exit code (Confirmed, medium)
 
@@ -372,6 +422,13 @@ Each was checked against current text:
   remembers seeing with a `requirements.txt` present did not come from this line on current
   code.) Gate on `"%DEP_SOURCE%"=="unknown"` instead. `tests/harness.ps1`
   `batch.req005.warn_gate` checks only the text, so update it to check behavior.
+- **Running the env interpreter with no script opens a Python prompt (second report,
+  2026-10-09)**: the maintainer ran the printed interpreter path without `main.py`, got a `>>>`
+  prompt, and read "`pipreqs` and even `pip` is not defined" as "not installed in that env". They
+  are commands, not Python names; there is nothing wrong with the env. The post-flight panel
+  that prints the run command should add one line: "Running the interpreter with no script
+  opens an interactive prompt; to run pip use `"<python>" -m pip ...`." (This is the "one line in
+  the post-flight panel later" from the do-not-add list; it is cheap enough to do here.)
 
 ### Item 69 -- Post-flight "run it yourself" command fails when pasted into PowerShell (Inferred, tiny)
 
@@ -401,6 +458,13 @@ turned straight quotes into curly ones on the way in. Curly quotes make cmd fail
 reported ("drop the quotes and it works"). This is a hypothesis, not a confirmed cause. Before
 changing any code, reproduce with the printed line pasted as-is into Command Prompt, and a copy
 of it with curly quotes, on a path that contains spaces. Keep the straight-quote form.
+
+**Re-check (maintainer, 2026-10-09)**: the printed line, quotes included, works when pasted into
+Command Prompt ("not sure why it didn't before"). That is the reproduction this item asked for,
+and it came out clean, so there is no code change to make. The curly-quote paste above is the
+remaining unproven explanation for the August failure; a fresh report with the exact pasted text
+would reopen this. Close the CLAUDE.md entry as "no action needed" (a Known Finding) when the next
+docs-only change touches the backlog.
 
 ### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
 
@@ -527,3 +591,78 @@ on intermediate files and log lines, not just exit code: (a) multi-file pandas+E
 `requirements.txt` (Items 63-65); (b) the same app run twice with a `requirements.txt` edit in
 between (Items 62, 66); (c) `%1` misuse cases (Item 67). Respect Item 35's process discipline:
 new rows start non-gating and soak before being promoted.
+
+### Item 77 -- Built EXE fails at launch with "DLL load failed while importing _extra" (Investigation, medium)
+
+**Symptom (second real run, 2026-10-09, same folder as Items 63 and 64)**: after PyInstaller built
+the EXE and warnfix installed pymupdf, the run ended with `ImportError: DLL load failed while
+importing _extra: The specified module could not be found.` and an unhandled exception.
+
+**What the message means**: `_extra` is a compiled extension inside the `pymupdf` wheel
+(`pymupdf/_extra.pyd`, checked 2026-10-09 in the `pymupdf-1.28.2-cp310-abi3-win_amd64` wheel; the
+wheel also holds `_mupdf.pyd` and `mupdfcpp64.dll` beside it). "The specified module could not be
+found" is Windows' generic text for "this `.pyd`, or a DLL it needs, did not load". The two
+possible causes look identical in the message:
+1. **Bundling gap**: PyInstaller copied the `.pyd` but not the DLL beside it. The same package then
+   imports fine from the environment's own interpreter and fails only in the EXE.
+2. **Missing runtime on the machine**: the wheel's DLLs need the Microsoft Visual C++ runtime. It
+   fails in both the EXE and the interpreter. CI runners have the runtime, so CI cannot show this
+   one.
+
+Neither is proven. The plan's do-not-add list says the PyInstaller "Visual C++ redistributable not
+installed" warnings are informational and to "revisit only if a real DLL load failure is seen";
+this is that failure. Nothing in the bootstrapper handles it today: `:dll_bundle_recover` only
+runs for conda environments (`HP_ENV_MODE=conda`, it searches the env's `Library\bin`), this run
+used a uv or venv environment, and `:hidden_import_recover` is correctly silent because this is
+not a `ModuleNotFoundError`.
+
+**Cheap evidence already on the maintainer's disk or one command away** (optional, not blocking):
+`~run.err.txt` shows which launch raised it (EXE or interpreter); the `~setup.log` install lines
+show the pymupdf version; and `"<env python>" -c "import pymupdf"` from Command Prompt either
+succeeds (points at cause 1) or prints the same error (points at cause 2).
+
+**Plan**: CI scenario first. A tiny app that does `import pymupdf` and prints its version, built to
+an EXE in a uv lane and run. If it fails there, cause 1 is real: fix by collecting the package's
+binaries (`--collect-all pymupdf` or `--collect-binaries=pymupdf`, double-gated on "used by
+source" AND "installed in the build interpreter" the way `HP_COLLECT_SUBMODULES` is, so a lean
+app never pays for it). If it passes in CI, cause 1 is much less likely and the right change is a
+hint: when an EXE or interpreter run prints `DLL load failed` and the interpreter run of the same
+import also fails, say that the Microsoft Visual C++ runtime may be missing and name where to get
+it. Do not install it automatically (it needs administrator rights, and the core flow does not).
+
+### Item 78 -- NI-VISA install fails on a real machine too, and the user is told nothing useful (Confirmed failure, cause unknown, small)
+
+**Symptom (second real run, 2026-10-09)**: `[VISA] installer exit code: -125202` then
+`[VISA] install_failed (post_check_timeout) installer_rc=-125202` (the maintainer's words: "failed
+visa install (rc=-125202)"). That is the NI-VISA installer's own exit code, not uv's. The August
+notes also say NI-VISA "had been attempted to be installed a few times prior" with no sign of
+whether it succeeded, so this is not new.
+
+**Why it was attempted**: the folder imports `pyvisa` (the detector in `tools/detect_visa.py` only
+matches `import pyvisa`, `from pyvisa`, and `import visa` at the start of a line, with a trailing
+`\b`, so a name like `pyvista` cannot trigger it; the August Nuitka log also names
+`pyvisa.attributes.c`). The attempt is legitimate.
+
+**What this changes in the docs**: `docs/agent-closed-backlog.md`'s Known Finding "NI-VISA real
+install fails fast in CI" concluded the failure was environmental to CI and said it still needed
+one real user run to confirm the same installer succeeds off CI. That real run now exists and it
+fails too, with the same family of code (`-125202` here; `-125202` was also captured in CI per
+`docs/demo-bootstrapper-output.md`'s Scenario 24, `-125083` in the original finding). So the
+"CI-only" part of the conclusion does not hold. The finding is updated in the same change as
+this plan.
+
+**Cause (unknown)**: the logs say the 21.5 online installer downloaded cleanly (`PE_OK`), ran, and
+exited nonzero. Candidates: it needs an elevated (administrator) session while the core flow
+deliberately does not; NI's package feed is unreachable or changed; the pinned 21.5 online URL is
+stale. The bootstrapper currently records none of what would tell these apart.
+
+**Fix shape (small, evidence first)**: (a) log whether the process is elevated right next to the
+install attempt, so the next report separates "needs administrator" from the other two; (b) on
+`install_failed`, print a console `[WARN]` (not only a `~setup.log` line) saying the NI-VISA
+driver did not install, that the Python `pyvisa` package is installed anyway, and that talking to
+real instruments needs the NI-VISA driver (install it from ni.com, or run the bootstrapper as
+administrator once) or a pure-Python backend; the bootstrap itself still continues (never fatal,
+as today). (c) Do not add a retry loop or an automatic elevation prompt: both are guesses until (a)
+has run on a real machine. **CI proof**: the existing `pyvisa.nivisa` scenario in
+`selfapps_*` already reaches `install_failed` in CI; assert the new `[WARN]` text and the
+elevation log line there.
