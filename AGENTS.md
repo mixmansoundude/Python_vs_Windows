@@ -157,7 +157,9 @@ No label is required. Auto-merge fires automatically for all non-draft PRs unles
 'no-automerge' label is present.
 
 Do NOT open a PR before CI is green on the final commit. Exception: a test-first change opens
-its PR after the regression test's red run (so the red check blocks automerge), then pushes the fix.
+its PR as soon as the regression test is pushed, with the 'no-automerge' label added at once, so
+the thread receives CI events and automerge cannot fire while the test is red. Record the red
+run, push the fix, and remove the label only after CI is green on the fix.
 
 # Iteration Contract (Agent)
 
