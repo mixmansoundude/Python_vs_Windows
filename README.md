@@ -537,6 +537,7 @@ blip or a temporary outage.
 - At bootstrap time, the bootstrapper appends standard `.gitignore` and `.gitattributes` entries to the working directory.
 - Uses a sentinel comment line to detect existing entries; never duplicates content already present.
 - `.gitignore` additions: tilde-prefix work files (`~*`), env directories (`.venv/`, `.uv/`, `.*_env/`, `.cache/`, `.conda/`), build artifacts (`dist/`, `build/`).
+- Tilde-prefixed files: a file the bootstrapper writes for its own bookkeeping shall start with `~`, and a file the user is meant to keep or share shall not. Tilde files are git-ignored, and deleting one shall not lose the user's work.
 - `.gitattributes` additions: `*.bat -text`, `*.cmd -text`, `*.exe binary`. (`-text`, not `eol=crlf`: `eol=crlf` only affects `git checkout`, never what a raw/GitHub-served download returns -- see this repo's own CRLF distribution fix.)
 - Silent if no changes needed; logs when appending.
 - Log contract:
