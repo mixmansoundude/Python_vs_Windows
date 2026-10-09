@@ -112,7 +112,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     $skipDetails = [ordered]@{ skip = $true; scenario = $scenario; platform = $platform; reason = 'non-windows-host' }
     switch ($scenario) {
-        'idempotent'             { Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $true -Desc "PEP 723 write-back $scenario (skipped on non-Windows)" -Details $skipDetails }
+        'idempotent'             { Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $true -Desc "PEP 723 write-back $scenario (skipped on non-Windows)" -Details $skipDetails; Write-Pep723Row -Id 'self.pep723.writeback.roundtrip' -Pass $true -Desc "PEP 723 write-back round trip (skipped on non-Windows)" -Details $skipDetails }
         'skipflag'               { Write-Pep723Row -Id 'self.pep723.writeback.skipflag' -Pass $true -Desc "PEP 723 write-back $scenario (skipped on non-Windows)" -Details $skipDetails }
         'malformed'               { Write-Pep723Row -Id 'self.pep723.writeback.malformed' -Pass $true -Desc "PEP 723 write-back $scenario (skipped on non-Windows)" -Details $skipDetails }
         'trailing_ws_malformed'   { Write-Pep723Row -Id 'self.pep723.writeback.trailing_ws_malformed' -Pass $true -Desc "PEP 723 write-back $scenario (skipped on non-Windows)" -Details $skipDetails }
@@ -128,7 +128,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     $missingDetails = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
     switch ($scenario) {
-        'idempotent'             { Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $false -Desc "PEP 723 write-back $scenario`: run_setup.bat not found" -Details $missingDetails }
+        'idempotent'             { Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $false -Desc "PEP 723 write-back $scenario`: run_setup.bat not found" -Details $missingDetails; Write-Pep723Row -Id 'self.pep723.writeback.roundtrip' -Pass $false -Desc "PEP 723 write-back round trip`: run_setup.bat not found" -Details $missingDetails }
         'skipflag'               { Write-Pep723Row -Id 'self.pep723.writeback.skipflag' -Pass $false -Desc "PEP 723 write-back $scenario`: run_setup.bat not found" -Details $missingDetails }
         'malformed'               { Write-Pep723Row -Id 'self.pep723.writeback.malformed' -Pass $false -Desc "PEP 723 write-back $scenario`: run_setup.bat not found" -Details $missingDetails }
         'trailing_ws_malformed'   { Write-Pep723Row -Id 'self.pep723.writeback.trailing_ws_malformed' -Pass $false -Desc "PEP 723 write-back $scenario`: run_setup.bat not found" -Details $missingDetails }
@@ -318,7 +318,7 @@ $nonUtf8Fired1   = $combined -match [regex]::Escape($nonUtf8Phrase)
 if (-not $isUvMode) {
     $skipDetails2 = [ordered]@{ skip = $true; scenario = $scenario; reason = 'provider_not_uv' }
     switch ($scenario) {
-        'idempotent'             { Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $true -Desc "PEP 723 write-back $scenario (v1 scope gate: HP_ENV_MODE did not resolve to uv)" -Details $skipDetails2 }
+        'idempotent'             { Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $true -Desc "PEP 723 write-back $scenario (v1 scope gate: HP_ENV_MODE did not resolve to uv)" -Details $skipDetails2; Write-Pep723Row -Id 'self.pep723.writeback.roundtrip' -Pass $true -Desc "PEP 723 write-back round trip (v1 scope gate: HP_ENV_MODE did not resolve to uv)" -Details $skipDetails2 }
         'skipflag'               { Write-Pep723Row -Id 'self.pep723.writeback.skipflag' -Pass $true -Desc "PEP 723 write-back $scenario (v1 scope gate: HP_ENV_MODE did not resolve to uv)" -Details $skipDetails2 }
         'malformed'               { Write-Pep723Row -Id 'self.pep723.writeback.malformed' -Pass $true -Desc "PEP 723 write-back $scenario (v1 scope gate: HP_ENV_MODE did not resolve to uv)" -Details $skipDetails2 }
         'trailing_ws_malformed'   { Write-Pep723Row -Id 'self.pep723.writeback.trailing_ws_malformed' -Pass $true -Desc "PEP 723 write-back $scenario (v1 scope gate: HP_ENV_MODE did not resolve to uv)" -Details $skipDetails2 }
@@ -378,6 +378,29 @@ if ($scenario -eq 'idempotent') {
     $entryBytesAfterRun2 = if (Test-Path -LiteralPath $appPath) { [System.IO.File]::ReadAllBytes($appPath) } else { $null }
     $bytesEqual = Test-BytesEqual $entryBytesAfterRun1 $entryBytesAfterRun2
     $idempotentPass = $successFired1 -and $successFired2 -and $bytesEqual
+
+    # Round trip with the REAL uv (CLAUDE.md Item 62). The header in the entry file after run 1 was
+    # written by the uv this lane installed, not by a hand-typed fixture, so run 2 reading it back
+    # fails if uv's layout ever drifts from what :extract_pep723_requirements accepts (the sibling
+    # selftest scenario self.pep723.uvformat pins a hardcoded copy of today's layout instead).
+    # derived requirement: look only at run 2's own console log. ~setup.log (combined2) accumulates
+    # across both runs, so run 1's lines would satisfy a "was the header used" check by themselves.
+    $headerUsedTag = 'Using PEP 723 inline dependency metadata'
+    $headerEmptyTag = 'PEP 723 block found but no valid dependencies extracted'
+    $headerUsed2 = ($logLines2 | Where-Object { $_ -like "*$headerUsedTag*" }).Count -gt 0
+    $headerEmpty2 = ($logLines2 | Where-Object { $_ -like "*$headerEmptyTag*" }).Count -gt 0
+    $headerText = ''
+    if (Test-Path -LiteralPath $appPath) {
+        $headerLines = [System.IO.File]::ReadAllText($appPath).Split("`n") | ForEach-Object { $_.TrimEnd("`r") }
+        $headerText = (($headerLines | Select-Object -First 12) -join ' | ')
+    }
+    $roundtripPass = $headerUsed2 -and (-not $headerEmpty2)
+    Write-Pep723Row -Id 'self.pep723.writeback.roundtrip' -Pass $roundtripPass -Desc 'The header uv add --script wrote on run 1 is accepted as the dependency source on run 2' -Details ([ordered]@{
+        scenario      = $scenario
+        headerUsed2   = $headerUsed2
+        headerEmpty2  = $headerEmpty2
+        entryHead     = $headerText
+    })
     Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $idempotentPass -Desc 'Two full bootstrap runs produce a byte-identical PEP 723 header (uv add --script idempotency)' -Details ([ordered]@{
         scenario      = $scenario
         run1Exit      = $run1Exit
@@ -386,7 +409,7 @@ if ($scenario -eq 'idempotent') {
         successFired2 = $successFired2
         bytesEqual    = $bytesEqual
     })
-    if (-not $idempotentPass) { exit 1 }
+    if (-not ($idempotentPass -and $roundtripPass)) { exit 1 }
     exit 0
 }
 
