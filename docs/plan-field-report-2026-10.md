@@ -358,8 +358,16 @@ the quotes worked.
 Windows Terminal on Windows 11) a quoted string at the start of a line is an expression, not a
 command, and fails with "Unexpected token"; PowerShell needs `& "C:\...\python.exe" "main.py"`.
 Removing the quotes only worked because the path had no spaces. So do NOT remove the quotes
-(both outside analyses' instincts there were half right). Show both forms, labelled
-"Command Prompt:" and "PowerShell:". Confirm the shell with Q5 before changing.
+(both outside analyses' instincts there were half right).
+
+**Maintainer answer (Q5, 2026-10-09, resolved)**: the command was pasted into Command Prompt, not
+PowerShell. PowerShell was used only for the PEP 723 work. That makes the PowerShell explanation
+above unlikely to be the cause, since the quoted line is valid in Command Prompt. The cause is
+still unexplained, so this item is no longer "Inferred" and needs a fresh look before any fix.
+Do not assume the PowerShell cause. Next step for an implementing agent: reproduce the exact
+printed line in a Windows CI step (cmd.exe), with a path that contains spaces, and check the
+line the bootstrapper actually prints byte for byte. Showing a PowerShell form stays optional
+and only makes sense if the line itself is shown to fail there.
 
 ### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
 

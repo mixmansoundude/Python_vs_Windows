@@ -681,7 +681,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. Maintainer decisions they wait on are Q5-Q7 in `docs/open-questions.md` (Q1-Q4 and Q8 are decided, see Items 67, 65, 66 and 63).
+starting any of these. Maintainer decisions they wait on are Q6-Q7 in `docs/open-questions.md` (Q1-Q5 and Q8 are decided, see Items 67, 65, 66, 63 and 69).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
@@ -707,13 +707,13 @@ the original symptom (see that doc's "CI-first testing policy").
   and the memory-invalidation rules are in the plan doc. A failed forced solve stops; it does not cascade.
 - **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
   (any existing file) or silently ignored, dropping the user's first real argument; this deleted
-  a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09, Kalen: validate and stop; program arguments stay optional).
+  a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09: validate and stop; program arguments stay optional).
 - **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
 - **Item 69 (Inferred, tiny)**: post-flight `"python.exe" "main.py"` fails in PowerShell, not
-  Command Prompt; show both forms (Q5), keep the quotes.
+  pasted into Command Prompt (Q5), so the PowerShell cause is unlikely; reproduce the printed line before changing anything; keep the quotes.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
