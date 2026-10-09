@@ -302,10 +302,29 @@ regex change cannot start installing it). The packages that did install (pandas,
 pymupdf, PyPDF2, `future`) are exactly the real dependencies that Item 63's crashed pipreqs scan
 should have written to `requirements.txt` up front, which is the chain in "The big picture".
 
+**The two failures, in the maintainer's words from the console and `~setup.log` (2026-10-09, uv
+env on Python 3.14.8; the console showed only pass or fail, the reasons are in the log)**:
+- `pyimod02_importers` (a `(delayed)` entry): uv reported "No solution found when resolving
+  dependencies ... `pyimod02-importers` was not found in the package registry and you require
+  `pyimod02-importers`, we can conclude your requirements are unsatisfiable", then "repair failed".
+  The name is PyInstaller-internal and exists nowhere on PyPI.
+- `multiprocessing` (stdlib): uv did find a package of that name on PyPI, the Python-2-era backport
+  `multiprocessing==2.6.2.1`, and failed to build it ("The build backend returned an error ...
+  `setuptools.build_meta:__legacy__.get_requires_for_build_wheel` failed", from its `setup.py`:
+  `print 'Macros:'`, "SyntaxError: Missing parentheses in call to 'print'"). So asking PyPI whether
+  a name exists cannot replace the stdlib list: a stdlib name can resolve to an unrelated, broken
+  old package. That is one more reason the filter must use `sys.stdlib_module_names` (guarded per
+  the embedded-helper baseline) and not an install attempt.
+These two are the Item 64 fixture: a `test_parse_warn.py` case with `missing module named
+pyimod02_importers - imported by pkg_resources._vendor... (delayed)` and `missing module named
+multiprocessing.X - imported by ... (top-level)` that must produce no install target. Nothing else
+in the long list needs retyping; the real dependencies that installed (`future`, pandas, pdfminer,
+pymupdf, PyPDF2) are the expected positives of Item 63's staged scan.
+
 **CI proof**: a pandas app with no `requirements.txt` asserting no stdlib/never-installable name
 is attempted, total install attempts stay small, no cascade candidate is raised, and the EXE
 still builds; a `test_parse_warn.py` table covering each new filter rule, including the
-`excluded module named` negative case above.
+`excluded module named` negative case above and the two fixtures just described.
 
 ### Item 65 -- Runtime `ModuleNotFoundError` is ignored when it does not change the exit code (Confirmed, medium)
 
@@ -609,7 +628,7 @@ on intermediate files and log lines, not just exit code: (a) multi-file pandas+E
 between (Items 62, 66); (c) `%1` misuse cases (Item 67). Respect Item 35's process discipline:
 new rows start non-gating and soak before being promoted.
 
-### Item 77 -- `import pymupdf` fails on a clean machine: "DLL load failed while importing _extra" (Likely cause found, one confirmation pending, small)
+### Item 77 -- `import pymupdf` fails on a clean machine: "DLL load failed while importing _extra" (Likely cause, runtime DLLs confirmed missing, small)
 
 **Symptom (second real run, 2026-10-09, same folder as Items 63 and 64)**: after PyInstaller built
 the EXE and warnfix installed pymupdf, the run ended with `ImportError: DLL load failed while
@@ -639,13 +658,15 @@ runtime installed. `:dll_bundle_recover` only handles conda envs (`HP_ENV_MODE=c
 `:hidden_import_recover` is correctly silent because this is not a `ModuleNotFoundError`. Nothing in
 the bootstrapper looks for the runtime today (no mention of it in `run_setup.bat`).
 
-**Confirmation still owed (cheap, in the maintainer's sandbox)**: `dir /b
-%SystemRoot%\System32\msvcp140.dll %SystemRoot%\System32\vcruntime140_1.dll` should say "File Not
-Found" for at least one; then install the official x64 runtime (https://aka.ms/vs/17/release/
-vc_redist.x64.exe, needs administrator) and repeat the `import pymupdf`. If it now imports, the
-cause is confirmed. If it still fails, check that the interpreter is 64-bit
-(`"<env python>" -c "import struct; print(struct.calcsize('P')*8)"`), since `mupdfcpp64.dll` is
-64-bit only.
+**Confirmation status (maintainer, 2026-10-09)**: `dir /b %SystemRoot%\System32\msvcp140.dll
+%SystemRoot%\System32\vcruntime140_1.dll` answered "File Not Found" (retyped; the command named
+both files, so at least one is missing). That supports the cause. The last step, installing the
+official x64 runtime and repeating `import pymupdf`, was skipped because the sandbox is being thrown
+away, so the cause is LIKELY, not confirmed. Supporting context: the maintainer has run this same
+program from the interpreter on their normal machine before (once the xlsxwriter workaround was
+done), which fits a machine that has the runtime. A 32-bit interpreter is the other remaining
+explanation (`mupdfcpp64.dll` is 64-bit only); the 3.14.8 env came from uv, which gives 64-bit on a
+64-bit machine, so that is unlikely.
 
 **Fix shape (small, if confirmed)**: (a) detect and say so. When the build or a run prints
 `DLL load failed`, or before building when `System32` lacks `msvcp140.dll` or `vcruntime140_1.dll`,
@@ -659,39 +680,49 @@ as missing, plus a fixture run whose output contains the `DLL load failed` text,
 `[WARN]` appears. No CI scenario that builds a pymupdf EXE is needed for this cause, and none is
 planned unless the confirmation above fails.
 
-### Item 78 -- NI-VISA install fails on a real machine too, and the user is told nothing useful (Confirmed failure, cause unknown, small)
+### Item 78 -- An archived subfolder triggered an NI-VISA driver install that then failed (Confirmed trigger, failure cause partly narrowed, small)
 
 **Symptom (second real run, 2026-10-09)**: `[VISA] installer exit code: -125202` then
 `[VISA] install_failed (post_check_timeout) installer_rc=-125202` (the maintainer's words: "failed
-visa install (rc=-125202)"). That is the NI-VISA installer's own exit code, not uv's. The August
-notes also say NI-VISA "had been attempted to be installed a few times prior" with no sign of
-whether it succeeded, so this is not new.
+visa install (rc=-125202)"). That is the NI-VISA installer's own exit code, not uv's.
 
-**Why it was attempted**: the folder imports `pyvisa` (the detector in `tools/detect_visa.py` only
-matches `import pyvisa`, `from pyvisa`, and `import visa` at the start of a line, with a trailing
-`\b`, so a name like `pyvista` cannot trigger it; the August Nuitka log also names
-`pyvisa.attributes.c`). The attempt is legitimate.
+**Why it was attempted (Confirmed by the maintainer)**: the program being run is the PDF extractor,
+which does not use VISA. A `.py` in an archived subfolder (kept so the maintainer can switch
+between programs under test) has `import visa`. `tools/detect_visa.py` walks every subfolder, skipping
+only `~`- and `.`-prefixed directories, and any line `import visa` / `import pyvisa` / `from pyvisa`
+sets `NEED_VISA=1` (`run_setup.bat` around line 1913), which starts a real driver install. The
+detector's regex is anchored (`pyvista` cannot trigger it), so this is the design working as coded,
+on files the user did not think were part of the app.
+
+**Open design question (maintainer decision pending, asked on a card in the thread; registered
+as Q9 in `docs/open-questions.md`)**: which `.py` files count as "the app" for the NI-VISA decision?
+README REQ-008 says only "If the app imports `pyvisa` or `visa`". Other scans differ: pipreqs
+(`pipreqs . ...`, ignoring only `.git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests`),
+`tools/collect_submodules.py` and the fast-path hash all recurse; `tools/find_entry.py` lists only
+the top folder. Default for an implementing agent until answered: change nothing about scanning.
+The same scope also decides whether an undecodable archived file can crash pipreqs (Item 63).
+
+**Elevation (maintainer, 2026-10-09)**: `whoami /groups` returned `S-1-16-12288`, so this run WAS
+elevated, and the installer still exited `-125202`. That rules out "the installer needs
+administrator rights" for this run. What remains: the sandbox is a clean Windows image whose
+network or install policy NI's online installer does not like (the CI runner behaves the same way
+with `-125083`), or the pinned 21.5 online URL is stale. The maintainer says the install has
+worked on their regular machine before, slowly (from memory, not from a log).
 
 **What this changes in the docs**: `docs/agent-closed-backlog.md`'s Known Finding "NI-VISA real
-install fails fast in CI" concluded the failure was environmental to CI and said it still needed
-one real user run to confirm the same installer succeeds off CI. That real run now exists and it
-fails too, with the same family of code (`-125202` here; `-125202` was also captured in CI per
-`docs/demo-bootstrapper-output.md`'s Scenario 24, `-125083` in the original finding). So the
-"CI-only" part of the conclusion does not hold. The finding is updated in the same change as
-this plan.
+install fails fast in CI" said it still needed a real user run to confirm the installer succeeds off
+CI. This run does not do that: it is another clean image, elevated, failing with the same family of
+code (`-125202` also appears in CI per `docs/demo-bootstrapper-output.md`'s Scenario 24). The
+maintainer's recollection of past successes is the only off-CI evidence. The finding's
+"environmental" classification stands; it gets a note, not a rewrite, in the same change as this plan.
 
-**Cause (unknown)**: the logs say the 21.5 online installer downloaded cleanly (`PE_OK`), ran, and
-exited nonzero. Candidates: it needs an elevated (administrator) session while the core flow
-deliberately does not; NI's package feed is unreachable or changed; the pinned 21.5 online URL is
-stale. The bootstrapper currently records none of what would tell these apart.
-
-**Fix shape (small, evidence first)**: (a) log whether the process is elevated right next to the
-install attempt, so the next report separates "needs administrator" from the other two; (b) on
-`install_failed`, print a console `[WARN]` (not only a `~setup.log` line) saying the NI-VISA
-driver did not install, that the Python `pyvisa` package is installed anyway, and that talking to
-real instruments needs the NI-VISA driver (install it from ni.com, or run the bootstrapper as
-administrator once) or a pure-Python backend; the bootstrap itself still continues (never fatal,
-as today). (c) Do not add a retry loop or an automatic elevation prompt: both are guesses until (a)
-has run on a real machine. **CI proof**: the existing `pyvisa.nivisa` scenario in
-`selfapps_*` already reaches `install_failed` in CI; assert the new `[WARN]` text and the
-elevation log line there.
+**Fix shape (small)**: (a) log elevation once near the start of every run, as the maintainer
+proposed: `[INFO] Elevated: yes` or `no`. The bootstrapper already has a test that works (`fsutil
+dirty query %systemdrive%` succeeds only when elevated, used in the Miniconda AllUsers branch);
+reuse it from one place instead of repeating it. (b) On `install_failed`, print a console `[WARN]`
+(not only a `~setup.log` line) saying the NI-VISA driver did not install, that the Python `pyvisa`
+package is installed anyway, and that talking to real instruments needs the driver; the bootstrap
+itself still continues (never fatal, as today). (c) Do not add a retry loop or an automatic
+elevation prompt. (d) Scan scope is NOT part of this item until Q9 is answered. **CI proof**: the
+existing `pyvisa.nivisa` scenario already reaches `install_failed` in CI; assert the new `[WARN]`
+text there, and assert the `Elevated:` line appears in the log on every lane.

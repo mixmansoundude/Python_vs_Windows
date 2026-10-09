@@ -11,4 +11,21 @@ changelog-style sections are for.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 
-No questions are open for this report. Q1-Q8 are decided or retired.
+Q1-Q8 are decided or retired. One question is open:
+
+### Q9 -- Which `.py` files count as "the app" for the NI-VISA install? (blocks the scan-scope part of Item 78)
+
+Asked 2026-10-09 after a real run installed NI-VISA because an archived subfolder held an
+`import visa`, while the program being run did not use it. The maintainer's words: "in a subfolder
+there is a .py that has an import visa in it (saved in an archived folder so I can easily switch
+between what program I am testing), maybe it found it there."
+
+Today: `tools/detect_visa.py` walks every subfolder (it skips only `~`- and `.`-prefixed directories),
+so any `import visa` or `import pyvisa` line anywhere under the folder starts a driver install that
+can run 30-45 minutes and may fail. README REQ-008 says only "If the app imports `pyvisa` or
+`visa`", without saying which files are the app.
+
+Options: (1) only the entry file and the local files it imports can start the install;
+(2) the same limit for all dependency discovery, not just VISA; (3) keep the whole folder and
+document it in REQ-008. **Default until answered: change nothing about scanning.** Recommended:
+option 1. The answer is also recorded in the thread's decision card.
