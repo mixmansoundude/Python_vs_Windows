@@ -130,6 +130,27 @@ class HandWrittenShapes(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(deps, ["requests"])
 
+    def test_toml_escaped_quote_in_a_marker_is_decoded(self):
+        # Review finding on PR 475: the header holds python_version < "3.10" with escaped
+        # inner quotes; the requirements file must carry the decoded text, or pip rejects the
+        # whole line as an invalid requirement.
+        text = '# /// script\n# dependencies = ["requests; python_version < \\"3.10\\""]\n# ///\n'
+        rc, _out, deps = _run(text)
+        self.assertEqual(rc, 0)
+        self.assertEqual(deps, ['requests; python_version < "3.10"'])
+
+    def test_toml_backslash_and_unicode_escapes_are_decoded(self):
+        text = '# /// script\n# dependencies = ["a\\\\b", "c\\u0041d"]\n# ///\n'
+        rc, _out, deps = _run(text)
+        self.assertEqual(rc, 0)
+        self.assertEqual(deps, ["a\\b", "cAd"])
+
+    def test_single_quoted_items_are_literal_no_escapes(self):
+        text = "# /// script\n# dependencies = ['a\\nb']\n# ///\n"
+        rc, _out, deps = _run(text)
+        self.assertEqual(rc, 0)
+        self.assertEqual(deps, ["a\\nb"])
+
     def test_first_block_wins(self):
         text = (
             '# /// script\n# dependencies = ["first"]\n# ///\n'
@@ -175,6 +196,13 @@ class NothingUsable(unittest.TestCase):
     def test_empty_list(self):
         self._assert_none("# /// script\n# dependencies = []\n# ///\n", "empty")
 
+    def test_array_without_a_closing_bracket_is_rejected(self):
+        # Review finding on PR 475: a truncated array used to return the items read so far.
+        self._assert_none('# /// script\n# dependencies = ["requests",\n# ///\n', 'no closing "]"')
+
+    def test_multiline_array_without_a_closing_bracket_is_rejected(self):
+        self._assert_none('# /// script\n# dependencies = [\n#     "requests",\n#     "numpy"\n# ///\n', 'no closing "]"')
+
     def test_dependencies_key_inside_a_tool_table_is_ignored(self):
         text = (
             "# /// script\n"
@@ -194,6 +222,28 @@ class InternalError(unittest.TestCase):
                 capture_output=True, text=True,
             )
         self.assertEqual(proc.returncode, 3)
+
+
+class BatchCallSite(unittest.TestCase):
+    """The batch subroutine's own contract: any nonzero helper result leaves no output file.
+
+    Both callers decide by file size, not exit code, so a partial file left by a failed write
+    (review finding on PR 475) would be activated as if it were complete. No Windows scenario can
+    force a write to fail midway, so this pins the guard in the source text.
+    """
+
+    def test_nonzero_result_deletes_the_output_file(self):
+        bat = (REPO / "run_setup.bat").read_text(encoding="ascii", errors="replace")
+        start = bat.index("\n:extract_pep723_requirements\n")
+        end = bat.index("\n:determine_entry", start)
+        body = bat[start:end]
+        self.assertRegex(
+            body,
+            r'if not "%HP_PEP723_RC%"=="0" if exist "%HP_PEP723_OUT%" del "%HP_PEP723_OUT%"',
+        )
+        # The delete must come after the helper ran, before the subroutine returns its result.
+        self.assertLess(body.index('"%HP_PY%" "~pep723_extract.py"'), body.index('if not "%HP_PEP723_RC%"=="0"'))
+        self.assertLess(body.index('if not "%HP_PEP723_RC%"=="0"'), body.index("exit /b %HP_PEP723_RC%"))
 
 
 class EmbeddedHelperBaseline(unittest.TestCase):
