@@ -385,7 +385,7 @@ The maintainer needed test-only flags (`HP_TEST_FORCE_PYINSTALLER_FAIL`) plus de
 by hand to get a Nuitka build. Add a `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
 override (absence = today's behavior, REQ-019). For `both`, never replace a verified EXE with
 an unverified one, reusing `:offer_optimized_build`'s build-to-temp-then-swap pattern. A
-user-facing prompt to pick a builder is a separate decision (Q6); leave the default order
+user-facing prompt to pick a builder was decided against (Q6 = A, override only, 2026-10-09); leave the default order
 alone until Tier B matures, as the notes say.
 
 ### Item 72 -- Nuitka long-build visibility and slow first launch (Investigation, medium)

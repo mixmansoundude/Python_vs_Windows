@@ -11,8 +11,6 @@ changelog-style sections are for.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 
-- **Q6 (Item 71) -- Builder choice: super-user override only, or also a prompt?** **Default:
-  `PVW_BUILDER` override only**, no new prompt on the default double-click path.
 - **Q7 -- What did "Dep source should be ~?" mean?** Best guess: `dependency_source.txt` (and
   maybe `requirements.auto.txt`) should get the `~` prefix like other generated files. Note that
   on current code it always says `dependency_source=unknown` for pipreqs-only apps (Item 68).

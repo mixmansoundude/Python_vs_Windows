@@ -681,7 +681,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. Maintainer decisions they wait on are Q6-Q7 in `docs/open-questions.md` (Q1-Q5 and Q8 are decided, see Items 67, 65, 66, 63 and 69).
+starting any of these. Maintainer decision they wait on is Q7 in `docs/open-questions.md` (Q1-Q6 and Q8 are decided, see Items 67, 65, 66, 63, 69 and 71).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
@@ -717,7 +717,7 @@ the original symptom (see that doc's "CI-first testing policy").
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
-  override (Q6).
+  override only, no prompt (decided 2026-10-09, Q6 = A).
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
   first-launch experiment (`--onefile-tempdir-spec`).
 - **Item 73 (Confirmed, tiny)**: PEP 723 write-back discards uv's stderr, so `ERROR:uv_rc_1` has
