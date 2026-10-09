@@ -194,3 +194,20 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   dedicated investigation into what signal (if any) reliably distinguishes the two before
   proposing a specific fix, not implemented speculatively ahead of that.
 
+- **Payload headroom, then one shared TOML reader for pyproject and PEP 723** (and a shared
+  fence finder for the extractor and `strip_pep723_block`). Filed 2026-10-09 with CLAUDE.md
+  Item 79; evidence in `docs/plan-toml-reading-hygiene.md`. The pyproject fallback walker and
+  `pep723_extract.py` are near-identical, but together they are 10.5 KB of source against a
+  ceiling of about 6.1 KB per payload line, so a merge needs headroom FIRST (a deflate mode in
+  `:emit_from_base64`, or stripping comments at `tools/sync_payload.py` time, opt-in per
+  payload). Four payloads are within 460 chars of the 8191 limit today (`HP_PYPROJ_DEPS` 198,
+  `HP_PREP_REQUIREMENTS` 304, `HP_PEP723_WRITEBACK` 333, `HP_COLLECT_SUBMODULES` 459). **Trigger
+  to thaw**: a payload edit lands under 100 chars of margin (Item 79 slice 2 may be the first),
+  or a third TOML consumer appears. Do not merge parsers before headroom exists.
+- **PEP 723 `requires-python` as a Python-version input** (new feature). Filed 2026-10-09 with
+  Item 79. It needs the entry script known before the environment is created, which today is
+  decided after it, and `uv add --script` itself writes `requires-python = ">=<running
+  python>"`, so honouring it recreates the exact write-back pin problem documented for
+  `runtime.txt`. It is a REQ-004 precedence decision, not an implementation detail. **Trigger to
+  thaw**: a field report of a script header with an upper bound running on a too-new Python;
+  a maintainer decision on precedence (add it to `docs/open-questions.md` then) comes first.

@@ -763,6 +763,22 @@ the original symptom (see that doc's "CI-first testing policy").
   triggered the install and prompt (default no, cascade timeout) only when every match is below a
   subfolder. Separate PRs, each test first.
 
+### Item 79: TOML reading hygiene (filed 2026-10-09 from a planning brainstorm, not from the field report)
+
+- **Item 79 (low priority, three test-first slices, one per PR; plan and evidence in
+  `docs/plan-toml-reading-hygiene.md`)**: the PEP 723 reader and the pyproject fallback are two
+  hand-written TOML array walkers that have drifted apart, and `detect_python.py` reads
+  `requires-python` with an unscoped regex. Two live bugs, both reproduced: the pyproject
+  fallback (Python below 3.11) keeps backslashes in escaped markers and accepts an unclosed
+  array; `detect_python.py` matches a commented-out `requires-python` line and one under another
+  table. Slices: (1) oracle tests, tomllib as the oracle for both walkers over a PEP 508 corpus
+  plus a uv-lane row that round-trips a corpus written by real `uv add --script`; (2) port the
+  extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
+  `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
+  dependency source priority or REQ-004 precedence.** Starts after PR #475 (Item 62) has merged.
+  Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
+  as a Python-version input) are in `docs/agent-cold-storage.md`.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
