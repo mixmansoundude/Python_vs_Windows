@@ -14,6 +14,9 @@ LF, `#` followed by any amount of whitespace, single or double quoted items,
 a trailing comma, a comment after an item, trailing whitespace on the fence
 lines (astral-sh/uv#10918), and dependencies on one line or many. Only the
 top-level `dependencies` key counts; a [tool.*] table ends the search.
+Double-quoted items have their TOML escapes decoded (a marker like
+python_version < \"3.10\" must reach pip unescaped); single-quoted items are
+literal. An array with no closing bracket is rejected (exit 1), never partly used.
 
 Runs on any interpreter the bootstrapper may hold, so no tomllib and no
 3.10+ syntax: the array walk is char-by-char, as in pyproj_deps.py.
@@ -45,9 +48,30 @@ def block_text(lines):
     return '\n'.join(re.sub(r'^#[ \t]?', '', ln) for ln in lines[start:end]), None
 
 
+_ESC = {'b': '\b', 't': '\t', 'n': '\n', 'f': '\f', 'r': '\r', '"': '"', '\\': '\\'}
+
+
+def unescape(s):
+    """Decode TOML basic-string escapes; an unknown escape is left as written."""
+    def one(m):
+        g = m.group(1)
+        if g[0] in 'uU' and len(g) > 1:
+            try:
+                return chr(int(g[1:], 16))
+            except (ValueError, OverflowError):
+                return m.group(0)
+        return _ESC.get(g, m.group(0))
+    return re.sub(r'\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)', one, s)
+
+
 def walk_array(rest):
-    """Collect the quoted strings of a TOML array body, stopping at the closing ]."""
+    """Collect the quoted strings of a TOML array body; return (deps, closed).
+
+    closed is False when the text ends before the closing ], so the caller can reject
+    a truncated array instead of installing the items read so far.
+    """
     deps = []
+    closed = False
     i = 0
     while i < len(rest):
         c = rest[i]
@@ -59,7 +83,10 @@ def walk_array(rest):
                 if q == '"' and rest[i] == '\\':
                     i += 1
                 i += 1
-            deps.append(rest[s:i].strip())
+            item = rest[s:i]
+            if q == '"':
+                item = unescape(item)
+            deps.append(item.strip())
             i += 1
         elif c == '#':
             nl = rest.find('\n', i)
@@ -67,10 +94,11 @@ def walk_array(rest):
                 break
             i = nl + 1
         elif c == ']':
+            closed = True
             break
         else:
             i += 1
-    return [d for d in deps if d]
+    return [d for d in deps if d], closed
 
 
 def extract(path):
@@ -83,7 +111,9 @@ def extract(path):
     m = re.search(r'^[ \t]*dependencies[ \t]*=[ \t]*\[', top, re.MULTILINE)
     if not m:
         return [], 'block has no top-level dependencies list'
-    deps = walk_array(top[m.end():])
+    deps, closed = walk_array(top[m.end():])
+    if not closed:
+        return [], 'dependencies list has no closing "]"'
     if not deps:
         return [], 'dependencies list is empty'
     return deps, None

@@ -444,7 +444,7 @@ At completion:
 
 - If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
 - Leave option to disable for debugging purposes: set `HP_SKIP_NIVISA=1` to skip the NI-VISA install even when `pyvisa`/`visa` is detected. Log contract: `[VISA] skipped (disabled)`.
-- Scan scope (documented behavior): the import scan covers every `.py` below the bootstrapper's folder, subfolders included (directories starting with `~` or `.` are skipped), not only the entry file or the files it imports. An `import pyvisa` or `import visa` in an archived or unrelated subfolder therefore counts and can start the driver install, which can take 30-45 minutes. The bootstrapper does not trace the entry file's import chain.
+- Scan scope (documented behavior): the import scan covers every `.py` below the bootstrapper's folder, subfolders included (directories starting with `~` or `.`, and `.py` files whose names start with `~`, are skipped), not only the entry file or the files it imports. An `import pyvisa` or `import visa` in an archived or unrelated subfolder therefore counts and can start the driver install, which can take 30-45 minutes. The bootstrapper does not trace the entry file's import chain.
 - May require admin rights.
 
 ---
