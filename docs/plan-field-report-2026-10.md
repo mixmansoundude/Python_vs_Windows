@@ -125,7 +125,7 @@ ignored on run 2, so if pipreqs finds nothing on run 2 (Item 63) the recorded de
 trap, `>=` eaten by cmd.exe, UTF-16 output) do not match the code: it is line-oriented by
 design, the content never passes through cmd.exe, and it already writes `-Encoding ASCII`.
 
-### Item 63 -- pipreqs crashes are reported as "no imports found" (Confirmed mechanism, cause matched by a second real run, small)
+### Item 63 -- pipreqs crashes are reported as "no imports found" (Confirmed mechanism and cause, small)
 
 **Symptom (Aug)**: a `main.py` that imports a sibling `adjacent.py` (which imports pandas,
 PyPDF2, pdfminer, etc.) produced no `requirements.txt`; `~pipreqs.diff.txt` said
@@ -169,11 +169,20 @@ double quote (`E2 80 9D`) that word processors and chat assistants put in commen
 The other curly quotes decode silently as mojibake (`E2 80 98`, `99`, `9C` all map), so a file
 full of curly quotes can pass while one containing U+201D aborts the scan. Other UTF-8 characters
 that end in 0x9D (U+221D, U+1F49D) and the emoji case already above (0x8D) fail the same way.
-Because cp1252 cannot even represent 0x9D, the offending file is very probably valid UTF-8, not a
-cp1252 file. The cause is still not proven: nothing in the logs names the file, and the position
-only says that file is at least ~6.3 KB. Treat "a UTF-8 file containing U+201D" as the leading
-hypothesis and expect `--encoding utf-8` (a) to clear it. The per-file informational line above
-will name the file on the next run either way.
+Because cp1252 cannot even represent 0x9D, the offending file has to be valid UTF-8, not a cp1252
+file.
+
+**Cause confirmed on the maintainer's own folder (2026-10-09, later the same day)**: the maintainer
+scanned the folder with a decode check and found the file. It is valid UTF-8 (Notepad++ shows
+UTF-8), has no encoding cookie, and holds both a left and a right curly double quote, on two
+different lines, inside regex lines of the shape `data = re.sub(r'<U+201D>', '"', data)` that
+normalize smart quotes in text extracted from a PDF. Only the right quote (`E2 80 9D`) is
+undecodable under cp1252, which is why the left one on the other line did no harm. The code is
+fine; pipreqs' cp1252 read is the whole fault, and nothing but `--encoding utf-8` (or the staged
+UTF-8 copy) is needed to clear it. The shape matters for the fixture: a smart-quote cleanup like
+this is ordinary for any script that handles PDF or word-processor text, so expect it from other
+users too. The scan was done with a one-off script, not the bootstrapper, because the bootstrapper
+still cannot name the file; the per-file informational line above is what removes that need.
 
 **Visibility gap seen in the same run**: `no imports found` appears in `~pipreqs.summary.txt` but
 not in `~setup.log`. `~setup.log` only gets `[DEBUG] pipreqs (direct) rc=<n> size=missing` from
@@ -206,10 +215,13 @@ This is the narrow fix; the shelved "pipreqs internalization" idea in
 warnfix safety net doesn't cleanly cover") that this arguably meets, but the narrow fix should
 come first.
 
-**CI proof**: a fixture app with a UTF-8 emoji in one file; a second UTF-8 file containing the
-right curly double quote U+201D in a comment or string (the 2026-10-09 field traceback, byte for
-byte: this one fails under cp1252 on 0x9D while the other curly quotes do not, so it must be its
-own fixture, not folded into the emoji one) and importing a real package; a cp1252 `.py` that
+**CI proof**: a fixture app with a UTF-8 emoji in one file; a second UTF-8 file shaped like the
+maintainer's real one (confirmed 2026-10-09): valid UTF-8, no coding cookie, `import re` plus an
+import of a real package, and a raw-string regex line holding the right curly double quote U+201D
+(for example `re.sub(r'<U+201D>', '"', data)`, written with the real character) and another
+holding the left one U+201C. Under cp1252 only the right quote fails (on 0x9D), so this must be its
+own fixture, not folded into the emoji one, and a version with only left quotes would pass today
+and prove nothing; a cp1252 `.py` that
 declares `# -*- coding: cp1252 -*-`, contains a non-ASCII byte and imports a real package; a cp1252
 `.py` with no coding cookie (not valid UTF-8); and a deliberately unparseable `.py`. Assert that
 the imports from the first three files land in `requirements.auto.txt` and that no WARN names
