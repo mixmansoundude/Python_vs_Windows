@@ -473,6 +473,10 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
 - **Verifying a fresh build is activity-aware and announced.** When the bootstrapper builds or rebuilds the EXE, it runs it once to verify, preceded by a clear warning that this is a throwaway check so the user does not start real work in it. This run is only force-stopped if it stays completely silent for about 30 seconds; any output at all -- including a prompt waiting on input -- keeps it running for as long as needed, so an interactive program gets a real chance to be exercised. (A separate, narrower re-verification inside the `--hidden-import` auto-recovery loop remains unconditionally time-boxed at ~30 seconds, since it exists only to confirm one specific repair worked.) This is the only primary verification run that can be force-stopped at all.
 - **After a build, the real run is offered, not forced.** Following a successful build and verification, the bootstrapper offers to launch the app untimed for real, so a beginner need not launch it manually. The offer is consent-gated and names the side-effect/idempotency risk; declining leaves the verified EXE plus the post-flight guidance.
 - **Consent before any extra run.** Beyond the single automatic run, any further execution -- re-running, or running via the other launch method -- requires explicit consent that names the risk that the program may not be safe to run twice.
+- **Missing packages named at runtime (decided, not yet built).** If your program's own run
+  fails with `No module named X` for a package that is not installed, the bootstrapper asks once
+  before it installs X, edits `requirements.txt`, or rebuilds. A yes covers those steps and one
+  verification run of the rebuilt EXE. A no changes nothing and only names the missing package.
 - **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
 
 ---

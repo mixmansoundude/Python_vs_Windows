@@ -12,10 +12,6 @@ changelog-style sections are for.
 Each question names the backlog item it blocks and the default an implementing agent should use
 if it is still unanswered when that item is picked up.
 
-- **Q2 (Item 65 slice 2) -- When your program's own run names a missing package (for example
-  `No module named 'xlsxwriter'`), may the bootstrapper install it, add it to
-  `requirements.txt`, and rebuild automatically?** It would NOT re-run your program unasked
-  (REQ-018). **Default: ship slice 1 (name the package clearly) first; hold slice 2 for an answer.**
 - **Q3 (Item 66) -- Should forcing conda become a supported super-user switch?**
   `HP_FORCE_CONDA_ONLY` is CI scaffolding today (REQ-019). Options: rely on Item 66 (remember the
   provider that worked), or also add a `PVW_PROVIDER=conda` override. **Default: Item 66 only.**

@@ -226,7 +226,7 @@ already installed. A missing, not-installed package named at runtime has no repa
 path), scan the captured stderr for `ModuleNotFoundError: No module named 'X'` regardless of exit
 code; when X is not installed in the env, say so plainly in the console and the post-flight
 panel ("Your program needed X, which is not installed; add X to requirements.txt and re-run"),
-and emit an NDJSON row. Slice 2 (needs Q2): automatically install X into the env, add it to
+and emit an NDJSON row. Slice 2 (decided 2026-10-09, option B: one consent prompt before any install, requirements edit, or rebuild; a yes also covers one verification run): install X into the env, add it to
 `requirements.txt` (or the PEP 723 header), and rebuild, without re-running the user's program
 unasked. The 4th party's caution about auto-rerunning user code is right; REQ-018 governs it.
 

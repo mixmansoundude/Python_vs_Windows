@@ -681,7 +681,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. Maintainer decisions they wait on are Q2-Q7 in `docs/open-questions.md` (Q1 is decided, see Item 67).
+starting any of these. Maintainer decisions they wait on are Q3-Q7 in `docs/open-questions.md` (Q1 and Q2 are decided, see Items 67 and 65).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
@@ -699,7 +699,8 @@ the original symptom (see that doc's "CI-first testing policy").
   the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written.
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
-  (auto-install + rebuild) waits on Q2.
+  (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
+  install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
 - **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
 - **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
