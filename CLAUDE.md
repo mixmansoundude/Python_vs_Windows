@@ -725,9 +725,12 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
-- **Item 69 (re-checked 2026-10-09, no code change planned)**: the printed post-flight line works
-  pasted into Command Prompt; Q5 already ruled out PowerShell. Keep the quotes. Proposed to close
-  as a Known Finding once the maintainer agrees.
+- **Item 69 (re-checked 2026-10-09, no code change planned; stays open until the CI result below)**:
+  the printed post-flight line works pasted into Command Prompt; Q5 already ruled out PowerShell.
+  Keep the quotes. CI check added 2026-10-09 (`tests/selfapps_postflight_runline.ps1`, uv and
+  justme-test lanes, non-gating): runs the line exactly as a real run printed it, plus curly-quote,
+  quotes-dropped, space-in-path and PowerShell variants. Read its `variants` row from a finished
+  run, report it, then close as a Known Finding or reopen.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user

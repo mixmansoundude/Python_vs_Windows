@@ -581,6 +581,16 @@ jobs:
         run: |
           & tests\selfapps_dl_fallback.ps1
 
+      # CLAUDE.md Item 69 investigation: run the post-flight "run it yourself" line as printed.
+      # Only the uv and justme-test lanes (uv-venv vs conda interpreter, neither a gated lane),
+      # and the step has its own continue-on-error so it can never block a merge.
+      - name: "Self-test: post-flight run line as printed (uv/justme-test, non-gating)"
+        if: ${{ !cancelled() && (matrix.mode == 'uv' || matrix.mode == 'justme-test') }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_postflight_runline.ps1
+
       - name: "Self-test: requirements specifier coverage"
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
