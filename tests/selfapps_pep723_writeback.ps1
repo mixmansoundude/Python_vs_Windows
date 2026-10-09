@@ -172,7 +172,12 @@ switch ($scenario) {
     'trailing_ws_malformed' {
         # Trailing whitespace on the closing fence line, built explicitly (not via a
         # here-string) so it survives regardless of editor/tooling trailing-space trimming.
-        $text = "# /// script`n# dependencies = [`"click`"]`n# ///" + "   " + "`nimport requests`nprint('hi')`n"
+        # The stale content is a [tool.*] table, deliberately NOT a dependencies list: the
+        # embedded PEP 723 reader (Item 62) now honors a one-line dependencies array, so a
+        # declared dependency would be installed and legitimately survive into the rewritten
+        # header. A tool table is ignored by the reader and kept by uv in a valid header, so it
+        # only survives here if the broken block was NOT replaced.
+        $text = "# /// script`n# [tool.pvw_stale_marker]`n# stale = true`n# ///" + "   " + "`nimport requests`nprint('hi')`n"
         Write-Utf8NoBom -Path $appPath -Text $text
     }
     'non_utf8' {
@@ -437,15 +442,15 @@ if ($scenario -eq 'malformed') {
 if ($scenario -eq 'trailing_ws_malformed') {
     $hasRequiresPy = $entryText -match 'requires-python'
     $hasRequests   = $entryText -match 'requests'
-    $stillHasClick = $entryText -match [regex]::Escape('click')
-    $trailingWsPass = $successFired1 -and $hasRequiresPy -and $hasRequests -and (-not $stillHasClick)
+    $stillHasMarker = $entryText -match [regex]::Escape('pvw_stale_marker')
+    $trailingWsPass = $successFired1 -and $hasRequiresPy -and $hasRequests -and (-not $stillHasMarker)
     Write-Pep723Row -Id 'self.pep723.writeback.trailing_ws_malformed' -Pass $trailingWsPass -Desc 'A closing fence with trailing whitespace (astral-sh/uv#10918) is still recognized as malformed and fully replaced' -Details ([ordered]@{
         scenario       = $scenario
         exitCode       = $run1Exit
         successFired   = $successFired1
         hasRequiresPy  = $hasRequiresPy
         hasRequests    = $hasRequests
-        stillHasClick  = $stillHasClick
+        stillHasMarker = $stillHasMarker
     })
     if (-not $trailingWsPass) { exit 1 }
     exit 0
