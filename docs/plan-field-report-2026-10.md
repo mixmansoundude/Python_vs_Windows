@@ -179,7 +179,12 @@ different lines, inside regex lines of the shape `data = re.sub(r'<U+201D>', '"'
 normalize smart quotes in text extracted from a PDF. Only the right quote (`E2 80 9D`) is
 undecodable under cp1252, which is why the left one on the other line did no harm. The code is
 fine; pipreqs' cp1252 read is the whole fault, and nothing but `--encoding utf-8` (or the staged
-UTF-8 copy) is needed to clear it. The shape matters for the fixture: a smart-quote cleanup like
+UTF-8 copy) is needed to clear it. The scan found exactly one failing file, `adjacent.py`, with
+the undecodable byte at offset 6291 (line 190). That matches the traceback's `position 6291`
+exactly (`f.read()` decodes the whole file in one call, so the position is the file offset), so
+traceback and file are the same event. `adjacent.py` is also the sibling the August symptom names
+as the one holding the real imports (pandas, PyPDF2, pdfminer), which is why the crash hid exactly
+the dependencies that mattered. The shape matters for the fixture: a smart-quote cleanup like
 this is ordinary for any script that handles PDF or word-processor text, so expect it from other
 users too. The scan was done with a one-off script, not the bootstrapper, because the bootstrapper
 still cannot name the file; the per-file informational line above is what removes that need.
@@ -285,12 +290,12 @@ install count" assertion below.
 
 **Second real run (maintainer, 2026-10-09)**: the same folder as Item 63's second run produced the
 same pattern. The PyInstaller warn-file copy (`~warnfile.txt`) held about 25 `missing module`
-lines and one `excluded module named frozen_importlib`; warnfix tried to install
+lines and one `excluded module named _frozen_importlib`; warnfix tried to install
 `pyimod02_importers` and `multiprocessing` (both failed) and succeeded for `future`, pandas,
 pdfminer, pymupdf and PyPDF2; the cascade prompt then timed out to "no" (its 30-second default).
 Reproduced without CI on 2026-10-09: `parse_warn_file` over sample lines in the 6.x format returns
 `multiprocessing`, `pyimod02_importers`, `tkinter` and `AppKit` as install targets, so point 1 is
-live on current code. The `excluded module named frozen_importlib` line needs no fix: both
+live on current code. The `excluded module named _frozen_importlib` line needs no fix: both
 matchers in `parse_warn.py` look only for `W: no module named` or `missing module named`, so an
 `excluded module` line is never an install candidate (pin that with a table case so a future
 regex change cannot start installing it). The packages that did install (pandas, pdfminer,
@@ -604,43 +609,55 @@ on intermediate files and log lines, not just exit code: (a) multi-file pandas+E
 between (Items 62, 66); (c) `%1` misuse cases (Item 67). Respect Item 35's process discipline:
 new rows start non-gating and soak before being promoted.
 
-### Item 77 -- Built EXE fails at launch with "DLL load failed while importing _extra" (Investigation, medium)
+### Item 77 -- `import pymupdf` fails on a clean machine: "DLL load failed while importing _extra" (Likely cause found, one confirmation pending, small)
 
 **Symptom (second real run, 2026-10-09, same folder as Items 63 and 64)**: after PyInstaller built
 the EXE and warnfix installed pymupdf, the run ended with `ImportError: DLL load failed while
 importing _extra: The specified module could not be found.` and an unhandled exception.
 
-**What the message means**: `_extra` is a compiled extension inside the `pymupdf` wheel
-(`pymupdf/_extra.pyd`, checked 2026-10-09 in the `pymupdf-1.28.2-cp310-abi3-win_amd64` wheel; the
-wheel also holds `_mupdf.pyd` and `mupdfcpp64.dll` beside it). "The specified module could not be
-found" is Windows' generic text for "this `.pyd`, or a DLL it needs, did not load". The two
-possible causes look identical in the message:
-1. **Bundling gap**: PyInstaller copied the `.pyd` but not the DLL beside it. The same package then
-   imports fine from the environment's own interpreter and fails only in the EXE.
-2. **Missing runtime on the machine**: the wheel's DLLs need the Microsoft Visual C++ runtime. It
-   fails in both the EXE and the interpreter. CI runners have the runtime, so CI cannot show this
-   one.
+**Field result that narrows it (maintainer, same day)**: `_extra.pyd` and `mupdfcpp64.dll` are both
+present in the env's `pymupdf` folder, and a bare `import pymupdf` in the env's own interpreter
+fails with the same error. So this is NOT a PyInstaller bundling gap: the package fails before
+PyInstaller is involved. The test machine is a Windows sandbox, that is, a clean Windows image,
+which is the bootstrapper's stated target machine, so this is not a red herring.
 
-Neither is proven. The plan's do-not-add list says the PyInstaller "Visual C++ redistributable not
-installed" warnings are informational and to "revisit only if a real DLL load failure is seen";
-this is that failure. Nothing in the bootstrapper handles it today: `:dll_bundle_recover` only
-runs for conda environments (`HP_ENV_MODE=conda`, it searches the env's `Library\bin`), this run
-used a uv or venv environment, and `:hidden_import_recover` is correctly silent because this is
-not a `ModuleNotFoundError`.
+**What the message means**: "The specified module could not be found" is Windows' generic text for
+"this `.pyd`, or a DLL it needs, did not load"; it never names the missing DLL. Reading the import
+tables of the `pymupdf-1.28.2-cp310-abi3-win_amd64` wheel (checked 2026-10-09 by scanning the
+binaries for DLL names): `_extra.pyd` imports `mupdfcpp64.dll`, and `mupdfcpp64.dll` imports
+`msvcp140.dll`, `vcruntime140.dll` and `vcruntime140_1.dll` plus Windows' own `api-ms-win-*`
+forwarders. `msvcp140.dll` (the C++ standard library) and `vcruntime140_1.dll` are Microsoft's
+Visual C++ runtime, not part of a fresh Windows install and, to my knowledge, not shipped with
+CPython. A clean machine without that runtime fails exactly like this. The August notes already
+carry the matching warning: "Microsoft Visual C++ redistributable is not installed which may lead
+to DLL load failure" (PyInstaller printed it). The do-not-add list said to revisit that warning
+"only if a real DLL load failure is seen"; this is that failure.
 
-**Cheap evidence already on the maintainer's disk or one command away** (optional, not blocking):
-`~run.err.txt` shows which launch raised it (EXE or interpreter); the `~setup.log` install lines
-show the pymupdf version; and `"<env python>" -c "import pymupdf"` from Command Prompt either
-succeeds (points at cause 1) or prints the same error (points at cause 2).
+**Why a conda env would not show it**: conda-forge packages normally depend on their own copy of the
+runtime, so the DLLs land inside the env. A uv or venv env relies on the machine having Microsoft's
+runtime installed. `:dll_bundle_recover` only handles conda envs (`HP_ENV_MODE=conda`), and
+`:hidden_import_recover` is correctly silent because this is not a `ModuleNotFoundError`. Nothing in
+the bootstrapper looks for the runtime today (no mention of it in `run_setup.bat`).
 
-**Plan**: CI scenario first. A tiny app that does `import pymupdf` and prints its version, built to
-an EXE in a uv lane and run. If it fails there, cause 1 is real: fix by collecting the package's
-binaries (`--collect-all pymupdf` or `--collect-binaries=pymupdf`, double-gated on "used by
-source" AND "installed in the build interpreter" the way `HP_COLLECT_SUBMODULES` is, so a lean
-app never pays for it). If it passes in CI, cause 1 is much less likely and the right change is a
-hint: when an EXE or interpreter run prints `DLL load failed` and the interpreter run of the same
-import also fails, say that the Microsoft Visual C++ runtime may be missing and name where to get
-it. Do not install it automatically (it needs administrator rights, and the core flow does not).
+**Confirmation still owed (cheap, in the maintainer's sandbox)**: `dir /b
+%SystemRoot%\System32\msvcp140.dll %SystemRoot%\System32\vcruntime140_1.dll` should say "File Not
+Found" for at least one; then install the official x64 runtime (https://aka.ms/vs/17/release/
+vc_redist.x64.exe, needs administrator) and repeat the `import pymupdf`. If it now imports, the
+cause is confirmed. If it still fails, check that the interpreter is 64-bit
+(`"<env python>" -c "import struct; print(struct.calcsize('P')*8)"`), since `mupdfcpp64.dll` is
+64-bit only.
+
+**Fix shape (small, if confirmed)**: (a) detect and say so. When the build or a run prints
+`DLL load failed`, or before building when `System32` lacks `msvcp140.dll` or `vcruntime140_1.dll`,
+print a `[WARN]` that names the Microsoft Visual C++ runtime, says some packages (PyMuPDF is one)
+will not load without it, and gives the download link; do not install it automatically (it needs
+administrator rights and the core flow does not). (b) Evaluate, as a separate decision, whether the
+uv and venv paths should carry the runtime inside the env the way conda does; do not decide that
+here. CI runners already have the runtime, so CI cannot reproduce the real failure. CI can prove
+the wiring: a test-only flag (absent means normal behavior) that makes the check report the runtime
+as missing, plus a fixture run whose output contains the `DLL load failed` text, asserting the new
+`[WARN]` appears. No CI scenario that builds a pymupdf EXE is needed for this cause, and none is
+planned unless the confirmation above fails.
 
 ### Item 78 -- NI-VISA install fails on a real machine too, and the user is told nothing useful (Confirmed failure, cause unknown, small)
 
