@@ -685,22 +685,25 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 62-75: Aug-Sep 2026 real-user field report (filed 2026-10-08, planning only)
+### Items 62-78: Aug-Sep 2026 real-user field report (filed 2026-10-08, planning only)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. No maintainer decisions are open. Q1-Q8 are decided or retired (see Items 63, 65, 66, 67, 69, 71 and 76).
+starting any of these. No maintainer decisions are open. Q1-Q9 are decided or retired (see Items 63, 65, 66, 67, 69, 71, 76 and 78).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
 - **Item 62 (Confirmed, small)**: `:extract_pep723_requirements` only reads `# "pkg"` lines, so
   the canonical `#     "pkg>=x",` header that REQ-005.11 write-back (`uv add --script`) itself
   writes extracts zero deps on the next run ("PEP 723 block found but dependency list is empty").
-- **Item 63 (mechanism Confirmed, trigger Inferred, small)**: pipreqs 0.4.13 aborts the whole
+- **Item 63 (mechanism and trigger Confirmed, small)**: pipreqs 0.4.13 aborts the whole
   scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
   that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`
   (declared encoding, then parse; a decode error names no file), and scan a staged UTF-8 copy of
-  the files that pass, naming each one left out.
+  the files that pass, naming each one left out. Trigger confirmed 2026-10-09 on the maintainer's
+  folder: one valid UTF-8 file with no coding cookie holding U+201D (byte 0x9D, undefined in
+  cp1252) in smart-quote cleanup regexes; the regression fixture must contain U+201D. Also log
+  the crash reason in `~setup.log` (today only `~pipreqs.summary.txt` says it).
 - **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
@@ -720,8 +723,9 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
-- **Item 69 (Inferred, tiny)**: post-flight `"python.exe" "main.py"` fails in PowerShell, not
-  pasted into Command Prompt (Q5), so the PowerShell cause is unlikely; reproduce the printed line before changing anything; keep the quotes.
+- **Item 69 (re-checked 2026-10-09, no code change planned)**: the printed post-flight line works
+  pasted into Command Prompt; Q5 already ruled out PowerShell. Keep the quotes. Proposed to close
+  as a Known Finding once the maintainer agrees.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
@@ -740,6 +744,19 @@ the original symptom (see that doc's "CI-first testing policy").
   three CI references in `batch-check.yml` (~1817, ~2926, ~3376) that collect it by exact name.
   Implement in a coding agent, test first: add a CI check that the file is still collected under
   its new name before the rename lands. Not implemented on the docs-only plan PR.
+- **Item 77 (likely cause, runtime DLLs reported missing, small)**: `import pymupdf` fails with
+  `DLL load failed while importing _extra` in the env's own interpreter on a clean Windows image;
+  the wheel's `mupdfcpp64.dll` needs `msvcp140.dll` and `vcruntime140_1.dll` (Visual C++ runtime),
+  reported missing in System32. Not a PyInstaller bundling gap. Fix: detect and tell the user
+  with the download link, never install it automatically. CI cannot reproduce the real failure;
+  test the warning wiring with a test-only flag.
+- **Item 78 (Confirmed trigger, small, two slices)**: an `import visa` in an archived SUBFOLDER
+  started a real NI-VISA driver install for a program that does not use it; the elevated install
+  then failed (`-125202`). Slice 1: log `Elevated: yes|no` once per run, and print a console
+  `[WARN]` when the NI-VISA install fails. Slice 2 (decided 2026-10-09, scan scope): subfolder
+  scanning stays and is documented in README REQ-008; no call-chain tracing; log which file
+  triggered the install and prompt (default no, cascade timeout) only when every match is below a
+  subfolder. Separate PRs, each test first.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -7,7 +7,7 @@ party" below; neither could run the code). Every claim below was re-checked agai
 `0f088b4` (2026-08-30). `main` has not changed since, so every note dated after 2026-08-30 was
 observed on exactly this code.
 
-The ranked backlog items live in CLAUDE.md's Active Backlog (Items 62-75), each one short and
+The ranked backlog items live in CLAUDE.md's Active Backlog (Items 62-78), each one short and
 pointing back here. This file holds the evidence, root causes, and the "do not add" list so a
 future implementing agent does not re-derive them. Open maintainer decisions are in
 `docs/open-questions.md`.
@@ -208,7 +208,8 @@ the same name. pipreqs 0.4.13 treats any import that matches a `.py` filename in
 tree as local, so the empty stub keeps `import adjacent` from becoming a false requirement
 while contributing no imports of its own. pipreqs' `--ignore`
 takes directories, not files, so it cannot do this exclusion. Each left-out file is named in a
-`[WARN]` that also says the detected requirements may be incomplete. (c) Change the summary
+`[WARN]` that also says the detected requirements may be incomplete. The scan is whole-tree, so
+archived subfolders are pre-checked and staged too (scan scope decided under Item 78). (c) Change the summary
 note so a crash is never labeled "no imports found", and put the same words in `~setup.log` and
 on the console as a `[WARN]` that points at `~pipreqs_direct.log`, followed by the traceback's
 last line. That last line (for example `... character maps to <undefined>`) contains `<` and `>`,
@@ -694,13 +695,42 @@ sets `NEED_VISA=1` (`run_setup.bat` around line 1913), which starts a real drive
 detector's regex is anchored (`pyvista` cannot trigger it), so this is the design working as coded,
 on files the user did not think were part of the app.
 
-**Open design question (maintainer decision pending, asked on a card in the thread; registered
-as Q9 in `docs/open-questions.md`)**: which `.py` files count as "the app" for the NI-VISA decision?
-README REQ-008 says only "If the app imports `pyvisa` or `visa`". Other scans differ: pipreqs
-(`pipreqs . ...`, ignoring only `.git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests`),
-`tools/collect_submodules.py` and the fast-path hash all recurse; `tools/find_entry.py` lists only
-the top folder. Default for an implementing agent until answered: change nothing about scanning.
-The same scope also decides whether an undecodable archived file can crash pipreqs (Item 63).
+**Decision on scan scope (maintainer, 2026-10-09, resolved; was Q9)**: keep scanning subfolders for
+now and document it. Do not build call-chain tracing from the entry file: it is not already done
+(`tools/find_entry.py` lists only the top folder; pipreqs, `tools/collect_submodules.py`,
+`tools/detect_visa.py` and the fast-path hash all recurse), so tracing would be new work, and it is
+not worth it. The maintainer left the rest to this thread, with this preference order: a log at
+minimum, and at worst a prompt that defaults to "no install" after the same timeout the cascade
+prompt uses. The README (REQ-008) now states the subfolder behavior as documented behavior. That
+README sentence describes what the code does today; the log and prompt below are planned and are
+deliberately NOT in the README until they ship.
+
+**Chosen shape (this thread's call)**: both pieces, because the log alone cannot stop a 30-45
+minute install that the user has already waited through.
+1. **Log, always, when the scan finds an import**: name the file(s) that triggered it and whether
+   they sit next to the bootstrapper or below a subfolder, for example `[VISA] pyvisa/visa import
+   found in: <relative path> (subfolder)`. At most three paths, written by the Python scanner
+   straight to the log (its stderr is already appended to `%LOG%`), never through `:log`, because a
+   relative path can hold `&`, `%` or `^` (see "`:log` echoes UNQUOTED" in
+   `docs/agent-lessons-learned.md`). "Outside the bootstrapper's folder" cannot happen: the scan
+   root is the working directory, so a subfolder is the only other place a match can come from.
+2. **Prompt, only when every match is below a subfolder** (none in the folder next to
+   `run_setup.bat`): a timed consent gate, same pattern as `:cascade_consent_gate` (`choice /T` with
+   the cascade's default timeout, default NO). Wording: NI-VISA looks needed only by a file in a
+   subfolder, name the file, say the install can take 30-45 minutes and that the Python `pyvisa`
+   package is installed either way. CI-safe by the repo's rule: echo the prompt unconditionally, a
+   `HP_TEST_*_ANSWER` override first, then `HP_CI_LANE` auto-decline, then the timed prompt. A match
+   in the top folder keeps today's behavior exactly: no prompt, install attempted. The scanner's
+   stdout contract grows from `0|1` to `0|1|2` (`2` = matches only in subfolders), with `NEED_VISA`
+   still required to be exactly `1` to install, which keeps `2` safe by default. Declined or timed
+   out: log `[VISA] skipped (subfolder_only)`.
+3. **Cost and sequencing**: small. Changing the output contract means updating `HP_DETECT_VISA`
+   through `tools/sync_payload.py` and `tests/test_detect_visa.py` (which already pins the recursive
+   behavior, so the new `2` case is an addition, not a reversal). The existing `selfapps_pyvisa.ps1`
+   puts its import in a top-level `main.py`, so it keeps meaning "install attempted"; it needs a
+   sibling scenario with the import in a subfolder, asserting the prompt text, the default-no
+   result and the log line. Ship this as its own PR, separate from the Item 64 and Item 77 fixes
+   and from slice 1 of this item (the elevation line and the failure `[WARN]` below).
 
 **Elevation (maintainer, 2026-10-09)**: `whoami /groups` returned `S-1-16-12288`, so this run WAS
 elevated, and the installer still exited `-125202`. That rules out "the installer needs
@@ -723,6 +753,6 @@ reuse it from one place instead of repeating it. (b) On `install_failed`, print 
 (not only a `~setup.log` line) saying the NI-VISA driver did not install, that the Python `pyvisa`
 package is installed anyway, and that talking to real instruments needs the driver; the bootstrap
 itself still continues (never fatal, as today). (c) Do not add a retry loop or an automatic
-elevation prompt. (d) Scan scope is NOT part of this item until Q9 is answered. **CI proof**: the
+elevation prompt. (d) Scan scope: see the decision above; it ships as its own slice. **CI proof**: the
 existing `pyvisa.nivisa` scenario already reaches `install_failed` in CI; assert the new `[WARN]`
 text there, and assert the `Elevated:` line appears in the log on every lane.
