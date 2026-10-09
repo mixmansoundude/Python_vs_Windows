@@ -298,7 +298,9 @@ $setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw 
 $combined  = ($logLines -join "`n") + "`n" + $setupText
 if ($scenario -eq 'idempotent') {
     $logPath2  = Join-Path $workDir '~pep723_idempotent_bootstrap_run2.log'
-    $logLines2 = if (Test-Path $logPath2) { Get-Content -LiteralPath $logPath2 -Encoding ASCII } else { @() }
+    $logExists2 = Test-Path -LiteralPath $logPath2
+    $logLines2 = if ($logExists2) { Get-Content -LiteralPath $logPath2 -Encoding ASCII } else { @() }
+    $logLineCount2 = @($logLines2).Count
     $setupText2 = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw -Encoding ASCII } else { '' }
     $combined2 = ($logLines2 -join "`n") + "`n" + $setupText2
 }
@@ -399,6 +401,8 @@ if ($scenario -eq 'idempotent') {
         scenario      = $scenario
         headerUsed2   = $headerUsed2
         headerEmpty2  = $headerEmpty2
+            logExists2    = $logExists2
+            logLineCount2 = $logLineCount2
         entryHead     = $headerText
     })
     Write-Pep723Row -Id 'self.pep723.writeback.idempotent' -Pass $idempotentPass -Desc 'Two full bootstrap runs produce a byte-identical PEP 723 header (uv add --script idempotency)' -Details ([ordered]@{

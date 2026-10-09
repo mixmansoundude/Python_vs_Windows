@@ -1187,8 +1187,9 @@ $pep723UvFound = ($pep723UvLog | Where-Object { $_ -like '*Using PEP 723 inline 
 $pep723UvEmptyWarn = ($pep723UvLog | Where-Object { $_ -like '*PEP 723 block found but no valid dependencies extracted*' }).Count -gt 0
 $pep723UvReqPath = Join-Path $pep723UvDir '~requirements.pep723.txt'
 $pep723UvExtracted = @()
+# Compare raw lines, no Trim(): the helper's contract is bare specs, so stray whitespace must fail.
 if (Test-Path $pep723UvReqPath) {
-  $pep723UvExtracted = @(Get-Content -LiteralPath $pep723UvReqPath -Encoding ASCII | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+  $pep723UvExtracted = @(Get-Content -LiteralPath $pep723UvReqPath -Encoding ASCII | Where-Object { $_ -ne '' })
 }
 $pep723UvExpected = @('packaging>=24.0', 'colorama>=0.4.6')
 $pep723UvExtractedOk = (($pep723UvExtracted -join '|') -ceq ($pep723UvExpected -join '|'))
