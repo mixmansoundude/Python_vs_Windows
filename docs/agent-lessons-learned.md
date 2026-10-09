@@ -815,6 +815,10 @@ facts, consolidated here once:
   dependency uv had just written (Item 62). `tools/pep723_extract.py` (`HP_PEP723_EXTRACT`) is the
   single reader now; any test of a parser for a tool-written format needs a fixture copied
   byte-for-byte from that tool's real output, not a hand-typed lookalike (`self.pep723.uvformat`).
+  The reader also honors one-line arrays and tolerates whitespace on the fences, so a test that
+  seeds a "stale header must be replaced" fixture must mark it with something the reader ignores
+  (a `[tool.*]` table), never a dependency: a declared dependency is now installed and correctly
+  kept in the rewritten header (`self.pep723.writeback.trailing_ws_malformed`).
 
 ---
 

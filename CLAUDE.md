@@ -511,6 +511,11 @@ but several represent real gaps worth closing before calling the path fully rele
   ever exercised in any CI configuration at all (lower priority -- already mitigated via forced-
   branch tests, just not the ambient real-user condition).
 
+  **Row added 2026-10-09 (Item 62)**: `self.pep723.writeback.roundtrip` (`selfapps_pep723_writeback.ps1`,
+  `uv` lane, real uv writes the header and the next run must read it back) was green on its first
+  full run (`37938844739`). Decision for now: leave it advisory and let it soak; promote it only
+  after several consecutive green full matrices, per the process discipline below.
+
   **Non-negotiable constraint: the diagnostics-site-publish job must never be blocked or skipped
   by this work.** `publish_diag`'s `if: ${{ always() }}` / `needs: [selftest, selftest-gate,
   model-quick-fix]` guard already covers this -- any change to the job graph as part of this item
@@ -685,7 +690,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 62-78: Aug-Sep 2026 real-user field report (filed 2026-10-08, planning only)
+### Items 63-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Item 62 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -693,9 +698,6 @@ starting any of these. No maintainer decisions are open. Q1-Q9 are decided or re
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-- **Item 62 (Confirmed, small)**: `:extract_pep723_requirements` only reads `# "pkg"` lines, so
-  the canonical `#     "pkg>=x",` header that REQ-005.11 write-back (`uv add --script`) itself
-  writes extracts zero deps on the next run ("PEP 723 block found but dependency list is empty").
 - **Item 63 (mechanism and trigger Confirmed, small)**: pipreqs 0.4.13 aborts the whole
   scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
   that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`

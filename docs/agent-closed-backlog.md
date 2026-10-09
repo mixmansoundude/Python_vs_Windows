@@ -3251,6 +3251,35 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   on `Verification finished...`/`Want to build an optimized version too?`, both untouched by this
   change); `docs/demo-bootstrapper-output.md`'s transcript excerpts were updated to match.
 
+### Item 62 (closed 2026-10-09; PR #475)
+
+- **The PEP 723 reader now accepts the header the bootstrapper itself writes.** Symptom: after
+  REQ-005.11 write-back (`uv add --script`) put a header in the user's file, the next run printed
+  `PEP 723 block found but dependency list is empty or malformed; falling back` and the recorded
+  dependencies were ignored. Cause: `:extract_pep723_requirements` was an inline `-Command` that
+  accepted only `# "pkg"` (one space, no comma); uv writes `#     "pkg>=x",` (four spaces, trailing
+  comma, CRLF on Windows). Fix: the extraction moved to an embedded Python helper,
+  `tools/pep723_extract.py` (`HP_PEP723_EXTRACT`, run via `%HP_PY%`), that accepts CRLF, any `#`
+  spacing, either quote style, trailing commas, comments after an item, one-line or multi-line
+  arrays and trailing whitespace on the fences, and prints a one-line reason to the setup log when it
+  finds nothing (`pep723_extract: N dependencies` otherwise).
+- **Test-first, as required.** The regression test landed alone and was red in blocking CI (run
+  `37925174074`: `self.pep723.uvformat` failed in all 8 lanes, plus the real-uv round-trip row in the `uv` lane, nothing else new). After the fix
+  (run `37938844739`) `self.pep723.uvformat` is green in all 8 lanes, and the `uv` lane's real-uv
+  `self.pep723.writeback.roundtrip` (run 1 writes, run 2 reads back) and `...idempotent`
+  (byte-equal second run) rows are green. Unit coverage: `tests/test_pep723_extract.py` (payload
+  sync, Python 3.9 grammar guard, the layout `uv add --script` writes in LF and CRLF).
+- **One test had to change with the fix.** `self.pep723.writeback.trailing_ws_malformed` seeded
+  `dependencies = ["click"]` and asserted click was gone after the broken header was replaced; that
+  held only while the old reader could not see one-line arrays. Now click is read, installed and
+  correctly kept in the rewritten header. The fixture seeds a `[tool.pvw_stale_marker]` table
+  instead, which the reader ignores and uv keeps in a valid header, so it survives only if the block
+  was not replaced. Rule for similar tests: a "stale content must be removed" marker must be
+  something the fix does not legitimately start reading.
+- **Not caused by this item**: the other red rows in run `37938844739` were already open before it:
+  `self.exe.warnfix.venv_repair` and `self.cascade.exec` (`uv` lane) and `self.exe.smokerun`
+  (`cache` lane); see Active Backlog Item 35.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
@@ -3401,6 +3430,17 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
     real user run (normal internet, interactive/admin session) to confirm the same valid installer succeeds
     off-CI (expected ~30-45 min per the maintainer's prior experience). Until then, treat the
     "environmental" classification as strongly-supported-but-provisional.
+  - **Second off-CI datapoint (2026-10-09), same conclusion.** A real run in a clean, elevated Windows
+    sandbox (`S-1-16-12288`) also failed, with `installer_rc=-125202` (the same family of NI
+    installer exit code as the CI `-125083` and the `-125202` in `docs/demo-bootstrapper-output.md`'s
+    Scenario 24). Afterwards Program Files held `National Instruments\NI Package Manager` and
+    `Common` but no `NI-VISA` folder, so the installer started, installed its package manager and then
+    failed at the NI-VISA component; it did not finish late. This does NOT confirm that the installer
+    succeeds off-CI: it is another clean image. The maintainer's recollection of slow successful
+    installs on a regular machine is still the only off-CI evidence for success, so the
+    "environmental" classification stands, still provisional. The install was triggered by an
+    `import visa` in an archived subfolder of a program that does not use VISA (Active Backlog Item
+    78 covers the scan scope and the failure warning).
 
 ## Dependency Strategy Rationale (reference)
 
