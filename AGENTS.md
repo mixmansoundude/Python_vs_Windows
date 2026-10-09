@@ -113,14 +113,17 @@ run still publishes a near-empty page to the diagnostics site, which is not evid
   push cancels the previous docs-only run, which is fine because only the last one has to finish.
   Never stack a docs push on a code push whose run is still going.
 
-How to tell a run has finished: the run for the pushed commit has `status: completed`, and
-`diag/latest.json` on the diagnostics site names that run id.
+How to tell a run has finished: the run for the pushed commit has `status: completed` in
+Actions. That is the authoritative check. The diagnostics site is a single shared page that every
+branch's publish overwrites (and each publish rebuilds the whole site), so `diag/latest.json` only
+confirms your run while it names your run id; if it names a different run, another branch
+published after yours, so read your run's artifacts through the Actions API instead.
 
 ```bash
 # status of the run for a pushed commit (REST works where GraphQL does not)
 gh api "repos/mixmansoundude/Python_vs_Windows/actions/runs?head_sha=<sha>" \
   --jq '.workflow_runs[] | [.id, .name, .status, .conclusion] | @tsv'
-# which run the diagnostics site currently shows
+# which run the diagnostics site currently shows (any branch's, not necessarily yours)
 curl -s "https://mixmansoundude.github.io/Python_vs_Windows/diag/latest.json"
 ```
 
