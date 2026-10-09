@@ -739,6 +739,18 @@ network or install policy NI's online installer does not like (the CI runner beh
 with `-125083`), or the pinned 21.5 online URL is stale. The maintainer says the install has
 worked on their regular machine before, slowly (from memory, not from a log).
 
+**State left behind (maintainer, 2026-10-09, retyped from the sandbox)**: under Program Files the
+`National Instruments` folder exists and holds `NI Package Manager` and `Common` (with `MIF`), but
+there is no `NI-VISA` folder. So the NI online installer started and got as far as installing its own
+package manager, and the NI-VISA component itself was not present afterwards. That settles the
+question the post-install wait raised: the install did not finish late in the background, it failed,
+and a longer wait would not have helped. (The registry key `HKLM\SOFTWARE\National Instruments\NI-VISA`
+was not queried; the missing folder answers the same question.) Two consequences for the fix:
+the console `[WARN]` must say the driver failed to install, not that it "timed out" (today's state
+name is `install_failed (post_check_timeout)`, which describes the check, not what the user should
+read), and the installer's exit code stays in `~setup.log` where `[VISA] installer exit code:` already
+puts it, so the console line does not need to repeat `-125202`.
+
 **What this changes in the docs**: `docs/agent-closed-backlog.md`'s Known Finding "NI-VISA real
 install fails fast in CI" said it still needed a real user run to confirm the installer succeeds off
 CI. This run does not do that: it is another clean image, elevated, failing with the same family of
@@ -750,8 +762,8 @@ maintainer's recollection of past successes is the only off-CI evidence. The fin
 proposed: `[INFO] Elevated: yes` or `no`. The bootstrapper already has a test that works (`fsutil
 dirty query %systemdrive%` succeeds only when elevated, used in the Miniconda AllUsers branch);
 reuse it from one place instead of repeating it. (b) On `install_failed`, print a console `[WARN]`
-(not only a `~setup.log` line) saying the NI-VISA driver did not install, that the Python `pyvisa`
-package is installed anyway, and that talking to real instruments needs the driver; the bootstrap
+(not only a `~setup.log` line) saying the NI-VISA driver failed to install (not "timed out"; see
+"State left behind" above), that the Python `pyvisa` package is installed anyway, and that talking to real instruments needs the driver; the bootstrap
 itself still continues (never fatal, as today). (c) Do not add a retry loop or an automatic
 elevation prompt. (d) Scan scope: see the decision above; it ships as its own slice. **CI proof**: the
 existing `pyvisa.nivisa` scenario already reaches `install_failed` in CI; assert the new `[WARN]`
