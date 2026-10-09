@@ -10,3 +10,5 @@ changelog-style sections are for.
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 
 Each question names the backlog item it blocks and the default an implementing agent should use
+
+No questions are open for this report. Q1-Q8 are decided or retired.
