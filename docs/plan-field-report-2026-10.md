@@ -665,9 +665,9 @@ both files, so at least one is missing). That supports the cause. The last step,
 official x64 runtime and repeating `import pymupdf`, was skipped because the sandbox is being thrown
 away, so the cause is LIKELY, not confirmed. Supporting context: the maintainer has run this same
 program from the interpreter on their normal machine before (once the xlsxwriter workaround was
-done), which fits a machine that has the runtime. A 32-bit interpreter is the other remaining
-explanation (`mupdfcpp64.dll` is 64-bit only); the 3.14.8 env came from uv, which gives 64-bit on a
-64-bit machine, so that is unlikely.
+done), which fits a machine that has the runtime. A 32-bit interpreter is ruled out: `mupdfcpp64.dll`
+is in the env's `pymupdf` folder, so pip installed the `win_amd64` wheel, which it only does for a
+64-bit interpreter.
 
 **Fix shape (small, if confirmed)**: (a) detect and say so. When the build or a run prints
 `DLL load failed`, or before building when `System32` lacks `msvcp140.dll` or `vcruntime140_1.dll`,
