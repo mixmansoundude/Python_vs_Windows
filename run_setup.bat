@@ -1490,6 +1490,7 @@ set "HP_PIPREQS_SUMMARY_NOTE="
 set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_TARGET_WORK%"
 set "HP_PIPREQS_SUMMARY_IGNORE=%HP_PIPREQS_IGNORE_DISPLAY%"
 set "HP_PIPREQS_PHASE_RESULT="
+set "HP_PIPREQS_AUTO_UNTRUSTED="
 set "HP_PIPREQS_LAST_LOG="
 set "HP_PIPREQS_DIRECT_LOG=~pipreqs_direct.log"
 if exist "%HP_PIPREQS_DIRECT_LOG%" del "%HP_PIPREQS_DIRECT_LOG%"
@@ -1571,6 +1572,7 @@ set "HP_PIPREQS_RC=%errorlevel%"
 goto :pipreqs_rc_known
 :pipreqs_staged_done
 set "HP_PIPREQS_RC=%HP_PIPREQS_STAGED_RC%"
+if defined HP_PIPREQS_COPYBACK_FAILED goto :pipreqs_copyback_failed
 :pipreqs_rc_known
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
@@ -1611,7 +1613,10 @@ if not "%HP_PIPREQS_RC%"=="0" (
 
 set "HP_TEMP_ROOT=%RUNNER_TEMP%"
 if not defined HP_TEMP_ROOT set "HP_TEMP_ROOT=%TEMP%"
-set "HP_PIPREQS_STAGE_ROOT=%HP_TEMP_ROOT%\pipreqs_stage"
+rem derived requirement: PR #478 review -- the copy lives in a folder named for this run, because a fixed
+rem name is deleted by the next scan and two projects bootstrapping together would delete each other's.
+if not defined HP_PIPREQS_STAGE_TOKEN set "HP_PIPREQS_STAGE_TOKEN=%RANDOM%%RANDOM%"
+set "HP_PIPREQS_STAGE_ROOT=%HP_TEMP_ROOT%\pipreqs_stage_%HP_PIPREQS_STAGE_TOKEN%"
 set "HP_PIPREQS_STAGE_TARGET=%HP_PIPREQS_STAGE_ROOT%\requirements.auto.txt"
 if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
 mkdir "%HP_PIPREQS_STAGE_ROOT%" >nul 2>&1
@@ -1654,6 +1659,7 @@ if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
   if errorlevel 1 (
     set "HP_PIPREQS_PHASE_RESULT=fail"
     set "HP_PIPREQS_SUMMARY_NOTE=(failed to copy staging output)"
+    call :pipreqs_output_blocked
     goto :after_pipreqs_run
   )
   set "HP_PIPREQS_PHASE_RESULT=ok"
@@ -1698,6 +1704,13 @@ goto :after_pipreqs_run
 set "HP_PIPREQS_PHASE_RESULT=ok"
 set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
 goto :after_pipreqs_run
+:pipreqs_copyback_failed
+rem PR #478 review: the scan of the UTF-8 copy ran, but its result could not be written to
+rem requirements.auto.txt. That is a failed scan, never a clean one, and never zero requirements.
+set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
+set "HP_PIPREQS_PHASE_RESULT=fail"
+set "HP_PIPREQS_SUMMARY_NOTE=(could not write requirements.auto.txt)"
+goto :after_pipreqs_run
 
 :after_pipreqs_run
 set "DEP_FINAL_COUNT=0"
@@ -1723,7 +1736,9 @@ if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
     call :log "[WARN] pipreqs generation failed; continuing without auto-detected requirements."
   )
 )
-if not exist "%REQ%" if exist "requirements.auto.txt" (
+rem derived requirement: PR #478 review -- an old requirements.auto.txt that could not be replaced is not this
+rem run's scan, so it is never promoted to requirements.txt and installed (HP_PIPREQS_AUTO_UNTRUSTED).
+if not exist "%REQ%" if exist "requirements.auto.txt" if not defined HP_PIPREQS_AUTO_UNTRUSTED (
   copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1
   if errorlevel 1 (
     echo *** Could not generate requirements.txt. Continuing without dependencies...
@@ -5177,13 +5192,16 @@ rem folder; the originals are never touched. Any other result leaves HP_PIPREQS_
 rem the caller scans in place. No setlocal: the summary variables must persist to the caller.
 set "HP_PIPREQS_PRECHECK_RC="
 set "HP_PIPREQS_STAGED_RC="
+set "HP_PIPREQS_COPYBACK_FAILED="
+call :pipreqs_clear_old_output
 set "HP_PIPREQS_PRECHECK_REPORT=~pipreqs_precheck.txt"
 if exist "%HP_PIPREQS_PRECHECK_REPORT%" del "%HP_PIPREQS_PRECHECK_REPORT%" >nul 2>&1
 call :emit_from_base64 "~pipreqs_precheck.py" HP_PIPREQS_PRECHECK
 if errorlevel 1 goto :pipreqs_precheck_unavailable
 set "HP_TEMP_ROOT=%RUNNER_TEMP%"
 if not defined HP_TEMP_ROOT set "HP_TEMP_ROOT=%TEMP%"
-set "HP_PIPREQS_STAGE_ROOT=%HP_TEMP_ROOT%\pipreqs_stage"
+if not defined HP_PIPREQS_STAGE_TOKEN set "HP_PIPREQS_STAGE_TOKEN=%RANDOM%%RANDOM%"
+set "HP_PIPREQS_STAGE_ROOT=%HP_TEMP_ROOT%\pipreqs_stage_%HP_PIPREQS_STAGE_TOKEN%"
 set "HP_PIPREQS_STAGE_TARGET=%HP_PIPREQS_STAGE_ROOT%\requirements.auto.txt"
 if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
 "%HP_PY%" "~pipreqs_precheck.py" "." "%HP_PIPREQS_STAGE_ROOT%" "%HP_PIPREQS_IGNORE%" "%HP_PIPREQS_PRECHECK_REPORT%" >> "%LOG%" 2>&1
@@ -5214,10 +5232,30 @@ set "HP_PIPREQS_SUMMARY_NOTE=(scanned a UTF-8 copy of the project, see ~pipreqs_
 if not "%HP_PIPREQS_STAGED_RC%"=="0" exit /b 0
 if not exist "%HP_PIPREQS_STAGE_TARGET%" exit /b 0
 copy /y "%HP_PIPREQS_STAGE_TARGET%" "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
-if errorlevel 1 call :log "[WARN] pipreqs ran on the UTF-8 copy but its output could not be copied back."
+if errorlevel 1 goto :pipreqs_precheck_copyback_fail
+exit /b 0
+:pipreqs_precheck_copyback_fail
+rem PR #478 review: the old requirements.auto.txt was cleared before the scan, so a copy-back that fails
+rem leaves either nothing or an old file another program holds open. Either way this run has no result,
+rem and the caller reports a failed scan instead of accepting whatever file is there.
+set "HP_PIPREQS_COPYBACK_FAILED=1"
+call :pipreqs_output_blocked
 exit /b 0
 :pipreqs_precheck_stage_fail
 call :log "[WARN] pipreqs pre-check could not open its UTF-8 copy, so the project is scanned as it is."
+exit /b 0
+:pipreqs_clear_old_output
+rem derived requirement: PR #478 review -- requirements.auto.txt is the scan's own output, so an old one
+rem is removed before pipreqs runs and can never be taken for this run's result. del /f also removes a
+rem read-only file. A file another program holds open survives the delete, and the failed write that
+rem follows is reported by name.
+if not exist "%HP_PIPREQS_TARGET_WORK%" exit /b 0
+del /f /q "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
+if exist "%HP_PIPREQS_TARGET_WORK%" call :log "[DEBUG] The old requirements.auto.txt could not be removed before the scan."
+exit /b 0
+:pipreqs_output_blocked
+set "HP_PIPREQS_AUTO_UNTRUSTED=1"
+call :log "[WARN] The dependency scan finished but requirements.auto.txt in this folder could not be updated. Another program may have it open, or it may be read-only. Close it and run this again."
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
