@@ -583,12 +583,14 @@ result is just a variable I read" is enough.
 
 pipreqs 0.4.13 opens every `.py` with `encoding=None` (the locale encoding, cp1252 on Western Windows)
 outside its try block, so ONE undecodable file aborts the scan with a bare `UnicodeDecodeError` and no
-file name (CLAUDE.md Item 63). U+201D (bytes `E2 80 9D`, 0x9D undefined in cp1252) in a UTF-8 file is the
+file name (Item 63). U+201D (bytes `E2 80 9D`, 0x9D undefined in cp1252) in a UTF-8 file is the
 common trigger. **Python 3.15 defaults to UTF-8 mode (PEP 686)**, and uv's newest managed CPython is now
 3.15, so on a lane that provisions 3.15 the same file scans cleanly and a regression test for this bug
 silently proves nothing. Any CI scenario about locale-encoding behavior must set `PYTHONUTF8=0` and record
 the interpreter's `sys.flags.utf8_mode` and `locale.getpreferredencoding(False)` in its row
-(`self.pipreqs.encoding.*` does both). A local Linux check proves nothing either: the C locale forces UTF-8
+and fail unless it reads `0 cp1252` (`self.pipreqs.encoding.*` does all three via `encodingOk`; the first
+version recorded the value but passed regardless). Item 63 is closed; history is in
+`docs/agent-closed-backlog.md`. A local Linux check proves nothing either: the C locale forces UTF-8
 mode there, so reproduce with `PYTHONUTF8=0 LC_ALL=C PYTHONCOERCECLOCALE=0`.
 
 Two smaller rules from the same fix: **`str.isalnum()` is Unicode-aware**, so a sanitizer that must emit
