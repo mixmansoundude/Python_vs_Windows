@@ -241,13 +241,30 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 - REQ-005.4 -- Generate inferred requirements (non-authoritative): Always run:
   ```
-  pipreqs . --force --mode compat --savepath requirements.auto.txt
+  pipreqs . --force --mode compat --savepath requirements.auto.txt --encoding utf-8
   ```
   - `compat` ensures cross-runner determinism
   - `--force` overwrites stale output
   - `--savepath` preserves original requirements
+  - `--encoding utf-8` because pipreqs otherwise reads every `.py` with the Windows locale encoding
+    (cp1252 on Western systems before Python 3.15), which cannot decode ordinary UTF-8 text such as
+    a curly double quote or an emoji
   - Behavior: Used for visibility and fallback only
   - Failure does not stop bootstrap: `[WARN] pipreqs failed, continuing with available sources`
+  - Pre-check: pipreqs stops its whole scan at the first `.py` it cannot decode or parse, so before it
+    runs every `.py` under the folder (subfolders included, minus the ignored folders) is checked using
+    its declared or detected encoding and parsed, and one line per file giving its encoding (the first
+    100 files) is written to `~setup.log`. If all are clean UTF-8, pipreqs scans the folder in place. Otherwise pipreqs scans
+    a UTF-8 copy of the folder under the temp folder and the original files are never changed: a file
+    in another declared encoding is re-encoded, and a file that cannot be read or does not parse is
+    left out of the scan. Each file left out is named in a `[WARN]` line on the console and in
+    `~setup.log` that says the detected requirements may be incomplete, and the full report is
+    `~pipreqs_precheck.txt`. A left-out file keeps its module name as a local module, so an
+    `import` of it is never treated as a requirement.
+  - A pipreqs crash is never reported as "no imports found": the console and `~setup.log` say pipreqs
+    crashed and point at `~pipreqs_direct.log`, whose contents are copied into `~setup.log`.
+  - Test NDJSON rows: `self.pipreqs.encoding.curly_quote`, `.mixed_files`, `.never_no_imports`
+    (`tests/selfapps_pipreqs_encoding.ps1`, `real` lane, gating).
 
 ---
 

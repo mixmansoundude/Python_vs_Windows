@@ -3280,6 +3280,27 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `self.exe.warnfix.venv_repair` and `self.cascade.exec` (`uv` lane) and `self.exe.smokerun`
   (`cache` lane); see Active Backlog Item 35.
 
+### Item 69 (closed 2026-10-10; no code change)
+
+- **The quoted run line the post-flight briefing prints is correct as printed.** Field note (late
+  Aug): "The post-flight debriefing stated "C:\...\miniconda3\...\python.exe" "main.py" but it
+  seems like the quotes are offending when I try to run it with both wrapped in quotes like that
+  manually." The line is `"%HP_PY%" "%HP_ENTRY%"` at two print sites (`:pfb_runapp`,
+  `:noexe_runapp`), identical in the conda, uv and cascade lanes; only `HP_PY` differs.
+- **CI result** (`tests/selfapps_postflight_runline.ps1`, `uv` and `justme-test` lanes, non-gating,
+  run `37996430244`, rows `self.postflight.runline.verbatim` and `.variants` read from the job logs):
+  the line runs the app exactly as printed in Command Prompt with the uv venv python and with the
+  conda env python. Curly quotes fail with "The filename, directory name, or volume label syntax is
+  incorrect" (cmd rc 123), the field note's symptom, so a paste that turned straight quotes into
+  curly ones is the only reproduction (still a hypothesis for the maintainer's machine, who later
+  found the pasted line worked). With a space in the path the quotes around `python.exe` are
+  required: quoted works, unquoted fails with cmd rc 9009. Windows PowerShell 5.1 rejects the line
+  as printed (a parse error at the second quoted string) and accepts it with a leading `& `; the
+  maintainer pastes into Command Prompt, so no hint was added (decision card, 2026-10-10: "Close,
+  no change").
+- **Keep the quotes.** The check stays in CI as a regression guard against anyone changing the
+  printed line (the `verbatim` row fails the script if it stops working in cmd).
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

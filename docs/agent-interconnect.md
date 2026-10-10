@@ -633,6 +633,48 @@ without also short-circuiting before download is reached.
 
 ---
 
+## pipreqs pre-check and UTF-8 copy scan (`:pipreqs_precheck`, CLAUDE.md Item 63)
+
+**Touch the pipreqs invocation, the pre-check, the result handling, or the `pipreqs.flags` gate, must
+understand the others.** pipreqs 0.4.13 opens every `.py` with the locale encoding (cp1252 on Western
+Windows before Python 3.15) and aborts the whole scan at the first file it cannot decode or parse, so
+`:pipreqs_precheck` runs `~pipreqs_precheck.py` (`HP_PIPREQS_PRECHECK`) first. Contract:
+- **Exit 0**: every `.py` is clean UTF-8, pipreqs scans in place (the direct invocation, which now
+  carries `--encoding utf-8`). **Exit 10**: something needs a UTF-8 rewrite or must be left out, so the
+  helper wrote a UTF-8 copy of the tree under `%HP_PIPREQS_STAGE_ROOT%` and the subroutine ran pipreqs
+  there itself, leaving its exit code in `HP_PIPREQS_STAGED_RC`. The caller's
+  `if defined HP_PIPREQS_STAGED_RC goto :pipreqs_staged_done` skips the direct invocation and rejoins at
+  `:pipreqs_rc_known`. **Anything else (helper failed to emit, exit 3, stage dir unusable)** leaves
+  `HP_PIPREQS_STAGED_RC` undefined, so the direct in-place scan runs and a crash is reported honestly.
+  `HP_PIPREQS_STAGED_RC` is reset at the top of the subroutine, so cascade re-entry cannot inherit it.
+- **Stub files keep module names local**: pipreqs counts every `.py` basename and folder basename in the
+  scanned tree as a local module, so a file left out of the copy is replaced by an EMPTY `.py` of the same
+  name, not omitted. The copy therefore also keeps empty folders. The helper's `SKIP` set equals pipreqs'
+  built-in ignore list and the `--ignore` list is passed in from `HP_PIPREQS_IGNORE`, so the helper and the
+  direct invocation prune the same folders; change one list, change the other.
+- **Every pipreqs invocation passes `--encoding utf-8`** (direct, UTF-8 copy, and the older robocopy
+  fallback), and the `pipreqs.flags` gate in `tests/harness.ps1` requires it on the first matching
+  invocation line. The gate also needs that line to start `pipreqs.pipreqs . --force --mode compat
+  --savepath`, so keep new flags AFTER `--savepath <target>`.
+- **Crash vs. nothing found**: pipreqs exits nonzero and leaves no output both ways.
+  `:pipreqs_zero_requirements` (shared by the direct and robocopy guards) treats a
+  `Traceback (most recent call last)` line in `%HP_PIPREQS_LAST_LOG%` as a crash: phase `fail`, summary
+  note `(pipreqs crashed, ...)`, and the log is appended to `%LOG%` as a FILE (a traceback line can hold
+  `<`/`>`, so never through `:log`). Otherwise it is the old `(zero requirements: no imports found)`
+  success. The UTF-8 copy run writes its log to the same `~pipreqs_direct.log` (absolute path, because
+  the run starts in the copy's folder).
+- **Console vs. log**: the report `~pipreqs_precheck.txt` goes to `%LOG%` in full via `type`; only its
+  `[WARN]` lines are shown on the console via `findstr /b /l /c:"[WARN]"` (use `/l`: `[WARN]` is a regex
+  character class otherwise). Every file name in the report passes through the helper's `safe()` (ASCII
+  letters, digits and a few punctuation marks only), which is what makes echoing it safe.
+- `:pipreqs_precheck` shares `HP_PIPREQS_STAGE_ROOT`/`HP_PIPREQS_STAGE_TARGET` with the older robocopy
+  staging fallback, and `:after_pipreqs_run` removes the root, so the copy never outlives the pipreqs step.
+- Regression: `tests/selfapps_pipreqs_encoding.ps1` (`real` lane, gating, forces `PYTHONUTF8=0` because
+  Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read); unit tests
+  `tests/test_pipreqs_precheck.py`.
+
+---
+
 ## Single-verification smoke model (REQ-018 2b-A.2)
 
 The bootstrapper runs the user's code for MANDATORY verification exactly ONCE per invocation (the

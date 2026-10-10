@@ -336,7 +336,7 @@ isolate one mechanism from the other):
 
 ```
 [INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
-[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath "...\requirements.auto.txt" --ignore ".git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
+[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath "...\requirements.auto.txt" --encoding utf-8 --ignore ".git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
 *** [WARN] Dependencies were auto-detected via pipreqs
 *** [WARN] Auto-detection may be incomplete or incorrect
 *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
@@ -347,7 +347,7 @@ isolate one mechanism from the other):
 The "pipreqs (direct) command:" line is a DISPLAY-ONLY string (`HP_PIPREQS_CMD_LOG`, built for
 human readability as the CLI-equivalent form) -- the actual invocation, per this repo's own
 "never depend on console scripts during bootstrap" rule, is
-`"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath ... --ignore ...`, never the
+`"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath ... --encoding utf-8 --ignore ...`, never the
 bare `pipreqs` command shown on screen.
 
 **Not shown above because it doesn't apply to this run, not omitted:** since this app had no
@@ -2587,7 +2587,7 @@ including the "pipreqs (direct) command:" line's own display-only caveat, noted 
 Creating Python environment '<env>' -- this may take several minutes...
 [INFO] runtime.txt written: python-3.14.6
 [INFO] pipreqs 0.4.13 installed successfully; using it for dependency discovery.
-[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath "...\requirements.auto.txt" --ignore ".git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
+[INFO] pipreqs (direct) command: pipreqs . --force --mode compat --savepath "...\requirements.auto.txt" --encoding utf-8 --ignore ".git,.github,.venv,venv,env,.uv_env,build,dist,__pycache__,tests"
 [INFO] DEP_INSTALLED_CAPTURED=1
 [INFO] Environment snapshot written: ~environment.lock.txt
 [INFO] Building standalone executable -- this may take a minute or two...

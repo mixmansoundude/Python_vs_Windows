@@ -205,7 +205,12 @@ if ($normalized.Count -ge $expectedPipreqs.Count) {
     }
   }
 }
-$expectedCommand = $expectedPipreqs -join ' '
+# CLAUDE.md Item 63: pipreqs reads with the locale encoding unless told otherwise, and one undecodable
+# file aborts the whole scan, so the invocation must carry --encoding utf-8.
+$encodingIdx = [array]::IndexOf($normalized, '--encoding')
+$hasEncodingUtf8 = ($encodingIdx -ge 0) -and ($normalized.Count -gt ($encodingIdx + 1)) -and ($normalized[$encodingIdx + 1] -eq 'utf-8')
+$pipreqsOk = $pipreqsOk -and $hasEncodingUtf8
+$expectedCommand = ($expectedPipreqs -join ' ') + ' --encoding utf-8'
 $observedCommand = if ($normalized.Count -gt 0) { $normalized -join ' ' } else { '<missing>' }
 $details = [ordered]@{
   expected = $expectedPipreqs
@@ -215,6 +220,7 @@ $details = [ordered]@{
   source = $pipreqsSource
   hasModulePrefix = ($pipreqsLine -match '\-m\s+pipreqs\.pipreqs\b')
   hasIgnore = ($normalized -contains '--ignore')
+  hasEncodingUtf8 = $hasEncodingUtf8
   extraArgs = if ($normalized.Count -gt $expectedPipreqs.Count) { $normalized[$expectedPipreqs.Count..($normalized.Count-1)] } else { @() }
   message = "expected: $expectedCommand | observed: $observedCommand"
 }
