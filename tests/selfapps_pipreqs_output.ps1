@@ -27,7 +27,17 @@
 #                         dependencies are not promoted into the resolved dependency list, and
 #                         the bootstrap carries on (a failed scan never blocks the bootstrap).
 #
-# Each row also requires that the UTF-8 copy path was really used (summary note), so a run that
+#   Bootstrap 3 - PR #480 review: a clean project (no cp1252 file, so the scan runs in place) whose
+#                 old requirements.auto.txt is held open as in bootstrap 2, while pipreqs itself
+#                 crashes in every scan it attempts (REQUESTS_CA_BUNDLE points at a file that does not
+#                 exist, so pipreqs fails the moment it asks PyPI about colorama). Nothing then
+#                 replaces the old file, and the old dependencies must still not be installed.
+#     locked_crash      - the resolved list and requirements.txt hold no dependency from the old
+#                         file, the scan is reported failed, and a console [WARN] names
+#                         requirements.auto.txt. The row also requires the crash to be the expected
+#                         one (setup log shows the CA bundle error), or it proves nothing.
+#
+# Rows 1 and 2 also require that the UTF-8 copy path was really used (summary note), so a run that
 # scanned in place cannot pass without testing anything.
 #
 # derived requirement: the child bootstraps run with RUNNER_TEMP pointed at a folder private to this
@@ -37,7 +47,7 @@
 # Lane: real only (gating, uv-first), next to selfapps_pipreqs_encoding.ps1.
 #
 # Emits: self.pipreqs.output.readonly_replaced, self.pipreqs.output.temp_isolated,
-#        self.pipreqs.output.locked_named
+#        self.pipreqs.output.locked_named, self.pipreqs.output.locked_crash
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -84,6 +94,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.readonly_replaced'; req = 'REQ-005'; pass = $true; desc = 'read-only old requirements.auto.txt is replaced (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
     Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.temp_isolated'; req = 'REQ-005'; pass = $true; desc = 'scan temp folder is not shared (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
     Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.locked_named'; req = 'REQ-005'; pass = $true; desc = 'locked old requirements.auto.txt is named, scan reported failed (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.locked_crash'; req = 'REQ-005'; pass = $true; desc = 'locked old requirements.auto.txt is not installed when every scan crashes (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
     exit 0
 }
 
@@ -92,6 +103,7 @@ if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.readonly_replaced'; req = 'REQ-005'; pass = $false; desc = 'pipreqs output: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.temp_isolated'; req = 'REQ-005'; pass = $false; desc = 'pipreqs output: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.locked_named'; req = 'REQ-005'; pass = $false; desc = 'pipreqs output: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.pipreqs.output.locked_crash'; req = 'REQ-005'; pass = $false; desc = 'pipreqs output: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     exit 1
 }
 
@@ -101,7 +113,7 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 $cp1252 = [System.Text.Encoding]::GetEncoding('ISO-8859-1')
 
 function New-ScenarioDir {
-    param([string]$Name)
+    param([string]$Name, [switch]$Clean)
     $dir = Join-Path $here ('~selftest_pipreqs_output_' + $Name)
     if (Test-Path -LiteralPath $dir) {
         # A leftover read-only file from an earlier local run would block the delete.
@@ -111,8 +123,13 @@ function New-ScenarioDir {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     Copy-Item -Path $batchPath -Destination $dir -Force
     [System.IO.File]::WriteAllBytes((Join-Path $dir 'good.py'), $utf8.GetBytes("import colorama`n`nGREEN = colorama.Fore.GREEN`n"))
-    [System.IO.File]::WriteAllBytes((Join-Path $dir 'cp1252_nocookie.py'), $cp1252.GetBytes("NAME = 'caf" + [string][char]0x00E9 + "'`n"))
-    [System.IO.File]::WriteAllBytes((Join-Path $dir 'main.py'), $utf8.GetBytes("import good`nimport cp1252_nocookie`n`nprint('pipreqs-output-ok')`n"))
+    if ($Clean) {
+        # Every file is clean UTF-8, so the pre-check lets pipreqs scan the folder in place.
+        [System.IO.File]::WriteAllBytes((Join-Path $dir 'main.py'), $utf8.GetBytes("import good`n`nprint('pipreqs-output-ok')`n"))
+    } else {
+        [System.IO.File]::WriteAllBytes((Join-Path $dir 'cp1252_nocookie.py'), $cp1252.GetBytes("NAME = 'caf" + [string][char]0x00E9 + "'`n"))
+        [System.IO.File]::WriteAllBytes((Join-Path $dir 'main.py'), $utf8.GetBytes("import good`nimport cp1252_nocookie`n`nprint('pipreqs-output-ok')`n"))
+    }
     return $dir
 }
 
@@ -143,7 +160,10 @@ $env:HP_SKIP_EXE_SMOKERUN = '1'
 $readonlyPass = $false
 $tempPass = $false
 $lockedPass = $false
+$crashPass = $false
 $lock = $null
+$lock3 = $null
+$prevCaBundle = if (Test-Path Env:REQUESTS_CA_BUNDLE) { $env:REQUESTS_CA_BUNDLE } else { $null }
 try {
     # ---------------- Bootstrap 1: read-only old output, and a sentinel in the shared temp name ----
     $dir1 = New-ScenarioDir 'readonly'
@@ -255,7 +275,65 @@ try {
             log               = $log2
         }
     })
+
+    # ---------------- Bootstrap 3: old output held open, and every pipreqs scan crashes -------------
+    # pipreqs asks PyPI about any import it cannot find in the environment (colorama here). With
+    # REQUESTS_CA_BUNDLE pointing at a file that does not exist, requests refuses to make the call
+    # and pipreqs dies with a traceback, in the scan of the project and in the fallback scan alike.
+    # uv ignores that variable, so only pipreqs is affected. Nothing then replaces the old file.
+    $dir3 = New-ScenarioDir 'lockedcrash' -Clean
+    $auto3 = Join-Path $dir3 'requirements.auto.txt'
+    [System.IO.File]::WriteAllBytes($auto3, $utf8.GetBytes("six==1.16.0`r`n"))
+    $lock3 = [System.IO.File]::Open($auto3, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    $lockHeld3 = $true
+    $env:REQUESTS_CA_BUNDLE = Join-Path $tempRoot 'no-such-ca-bundle.pem'
+
+    $log3 = '~pipreqs_output_lockedcrash.log'
+    $exit3 = Invoke-Bootstrap $dir3 $log3
+
+    if ($null -eq $prevCaBundle) { Remove-Item Env:REQUESTS_CA_BUNDLE -ErrorAction SilentlyContinue } else { $env:REQUESTS_CA_BUNDLE = $prevCaBundle }
+    $lock3.Dispose()
+    $lock3 = $null
+
+    $summary3 = Read-TextOrEmpty (Join-Path $dir3 '~pipreqs.summary.txt')
+    $setup3 = Read-TextOrEmpty (Join-Path $dir3 '~setup.log')
+    $console3 = Read-TextOrEmpty (Join-Path $dir3 $log3)
+    $autoText3 = Read-TextOrEmpty $auto3
+    $resolvedText3 = Read-TextOrEmpty (Join-Path $dir3 '~dependency_resolved.txt')
+    $reqText3 = Read-TextOrEmpty (Join-Path $dir3 'requirements.txt')
+    $crashSeen3 = $setup3 -match 'Could not find a suitable TLS CA certificate bundle'
+    $inPlace3 = -not ($summary3 -match 'scanned a UTF-8 copy')
+    $stillOld3 = Test-ReqLine $autoText3 'six'
+    $resolvedHasSix3 = Test-ReqLine $resolvedText3 'six'
+    $reqHasSix3 = Test-ReqLine $reqText3 'six'
+    $phaseFailed3 = [regex]::IsMatch($summary3, '(?m)^Phase:\s+failed')
+    $consoleWarns3 = @($console3 -split "`r?`n" | Where-Object { $_ -match '\[WARN\]' })
+    $consoleNamesFile3 = @($consoleWarns3 | Where-Object { $_ -match 'requirements\.auto\.txt' }).Count -gt 0
+
+    $crashPass = $lockHeld3 -and $crashSeen3 -and $inPlace3 -and $stillOld3 -and (-not $resolvedHasSix3) -and (-not $reqHasSix3) -and $phaseFailed3 -and $consoleNamesFile3
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.pipreqs.output.locked_crash'
+        req     = 'REQ-005'
+        pass    = $crashPass
+        desc    = 'A locked old requirements.auto.txt is never installed when every scan crashes'
+        details = [ordered]@{
+            exitCode           = $exit3
+            lockHeld           = $lockHeld3
+            crashSeen          = $crashSeen3
+            scannedInPlace     = $inPlace3
+            oldFileUntouched   = $stillOld3
+            resolvedHasOldDep  = $resolvedHasSix3
+            requirementsHasOldDep = $reqHasSix3
+            summaryPhaseFailed = $phaseFailed3
+            consoleNamesFile   = $consoleNamesFile3
+            summaryPhase       = Get-Snippet (([regex]::Match($summary3, '(?m)^Phase:.*$')).Value) 160
+            consoleWarnCount   = $consoleWarns3.Count
+            log                = $log3
+        }
+    })
 } finally {
+    if ($null -ne $lock3) { $lock3.Dispose() }
+    if ($null -eq $prevCaBundle) { Remove-Item Env:REQUESTS_CA_BUNDLE -ErrorAction SilentlyContinue } else { $env:REQUESTS_CA_BUNDLE = $prevCaBundle }
     if ($null -ne $lock) { $lock.Dispose() }
     if ($null -eq $prevRunnerTemp) { Remove-Item Env:RUNNER_TEMP -ErrorAction SilentlyContinue } else { $env:RUNNER_TEMP = $prevRunnerTemp }
     # Only the folder private to this script is removed.
@@ -264,5 +342,5 @@ try {
     if ($null -eq $prevSkipExe) { Remove-Item Env:HP_SKIP_EXE_SMOKERUN -ErrorAction SilentlyContinue } else { $env:HP_SKIP_EXE_SMOKERUN = $prevSkipExe }
 }
 
-if (-not ($readonlyPass -and $tempPass -and $lockedPass)) { exit 1 }
+if (-not ($readonlyPass -and $tempPass -and $lockedPass -and $crashPass)) { exit 1 }
 exit 0

@@ -1899,6 +1899,16 @@ jobs:
             tests\~selftest_pipreqs_output_locked\~pipreqs.summary.txt
             tests/~selftest_pipreqs_output_locked/~dependency_resolved.txt
             tests\~selftest_pipreqs_output_locked\~dependency_resolved.txt
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_output_lockedcrash.log
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_output_lockedcrash.log
+            tests/~selftest_pipreqs_output_lockedcrash/~setup.log
+            tests\~selftest_pipreqs_output_lockedcrash\~setup.log
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs.summary.txt
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs.summary.txt
+            tests/~selftest_pipreqs_output_lockedcrash/~dependency_resolved.txt
+            tests\~selftest_pipreqs_output_lockedcrash\~dependency_resolved.txt
+            tests/~selftest_pipreqs_output_lockedcrash/requirements.txt
+            tests\~selftest_pipreqs_output_lockedcrash\requirements.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

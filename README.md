@@ -272,7 +272,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
     never delete each other's copy, and the copy is removed when the scan ends.
   - Test NDJSON rows: `self.pipreqs.encoding.curly_quote`, `.mixed_files`, `.never_no_imports`
     (`tests/selfapps_pipreqs_encoding.ps1`, `real` lane, gating); `self.pipreqs.output.readonly_replaced`,
-    `.temp_isolated`, `.locked_named` (`tests/selfapps_pipreqs_output.ps1`, `real` lane, gating).
+    `.temp_isolated`, `.locked_named`, `.locked_crash` (`tests/selfapps_pipreqs_output.ps1`, `real` lane, gating).
 
 ---
 
