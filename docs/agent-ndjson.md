@@ -732,7 +732,7 @@ self.postflight.runline.verbatim, self.postflight.runline.variants
 
 ## selfapps-pipreqs-encoding NDJSON rows (selfapps_pipreqs_encoding.ps1, real lane only, GATING)
 
-CLAUDE.md Item 63 regression test. One real bootstrap (skip hooks, so `main.py` never runs) over a
+Item 63 regression test (`docs/agent-closed-backlog.md`). One real bootstrap (skip hooks, so `main.py` never runs) over a
 folder holding the maintainer's real file shape (valid UTF-8, no coding cookie, U+201C and U+201D
 in raw-string regexes), an emoji file, a cp1252 file that declares its encoding, a cp1252 file with
 no cookie, and an unparseable file. `PYTHONUTF8=0` is set for the sub-bootstrap because Python

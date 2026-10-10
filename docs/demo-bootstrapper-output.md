@@ -348,7 +348,7 @@ The "pipreqs (direct) command:" line is a DISPLAY-ONLY string (`HP_PIPREQS_CMD_L
 human readability as the CLI-equivalent form) -- the actual invocation, per this repo's own
 "never depend on console scripts during bootstrap" rule, is
 `"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath ... --ignore ...`, never the
-bare `pipreqs` command shown on screen. Since CLAUDE.md Item 63 both the display line and the real
+bare `pipreqs` command shown on screen. Since Item 63 (`docs/agent-closed-backlog.md`) both the display line and the real
 invocation also carry `--encoding utf-8` right after `--savepath <target>`; the captured line above
 predates that change and is kept verbatim.
 

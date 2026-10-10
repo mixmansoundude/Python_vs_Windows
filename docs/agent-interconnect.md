@@ -633,7 +633,7 @@ without also short-circuiting before download is reached.
 
 ---
 
-## pipreqs pre-check and UTF-8 copy scan (`:pipreqs_precheck`, CLAUDE.md Item 63)
+## pipreqs pre-check and UTF-8 copy scan (`:pipreqs_precheck`, Item 63 in `docs/agent-closed-backlog.md`)
 
 **Touch the pipreqs invocation, the pre-check, the result handling, or the `pipreqs.flags` gate, must
 understand the others.** pipreqs 0.4.13 opens every `.py` with the locale encoding (cp1252 on Western
