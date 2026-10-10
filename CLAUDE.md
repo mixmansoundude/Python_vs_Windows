@@ -694,22 +694,14 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 63-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Item 62 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62 and 63 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. No maintainer decisions are open. Q1-Q9 are decided or retired (see Items 63, 65, 66, 67, 69, 71, 76 and 78).
+starting any of these. No maintainer decisions are open. Q1-Q9 are decided or retired (see Items 65, 66, 67, 69, 71, 76 and 78).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-- **Item 63 (mechanism and trigger Confirmed, small)**: pipreqs 0.4.13 aborts the whole
-  scan on one undecodable (cp1252 default) or unparseable `.py`, and the bootstrapper reports
-  that as "zero requirements: no imports found". Pass `--encoding utf-8`, pre-check each `.py`
-  (declared encoding, then parse; a decode error names no file), and scan a staged UTF-8 copy of
-  the files that pass, naming each one left out. Trigger confirmed 2026-10-09 on the maintainer's
-  folder: one valid UTF-8 file with no coding cookie holding U+201D (byte 0x9D, undefined in
-  cp1252) in smart-quote cleanup regexes; the regression fixture must contain U+201D. Also log
-  the crash reason in `~setup.log` (today only `~pipreqs.summary.txt` says it).
 - **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and

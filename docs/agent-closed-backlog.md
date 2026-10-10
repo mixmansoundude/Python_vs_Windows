@@ -3301,6 +3301,47 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Keep the quotes.** The check stays in CI as a regression guard against anyone changing the
   printed line (the `verbatim` row fails the script if it stops working in cmd).
 
+### Item 63 (closed 2026-10-10; PR #478)
+
+- **One unreadable `.py` no longer hides every import.** Symptom (Aug, confirmed again 2026-10-09 on
+  the maintainer's own folder): pipreqs 0.4.13 stopped the whole scan and the bootstrapper summarized
+  that as "zero requirements: no imports found". Cause: pipreqs opens each file with the locale
+  encoding (cp1252 on Western Windows before Python 3.15) outside its try block, so one valid UTF-8
+  file with no coding cookie holding U+201D (bytes `E2 80 9D`, 0x9D undefined in cp1252) raised a
+  bare `UnicodeDecodeError` that names no file. Fix: `tools/pipreqs_precheck.py`
+  (`HP_PIPREQS_PRECHECK`, run via `%HP_PY%` from `:pipreqs_precheck`) reads every `.py` first
+  (declared or detected encoding, then `ast.parse`); when something needs rewriting or must be left
+  out it writes a UTF-8 copy of the tree (re-encoded files, empty stubs for the unreadable ones so
+  their names stay local modules) and pipreqs scans that. Every pipreqs invocation now passes
+  `--encoding utf-8`, each file left out is named in a `[WARN]` line on the console and in
+  `~setup.log` (first 25, then a count), and a pipreqs `Traceback` is reported as a crash with its
+  log in `~setup.log` instead of "no imports found".
+- **Test-first, as required.** The scenario `tests/selfapps_pipreqs_encoding.ps1` (`real` lane,
+  gating; rows `self.pipreqs.encoding.curly_quote`, `.mixed_files`, `.never_no_imports`) landed alone
+  and was red in blocking CI (run `38016490842`, head `10893bd`): on `real` exactly those three rows
+  failed with `pyEncoding` `0 cp1252` and the real `UnicodeDecodeError ... byte 0x9d`; every other
+  lane was green and the diagnostics site published. After the fix (run `38024966657`, head
+  `4edb7ed`) the three rows are green on `real` (`encodingOk:true`; `mixed_files` names both left-out
+  files in the setup log and on the console, `warnCount` 4 = two files in each place), `real`,
+  `conda-full`, `cache` and `justme-test` have no failing rows, and the `uv` lane shows only its five
+  already-open rows (Item 35: `self.cascade.exec`, `self.exe.warnfix.venv_repair`; Item 80:
+  `self.exe.build.tiera`, `self.exe.tiera.hidden_skip`, `self.optbuild.offer`). The pre-check also
+  ran on every other bootstrap in the run and left nothing out (`0 left out` lines), so no existing
+  scenario changed. Unit coverage: `tests/test_pipreqs_precheck.py` (payload sync, exit codes, report
+  caps, SyntaxWarning suppression).
+- **Rule that came out of it.** A scenario about locale-encoding behavior must force
+  `PYTHONUTF8=0` and fail unless the interpreter reports `0 cp1252` (Python 3.15 defaults to UTF-8
+  mode, and uv now provisions 3.15), otherwise it passes without exercising the bug. See
+  `docs/agent-lessons-learned.md`'s pipreqs entry.
+- **Two CodeRabbit Major findings were traced and deliberately not fixed** (maintainer can overrule):
+  (a) the staging directory `%TEMP%\pipreqs_stage` is shared, as it already was for the older
+  robocopy fallback, so two different project folders reaching the pipreqs step within seconds, one
+  of them needing the UTF-8 copy, could collide; the lock is per project folder. Worst case is one
+  degraded scan with a logged warning. (b) if copying the staged output back to
+  `requirements.auto.txt` fails while an older `requirements.auto.txt` exists, the older file is
+  accepted as this run's output; that needs the file to be locked or read-only, which also stops the
+  direct scan from writing it, and the older staging fallback behaves the same way.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
