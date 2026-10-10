@@ -691,8 +691,9 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
   and the older fallback's good copy-back), since that scan wrote the file. `:after_pipreqs_run` calls
   `:pipreqs_output_blocked` just before the promotion guard so the console names the file on that path too;
   the subroutine warns once per run (`HP_PIPREQS_BLOCKED_WARNED`, reset with the other pipreqs state).
-  Known and not fixed: the older robocopy fallback writes `~pipreqs_stage.log` with a relative path after
-  `pushd` into the copy, so the log lands in the copy's folder, which is deleted, and the Traceback check in
+  Known and not fixed (Item 81 in CLAUDE.md): the older robocopy fallback writes `~pipreqs_stage.log` with a
+  relative path after `pushd` into the copy, so the log lands in the copy's folder, which is deleted: a failed
+  staging scan shows `<log tail unavailable>` in the summary, and the Traceback check in
   `:pipreqs_zero_requirements` cannot read it there.
 - Regression: `tests/selfapps_pipreqs_encoding.ps1` (`real` lane, gating, forces `PYTHONUTF8=0` because
   Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read) and
