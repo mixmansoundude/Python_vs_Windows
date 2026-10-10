@@ -817,6 +817,16 @@ jobs:
         run: |
           & tests\selfapps_collect.ps1
 
+      # derived requirement: CLAUDE.md Item 64 (README REQ-005.9) -- warnfix must not try to install
+      # stdlib names (multiprocessing), PyInstaller's own modules (pyimod02_importers) or other
+      # interpreters' modules (java, vms_lib). Gating on purpose (real/conda-full): this scenario is
+      # the regression test that the filter in tools/parse_warn.py must turn green.
+      - name: "Self-test: warnfix never installs stdlib or never-installable names (real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_warnfix_noise.ps1
+
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2023,6 +2033,16 @@ jobs:
             tests\~selftest_collect\dist\~collect_token.txt
             tests/~selftest_collect/dist/~collect_exe.log
             tests\~selftest_collect\dist\~collect_exe.log
+            tests/~selftest_warnfix_noise/~noise_bootstrap.log
+            tests\~selftest_warnfix_noise\~noise_bootstrap.log
+            tests/~selftest_warnfix_noise/~setup.log
+            tests\~selftest_warnfix_noise\~setup.log
+            tests/~selftest_warnfix_noise/~warnfile.txt
+            tests\~selftest_warnfix_noise\~warnfile.txt
+            tests/~selftest_warnfix_noise/dist/~noise_token.txt
+            tests\~selftest_warnfix_noise\dist\~noise_token.txt
+            tests/~selftest_warnfix_noise/dist/~noise_exe.log
+            tests\~selftest_warnfix_noise\dist\~noise_exe.log
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log
