@@ -579,6 +579,26 @@ result is just a variable I read" is enough.
 
 ---
 
+## pipreqs reads with the locale encoding; Python 3.15 hides that unless a test forces it off
+
+pipreqs 0.4.13 opens every `.py` with `encoding=None` (the locale encoding, cp1252 on Western Windows)
+outside its try block, so ONE undecodable file aborts the scan with a bare `UnicodeDecodeError` and no
+file name (CLAUDE.md Item 63). U+201D (bytes `E2 80 9D`, 0x9D undefined in cp1252) in a UTF-8 file is the
+common trigger. **Python 3.15 defaults to UTF-8 mode (PEP 686)**, and uv's newest managed CPython is now
+3.15, so on a lane that provisions 3.15 the same file scans cleanly and a regression test for this bug
+silently proves nothing. Any CI scenario about locale-encoding behavior must set `PYTHONUTF8=0` and record
+the interpreter's `sys.flags.utf8_mode` and `locale.getpreferredencoding(False)` in its row
+(`self.pipreqs.encoding.*` does both). A local Linux check proves nothing either: the C locale forces UTF-8
+mode there, so reproduce with `PYTHONUTF8=0 LC_ALL=C PYTHONCOERCECLOCALE=0`.
+
+Two smaller rules from the same fix: **`str.isalnum()` is Unicode-aware**, so a sanitizer that must emit
+ASCII for a batch echo needs `c.isascii() and c.isalnum()` (a file named with an accented letter slipped
+through the first version of `~pipreqs_precheck.py`'s `safe()`); and **`findstr /c:"[WARN]"` without `/l`
+may be read as a regex character class**, so use `/l` for any literal that contains `[`, `.`, `*`, `^`, `$`
+or `\`.
+
+---
+
 ## Heuristic dep-augmentation must strip pip extras before name lookup
 
 `HP_PREP_REQUIREMENTS`'s `names_lower` list must strip `[...]` (pip extras, e.g. `pandas[excel]`)

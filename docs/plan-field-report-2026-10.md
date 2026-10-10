@@ -239,6 +239,20 @@ the pre-check helper (new `tests/test_pipreqs_precheck.py`) pins the same cases 
 cp1252 Windows locale, including `b"\xe2\x80\x9d"` decoded under cp1252 raising and under UTF-8
 passing. The test lands first and must be red before the fix (rule in `AGENTS.md`).
 
+**As built (Item 63)**: `tools/pipreqs_precheck.py` (`HP_PIPREQS_PRECHECK`) implements the pre-check and
+staged copy exactly as described, and `:pipreqs_precheck` in `run_setup.bat` runs it before every pipreqs
+scan. Differences from the sketch above, all deliberate: (1) there is no "retry with the failed file
+excluded" step, because the pre-check names and removes every unreadable file up front, so a
+`Failed on file:` line can no longer happen for a `.py` the pre-check saw; (2) `--encoding utf-8` is passed on
+every invocation (direct, UTF-8 copy and the older robocopy fallback) and the `pipreqs.flags` gate requires
+it; (3) the `[WARN]` lines for left-out files reach the console as well as `~setup.log`, and the whole report
+is `~pipreqs_precheck.txt` (INFO lines capped at 100, WARN lines at 25 plus a remainder count); (4) a BOM file
+is re-encoded without its BOM, because `ast.parse` rejects a leading U+FEFF and so does pipreqs; (5) a crash
+(a `Traceback` in the pipreqs log) is now phase `failed` with its log copied into `~setup.log`, while a
+nonzero exit with no traceback keeps the old "zero requirements" success. The CI scenario forces
+`PYTHONUTF8=0` (Python 3.15 defaults to UTF-8 mode and would hide the bug) and records the interpreter's
+real encoding in its row.
+
 ### Item 64 -- warnfix treats noise as required: stdlib names, non-PyPI names, and library-internal optional imports (Confirmed, medium)
 
 **Symptoms (Aug)**: warnfix tried to install `multiprocessing`, `pyimod02_importers`, `java`,

@@ -741,7 +741,7 @@ no cookie, and an unparseable file. `PYTHONUTF8=0` is set for the sub-bootstrap 
 (`<utf8_mode> <preferred encoding>`, `0 cp1252` expected). Each row is judged on its own concern:
 `curly_quote` (the real file's import lands in `requirements.auto.txt`), `mixed_files` (emoji and
 declared-cp1252 imports land, the two unreadable files are each named in a `[WARN]` line of
-`~setup.log` and neither module name becomes a requirement), `never_no_imports` (neither
+`~setup.log` AND of the console capture and neither module name becomes a requirement), `never_no_imports` (neither
 `~pipreqs.summary.txt` nor `~setup.log` says "no imports found" for a folder that has imports).
 Skips with `skip=true, reason=non-windows-host` off Windows. Expected red on the commit that adds
 it (pipreqs 0.4.13 reads with the locale encoding and aborts on the first undecodable file) and

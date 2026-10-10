@@ -62,6 +62,7 @@ tests/
   selfapps_reqspec.ps1         Requirements specifier parsing tests (~= compatible release)
   selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests
   selfapps_pipgap.ps1          pip gap-fill safety net (runs run_setup.bat: conda misses opencv-python, pip fills it)
+  selfapps_pipreqs_encoding.ps1 Item 63: pipreqs scan survives unreadable files (real lane, gating; PYTHONUTF8=0)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -69,6 +70,7 @@ tests/
 tools/
   apply_patch.py               Unified/legacy diff parser and applier (used by inline_model_fix)
   find_entry.py                REQ-002 entry-point selector (canonical source for HP_FIND_ENTRY)
+  pipreqs_precheck.py          Item 63 pre-check/UTF-8 staging for pipreqs (canonical source for HP_PIPREQS_PRECHECK)
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
   check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
@@ -168,6 +170,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_HIDDEN_IMPORT_SCAN` | `~hidden_import_scan.py` | Slice 2 `--hidden-import` auto-recovery target selection for `:hidden_import_recover`; strict `ModuleNotFoundError` + installed-in-build-interpreter gate (a typo or `ImportError: cannot import name` costs zero rebuilds); capped at 3 rebuilds | `tools/hidden_import_scan.py` |
    | `HP_DLL_PCT_SANITIZE` | `~dll_pct_sanitize.ps1` | Strips `%`/`^` from env var values for `:log`'s UNQUOTED-echo safety in the native-DLL bundling loop; emitted as a real `.ps1` (invoked via `-File`) so cmd.exe's own tokenizer never parses its body -- see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry for why the earlier inline `-Command` version needed three separate fixes | `tools/dll_pct_sanitize.ps1` |
    | `HP_MIGRATE_GITATTRIBUTES` | `~migrate_gitattributes.ps1` | Item 60: replaces a pre-existing `.gitattributes`' stale `*.bat eol=crlf`/`*.cmd eol=crlf` lines with `-text`, in place, EXACT-line-match only so unrelated/user-hand-edited content is never touched; called unconditionally from `:merge_git_config` regardless of whether the append block ran or was skipped | `tools/migrate_gitattributes.ps1` |
+   | `HP_PIPREQS_PRECHECK` | `~pipreqs_precheck.py` | Item 63: reads every `.py` before pipreqs does (declared/detected encoding, then `ast.parse`); exit 0 = all clean UTF-8, scan in place; exit 10 = write a UTF-8 copy of the tree (re-encoded files, empty stubs for unreadable ones so their module names stay local) for pipreqs to scan; writes `~pipreqs_precheck.txt` (one INFO line per file capped at 100, a `[WARN]` per file left out capped at 25); every name it prints is stripped to a safe ASCII alphabet because the batch echoes it; run via `%HP_PY%` from `:pipreqs_precheck` | `tools/pipreqs_precheck.py` |
    | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays), decodes TOML escapes in double-quoted items, and rejects an array with no closing bracket; a nonzero result leaves no output file (the batch subroutine deletes it); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
@@ -270,6 +273,7 @@ Test files and what they cover:
 | `test_hidden_import_scan.py` | `--hidden-import` auto-recovery strictness (ModuleNotFoundError + installed only), typo/ImportError/circular-import non-triggers, tried-list loop guard, HP_HIDDEN_IMPORT_SCAN payload sync |
 | `test_check_ndjson_registry.py` | NDJSON registry cross-check: brace expansion, all four code emission patterns, log-file parsing, pass/fail end-to-end paths |
 | `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
+| `test_pipreqs_precheck.py` | Item 63: pipreqs pre-check (U+201D file ok as UTF-8, declared-cp1252 re-encoded, no-cookie cp1252 and unparseable left out, BOM, ignore folders, staged tree contents, exit codes 0/10/3, report hygiene and caps, `--encoding utf-8` on every pipreqs invocation, HP_PIPREQS_PRECHECK payload sync) |
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 
 ### Static harness (Windows-only, requires PowerShell)

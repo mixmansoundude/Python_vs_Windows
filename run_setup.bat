@@ -1499,7 +1499,7 @@ set "HP_PIPREQS_STAGE_COPY_LOG=~pipreqs_stage_copy.log"
 if exist "%HP_PIPREQS_STAGE_COPY_LOG%" del "%HP_PIPREQS_STAGE_COPY_LOG%"
 
 set "HP_PIPREQS_CANON=pipreqs . --force --mode compat --savepath requirements.auto.txt"
-set "HP_PIPREQS_CMD_LOG=pipreqs . --force --mode compat --savepath \"%HP_PIPREQS_TARGET%\"%HP_PIPREQS_IGNORE_DISPLAY%"
+set "HP_PIPREQS_CMD_LOG=pipreqs . --force --mode compat --savepath \"%HP_PIPREQS_TARGET%\" --encoding utf-8%HP_PIPREQS_IGNORE_DISPLAY%"
 call :log "[INFO] pipreqs (direct) command: %HP_PIPREQS_CMD_LOG%"
 echo Pipreqs command (direct): %HP_PIPREQS_CMD_LOG%
 
@@ -1552,7 +1552,13 @@ rem bootstrap sequencing issue. pipreqs is pinned to 0.4.13 permanently, so inte
 rem low-risk controlled assumption due to the pinned dependency version.
 rem pipreqs flags are locked by CI (pipreqs.flags gate).
 rem Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
+rem CLAUDE.md Item 63: encoding utf-8 is explicit because pipreqs otherwise reads with the locale encoding
+rem (cp1252 on Western Windows before Python 3.15), and the pre-check below has already confirmed every
+rem file it will read is valid UTF-8 or put them in a UTF-8 copy. When a copy was scanned the pre-check
+rem leaves its exit code in HP_PIPREQS_STAGED_RC and the direct run is skipped.
+call :pipreqs_precheck
+if defined HP_PIPREQS_STAGED_RC goto :pipreqs_staged_done
+"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_TARGET%" --encoding utf-8 --ignore "%HP_PIPREQS_IGNORE%" > "%HP_PIPREQS_DIRECT_LOG%" 2>&1
 :pipreqs_direct_done
 rem CLAUDE.md Item 51: capture %errorlevel% on the line immediately after the pipreqs
 rem invocation, before any intervening "set", matching the staging path's own already-safe
@@ -1562,6 +1568,10 @@ rem very likely never a live bug -- but the two call sites disagreeing on orderi
 rem reason, is what made this worth a live-cmd.exe check in the first place. Zero-risk either
 rem way; closes the inconsistency for good.
 set "HP_PIPREQS_RC=%errorlevel%"
+goto :pipreqs_rc_known
+:pipreqs_staged_done
+set "HP_PIPREQS_RC=%HP_PIPREQS_STAGED_RC%"
+:pipreqs_rc_known
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
   rem Zero imports are valid: pipreqs exits 0 and may intentionally leave requirements.auto.txt empty.
@@ -1589,16 +1599,12 @@ call :log "[DEBUG] pipreqs (direct) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%"
 rem Zero-requirements guard: accept non-zero exit only when output is absent or empty
 if not "%HP_PIPREQS_RC%"=="0" (
   if not exist "%HP_PIPREQS_TARGET_WORK%" (
-    set "HP_PIPREQS_PHASE_RESULT=ok"
     set "HP_PIPREQS_SUMMARY_PHASE=direct"
-    set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
-    goto :after_pipreqs_run
+    goto :pipreqs_zero_requirements
   ) else (
     for %%A in ("%HP_PIPREQS_TARGET_WORK%") do if %%~zA EQU 0 (
-      set "HP_PIPREQS_PHASE_RESULT=ok"
       set "HP_PIPREQS_SUMMARY_PHASE=direct"
-      set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
-      goto :after_pipreqs_run
+      goto :pipreqs_zero_requirements
     )
   )
 )
@@ -1633,11 +1639,11 @@ if errorlevel 1 (
     set "HP_PIPREQS_SUMMARY_NOTE=(pushd to staging root failed)"
     goto :after_pipreqs_run
 )
-call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"""
-echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%"
+call :log "[INFO] pipreqs (staging) command: pipreqs . --force --mode compat --savepath ""%HP_PIPREQS_STAGE_TARGET%"" --encoding utf-8"
+echo Pipreqs command (staging): pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" --encoding utf-8
 :: pipreqs flags are locked by CI (pipreqs.flags gate).
 :: Rationale: compat mode for deterministic output; force overwrite; write to requirements.auto.txt (separate from committed requirements).
-"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" > "%HP_PIPREQS_STAGE_LOG%" 2>&1
+"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" --encoding utf-8 > "%HP_PIPREQS_STAGE_LOG%" 2>&1
 set "HP_PIPREQS_RC=%errorlevel%"
 popd >nul 2>&1
 if errorlevel 1 call :log "[WARN] pipreqs staging: popd failed; CWD may not be restored."
@@ -1662,21 +1668,36 @@ call :log "[DEBUG] pipreqs (staging) rc=%HP_PIPREQS_RC% size=%HP_PIPREQS_SIZE%"
 rem Zero-requirements guard for staging path
 if not "%HP_PIPREQS_RC%"=="0" (
   if not exist "%HP_PIPREQS_STAGE_TARGET%" (
-    set "HP_PIPREQS_PHASE_RESULT=ok"
     set "HP_PIPREQS_SUMMARY_PHASE=staging"
-    set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
-    goto :after_pipreqs_run
+    goto :pipreqs_zero_requirements
   ) else (
     for %%A in ("%HP_PIPREQS_STAGE_TARGET%") do if %%~zA EQU 0 (
-      set "HP_PIPREQS_PHASE_RESULT=ok"
       set "HP_PIPREQS_SUMMARY_PHASE=staging"
-      set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
-      goto :after_pipreqs_run
+      goto :pipreqs_zero_requirements
     )
   )
 )
 if not defined HP_PIPREQS_SUMMARY_NOTE set "HP_PIPREQS_SUMMARY_NOTE=(staging pipreqs failed)"
 set "HP_PIPREQS_PHASE_RESULT=fail"
+goto :after_pipreqs_run
+
+:pipreqs_zero_requirements
+rem CLAUDE.md Item 63: pipreqs exits nonzero and leaves no requirements both when it found nothing and when
+rem it crashed, and the two used to be reported the same way. A Python traceback in its log means it
+rem crashed, and a crash is never reported as "no imports found". The log is appended to the setup log
+rem as a file, never through :log, because a traceback line can hold angle brackets that :log's unquoted
+rem echo would parse as redirection.
+findstr /l /c:"Traceback (most recent call last)" "%HP_PIPREQS_LAST_LOG%" >nul 2>&1
+if errorlevel 1 goto :pipreqs_zero_none
+set "HP_PIPREQS_PHASE_RESULT=fail"
+set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs crashed, see %HP_PIPREQS_LAST_LOG%)"
+call :log "[WARN] pipreqs crashed, so no requirements were detected. Its log is %HP_PIPREQS_LAST_LOG% in the app folder and is copied below."
+type "%HP_PIPREQS_LAST_LOG%" >> "%LOG%"
+goto :after_pipreqs_run
+:pipreqs_zero_none
+set "HP_PIPREQS_PHASE_RESULT=ok"
+set "HP_PIPREQS_SUMMARY_NOTE=(zero requirements: no imports found)"
+goto :after_pipreqs_run
 
 :after_pipreqs_run
 set "DEP_FINAL_COUNT=0"
@@ -5146,12 +5167,64 @@ set "HP_HINT_FILE="
 set "HP_HINT_FILE_NAME="
 set "HP_HINT_MOD="
 exit /b 0
+:pipreqs_precheck
+rem CLAUDE.md Item 63: pipreqs 0.4.13 opens every .py with the locale encoding (cp1252 on Western Windows
+rem before Python 3.15) and stops the whole scan at the first file it cannot decode or parse, so one
+rem stray curly quote cost a real project every import it had. ~pipreqs_precheck.py (HP_PIPREQS_PRECHECK)
+rem reads each .py first. Exit 0 means all are clean UTF-8 and the caller scans in place. Exit 10 means
+rem some file needs a UTF-8 rewrite or must be left out, so pipreqs scans a UTF-8 copy under the temp
+rem folder; the originals are never touched. Any other result leaves HP_PIPREQS_STAGED_RC undefined and
+rem the caller scans in place. No setlocal: the summary variables must persist to the caller.
+set "HP_PIPREQS_PRECHECK_RC="
+set "HP_PIPREQS_STAGED_RC="
+set "HP_PIPREQS_PRECHECK_REPORT=~pipreqs_precheck.txt"
+if exist "%HP_PIPREQS_PRECHECK_REPORT%" del "%HP_PIPREQS_PRECHECK_REPORT%" >nul 2>&1
+call :emit_from_base64 "~pipreqs_precheck.py" HP_PIPREQS_PRECHECK
+if errorlevel 1 goto :pipreqs_precheck_unavailable
+set "HP_TEMP_ROOT=%RUNNER_TEMP%"
+if not defined HP_TEMP_ROOT set "HP_TEMP_ROOT=%TEMP%"
+set "HP_PIPREQS_STAGE_ROOT=%HP_TEMP_ROOT%\pipreqs_stage"
+set "HP_PIPREQS_STAGE_TARGET=%HP_PIPREQS_STAGE_ROOT%\requirements.auto.txt"
+if exist "%HP_PIPREQS_STAGE_ROOT%" rd /s /q "%HP_PIPREQS_STAGE_ROOT%"
+"%HP_PY%" "~pipreqs_precheck.py" "." "%HP_PIPREQS_STAGE_ROOT%" "%HP_PIPREQS_IGNORE%" "%HP_PIPREQS_PRECHECK_REPORT%" >> "%LOG%" 2>&1
+set "HP_PIPREQS_PRECHECK_RC=%errorlevel%"
+if exist "~pipreqs_precheck.py" del "~pipreqs_precheck.py" >nul 2>&1
+rem The report holds one INFO line per file scanned plus a WARN line per file left out, all ASCII with
+rem no cmd metacharacters, so it can go to the log as a file. Only the WARN lines are shown on the console.
+if exist "%HP_PIPREQS_PRECHECK_REPORT%" type "%HP_PIPREQS_PRECHECK_REPORT%" >> "%LOG%"
+if "%HP_PIPREQS_PRECHECK_RC%"=="0" exit /b 0
+if "%HP_PIPREQS_PRECHECK_RC%"=="10" goto :pipreqs_precheck_stage
+:pipreqs_precheck_unavailable
+call :log "[WARN] pipreqs pre-check did not run, so the project is scanned as it is. One unreadable file can stop that scan."
+exit /b 0
+:pipreqs_precheck_stage
+findstr /b /l /c:"[WARN]" "%HP_PIPREQS_PRECHECK_REPORT%"
+call :log "[INFO] pipreqs pre-check: scanning a UTF-8 copy of the project. Your files are not changed."
+rem The copy run starts in the copy's folder, so its log needs an absolute path back into the app folder.
+set "HP_PIPREQS_DIRECT_LOG_ABS=%CD%\%HP_PIPREQS_DIRECT_LOG%"
+pushd "%HP_PIPREQS_STAGE_ROOT%" >nul 2>&1
+if errorlevel 1 goto :pipreqs_precheck_stage_fail
+:: pipreqs flags are locked by CI (pipreqs.flags gate).
+"%HP_PY%" -m pipreqs.pipreqs . --force --mode compat --savepath "%HP_PIPREQS_STAGE_TARGET%" --encoding utf-8 > "%HP_PIPREQS_DIRECT_LOG_ABS%" 2>&1
+set "HP_PIPREQS_STAGED_RC=%errorlevel%"
+popd >nul 2>&1
+set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_STAGE_TARGET%"
+set "HP_PIPREQS_SUMMARY_IGNORE="
+set "HP_PIPREQS_SUMMARY_NOTE=(scanned a UTF-8 copy of the project, see ~pipreqs_precheck.txt)"
+if not "%HP_PIPREQS_STAGED_RC%"=="0" exit /b 0
+if not exist "%HP_PIPREQS_STAGE_TARGET%" exit /b 0
+copy /y "%HP_PIPREQS_STAGE_TARGET%" "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
+if errorlevel 1 call :log "[WARN] pipreqs ran on the UTF-8 copy but its output could not be copied back."
+exit /b 0
+:pipreqs_precheck_stage_fail
+call :log "[WARN] pipreqs pre-check could not open its UTF-8 copy, so the project is scanned as it is."
+exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0
 set "HP_SUMMARY_PATH=%HP_JOB_SUMMARY%"
 if not defined HP_PIPREQS_SUMMARY_PHASE set "HP_PIPREQS_SUMMARY_PHASE=<unknown>"
 > "%HP_SUMMARY_PATH%" echo Interpreter: %HP_PY%
->> "%HP_SUMMARY_PATH%" echo Pipreqs command: pipreqs . --force --mode compat --savepath "%HP_PIPREQS_SUMMARY_CMD_PATH%"%HP_PIPREQS_SUMMARY_IGNORE%
+>> "%HP_SUMMARY_PATH%" echo Pipreqs command: pipreqs . --force --mode compat --savepath "%HP_PIPREQS_SUMMARY_CMD_PATH%" --encoding utf-8%HP_PIPREQS_SUMMARY_IGNORE%
 if defined HP_PIPREQS_SUMMARY_NOTE (
   >> "%HP_SUMMARY_PATH%" echo Phase: %HP_PIPREQS_SUMMARY_PHASE% %HP_PIPREQS_SUMMARY_NOTE%
 ) else (
@@ -5281,6 +5354,9 @@ set "HP_DLL_BUNDLE_SCAN=IiIiZGxsX2J1bmRsZV9zY2FuIHYxICgyMDI2LTA4LTA0KQpDb25kYSBu
 rem ~pep723_writeback.py promotes resolved dependencies into the entry file's
 rem PEP 723 header via uv add --script; see docs/plan-pep723-writeback.md Part 2.1.
 set "HP_PEP723_WRITEBACK=IiIicGVwNzIzX3dyaXRlYmFjayB2MSAoMjAyNi0wNy0xOCkKUHJvbW90ZXMgYSByZXNvbHZlZCBkZXBlbmRlbmN5IGxpc3QgaW50byB0aGUgZW50cnkgZmlsZSdzIFBFUCA3MjMgaGVhZGVyIHZpYQpgdXYgYWRkIC0tc2NyaXB0YC4gU2VlIGRvY3MvcGxhbi1wZXA3MjMtd3JpdGViYWNrLm1kIFBhcnQgMi4xIGZvciB0aGUgZnVsbCBkZXNpZ24uClVzYWdlOiBweXRob24gcGVwNzIzX3dyaXRlYmFjay5weSA8ZW50cnkucHk+IDx1dl9leGU+IDxweXRob25fZXhlPiA8cGFja2FnZXNfZmlsZT4KUHJpbnRzIG9uZSByZXN1bHQgbGluZSB0byBzdGRvdXQ6IE9LOjxuPiAvIFNLSVA6PHJlYXNvbj4gLyBFUlJPUjo8cmVhc29uPi4KIiIiCl9fdmVyc2lvbl9fID0gInBlcDcyM193cml0ZWJhY2sgdjEgKDIwMjYtMDctMTgpIgpfX2FsbF9fID0gWyJyZWFkX3BhY2thZ2VzIiwgInN0cmlwX3BlcDcyM19ibG9jayIsICJtYWluIl0KCmltcG9ydCBvcwppbXBvcnQgc3VicHJvY2VzcwppbXBvcnQgc3lzCgoKZGVmIHJlYWRfcGFja2FnZXMocGF0aCk6CiAgICAiIiJSZXR1cm4gYSBsaXN0IG9mIG5vbi1ibGFuaywgbm9uLWNvbW1lbnQgbGluZXMgZnJvbSBhIHBhY2thZ2VzIGZpbGUuIiIiCiAgICBwYWNrYWdlcyA9IFtdCiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKHBhdGgsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBmaDoKICAgICAgICAgICAgZm9yIGxpbmUgaW4gZmg6CiAgICAgICAgICAgICAgICBsaW5lID0gbGluZS5zdHJpcCgpCiAgICAgICAgICAgICAgICBpZiBub3QgbGluZSBvciBsaW5lLnN0YXJ0c3dpdGgoIiMiKToKICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgIyBwaXAgZGlyZWN0aXZlcyAoLWUsIC1yLCAtLWhhc2gsIC4uLikgZXhpdCAyIGZyb20gdXYncyBjbGFwCiAgICAgICAgICAgICAgICAjIHBhcnNlciBzYW1lIGFzIG1hbGZvcm1lZCBUT01MIC0tIGZpbHRlciBvciBtYWluKCkgd3JvbmdseQogICAgICAgICAgICAgICAgIyBzdHJpcHMgYSB2YWxpZCBoZWFkZXIuIFJlYWwgc3BlY3MgbmV2ZXIgc3RhcnQgd2l0aCAnLScuCiAgICAgICAgICAgICAgICBpZiBsaW5lLnN0YXJ0c3dpdGgoIi0iKToKICAgICAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICAgICAgcGFja2FnZXMuYXBwZW5kKGxpbmUpCiAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICBwYXNzCiAgICByZXR1cm4gcGFja2FnZXMKCgpkZWYgc3RyaXBfcGVwNzIzX2Jsb2NrKHRleHQpOgogICAgIiIiUmVtb3ZlIGFuIGV4aXN0aW5nICcjIC8vLyBzY3JpcHQnIC4uLiAnIyAvLy8nIGJsb2NrLCBsaW5lIGJ5IGxpbmUuCgogICAgQSBsaW5lLWJ5LWxpbmUgc3RhdGUgbWFjaGluZSwgbm90IGEgcmVnZXg6IGEgZ3JlZWR5IHJlZ2V4IHJpc2tzIHN0cmlwcGluZwogICAgY29kZSBhZnRlciB0aGUgYmxvY2ssIGFuZCBhIGxhenkgb25lIGNhbiBsZWF2ZSBhIHN0cmF5IGZlbmNlIGxpbmUgYmVoaW5kLAogICAgd2hpY2ggbmV3ZXIgdXYgdHJlYXRzIGFzIGEgaGFyZCBlcnJvciAoYXN0cmFsLXNoL3V2IzE5NTQ0KS4gVGhlIGNsb3NpbmcKICAgIGZlbmNlIG1hdGNoIHRvbGVyYXRlcyB0cmFpbGluZyB3aGl0ZXNwYWNlIChhc3RyYWwtc2gvdXYjMTA5MTgpLgogICAgIiIiCiAgICBsaW5lcyA9IHRleHQuc3BsaXRsaW5lcyhrZWVwZW5kcz1UcnVlKQogICAgb3V0ID0gW10KICAgIGluX2Jsb2NrID0gRmFsc2UKICAgIGZvciBsaW5lIGluIGxpbmVzOgogICAgICAgIHN0cmlwcGVkID0gbGluZS5yc3RyaXAoIlxyXG4iKQogICAgICAgIGlmIG5vdCBpbl9ibG9jayBhbmQgc3RyaXBwZWQgPT0gIiMgLy8vIHNjcmlwdCI6CiAgICAgICAgICAgIGluX2Jsb2NrID0gVHJ1ZQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIGlmIGluX2Jsb2NrOgogICAgICAgICAgICBpZiBzdHJpcHBlZC5yc3RyaXAoKSA9PSAiIyAvLy8iOgogICAgICAgICAgICAgICAgaW5fYmxvY2sgPSBGYWxzZQogICAgICAgICAgICBjb250aW51ZQogICAgICAgIG91dC5hcHBlbmQobGluZSkKICAgIHJldHVybiAiIi5qb2luKG91dCkKCgpkZWYgcnVuX3V2X2FkZChlbnRyeV9wYXRoLCB1dl9leGUsIHB5dGhvbl9leGUsIHBhY2thZ2VzKToKICAgICIiIkludm9rZSBgdXYgYWRkIC0tc2NyaXB0YCBvbmNlOyByZXR1cm4gKHJldHVybmNvZGUsIHN0ZGVycl90ZXh0KS4iIiIKICAgIGNtZCA9IFt1dl9leGUsICJhZGQiLCAiLS1zY3JpcHQiLCBlbnRyeV9wYXRoLCAiLXAiLCBweXRob25fZXhlXSArIHBhY2thZ2VzCiAgICB0cnk6CiAgICAgICAgIyBCb3VuZGVkIGxpa2Ugb3RoZXIgbmV0d29yay10b3VjaGluZyBoZWxwZXJzIGhlcmUgKGVtYmVkX3B5dmVyX2NoZWNrLnB5CiAgICAgICAgIyBzb2NrZXQgdGltZW91dCkgLS0gYSBzdGFsbGVkIHV2IGNhbGwgbXVzdCBub3QgaGFuZyB0aGUgYm9vdHN0cmFwLgogICAgICAgIHByb2MgPSBzdWJwcm9jZXNzLnJ1bihjbWQsIGNhcHR1cmVfb3V0cHV0PVRydWUsIHRleHQ9VHJ1ZSwgdGltZW91dD0xMjApCiAgICBleGNlcHQgc3VicHJvY2Vzcy5UaW1lb3V0RXhwaXJlZDoKICAgICAgICByZXR1cm4gMSwgInRpbWVvdXQiCiAgICAjIGFzdHJhbC1zaC91diMxNTk1NjogYSBiZW5pZ24gVklSVFVBTF9FTlYgbWlzbWF0Y2ggd2FybmluZyBjYW4gYXBwZWFyIG9uIHN0ZGVycgogICAgIyB3aXRoIGV4aXQgY29kZSAwIC0tIHN0ZGVyciB0ZXh0IGlzIG5ldmVyIGl0c2VsZiBhIGZhaWx1cmUgc2lnbmFsLCBvbmx5IHRoZQogICAgIyBwcm9jZXNzIHJldHVybiBjb2RlIGlzLgogICAgcmV0dXJuIHByb2MucmV0dXJuY29kZSwgcHJvYy5zdGRlcnIKCgpkZWYgbWFpbihhcmd2PU5vbmUpOgogICAgYXJncyA9IGxpc3Qoc3lzLmFyZ3ZbMTpdIGlmIGFyZ3YgaXMgTm9uZSBlbHNlIGFyZ3YpCiAgICBpZiBsZW4oYXJncykgPCA0OgogICAgICAgIHByaW50KCJFUlJPUjpiYWRfYXJncyIpCiAgICAgICAgcmV0dXJuIDEKICAgIGVudHJ5X3BhdGgsIHV2X2V4ZSwgcHl0aG9uX2V4ZSwgcGFja2FnZXNfZmlsZSA9IGFyZ3NbMF0sIGFyZ3NbMV0sIGFyZ3NbMl0sIGFyZ3NbM10KCiAgICBwYWNrYWdlcyA9IHJlYWRfcGFja2FnZXMocGFja2FnZXNfZmlsZSkKICAgIGlmIG5vdCBwYWNrYWdlczoKICAgICAgICBwcmludCgiU0tJUDpub19wYWNrYWdlcyIpCiAgICAgICAgcmV0dXJuIDAKCiAgICAjIEVuY29kaW5nIHByZS1jaGVjazogbmV2ZXIgaGFuZCB1diBhIGZpbGUgd2hvc2UgVVRGLTgtbmVzcyBpcyB1bmNvbmZpcm1lZC4KICAgIHRyeToKICAgICAgICB3aXRoIG9wZW4oZW50cnlfcGF0aCwgZW5jb2Rpbmc9InV0Zi04IikgYXMgZmg6CiAgICAgICAgICAgIGZoLnJlYWQoKQogICAgZXhjZXB0IChVbmljb2RlRGVjb2RlRXJyb3IsIE9TRXJyb3IpOgogICAgICAgIHByaW50KCJTS0lQOm5vbl91dGY4IikKICAgICAgICByZXR1cm4gMAoKICAgICMgRmlsZS1sb2NrIGNhbmFyeTogZGlhZ25vc3RpYy1xdWFsaXR5IG9ubHksIGdpdmVzIGEgY2xlYXJlciByZWFzb24gdGhhbiB0aGUKICAgICMgZ2VuZXJpYyBFUlJPUjp1dl9yY188bj4gcGF0aCBiZWxvdy4gQWNjZXB0ZWQgVE9DVE9VIHJhY2UgKGxvY2sgY291bGQgYmUKICAgICMgYWNxdWlyZWQgYWZ0ZXIgdGhpcyBjaGVjaykgZmFsbHMgYmFjayB0byB0aGF0IHNhbWUgc2FmZSBnZW5lcmljIHBhdGguCiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKGVudHJ5X3BhdGgsICJyK2IiKToKICAgICAgICAgICAgcGFzcwogICAgZXhjZXB0IFBlcm1pc3Npb25FcnJvcjoKICAgICAgICBwcmludCgiU0tJUDpmaWxlX2xvY2tlZCIpCiAgICAgICAgcmV0dXJuIDAKICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgIHBhc3MKCiAgICBpZiBlbnRyeV9wYXRoLmVuZHN3aXRoKCIucHkiKSBhbmQgX2xvY2tfc2lkZWNhcl9leGlzdHMoZW50cnlfcGF0aCk6CiAgICAgICAgcHJpbnQoIlNLSVA6bG9ja2ZpbGUiKQogICAgICAgIHJldHVybiAwCgogICAgcmMsIF9zdGRlcnIgPSBydW5fdXZfYWRkKGVudHJ5X3BhdGgsIHV2X2V4ZSwgcHl0aG9uX2V4ZSwgcGFja2FnZXMpCiAgICBpZiByYyA9PSAwOgogICAgICAgIHByaW50KCJPSzolZCIgJSBsZW4ocGFja2FnZXMpKQogICAgICAgIHJldHVybiAwCiAgICBpZiByYyA9PSAyOgogICAgICAgICMgYXN0cmFsLXNoL3V2IzEwOTE4IC8gIzE5NTQ0OiBleGl0IDIgaXMgdXYncyBzaWduYWwgdGhlIGV4aXN0aW5nIGhlYWRlcgogICAgICAgICMgaXMgdW5wYXJzZWFibGUgVE9NTCAtLSB0aGUgb25lIGNhc2Ugd2hlcmUgc3RhcnRpbmcgb3ZlciBpcyBjb3JyZWN0LgogICAgICAgICMgQW55IG90aGVyIGV4aXQgY29kZSBtdXN0IG5vdCBzdHJpcCBhbnl0aGluZy4KICAgICAgICB0cnk6CiAgICAgICAgICAgICMgbmV3bGluZT0iIiBrZWVwcyBDUkxGIGludGFjdCBvbiByZWFkIC0tIHdpdGhvdXQgaXQsIGJvdGggdGhlCiAgICAgICAgICAgICMgc3RyaXBwZWQgd3JpdGUgYW5kIHRoZSByZXN0b3JlLW9uLWRvdWJsZS1mYWlsdXJlIHdyaXRlIGJlbG93CiAgICAgICAgICAgICMgd291bGQgc2lsZW50bHkgbm9ybWFsaXplIHRoZSB3aG9sZSBmaWxlJ3MgbGluZSBlbmRpbmdzIHRvIExGLgogICAgICAgICAgICB3aXRoIG9wZW4oZW50cnlfcGF0aCwgInIiLCBlbmNvZGluZz0idXRmLTgiLCBlcnJvcnM9Imlnbm9yZSIsIG5ld2xpbmU9IiIpIGFzIGZoOgogICAgICAgICAgICAgICAgb3JpZ2luYWwgPSBmaC5yZWFkKCkKICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgcHJpbnQoIkVSUk9SOnN0cmlwX3JldHJ5X2ZhaWxlZDpyZWFkIikKICAgICAgICAgICAgcmV0dXJuIDEKICAgICAgICBzdHJpcHBlZCA9IHN0cmlwX3BlcDcyM19ibG9jayhvcmlnaW5hbCkKICAgICAgICB0cnk6CiAgICAgICAgICAgIHdpdGggb3BlbihlbnRyeV9wYXRoLCAidyIsIGVuY29kaW5nPSJ1dGYtOCIsIG5ld2xpbmU9IiIpIGFzIGZoOgogICAgICAgICAgICAgICAgZmgud3JpdGUoc3RyaXBwZWQpCiAgICAgICAgZXhjZXB0IE9TRXJyb3I6CiAgICAgICAgICAgIHByaW50KCJFUlJPUjpzdHJpcF9yZXRyeV9mYWlsZWQ6d3JpdGUiKQogICAgICAgICAgICByZXR1cm4gMQogICAgICAgIHJjMiwgX3N0ZGVycjIgPSBydW5fdXZfYWRkKGVudHJ5X3BhdGgsIHV2X2V4ZSwgcHl0aG9uX2V4ZSwgcGFja2FnZXMpCiAgICAgICAgaWYgcmMyID09IDA6CiAgICAgICAgICAgIHByaW50KCJPSzolZCIgJSBsZW4ocGFja2FnZXMpKQogICAgICAgICAgICByZXR1cm4gMAogICAgICAgICMgUmV0cnkgYWxzbyBmYWlsZWQgLS0gcmVzdG9yZSBvcmlnaW5hbCAoc3RpbGwtbWFsZm9ybWVkKSBjb250ZW50IHJhdGhlcgogICAgICAgICMgdGhhbiBsZWF2ZSB0aGUgZmlsZSBwZXJtYW5lbnRseSBzdHJpcHBlZCAobWlycm9ycyBQVlcgUXVpY2tTdGFydCdzIG93bgogICAgICAgICMgcmVzdG9yZS1vbi1kb3VibGUtZmFpbHVyZSBndWFyYW50ZWUpLgogICAgICAgIHRyeToKICAgICAgICAgICAgd2l0aCBvcGVuKGVudHJ5X3BhdGgsICJ3IiwgZW5jb2Rpbmc9InV0Zi04IiwgbmV3bGluZT0iIikgYXMgZmg6CiAgICAgICAgICAgICAgICBmaC53cml0ZShvcmlnaW5hbCkKICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgcGFzcwogICAgICAgIHByaW50KCJFUlJPUjpzdHJpcF9yZXRyeV9mYWlsZWQ6JWQiICUgcmMyKQogICAgICAgIHJldHVybiAxCiAgICBwcmludCgiRVJST1I6dXZfcmNfJWQiICUgcmMpCiAgICByZXR1cm4gMQoKCmRlZiBfbG9ja19zaWRlY2FyX2V4aXN0cyhlbnRyeV9wYXRoKToKICAgIHJldHVybiBvcy5wYXRoLmV4aXN0cyhlbnRyeV9wYXRoICsgIi5sb2NrIikKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgc3lzLmV4aXQobWFpbigpKQo="
+rem ~pipreqs_precheck.py (CLAUDE.md Item 63) reads each .py before pipreqs does and, when any file is not
+rem plain UTF-8, writes a UTF-8 copy of the project for pipreqs to scan; see :pipreqs_precheck.
+set "HP_PIPREQS_PRECHECK=IyBBU0NJSSBvbmx5LiBJdGVtIDYzOiBwaXByZXFzIDAuNC4xMyBvcGVucyBldmVyeSAucHkgd2l0aCB0aGUgbG9jYWxlIGVuY29kaW5nIChjcDEyNTIgb24gV2VzdGVybgojIFdpbmRvd3MgYmVmb3JlIFB5dGhvbiAzLjE1KSBhbmQgYWJvcnRzIHRoZSB3aG9sZSBzY2FuIG9uIHRoZSBmaXJzdCBmaWxlIGl0IGNhbm5vdCBkZWNvZGUgb3IKIyBwYXJzZSwgc28gb25lIHN0cmF5IFUrMjAxRCBpbiBhIHJlZ2V4IGxpbmUgY29zdHMgdGhlIHByb2plY3QgZXZlcnkgaW1wb3J0IGl0IGhhcy4gQ2hlY2sgZWFjaAojIC5weSBmaXJzdC4gSWYgYWxsIGFyZSBjbGVhbiBVVEYtOCB0aGUgY2FsbGVyIHNjYW5zIGluIHBsYWNlOyBvdGhlcndpc2Ugd3JpdGUgYSBVVEYtOCBjb3B5IG9mIHRoZQojIHRyZWUgZm9yIHBpcHJlcXMgdG8gc2NhbjogcmUtZW5jb2RhYmxlIGZpbGVzIGFyZSByZS1lbmNvZGVkLCB1bnJlYWRhYmxlIGZpbGVzIGJlY29tZSBlbXB0eSBzdHVicwojIChwaXByZXFzIHRyZWF0cyBhbnkgLnB5IGJhc2VuYW1lIGluIHRoZSBzY2FubmVkIHRyZWUgYXMgYSBsb2NhbCBtb2R1bGUsIHNvIHRoZSBzdHViIGtlZXBzIHRoZQojIGZpbGUncyBvd24gbW9kdWxlIG5hbWUgb3V0IG9mIHRoZSByZXF1aXJlbWVudHMgd2hpbGUgYWRkaW5nIG5vIGltcG9ydHMpLgojIHVzYWdlOiBwaXByZXFzX3ByZWNoZWNrLnB5IFNSQyBTVEFHRSBJR05PUkVfQ1NWIFJFUE9SVCAgIGV4aXQgMCBpbiBwbGFjZSwgMTAgc3RhZ2VkLCAzIGVycm9yCmltcG9ydCBhc3QsIGlvLCBvcywgc3lzLCB0b2tlbml6ZQoKIyBTYW1lIGRpcmVjdG9yeSBuYW1lcyBwaXByZXFzIDAuNC4xMyBwcnVuZXMgb24gaXRzIG93bjsgSUdOT1JFX0NTViBpcyB0aGUgY2FsbGVyJ3MgLS1pZ25vcmUgbGlzdC4KU0tJUCA9IHsiLmhnIiwgIi5zdm4iLCAiLmdpdCIsICIudG94IiwgIl9fcHljYWNoZV9fIiwgImVudiIsICJ2ZW52In0KQk9NID0gY2hyKDB4RkVGRikKTUFYX1dBUk4gPSAyNQpNQVhfSU5GTyA9IDEwMAoKCmRlZiBzYWZlKHRleHQpOgogICAgcmV0dXJuICIiLmpvaW4oYyBpZiAoYy5pc2FzY2lpKCkgYW5kIGMuaXNhbG51bSgpKSBvciBjIGluICIgLl8tfi9cXCIgZWxzZSAiPyIgZm9yIGMgaW4gdGV4dCkKCgpkZWYgY2hlY2tfZmlsZShwYXRoKToKICAgICIiIlJldHVybiAoc3RhdGUsIHRleHQsIGVuY29kaW5nLCB3aHkpOyBzdGF0ZSBpcyBvaywgcmVlbmMgKG5lZWRzIGEgVVRGLTggcmV3cml0ZSkgb3IgYmFkLiIiIgogICAgdHJ5OgogICAgICAgIHdpdGggb3BlbihwYXRoLCAicmIiKSBhcyBmaDoKICAgICAgICAgICAgcmF3ID0gZmgucmVhZCgpCiAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICByZXR1cm4gImJhZCIsIE5vbmUsICIiLCAiY2Fubm90IGJlIHJlYWQiCiAgICB0cnk6CiAgICAgICAgdGV4dCwgZW5jID0gcmF3LmRlY29kZSgidXRmLTgiKSwgInV0Zi04IgogICAgZXhjZXB0IFVuaWNvZGVEZWNvZGVFcnJvcjoKICAgICAgICB0cnk6CiAgICAgICAgICAgIGVuYyA9IHRva2VuaXplLmRldGVjdF9lbmNvZGluZyhpby5CeXRlc0lPKHJhdykucmVhZGxpbmUpWzBdCiAgICAgICAgICAgIHRleHQgPSByYXcuZGVjb2RlKGVuYykKICAgICAgICBleGNlcHQgKFN5bnRheEVycm9yLCBVbmljb2RlRGVjb2RlRXJyb3IsIExvb2t1cEVycm9yKToKICAgICAgICAgICAgcmV0dXJuICJiYWQiLCBOb25lLCAiIiwgIm5vdCB2YWxpZCBVVEYtOCBhbmQgbm8gcmVhZGFibGUgY29kaW5nIGRlY2xhcmF0aW9uIgogICAgc3RhdGUgPSAib2siCiAgICBpZiBlbmMgIT0gInV0Zi04IjoKICAgICAgICBzdGF0ZSA9ICJyZWVuYyIKICAgIGVsaWYgdGV4dC5zdGFydHN3aXRoKEJPTSk6CiAgICAgICAgIyBhc3QucGFyc2UgcmVqZWN0cyBhIGxlYWRpbmcgQk9NIGNoYXJhY3Rlciwgc28gcGlwcmVxcyB3b3VsZCB0b28KICAgICAgICB0ZXh0LCBzdGF0ZSwgZW5jID0gdGV4dFsxOl0sICJyZWVuYyIsICJ1dGYtOC1ib20iCiAgICB0cnk6CiAgICAgICAgYXN0LnBhcnNlKHRleHQpCiAgICBleGNlcHQgKFN5bnRheEVycm9yLCBWYWx1ZUVycm9yLCBNZW1vcnlFcnJvciwgUmVjdXJzaW9uRXJyb3IpIGFzIGV4YzoKICAgICAgICByZXR1cm4gImJhZCIsIE5vbmUsICIiLCAiZG9lcyBub3QgcGFyc2UsICIgKyB0eXBlKGV4YykuX19uYW1lX18KICAgIHJldHVybiBzdGF0ZSwgdGV4dCwgZW5jLCAiIgoKCmRlZiBtYWluKHNyYywgc3RhZ2UsIGlnbm9yZV9jc3YsIHJlcG9ydCk6CiAgICBza2lwID0gU0tJUCB8IHNldCh4IGZvciB4IGluIGlnbm9yZV9jc3Yuc3BsaXQoIiwiKSBpZiB4KQogICAgZm91bmQsIGRpcnNfc2Vlbiwgb3RoZXIgPSBbXSwgW10sIDAKICAgIGZvciByb290LCBkaXJzLCBmaWxlcyBpbiBvcy53YWxrKHNyYywgZm9sbG93bGlua3M9VHJ1ZSk6CiAgICAgICAgZGlyc1s6XSA9IHNvcnRlZChkIGZvciBkIGluIGRpcnMgaWYgZCBub3QgaW4gc2tpcCkKICAgICAgICBkaXJzX3NlZW4uYXBwZW5kKG9zLnBhdGgucmVscGF0aChyb290LCBzcmMpKQogICAgICAgIGZvciBuYW1lIGluIHNvcnRlZChmaWxlcyk6CiAgICAgICAgICAgIGlmIG9zLnBhdGguc3BsaXRleHQobmFtZSlbMV0gIT0gIi5weSI6CiAgICAgICAgICAgICAgICBvdGhlciArPSAxCiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICByZWwgPSBvcy5wYXRoLm5vcm1wYXRoKG9zLnBhdGguam9pbihvcy5wYXRoLnJlbHBhdGgocm9vdCwgc3JjKSwgbmFtZSkpCiAgICAgICAgICAgIGZvdW5kLmFwcGVuZCgocmVsLCkgKyBjaGVja19maWxlKG9zLnBhdGguam9pbihyb290LCBuYW1lKSkpCiAgICBsaW5lcywgbGVmdCwgbGlzdGVkLCBpbmZvcyA9IFtdLCAwLCAwLCAwCiAgICBmb3IgcmVsLCBzdGF0ZSwgdGV4dCwgZW5jLCB3aHkgaW4gZm91bmQ6CiAgICAgICAgaWYgc3RhdGUgPT0gImJhZCI6CiAgICAgICAgICAgIGxlZnQgKz0gMQogICAgICAgICAgICBpZiBsaXN0ZWQgPCBNQVhfV0FSTjoKICAgICAgICAgICAgICAgIGxpc3RlZCArPSAxCiAgICAgICAgICAgICAgICBsaW5lcy5hcHBlbmQoIltXQVJOXSBwaXByZXFzIHByZS1jaGVjazogbGVmdCBvdXQgJXMgKCVzKTsgaXRzIGltcG9ydHMgYXJlIG5vdCBzY2FubmVkIGFuZCB0aGUgZGV0ZWN0ZWQgcmVxdWlyZW1lbnRzIG1heSBiZSBpbmNvbXBsZXRlLiIgJSAoc2FmZShyZWwpLCB3aHkpKQogICAgICAgIGVsaWYgaW5mb3MgPCBNQVhfSU5GTzoKICAgICAgICAgICAgaW5mb3MgKz0gMQogICAgICAgICAgICBsaW5lcy5hcHBlbmQoIltJTkZPXSBwaXByZXFzIHByZS1jaGVjazogJXMgZW5jb2Rpbmc9JXMgcGFyc2VkPXllcyIgJSAoc2FmZShyZWwpLCBlbmMpKQogICAgaWYgbGVmdCA+IGxpc3RlZDoKICAgICAgICBsaW5lcy5hcHBlbmQoIltXQVJOXSBwaXByZXFzIHByZS1jaGVjazogJWQgbW9yZSBmaWxlKHMpIGxlZnQgb3V0LCBub3QgbGlzdGVkIGhlcmUuIiAlIChsZWZ0IC0gbGlzdGVkKSkKICAgIHN0YWdlZCA9IHN1bSgxIGZvciBmIGluIGZvdW5kIGlmIGZbMV0gPT0gInJlZW5jIikKICAgIGxpbmVzLmFwcGVuZCgiW0lORk9dIHBpcHJlcXMgcHJlLWNoZWNrOiAlZCAucHkgZmlsZShzKSwgJWQgcmUtZW5jb2RlZCBhcyBVVEYtOCwgJWQgbGVmdCBvdXQsICVkIG90aGVyIGZpbGUocykgbm90IHNjYW5uZWQuIiAlIChsZW4oZm91bmQpLCBzdGFnZWQsIGxlZnQsIG90aGVyKSkKICAgIGNvZGUgPSAxMCBpZiBzdGFnZWQgb3IgbGVmdCBlbHNlIDAKICAgIGlmIGNvZGU6CiAgICAgICAgZm9yIHJlbF9kaXIgaW4gZGlyc19zZWVuOgogICAgICAgICAgICBvcy5tYWtlZGlycyhvcy5wYXRoLmpvaW4oc3RhZ2UsIHJlbF9kaXIpLCBleGlzdF9vaz1UcnVlKQogICAgICAgIGZvciByZWwsIHN0YXRlLCB0ZXh0LCBlbmMsIHdoeSBpbiBmb3VuZDoKICAgICAgICAgICAgd2l0aCBvcGVuKG9zLnBhdGguam9pbihzdGFnZSwgcmVsKSwgIndiIikgYXMgb3V0OgogICAgICAgICAgICAgICAgaWYgc3RhdGUgPT0gInJlZW5jIjoKICAgICAgICAgICAgICAgICAgICBvdXQud3JpdGUodGV4dC5lbmNvZGUoInV0Zi04IikpCiAgICAgICAgICAgICAgICBlbGlmIHN0YXRlID09ICJvayI6CiAgICAgICAgICAgICAgICAgICAgd2l0aCBvcGVuKG9zLnBhdGguam9pbihzcmMsIHJlbCksICJyYiIpIGFzIGZoOgogICAgICAgICAgICAgICAgICAgICAgICBvdXQud3JpdGUoZmgucmVhZCgpKQogICAgd2l0aCBvcGVuKHJlcG9ydCwgInciKSBhcyBmaDoKICAgICAgICBmaC53cml0ZSgiXG4iLmpvaW4obGluZXMpICsgIlxuIikKICAgIHJldHVybiBjb2RlCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIHRyeToKICAgICAgICBzeXMuZXhpdChtYWluKCpzeXMuYXJndlsxOjVdKSkKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZXhjOgogICAgICAgIHN5cy5zdGRlcnIud3JpdGUoInBpcHJlcXNfcHJlY2hlY2sgZmFpbGVkOiAlc1xuIiAlIHR5cGUoZXhjKS5fX25hbWVfXykKICAgICAgICBzeXMuZXhpdCgzKQo="
 exit /b 0
 :log
 rem derived requirement (CLAUDE.md Item 42, lever 1): DEBUG/TRACE/INSTALL-tagged lines are
