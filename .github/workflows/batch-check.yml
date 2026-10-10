@@ -1116,6 +1116,17 @@ jobs:
         run: |
           & tests\selfapps_pipreqs_encoding.ps1
 
+      # derived requirement: CLAUDE.md Item 63 follow-up (PR #478 review) -- the pipreqs scan must
+      # never accept an old requirements.auto.txt as this run's result when it cannot be replaced,
+      # and must not share its temp folder with another project's scan. Gating on purpose (real
+      # lane), same as the encoding scenario above; these rows are the regression test the fix
+      # must turn green.
+      - name: "Self-test: pipreqs output file and scan temp folder (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pipreqs_output.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh

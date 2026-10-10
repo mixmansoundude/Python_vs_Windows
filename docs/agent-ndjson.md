@@ -752,6 +752,28 @@ green once the pre-check and staged UTF-8 copy land.
 self.pipreqs.encoding.curly_quote, self.pipreqs.encoding.mixed_files, self.pipreqs.encoding.never_no_imports
 ```
 
+## selfapps-pipreqs-output NDJSON rows (selfapps_pipreqs_output.ps1, real lane only, GATING)
+
+Item 63 follow-up regression test (PR #478 review; `docs/agent-closed-backlog.md`). Two real
+bootstraps (skip hooks) over a folder with `good.py` (imports colorama), a cp1252 file with no
+coding cookie (forces the UTF-8 copy scan) and `main.py`. Every row also requires the summary to
+say `scanned a UTF-8 copy`, so a run that scanned in place cannot pass without testing anything.
+Bootstrap 1 seeds a READ-ONLY old `requirements.auto.txt` listing `six` and a sentinel file in the
+fixed temp folder name `%RUNNER_TEMP%\pipreqs_stage` (standing in for another project's scan):
+`readonly_replaced` (the file now lists colorama and no longer lists six), `temp_isolated` (the
+sentinel survives and the scan leaves no `pipreqs_stage_*` folder of its own behind). Bootstrap 2
+holds the old file open from the test process (`FileShare.Read`, so it can be read but neither
+deleted nor overwritten): `locked_named` (summary `Phase: failed`, a console `[WARN]` line names
+`requirements.auto.txt`, nothing says "no imports found", the bootstrap carries on). Skips with
+`skip=true, reason=non-windows-host` off Windows. Expected red on the commit that adds it (the
+copy-back failure was only a log line and the old file was accepted; the temp folder name was
+fixed) and green once the scan clears the old output first, fails loudly on a copy-back failure
+and uses a per-run temp folder name.
+
+```
+self.pipreqs.output.readonly_replaced, self.pipreqs.output.temp_isolated, self.pipreqs.output.locked_named
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
