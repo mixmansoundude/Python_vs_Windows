@@ -791,6 +791,19 @@ the original symptom (see that doc's "CI-first testing policy").
   the two-layer rule in `docs/agent-lessons-learned.md`). Related: the "Embed version table"
   periodic check below, since `EMBED_PYTHON_TABLE` stops at 3.14 and 3.15.0 now exists.
 
+### Item 81: the older pipreqs staging fallback loses its own log (filed 2026-10-10, found while closing PR #480)
+
+- **Item 81 (Confirmed in CI output, tiny, low priority)**: `HP_PIPREQS_STAGE_LOG` is the relative name
+  `~pipreqs_stage.log` (`run_setup.bat` ~1498) and the older staging scan (~1655) redirects into it after
+  `pushd` into the copy, so the log is written inside the copy, which `:after_pipreqs_run` deletes. When
+  the staging scan fails, `~pipreqs.summary.txt` therefore ends with `<log tail unavailable>` (seen in the
+  `locked_crash` scenario's summary, run `38073463840`) and the setup log has no traceback, so the user
+  cannot see why it failed. The same missing log means `:pipreqs_zero_requirements` cannot detect a crash on
+  this path; that guard is only reached when the staged result is missing or empty, which is unlikely
+  because the copy carries the direct scan's populated result along. Slices, test first: (1) extend
+  `locked_crash` to require a traceback line in the summary or setup log; (2) make the log path absolute.
+  Detail: `docs/agent-interconnect.md`'s pipreqs pre-check entry.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context

@@ -3352,6 +3352,37 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   for the expected reasons (`oldSixStillIn:true` with no `colorama`; `sentinelSurvived:false`;
   `summaryPhaseFailed:false` and `consoleNamesFile:false` while the old file stayed locked), the
   `encoding` rows stayed green, and no other lane showed a new failing row.
+- **Follow-up, third review finding (same PR): a delete that failed was not remembered.** CodeRabbit
+  pointed out that when the old `requirements.auto.txt` is held open, the delete before the scan fails,
+  and if every scan then crashes no copy-back ever runs, so `HP_PIPREQS_AUTO_UNTRUSTED` stayed unset and
+  the old list was promoted to `requirements.txt` and installed. Fixed: the flag is also set when the
+  delete leaves the file in place, a scan that exits 0 clears it (that scan wrote the file),
+  `:after_pipreqs_run` calls `:pipreqs_output_blocked` just before the promotion guard so the console names
+  the file on this path too, and the console warning is printed once per run with wording that no longer
+  claims the scan finished.
+- **Third-finding test-first evidence.** Row `self.pipreqs.output.locked_crash` (clean folder, old file
+  `six==1.16.0` held with `FileShare.Read`, `REQUESTS_CA_BUNDLE` pointing at a missing file so every
+  pipreqs scan dies in its PyPI lookup) was red alone on `real` in two blocking runs. `38055499009` (head
+  `322eede`): `resolvedHasOldDep:true`, `requirementsHasOldDep:true`, `consoleNamesFile:false`, summary
+  `Phase: failed (staging pipreqs failed`, but `crashSeen:false`, because the test read `~setup.log` and on
+  this path the traceback stays in `~pipreqs_direct.log` (the old file is still populated, so the run falls
+  through to the staging scan). That made the row red for a reason the test had not proved, so the test was
+  corrected and re-run: `38064363171` (head `8ce95cd`) showed the same product symptoms with
+  `crashSeen:true` and `scannedInPlace:true`, and the other three output rows and the three `encoding` rows
+  green. Green on the fix: `38073463840` (head `cb7aa4c`), all 143 rows of the `real` snapshot pass and
+  `locked_crash` reads `crashSeen:true`, `resolvedHasOldDep:false`, `requirementsHasOldDep:false`,
+  `consoleNamesFile:true`, `Phase: failed (staging pipreqs failed`; `conda-full`, `justme-test`,
+  `contract-uv`, `contract-uv-fail` and `uv-dl-fallback` have no failing rows, `cache` shows only
+  `self.exe.smokerun` and `uv` only `self.cascade.exec` and `self.exe.warnfix.venv_repair` (both already
+  tracked, Item 35). Two smaller test fixes came from the same work: `locked_named` first went red on the
+  FIXED code (run `38049036330`, head `3c1859d`) only because its guard looked for "scanned a UTF-8 copy" in
+  the scan summary and a failed scan now ends with a failure summary, so the guard also accepts the setup
+  log line that announces the copy (`Test-UsedCopy`); and the first `locked_crash` version read the wrong
+  log for `crashSeen`.
+- **Found while fixing it, not fixed (filed as Item 81 in `CLAUDE.md`).** The older robocopy fallback
+  writes `~pipreqs_stage.log` by a relative path after `pushd` into the copy, so the log is deleted with the
+  copy: a failed staging scan leaves `<log tail unavailable>` in `~pipreqs.summary.txt` (visible in the green
+  run's `locked_crash` summary) and no traceback in the setup log.
 
 ## Known Findings (diagnosed, no action warranted)
 
