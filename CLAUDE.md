@@ -725,12 +725,13 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
-- **Item 69 (re-checked 2026-10-09, no code change planned; stays open until the CI result below)**:
-  the printed post-flight line works pasted into Command Prompt; Q5 already ruled out PowerShell.
-  Keep the quotes. CI check added 2026-10-09 (`tests/selfapps_postflight_runline.ps1`, uv and
-  justme-test lanes, non-gating): runs the line exactly as a real run printed it, plus curly-quote,
-  quotes-dropped, space-in-path and PowerShell variants. Read its `variants` row from a finished
-  run, report it, then close as a Known Finding or reopen.
+- **Item 69 (CI result read 2026-10-10, no code change planned; closes as a Known Finding once the
+  maintainer confirms)**: the printed post-flight line runs the app as printed in Command Prompt,
+  in the `uv` and `justme-test` lanes (run `37996430244`, `tests/selfapps_postflight_runline.ps1`,
+  non-gating). Curly quotes fail with "The filename, directory name, or volume label syntax is
+  incorrect", the field note's symptom; a space in the path needs the quotes around `python.exe`
+  (unquoted fails, cmd error 9009); Windows PowerShell 5.1 rejects the line unless `& ` leads it.
+  Keep the quotes. Open choice: whether to add a PowerShell `&` hint (Item 68 wording PR).
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
@@ -778,6 +779,27 @@ the original symptom (see that doc's "CI-first testing policy").
   dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
   Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
   as a Python-version input) are in `docs/agent-cold-storage.md`.
+
+### Item 80: Nuitka does not support the Python that uv now provisions (filed 2026-10-10 from reading PR #476's CI run)
+
+- **Item 80 (Confirmed cause, small to medium; found while reading the Item 69 check's run)**: on
+  2026-10-09 uv's newest managed CPython became 3.15.0, and the `uv` lane's Nuitka paths started
+  failing: `self.exe.build.tiera`, `self.exe.tiera.hidden_skip` and `self.optbuild.offer` (the
+  `accept` and `swapfail` scenarios), with `FATAL: The Python version '3.15' is not supported by
+  Nuitka '4.2.2'` in the setup log. Nuitka 4.2.2 is the latest release on PyPI (checked
+  2026-10-10), so waiting does not fix it yet. Not caused by any PR: the same three rows fail on the
+  `main` push run `37995888342` (21:51Z, before the Item 69 check existed) and were clean on
+  `37973464775` (18:27Z, Python 3.14). `real` and `conda-full` (the gating lanes) have zero failing
+  rows in the current run; the `uv` lane now shows 5 failing rows instead of its 2 known ones
+  (Item 35's `self.cascade.exec` and `self.exe.warnfix.venv_repair`). User-visible effect: when
+  PyInstaller fails and uv provisioned 3.15.0, the Tier A Nuitka fallback cannot build, and the
+  optimized-build offer fails after the user said yes. PyInstaller builds are unaffected on 3.15.0.
+  Slices, test first: (1) a row that shows the intended behaviour on an unsupported Python (Nuitka
+  is skipped with one honest log line and the caveat panel, not attempted); (2) the fix. Two fix
+  shapes, not decided: skip Nuitka cleanly when it reports the Python as unsupported (recommended,
+  small), or build Nuitka under a separate uv-managed 3.14 (heavier; two interpreters, cuts against
+  the two-layer rule in `docs/agent-lessons-learned.md`). Related: the "Embed version table"
+  periodic check below, since `EMBED_PYTHON_TABLE` stops at 3.14 and 3.15.0 now exists.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
