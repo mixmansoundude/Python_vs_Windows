@@ -756,9 +756,10 @@ self.pipreqs.encoding.curly_quote, self.pipreqs.encoding.mixed_files, self.pipre
 
 Item 63 follow-up regression test (PR #478 review; `docs/agent-closed-backlog.md`). Three real
 bootstraps (skip hooks). Bootstraps 1 and 2 use a folder with `good.py` (imports colorama), a cp1252
-file with no coding cookie (forces the UTF-8 copy scan) and `main.py`; their rows also require the
-summary to say `scanned a UTF-8 copy`, so a run that scanned in place cannot pass without testing
-anything.
+file with no coding cookie (forces the UTF-8 copy scan) and `main.py`; their rows also require
+proof that the copy was scanned (the summary says `scanned a UTF-8 copy`, or for a scan that failed
+the setup log says `scanning a UTF-8 copy of the project`), so a run that scanned in place cannot
+pass without testing anything.
 Bootstrap 1 seeds a READ-ONLY old `requirements.auto.txt` listing `six` and a sentinel file in the
 fixed temp folder name `%RUNNER_TEMP%\pipreqs_stage` (standing in for another project's scan):
 `readonly_replaced` (the file now lists colorama and no longer lists six), `temp_isolated` (the

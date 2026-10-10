@@ -37,8 +37,9 @@
 #                         requirements.auto.txt. The row also requires the crash to be the expected
 #                         one (setup log shows the CA bundle error), or it proves nothing.
 #
-# Rows 1 and 2 also require that the UTF-8 copy path was really used (summary note), so a run that
-# scanned in place cannot pass without testing anything.
+# Rows 1 and 2 also require that the UTF-8 copy path was really used, so a run that scanned in place
+# cannot pass without testing anything. The proof is the summary note (a scan that worked) or the
+# setup log line that announces the copy (a scan that failed has no such note in its summary).
 #
 # derived requirement: the child bootstraps run with RUNNER_TEMP pointed at a folder private to this
 # script (tests\~pipreqs_output_temp), so the sentinel and every cleanup touch only that folder and
@@ -82,6 +83,14 @@ function Read-TextOrEmpty {
         return [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::GetEncoding('ISO-8859-1'))
     }
     return ''
+}
+
+# The scan used the UTF-8 copy path. A scan that worked says so in its summary; a scan that failed
+# (the copy-back could not be written) ends with a failure summary instead, so the setup log line
+# that announces the copy counts too.
+function Test-UsedCopy {
+    param([string]$Summary, [string]$SetupLog)
+    return ($Summary -match 'scanned a UTF-8 copy') -or ($SetupLog -match 'scanning a UTF-8 copy of the project')
 }
 
 function Test-ReqLine {
@@ -188,7 +197,7 @@ try {
     $summary1 = Read-TextOrEmpty (Join-Path $dir1 '~pipreqs.summary.txt')
     $setup1 = Read-TextOrEmpty (Join-Path $dir1 '~setup.log')
     $autoText1 = Read-TextOrEmpty $auto1
-    $staged1 = $summary1 -match 'scanned a UTF-8 copy'
+    $staged1 = Test-UsedCopy $summary1 $setup1
     $hasColorama1 = Test-ReqLine $autoText1 'colorama'
     $hasSix1 = Test-ReqLine $autoText1 'six'
 
@@ -243,7 +252,7 @@ try {
     $console2 = Read-TextOrEmpty (Join-Path $dir2 $log2)
     $autoText2 = Read-TextOrEmpty $auto2
     $resolvedText2 = Read-TextOrEmpty (Join-Path $dir2 '~dependency_resolved.txt')
-    $staged2 = $summary2 -match 'scanned a UTF-8 copy'
+    $staged2 = Test-UsedCopy $summary2 $setup2
     $stillOld = Test-ReqLine $autoText2 'six'
     # The old file's dependencies must not be copied into requirements.txt and installed as if the
     # scan had produced them: the resolved snapshot is a copy of requirements.txt.
@@ -302,7 +311,7 @@ try {
     $resolvedText3 = Read-TextOrEmpty (Join-Path $dir3 '~dependency_resolved.txt')
     $reqText3 = Read-TextOrEmpty (Join-Path $dir3 'requirements.txt')
     $crashSeen3 = $setup3 -match 'Could not find a suitable TLS CA certificate bundle'
-    $inPlace3 = -not ($summary3 -match 'scanned a UTF-8 copy')
+    $inPlace3 = -not (Test-UsedCopy $summary3 $setup3)
     $stillOld3 = Test-ReqLine $autoText3 'six'
     $resolvedHasSix3 = Test-ReqLine $resolvedText3 'six'
     $reqHasSix3 = Test-ReqLine $reqText3 'six'
