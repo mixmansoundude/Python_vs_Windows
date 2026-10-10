@@ -593,6 +593,15 @@ version recorded the value but passed regardless). Item 63 is closed; history is
 `docs/agent-closed-backlog.md`. A local Linux check proves nothing either: the C locale forces UTF-8
 mode there, so reproduce with `PYTHONUTF8=0 LC_ALL=C PYTHONCOERCECLOCALE=0`.
 
+**A tool's output file left over from an earlier run must be deleted before the tool runs, never trusted
+afterwards** (PR #480). pipreqs exits 0 and the file exists is the success test, so an older
+`requirements.auto.txt` that a failed write could not replace passed it and was installed as if this scan
+had produced it. `del /f /q` first (it removes a read-only file too), and treat a failed write as a failed
+scan that names the file. A temp folder that a tool deletes before and after use needs a per-run name
+(`pipreqs_stage_<token>`), or two runs at once delete each other's. CI can hold a file open with
+`[System.IO.File]::Open(path, Open, Read, FileShare.Read)` in the test process: reads still work, delete and
+overwrite fail, which is exactly the "another program has it open" case.
+
 Two smaller rules from the same fix: **`str.isalnum()` is Unicode-aware**, so a sanitizer that must emit
 ASCII for a batch echo needs `c.isascii() and c.isalnum()` (a file named with an accented letter slipped
 through the first version of `~pipreqs_precheck.py`'s `safe()`); and **`findstr /c:"[WARN]"` without `/l`

@@ -669,8 +669,26 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
   letters, digits and a few punctuation marks only), which is what makes echoing it safe.
 - `:pipreqs_precheck` shares `HP_PIPREQS_STAGE_ROOT`/`HP_PIPREQS_STAGE_TARGET` with the older robocopy
   staging fallback, and `:after_pipreqs_run` removes the root, so the copy never outlives the pipreqs step.
+  The root is named `pipreqs_stage_<token>` (`HP_PIPREQS_STAGE_TOKEN`, two `%RANDOM%` values, set once per
+  run by whichever of the two sites runs first): the scan deletes its own root before and after, so a
+  fixed name let two projects bootstrapping together delete each other's copy. Anything that cleans up or
+  looks for the folder must use the variable, never the old fixed name.
+- **`requirements.auto.txt` is this run's output or nothing** (PR #480). `:pipreqs_clear_old_output`
+  (`del /f /q`, which also removes a read-only file) runs at the top of `:pipreqs_precheck`, so an older file
+  can never be mistaken for the scan's result by the `rc 0 and file exists` test at `:pipreqs_rc_known`.
+  A file another program holds open survives the delete. The staged path then fails the copy-back
+  (`:pipreqs_precheck_copyback_fail`: sets `HP_PIPREQS_COPYBACK_FAILED`, which the caller turns into phase
+  `fail` with note `(could not write requirements.auto.txt)` at `:pipreqs_copyback_failed`) and the older
+  robocopy fallback's existing copy-back failure goes through the same `:pipreqs_output_blocked`. That
+  subroutine prints one console `[WARN]` naming requirements.auto.txt and sets `HP_PIPREQS_AUTO_UNTRUSTED`;
+  `:after_pipreqs_run` then refuses to promote the surviving file to `requirements.txt` (otherwise the old
+  list would be installed). Any new code that reads `requirements.auto.txt` after the scan must honour
+  `HP_PIPREQS_AUTO_UNTRUSTED`. This is not the Item 48 write preflight: that only proves the folder accepts
+  a new file, not that one existing file can be replaced.
 - Regression: `tests/selfapps_pipreqs_encoding.ps1` (`real` lane, gating, forces `PYTHONUTF8=0` because
-  Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read); unit tests
+  Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read) and
+  `tests/selfapps_pipreqs_output.ps1` (`real` lane, gating: read-only old output replaced, scan temp folder
+  not shared, locked old output reported by name; the lock is held with `FileShare.Read`); unit tests
   `tests/test_pipreqs_precheck.py`.
 
 ---
