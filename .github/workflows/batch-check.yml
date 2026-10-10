@@ -1883,6 +1883,22 @@ jobs:
             tests\~envsmoke\~pipreqs.diff.txt
             tests/~envsmoke/~pipreqs_direct.log
             tests\~envsmoke\~pipreqs_direct.log
+            tests/~selftest_pipreqs_output_readonly/~pipreqs_output_readonly.log
+            tests\~selftest_pipreqs_output_readonly\~pipreqs_output_readonly.log
+            tests/~selftest_pipreqs_output_readonly/~setup.log
+            tests\~selftest_pipreqs_output_readonly\~setup.log
+            tests/~selftest_pipreqs_output_readonly/~pipreqs.summary.txt
+            tests\~selftest_pipreqs_output_readonly\~pipreqs.summary.txt
+            tests/~selftest_pipreqs_output_readonly/~dependency_resolved.txt
+            tests\~selftest_pipreqs_output_readonly\~dependency_resolved.txt
+            tests/~selftest_pipreqs_output_locked/~pipreqs_output_locked.log
+            tests\~selftest_pipreqs_output_locked\~pipreqs_output_locked.log
+            tests/~selftest_pipreqs_output_locked/~setup.log
+            tests\~selftest_pipreqs_output_locked\~setup.log
+            tests/~selftest_pipreqs_output_locked/~pipreqs.summary.txt
+            tests\~selftest_pipreqs_output_locked\~pipreqs.summary.txt
+            tests/~selftest_pipreqs_output_locked/~dependency_resolved.txt
+            tests\~selftest_pipreqs_output_locked\~dependency_resolved.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

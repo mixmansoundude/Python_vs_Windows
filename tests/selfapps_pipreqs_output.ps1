@@ -23,11 +23,16 @@
 #   Bootstrap 2 - an OLD requirements.auto.txt that this script holds open so it can be neither
 #                 deleted nor overwritten (read allowed, like an indexer or sync client would).
 #     locked_named      - the scan is reported as failed, a console [WARN] line names
-#                         requirements.auto.txt, nothing says "no imports found", and the
-#                         bootstrap carries on (a failed scan never blocks the bootstrap).
+#                         requirements.auto.txt, nothing says "no imports found", the old file's
+#                         dependencies are not promoted into the resolved dependency list, and
+#                         the bootstrap carries on (a failed scan never blocks the bootstrap).
 #
 # Each row also requires that the UTF-8 copy path was really used (summary note), so a run that
 # scanned in place cannot pass without testing anything.
+#
+# derived requirement: the child bootstraps run with RUNNER_TEMP pointed at a folder private to this
+# script (tests\~pipreqs_output_temp), so the sentinel and every cleanup touch only that folder and
+# never another scan's staging folder in the real temp root. Only that private folder is removed.
 #
 # Lane: real only (gating, uv-first), next to selfapps_pipreqs_encoding.ps1.
 #
@@ -122,10 +127,14 @@ function Invoke-Bootstrap {
     }
 }
 
-# The temp root the bootstrapper stages its copy under (RUNNER_TEMP first, then TEMP).
-$tempRoot = $env:RUNNER_TEMP
-if (-not $tempRoot) { $tempRoot = $env:TEMP }
+# The bootstrapper stages its copy under RUNNER_TEMP (then TEMP). Point it at a folder private to
+# this script so nothing here can touch a scan that is running elsewhere on the machine.
+$tempRoot = Join-Path $here '~pipreqs_output_temp'
 $fixedStage = Join-Path $tempRoot 'pipreqs_stage'
+$prevRunnerTemp = if (Test-Path Env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $null }
+if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+$env:RUNNER_TEMP = $tempRoot
 
 $prevSkipEntry = if (Test-Path Env:HP_SKIP_ENTRY_SMOKE) { $env:HP_SKIP_ENTRY_SMOKE } else { $null }
 $prevSkipExe = if (Test-Path Env:HP_SKIP_EXE_SMOKERUN) { $env:HP_SKIP_EXE_SMOKERUN } else { $null }
@@ -144,7 +153,6 @@ try {
     $wasReadOnly = (Get-Item -LiteralPath $auto1).IsReadOnly
 
     # Stands in for another project's scan that is running right now under the fixed name.
-    if (Test-Path -LiteralPath $fixedStage) { Remove-Item -LiteralPath $fixedStage -Recurse -Force -ErrorAction SilentlyContinue }
     New-Item -ItemType Directory -Force -Path $fixedStage | Out-Null
     $sentinel = Join-Path $fixedStage '~other_project_scan.txt'
     [System.IO.File]::WriteAllText($sentinel, "another project is scanning here`n")
@@ -156,7 +164,6 @@ try {
     $sentinelSurvived = Test-Path -LiteralPath $sentinel
     $stagesAfter = @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter 'pipreqs_stage_*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     $leftover = @($stagesAfter | Where-Object { $stagesBefore -notcontains $_ })
-    if (Test-Path -LiteralPath $fixedStage) { Remove-Item -LiteralPath $fixedStage -Recurse -Force -ErrorAction SilentlyContinue }
 
     $summary1 = Read-TextOrEmpty (Join-Path $dir1 '~pipreqs.summary.txt')
     $setup1 = Read-TextOrEmpty (Join-Path $dir1 '~setup.log')
@@ -215,15 +222,19 @@ try {
     $setup2 = Read-TextOrEmpty (Join-Path $dir2 '~setup.log')
     $console2 = Read-TextOrEmpty (Join-Path $dir2 $log2)
     $autoText2 = Read-TextOrEmpty $auto2
+    $resolvedText2 = Read-TextOrEmpty (Join-Path $dir2 '~dependency_resolved.txt')
     $staged2 = $summary2 -match 'scanned a UTF-8 copy'
     $stillOld = Test-ReqLine $autoText2 'six'
+    # The old file's dependencies must not be copied into requirements.txt and installed as if the
+    # scan had produced them: the resolved snapshot is a copy of requirements.txt.
+    $resolvedHasSix = Test-ReqLine $resolvedText2 'six'
     $phaseFailed = [regex]::IsMatch($summary2, '(?m)^Phase:\s+failed')
     $consoleWarns2 = @($console2 -split "`r?`n" | Where-Object { $_ -match '\[WARN\]' })
     $consoleNamesFile = @($consoleWarns2 | Where-Object { $_ -match 'requirements\.auto\.txt' }).Count -gt 0
     $noImportsClaim = ($summary2 -match 'no imports found') -or ($setup2 -match 'no imports found')
     $carriedOn = $setup2 -match 'continuing without auto-detected requirements'
 
-    $lockedPass = $lockHeld -and $staged2 -and $stillOld -and $phaseFailed -and $consoleNamesFile -and (-not $noImportsClaim) -and $carriedOn
+    $lockedPass = $lockHeld -and $staged2 -and $stillOld -and (-not $resolvedHasSix) -and $phaseFailed -and $consoleNamesFile -and (-not $noImportsClaim) -and $carriedOn
     Write-NdjsonRow ([ordered]@{
         id      = 'self.pipreqs.output.locked_named'
         req     = 'REQ-005'
@@ -234,6 +245,7 @@ try {
             lockHeld          = $lockHeld
             usedUtf8Copy      = $staged2
             oldFileUntouched  = $stillOld
+            resolvedHasOldDep = $resolvedHasSix
             summaryPhaseFailed = $phaseFailed
             consoleNamesFile  = $consoleNamesFile
             noImportsClaim    = $noImportsClaim
@@ -245,7 +257,9 @@ try {
     })
 } finally {
     if ($null -ne $lock) { $lock.Dispose() }
-    if (Test-Path -LiteralPath $fixedStage) { Remove-Item -LiteralPath $fixedStage -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($null -eq $prevRunnerTemp) { Remove-Item Env:RUNNER_TEMP -ErrorAction SilentlyContinue } else { $env:RUNNER_TEMP = $prevRunnerTemp }
+    # Only the folder private to this script is removed.
+    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     if ($null -eq $prevSkipEntry) { Remove-Item Env:HP_SKIP_ENTRY_SMOKE -ErrorAction SilentlyContinue } else { $env:HP_SKIP_ENTRY_SMOKE = $prevSkipEntry }
     if ($null -eq $prevSkipExe) { Remove-Item Env:HP_SKIP_EXE_SMOKERUN -ErrorAction SilentlyContinue } else { $env:HP_SKIP_EXE_SMOKERUN = $prevSkipExe }
 }
