@@ -19,8 +19,8 @@
 #                     requirements.auto.txt.
 #   mixed_files     - an emoji file and a cp1252-declared file contribute their imports; a cp1252
 #                     file with no cookie and an unparseable file are each named in a [WARN] line
-#                     of ~setup.log and contribute nothing (their module names are never treated
-#                     as requirements even though main.py imports them).
+#                     of ~setup.log AND on the console, and contribute nothing (their module names
+#                     are never treated as requirements even though main.py imports them).
 #   never_no_imports - this folder has imports, so neither ~pipreqs.summary.txt nor ~setup.log may
 #                     say "no imports found".
 #
@@ -142,6 +142,7 @@ try {
     $setupLog    = Read-TextOrEmpty (Join-Path $workDir '~setup.log')
     $summaryText = Read-TextOrEmpty (Join-Path $workDir '~pipreqs.summary.txt')
     $directLog   = Read-TextOrEmpty (Join-Path $workDir '~pipreqs_direct.log')
+    $consoleText = Read-TextOrEmpty (Join-Path $workDir $bootstrapLog)
     $autoPath    = Join-Path $workDir 'requirements.auto.txt'
     $autoExists  = Test-Path -LiteralPath $autoPath
     $autoText    = Read-TextOrEmpty $autoPath
@@ -175,6 +176,11 @@ try {
     $warnNamesUnparseable = @($warnLines | Where-Object { $_ -match 'unparseable\.py' }).Count -gt 0
     $warnNamesGoodFile = @($warnLines | Where-Object { $_ -match 'adjacent\.py|emoji_tool\.py|cp1252_declared\.py' }).Count -gt 0
 
+    # What a double-click user sees: the same [WARN] lines must reach the console, not only the log.
+    $consoleWarns = @($consoleText -split "`r?`n" | Where-Object { $_ -match '\[WARN\]' })
+    $consoleNamesNoCookie = @($consoleWarns | Where-Object { $_ -match 'cp1252_nocookie\.py' }).Count -gt 0
+    $consoleNamesUnparseable = @($consoleWarns | Where-Object { $_ -match 'unparseable\.py' }).Count -gt 0
+
     $summaryNoImports = $summaryText -match 'no imports found'
     $setupNoImports = $setupLog -match 'no imports found'
 
@@ -195,7 +201,7 @@ try {
         }
     })
 
-    $mixedPass = $autoExists -and $hasColorama -and $hasTabulate -and $hasTermcolor -and (-not $hasLocalName) -and $warnNamesNoCookie -and $warnNamesUnparseable -and (-not $warnNamesGoodFile)
+    $mixedPass = $autoExists -and $hasColorama -and $hasTabulate -and $hasTermcolor -and (-not $hasLocalName) -and $warnNamesNoCookie -and $warnNamesUnparseable -and (-not $warnNamesGoodFile) -and $consoleNamesNoCookie -and $consoleNamesUnparseable
     Write-NdjsonRow ([ordered]@{
         id      = 'self.pipreqs.encoding.mixed_files'
         req     = 'REQ-005'
@@ -211,6 +217,8 @@ try {
             warnNamesUnparseable  = $warnNamesUnparseable
             warnNamesReadableFile = $warnNamesGoodFile
             warnCount             = $warnLines.Count
+            consoleNamesNoCookie  = $consoleNamesNoCookie
+            consoleNamesUnparseable = $consoleNamesUnparseable
             log                   = $bootstrapLog
         }
     })
