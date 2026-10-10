@@ -314,6 +314,16 @@ class CommandLine(TreeCase):
         self.assertIn("pipreqs_precheck failed", r.stderr)
         self.assertEqual(len(r.stderr.strip().splitlines()), 1)
 
+    def test_invalid_escape_sequences_do_not_flood_stderr(self):
+        # Python 3.12+ warns on every '\\d' while parsing; the setup log would fill with them.
+        self.t.put("rx.py", "import re\nP = re.compile('\\d+')\n")
+        r = subprocess.run(
+            [sys.executable, "-W", "default", str(SOURCE), str(self.t.src), str(self.t.stage), "", str(self.t.report)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, "")
+
     def test_unwritable_report_is_exit_three(self):
         self.t.put("main.py", "import os\n")
         r = self._cli(str(self.t.src), str(self.t.stage), "", str(self.t.src / "no-such-dir" / "r.txt"))

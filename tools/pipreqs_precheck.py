@@ -6,7 +6,7 @@
 # (pipreqs treats any .py basename in the scanned tree as a local module, so the stub keeps the
 # file's own module name out of the requirements while adding no imports).
 # usage: pipreqs_precheck.py SRC STAGE IGNORE_CSV REPORT   exit 0 in place, 10 staged, 3 error
-import ast, io, os, sys, tokenize
+import ast, io, os, sys, tokenize, warnings
 
 # Same directory names pipreqs 0.4.13 prunes on its own; IGNORE_CSV is the caller's --ignore list.
 SKIP = {".hg", ".svn", ".git", ".tox", "__pycache__", "env", "venv"}
@@ -41,7 +41,11 @@ def check_file(path):
         # ast.parse rejects a leading BOM character, so pipreqs would too
         text, state, enc = text[1:], "reenc", "utf-8-bom"
     try:
-        ast.parse(text)
+        with warnings.catch_warnings():
+            # Python 3.12+ warns on every invalid escape sequence while parsing; thousands of those
+            # lines would drown the setup log, and pipreqs does not care.
+            warnings.simplefilter("ignore")
+            ast.parse(text)
     except (SyntaxError, ValueError, MemoryError, RecursionError) as exc:
         return "bad", None, "", "does not parse, " + type(exc).__name__
     return state, text, enc, ""
