@@ -715,6 +715,21 @@ self.die_emit_fallthrough
 
 ---
 
+## selfapps-postflight-runline NDJSON rows (selfapps_postflight_runline.ps1, uv and justme-test lanes, non-gating)
+
+CLAUDE.md Item 69 investigation (no product change): runs a real bootstrap, reads the "run it
+yourself" line the post-flight briefing printed out of the console capture, and runs it as printed.
+`verbatim` passes when cmd.exe (the line written to a `.cmd` file, so it parses like a pasted
+Command Prompt line, not like `cmd /c "<line>"`) runs the app. `variants` is always `pass:true` and
+only records, per variant, whether the app ran: quotes dropped, curly quotes, a space in the
+interpreter path (junction) quoted and unquoted, and the line in Windows PowerShell with and
+without a leading `&`. `interpreterKind` (`uv-venv`/`conda`) says which provider produced the line.
+Not wired into `real`/`conda-full`, the only gated lanes.
+
+```
+self.postflight.runline.verbatim, self.postflight.runline.variants
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
