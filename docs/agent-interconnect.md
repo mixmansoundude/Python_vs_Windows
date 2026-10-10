@@ -685,10 +685,21 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
   list would be installed). Any new code that reads `requirements.auto.txt` after the scan must honour
   `HP_PIPREQS_AUTO_UNTRUSTED`. This is not the Item 48 write preflight: that only proves the folder accepts
   a new file, not that one existing file can be replaced.
+  **The flag is also set when the delete itself fails** (`:pipreqs_clear_old_output`), because a scan that
+  then crashes in every attempt never reaches a copy-back, and the survivor would otherwise pass the
+  promotion guard (PR #480 review). A scan that exits 0 clears it again (`:pipreqs_rc_known`'s success block
+  and the older fallback's good copy-back), since that scan wrote the file. `:after_pipreqs_run` calls
+  `:pipreqs_output_blocked` just before the promotion guard so the console names the file on that path too;
+  the subroutine warns once per run (`HP_PIPREQS_BLOCKED_WARNED`, reset with the other pipreqs state).
+  Known and not fixed: the older robocopy fallback writes `~pipreqs_stage.log` with a relative path after
+  `pushd` into the copy, so the log lands in the copy's folder, which is deleted, and the Traceback check in
+  `:pipreqs_zero_requirements` cannot read it there.
 - Regression: `tests/selfapps_pipreqs_encoding.ps1` (`real` lane, gating, forces `PYTHONUTF8=0` because
   Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read) and
   `tests/selfapps_pipreqs_output.ps1` (`real` lane, gating: read-only old output replaced, scan temp folder
-  not shared, locked old output reported by name; the lock is held with `FileShare.Read`); unit tests
+  not shared, locked old output reported by name, locked old output never installed when every scan
+  crashes; the lock is held with `FileShare.Read`, the crash is forced with `REQUESTS_CA_BUNDLE` pointing at
+  a missing file); unit tests
   `tests/test_pipreqs_precheck.py`.
 
 ---

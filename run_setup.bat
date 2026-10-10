@@ -1491,6 +1491,7 @@ set "HP_PIPREQS_SUMMARY_CMD_PATH=%HP_PIPREQS_TARGET_WORK%"
 set "HP_PIPREQS_SUMMARY_IGNORE=%HP_PIPREQS_IGNORE_DISPLAY%"
 set "HP_PIPREQS_PHASE_RESULT="
 set "HP_PIPREQS_AUTO_UNTRUSTED="
+set "HP_PIPREQS_BLOCKED_WARNED="
 set "HP_PIPREQS_LAST_LOG="
 set "HP_PIPREQS_DIRECT_LOG=~pipreqs_direct.log"
 if exist "%HP_PIPREQS_DIRECT_LOG%" del "%HP_PIPREQS_DIRECT_LOG%"
@@ -1577,6 +1578,9 @@ if defined HP_PIPREQS_COPYBACK_FAILED goto :pipreqs_copyback_failed
 set "HP_PIPREQS_LAST_LOG=%HP_PIPREQS_DIRECT_LOG%"
 if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_TARGET_WORK%" (
   rem Zero imports are valid: pipreqs exits 0 and may intentionally leave requirements.auto.txt empty.
+  rem derived requirement: PR #480 review -- a scan that exited 0 wrote this file, so it is this run's own
+  rem result even if the delete before the scan had failed.
+  set "HP_PIPREQS_AUTO_UNTRUSTED="
   set "HP_PIPREQS_PHASE_RESULT=ok"
   set "HP_PIPREQS_SUMMARY_PHASE=direct"
   goto :after_pipreqs_run
@@ -1662,6 +1666,7 @@ if "%HP_PIPREQS_RC%"=="0" if exist "%HP_PIPREQS_STAGE_TARGET%" (
     call :pipreqs_output_blocked
     goto :after_pipreqs_run
   )
+  set "HP_PIPREQS_AUTO_UNTRUSTED="
   set "HP_PIPREQS_PHASE_RESULT=ok"
   set "HP_PIPREQS_SUMMARY_PHASE=staging"
   set "HP_PIPREQS_SUMMARY_NOTE=(fallback after direct failure)"
@@ -1737,7 +1742,10 @@ if "%HP_PIPREQS_PHASE_RESULT%"=="ok" (
   )
 )
 rem derived requirement: PR #478 review -- an old requirements.auto.txt that could not be replaced is not this
-rem run's scan, so it is never promoted to requirements.txt and installed (HP_PIPREQS_AUTO_UNTRUSTED).
+rem run's scan, so it is never promoted to requirements.txt and installed (HP_PIPREQS_AUTO_UNTRUSTED). The flag is
+rem also set when the delete before the scan failed, so a scan that then crashed in every attempt still refuses the
+rem survivor, and the console names the file once.
+if not exist "%REQ%" if exist "requirements.auto.txt" if defined HP_PIPREQS_AUTO_UNTRUSTED call :pipreqs_output_blocked
 if not exist "%REQ%" if exist "requirements.auto.txt" if not defined HP_PIPREQS_AUTO_UNTRUSTED (
   copy /y "requirements.auto.txt" "requirements.txt" >> "%LOG%" 2>&1
   if errorlevel 1 (
@@ -5251,11 +5259,16 @@ rem read-only file. A file another program holds open survives the delete, and t
 rem follows is reported by name.
 if not exist "%HP_PIPREQS_TARGET_WORK%" exit /b 0
 del /f /q "%HP_PIPREQS_TARGET_WORK%" >nul 2>&1
+rem derived requirement: PR #480 review -- a delete that failed means the file still holds an earlier run's list.
+rem Nothing may install it unless this run's scan overwrites it, which clears the flag again.
+if exist "%HP_PIPREQS_TARGET_WORK%" set "HP_PIPREQS_AUTO_UNTRUSTED=1"
 if exist "%HP_PIPREQS_TARGET_WORK%" call :log "[DEBUG] The old requirements.auto.txt could not be removed before the scan."
 exit /b 0
 :pipreqs_output_blocked
 set "HP_PIPREQS_AUTO_UNTRUSTED=1"
-call :log "[WARN] The dependency scan finished but requirements.auto.txt in this folder could not be updated. Another program may have it open, or it may be read-only. Close it and run this again."
+if defined HP_PIPREQS_BLOCKED_WARNED exit /b 0
+set "HP_PIPREQS_BLOCKED_WARNED=1"
+call :log "[WARN] requirements.auto.txt in this folder could not be updated by the dependency scan, so nothing from it is used. Another program may have it open, or it may be read-only. Close it and run this again."
 exit /b 0
 :write_pipreqs_summary
 if "%HP_JOB_SUMMARY%"=="" exit /b 0

@@ -600,7 +600,13 @@ had produced it. `del /f /q` first (it removes a read-only file too), and treat 
 scan that names the file. A temp folder that a tool deletes before and after use needs a per-run name
 (`pipreqs_stage_<token>`), or two runs at once delete each other's. CI can hold a file open with
 `[System.IO.File]::Open(path, Open, Read, FileShare.Read)` in the test process: reads still work, delete and
-overwrite fail, which is exactly the "another program has it open" case.
+overwrite fail, which is exactly the "another program has it open" case. **A delete that failed must be
+remembered**, not only a write that failed: a scan that then crashes in every attempt never reaches a
+copy-back, so the leftover file passed every later check. Set the "untrusted" flag where the delete fails and
+clear it only when a scan of this run writes the file. To reach a crash path in CI, make the tool's own
+network call fail: `REQUESTS_CA_BUNDLE` pointing at a missing file makes pipreqs die in its PyPI lookup while
+uv ignores the variable; the test must also read the traceback from the tool's log, or it can pass or fail
+for a reason it never checked (`crashSeen`).
 
 Two smaller rules from the same fix: **`str.isalnum()` is Unicode-aware**, so a sanitizer that must emit
 ASCII for a batch echo needs `c.isascii() and c.isalnum()` (a file named with an accented letter slipped
