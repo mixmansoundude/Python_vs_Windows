@@ -154,6 +154,9 @@ try {
     if ($interp.Success -and (Test-Path -LiteralPath $interp.Groups[1].Value)) {
         $pyEncoding = (& $interp.Groups[1].Value -c "import sys,locale; print(sys.flags.utf8_mode, locale.getpreferredencoding(False))" 2>&1 | Out-String).Trim()
     }
+    # derived requirement: a run that did not read with cp1252 and UTF-8 mode off never exercised the
+    # bug, so it must fail loudly instead of passing without testing anything.
+    $encodingOk = [regex]::IsMatch($pyEncoding, '(?im)^\s*0\s+cp1252\s*$')
 
     $directLastLine = ''
     $directLines = @($directLog -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
@@ -184,7 +187,7 @@ try {
     $summaryNoImports = $summaryText -match 'no imports found'
     $setupNoImports = $setupLog -match 'no imports found'
 
-    $curlyPass = $autoExists -and $hasColorama
+    $curlyPass = $encodingOk -and $autoExists -and $hasColorama
     Write-NdjsonRow ([ordered]@{
         id      = 'self.pipreqs.encoding.curly_quote'
         req     = 'REQ-005'
@@ -195,13 +198,14 @@ try {
             autoExists     = $autoExists
             hasColorama    = $hasColorama
             pyEncoding     = Get-Snippet $pyEncoding 80
+            encodingOk     = $encodingOk
             directRcLine   = Get-Snippet $rcLine 160
             directLastLine = Get-Snippet $directLastLine 200
             log            = $bootstrapLog
         }
     })
 
-    $mixedPass = $autoExists -and $hasColorama -and $hasTabulate -and $hasTermcolor -and (-not $hasLocalName) -and $warnNamesNoCookie -and $warnNamesUnparseable -and (-not $warnNamesGoodFile) -and $consoleNamesNoCookie -and $consoleNamesUnparseable
+    $mixedPass = $encodingOk -and $autoExists -and $hasColorama -and $hasTabulate -and $hasTermcolor -and (-not $hasLocalName) -and $warnNamesNoCookie -and $warnNamesUnparseable -and (-not $warnNamesGoodFile) -and $consoleNamesNoCookie -and $consoleNamesUnparseable
     Write-NdjsonRow ([ordered]@{
         id      = 'self.pipreqs.encoding.mixed_files'
         req     = 'REQ-005'
@@ -223,7 +227,7 @@ try {
         }
     })
 
-    $neverPass = (-not $summaryNoImports) -and (-not $setupNoImports)
+    $neverPass = $encodingOk -and (-not $summaryNoImports) -and (-not $setupNoImports)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.pipreqs.encoding.never_no_imports'
         req     = 'REQ-005'

@@ -738,7 +738,8 @@ in raw-string regexes), an emoji file, a cp1252 file that declares its encoding,
 no cookie, and an unparseable file. `PYTHONUTF8=0` is set for the sub-bootstrap because Python
 3.15 (which the uv-first lanes now provision) defaults to UTF-8 mode and would hide the bug; the
 `curly_quote` row's `pyEncoding` detail records what the env's interpreter really reports
-(`<utf8_mode> <preferred encoding>`, `0 cp1252` expected). Each row is judged on its own concern:
+(`<utf8_mode> <preferred encoding>`, `0 cp1252` expected); all three rows also require it (`encodingOk`),
+so a lane that did not read with cp1252 fails loudly instead of passing without testing the bug. Each row is judged on its own concern:
 `curly_quote` (the real file's import lands in `requirements.auto.txt`), `mixed_files` (emoji and
 declared-cp1252 imports land, the two unreadable files are each named in a `[WARN]` line of
 `~setup.log` AND of the console capture and neither module name becomes a requirement), `never_no_imports` (neither
