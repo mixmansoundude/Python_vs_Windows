@@ -263,8 +263,16 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
     `import` of it is never treated as a requirement.
   - A pipreqs crash is never reported as "no imports found": the console and `~setup.log` say pipreqs
     crashed and point at `~pipreqs_direct.log`, whose contents are copied into `~setup.log`.
+  - The scan's own output file is never stale: before pipreqs runs, any old `requirements.auto.txt` in
+    the folder is deleted (a read-only one too), so an old file cannot be taken for this run's result.
+    If the new result cannot be written because another program has the old file open, the console
+    names `requirements.auto.txt`, the scan is reported as failed (`~pipreqs.summary.txt` says
+    `Phase: failed`), and setup carries on without auto-detected requirements.
+  - The UTF-8 copy lives in a temp folder named for this run, so two projects set up at the same time
+    never delete each other's copy, and the copy is removed when the scan ends.
   - Test NDJSON rows: `self.pipreqs.encoding.curly_quote`, `.mixed_files`, `.never_no_imports`
-    (`tests/selfapps_pipreqs_encoding.ps1`, `real` lane, gating).
+    (`tests/selfapps_pipreqs_encoding.ps1`, `real` lane, gating); `self.pipreqs.output.readonly_replaced`,
+    `.temp_isolated`, `.locked_named`, `.locked_crash` (`tests/selfapps_pipreqs_output.ps1`, `real` lane, gating).
 
 ---
 

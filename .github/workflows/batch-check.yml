@@ -1116,6 +1116,17 @@ jobs:
         run: |
           & tests\selfapps_pipreqs_encoding.ps1
 
+      # derived requirement: CLAUDE.md Item 63 follow-up (PR #478 review) -- the pipreqs scan must
+      # never accept an old requirements.auto.txt as this run's result when it cannot be replaced,
+      # and must not share its temp folder with another project's scan. Gating on purpose (real
+      # lane), same as the encoding scenario above; these rows are the regression test the fix
+      # must turn green.
+      - name: "Self-test: pipreqs output file and scan temp folder (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pipreqs_output.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
@@ -1872,6 +1883,36 @@ jobs:
             tests\~envsmoke\~pipreqs.diff.txt
             tests/~envsmoke/~pipreqs_direct.log
             tests\~envsmoke\~pipreqs_direct.log
+            tests/~selftest_pipreqs_output_readonly/~pipreqs_output_readonly.log
+            tests\~selftest_pipreqs_output_readonly\~pipreqs_output_readonly.log
+            tests/~selftest_pipreqs_output_readonly/~setup.log
+            tests\~selftest_pipreqs_output_readonly\~setup.log
+            tests/~selftest_pipreqs_output_readonly/~pipreqs.summary.txt
+            tests\~selftest_pipreqs_output_readonly\~pipreqs.summary.txt
+            tests/~selftest_pipreqs_output_readonly/~dependency_resolved.txt
+            tests\~selftest_pipreqs_output_readonly\~dependency_resolved.txt
+            tests/~selftest_pipreqs_output_locked/~pipreqs_output_locked.log
+            tests\~selftest_pipreqs_output_locked\~pipreqs_output_locked.log
+            tests/~selftest_pipreqs_output_locked/~setup.log
+            tests\~selftest_pipreqs_output_locked\~setup.log
+            tests/~selftest_pipreqs_output_locked/~pipreqs.summary.txt
+            tests\~selftest_pipreqs_output_locked\~pipreqs.summary.txt
+            tests/~selftest_pipreqs_output_locked/~dependency_resolved.txt
+            tests\~selftest_pipreqs_output_locked\~dependency_resolved.txt
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_output_lockedcrash.log
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_output_lockedcrash.log
+            tests/~selftest_pipreqs_output_lockedcrash/~setup.log
+            tests\~selftest_pipreqs_output_lockedcrash\~setup.log
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs.summary.txt
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs.summary.txt
+            tests/~selftest_pipreqs_output_lockedcrash/~dependency_resolved.txt
+            tests\~selftest_pipreqs_output_lockedcrash\~dependency_resolved.txt
+            tests/~selftest_pipreqs_output_lockedcrash/requirements.txt
+            tests\~selftest_pipreqs_output_lockedcrash\requirements.txt
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_direct.log
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_direct.log
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_precheck.txt
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_precheck.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

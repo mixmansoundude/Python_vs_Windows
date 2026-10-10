@@ -3333,14 +3333,25 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `PYTHONUTF8=0` and fail unless the interpreter reports `0 cp1252` (Python 3.15 defaults to UTF-8
   mode, and uv now provisions 3.15), otherwise it passes without exercising the bug. See
   `docs/agent-lessons-learned.md`'s pipreqs entry.
-- **Two CodeRabbit Major findings were traced and deliberately not fixed** (maintainer can overrule):
-  (a) the staging directory `%TEMP%\pipreqs_stage` is shared, as it already was for the older
-  robocopy fallback, so two different project folders reaching the pipreqs step within seconds, one
-  of them needing the UTF-8 copy, could collide; the lock is per project folder. Worst case is one
-  degraded scan with a logged warning. (b) if copying the staged output back to
-  `requirements.auto.txt` fails while an older `requirements.auto.txt` exists, the older file is
-  accepted as this run's output; that needs the file to be locked or read-only, which also stops the
-  direct scan from writing it, and the older staging fallback behaves the same way.
+- **Follow-up (PR #480): the two CodeRabbit Major findings were first judged rare, then fixed at the
+  maintainer's request.** (a) The staging directory `%TEMP%\pipreqs_stage` was shared between project
+  folders, and each scan deletes it, so two projects bootstrapping together could delete each other's
+  copy. (b) If copying the staged output back to `requirements.auto.txt` failed (an older file that is
+  read-only or open in another program), the older file was accepted as this run's result: `rc 0 and the
+  file exists` held, the summary said the scan worked, and the stale list could be promoted to
+  `requirements.txt` and installed. An earlier version of this entry said the older robocopy fallback
+  behaved the same way; that was wrong, the fallback already failed the scan on a failed copy-back. The
+  fix keeps the empty-stub design (dropping unreadable files would turn their imports into false
+  requirements): the old `requirements.auto.txt` is deleted before the scan, a failed write is a failed
+  scan that names the file on the console, the old file is never promoted, and the temp folder is named
+  per run. The maintainer's question whether the Item 48 write check could head this off: it cannot, it
+  only proves the folder accepts a new file, not that one existing file can be replaced.
+- **Follow-up test-first evidence.** `tests/selfapps_pipreqs_output.ps1` (rows
+  `self.pipreqs.output.readonly_replaced`, `.temp_isolated`, `.locked_named`) landed alone on PR #480 and
+  was red in blocking CI (run `38040595110`, head `6de7263`): on `real` exactly those three rows failed,
+  for the expected reasons (`oldSixStillIn:true` with no `colorama`; `sentinelSurvived:false`;
+  `summaryPhaseFailed:false` and `consoleNamesFile:false` while the old file stayed locked), the
+  `encoding` rows stayed green, and no other lane showed a new failing row.
 
 ## Known Findings (diagnosed, no action warranted)
 
