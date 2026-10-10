@@ -35,7 +35,7 @@
 #     locked_crash      - the resolved list and requirements.txt hold no dependency from the old
 #                         file, the scan is reported failed, and a console [WARN] names
 #                         requirements.auto.txt. The row also requires the crash to be the expected
-#                         one (setup log shows the CA bundle error), or it proves nothing.
+#                         one (the direct scan's log shows the CA bundle error), or it proves nothing.
 #
 # Rows 1 and 2 also require that the UTF-8 copy path was really used, so a run that scanned in place
 # cannot pass without testing anything. The proof is the summary note (a scan that worked) or the
@@ -310,7 +310,11 @@ try {
     $autoText3 = Read-TextOrEmpty $auto3
     $resolvedText3 = Read-TextOrEmpty (Join-Path $dir3 '~dependency_resolved.txt')
     $reqText3 = Read-TextOrEmpty (Join-Path $dir3 'requirements.txt')
-    $crashSeen3 = $setup3 -match 'Could not find a suitable TLS CA certificate bundle'
+    # The direct scan's own log holds the traceback. It is not copied to the setup log on this path,
+    # because the old file is still populated, so the bootstrap falls through to the staging scan.
+    $directLog3 = Read-TextOrEmpty (Join-Path $dir3 '~pipreqs_direct.log')
+    $crashSeen3 = ($directLog3 -match 'Could not find a suitable TLS CA certificate bundle') -or ($setup3 -match 'Could not find a suitable TLS CA certificate bundle')
+    $crashLine3 = @($directLog3 -split "`r?`n" | Where-Object { $_ -match 'Error' }) | Select-Object -Last 1
     $inPlace3 = -not (Test-UsedCopy $summary3 $setup3)
     $stillOld3 = Test-ReqLine $autoText3 'six'
     $resolvedHasSix3 = Test-ReqLine $resolvedText3 'six'
@@ -329,6 +333,7 @@ try {
             exitCode           = $exit3
             lockHeld           = $lockHeld3
             crashSeen          = $crashSeen3
+            crashLine          = Get-Snippet ([string]$crashLine3) 200
             scannedInPlace     = $inPlace3
             oldFileUntouched   = $stillOld3
             resolvedHasOldDep  = $resolvedHasSix3

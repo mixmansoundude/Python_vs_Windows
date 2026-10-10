@@ -769,7 +769,7 @@ deleted nor overwritten): `locked_named` (summary `Phase: failed`, a console `[W
 `requirements.auto.txt`, nothing says "no imports found", the bootstrap carries on). Bootstrap 3
 (clean UTF-8 folder, so the scan runs in place) holds the old file open the same way and sets
 `REQUESTS_CA_BUNDLE` to a file that does not exist, which makes pipreqs crash on its PyPI lookup
-in every scan (uv ignores the variable): `locked_crash` (`crashSeen` proves the crash happened,
+in every scan (uv ignores the variable): `locked_crash` (`crashSeen` proves the crash happened, from the traceback in `~pipreqs_direct.log`,
 then neither `~dependency_resolved.txt` nor `requirements.txt` lists the old `six`, the summary says
 `Phase: failed`, and a console `[WARN]` names `requirements.auto.txt`). Skips with
 `skip=true, reason=non-windows-host` off Windows. Expected red on the commit that adds it (the

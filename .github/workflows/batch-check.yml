@@ -1909,6 +1909,10 @@ jobs:
             tests\~selftest_pipreqs_output_lockedcrash\~dependency_resolved.txt
             tests/~selftest_pipreqs_output_lockedcrash/requirements.txt
             tests\~selftest_pipreqs_output_lockedcrash\requirements.txt
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_direct.log
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_direct.log
+            tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_precheck.txt
+            tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_precheck.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
