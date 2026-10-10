@@ -500,8 +500,12 @@ of it with curly quotes, on a path that contains spaces. Keep the straight-quote
 Command Prompt ("not sure why it didn't before"). That is the reproduction this item asked for,
 and it came out clean, so there is no code change to make. The curly-quote paste above is the
 remaining unproven explanation for the August failure; a fresh report with the exact pasted text
-would reopen this. Close the CLAUDE.md entry as "no action needed" (a Known Finding) when the next
-docs-only change touches the backlog.
+would reopen this.
+
+**Closed 2026-10-10 (maintainer, "Close, no change")**: the CI check (run `37996430244`) ran the
+line as printed in both lanes, reproduced the curly-quote failure, and showed Windows PowerShell
+needs a leading `& `. No code change and no PowerShell hint. The result is in
+`docs/agent-closed-backlog.md` under Item 69.
 
 ### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
 

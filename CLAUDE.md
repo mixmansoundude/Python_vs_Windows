@@ -725,13 +725,6 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
-- **Item 69 (CI result read 2026-10-10, no code change planned; closes as a Known Finding once the
-  maintainer confirms)**: the printed post-flight line runs the app as printed in Command Prompt,
-  in the `uv` and `justme-test` lanes (run `37996430244`, `tests/selfapps_postflight_runline.ps1`,
-  non-gating). Curly quotes fail with "The filename, directory name, or volume label syntax is
-  incorrect", the field note's symptom; a space in the path needs the quotes around `python.exe`
-  (unquoted fails, cmd error 9009); Windows PowerShell 5.1 rejects the line unless `& ` leads it.
-  Keep the quotes. Open choice: whether to add a PowerShell `&` hint (Item 68 wording PR).
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
