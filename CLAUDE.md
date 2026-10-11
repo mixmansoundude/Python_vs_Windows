@@ -695,7 +695,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62 and 63 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63 and 64 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -703,18 +703,6 @@ starting any of these. No maintainer decisions are open. Q1-Q9 are decided or re
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-- **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
-  (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
-  optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
-  the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written. Slice 1 (stdlib, never-installable
-  names, PyInstaller's own modules, installed `X.attr`, pywin32 names) shipped on PR #482 (red run
-  `38089448746`, green run `38098172664`; detail in `docs/agent-closed-backlog.md`). Slice 2
-  (library-internal optional imports: a missing module is an install target only when some importer
-  is the program's own code, plus the pandas row `self.warnfix.noise.library`) is on PR #485; its
-  red run `38110474824` failed as intended (30 install attempts, cascade candidate, 6 unit tests
-  red). No multi-part `HP_PARSE_WARN` emit was needed (503-character margin left). Once #485
-  merges, Item 64 is fully done: a docs follow-up with the green run moves it to
-  `docs/agent-closed-backlog.md`.
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
   (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
