@@ -872,4 +872,14 @@ prompt absent; (5) not offered: silent timeout, fast path, provider already cond
 already approved; (6) no TTY and no override: resolves to "neither" without waiting; (7) an error line
 holding `<>&|%^` is shown intact, the setup log is intact and no stray file appears.
 
-**Open**: Q10 in `docs/open-questions.md` (recording a window app's pass on the cascade-reached conda run).
+**Window apps on the conda run (decided by the maintainer 2026-10-11, was Q10, option a)**: a window app's
+check run is stopped after about 30 silent seconds (exit `-1`), so on a cascade-reached conda run it can
+never end in a clean exit 0 and would never count as a verified pass for Item 66. So on that tier only
+(current provider conda, reached through the cascade, never on the uv tier where the silent timeout gets
+no prompt), a silent timeout asks once: "Your window app was still running when the check stopped it. Did
+it open and work? [Y/N]". A yes is recorded as pass type `user_confirmed` (so the next run can start on
+conda once Item 66 exists); a no records nothing. Same guards as the main prompt: `HP_CI_LANE`, `NOINPUT`
+and `HP_NONINTERACTIVE` resolve to "no" without waiting, with a `HP_TEST_*_ANSWER` override. The first
+slice only logs the answer and puts it on the NDJSON row, like the other pass types. Extra CI row (8): a
+silent-running fixture on the cascade-reached conda tier, answers Y and N, plus the same fixture on the
+uv tier asserting the question is absent.

@@ -820,7 +820,8 @@ the original symptom (see that doc's "CI-first testing policy").
   `HP_CASCADE_APPROVED` late reuses the existing cascade with no change to it. The checkpoint's
   discarded interpreter result (`:run_postexec_checkpoint`) must be captured. The nine proposed
   defaults, the CI row per branch and the sequencing with Items 64, 65, 66 and 68 are in the plan doc.
-  Open: Q10 in `docs/open-questions.md` (recording a window app's pass on the conda run). Test first.
+  Decided 2026-10-11 (was Q10, option a): on the cascade-reached conda tier only, a window app's silent
+  timeout asks once whether it opened and worked, and a yes is recorded as `user_confirmed`. Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)

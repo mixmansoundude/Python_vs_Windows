@@ -11,15 +11,4 @@ changelog-style sections are for.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 
-Q1-Q9 are decided or retired. One question is open, from Item 82 (filed 2026-10-11):
-
-- **Q10 -- Item 82: record a window app's pass on the conda run?** A window app's check run is
-  stopped after about 30 silent seconds (exit `-1`), so on a cascade-reached conda run it can never
-  end in a clean exit 0 and so never counts as a verified pass for Item 66's provider memory.
-  Options: (a) ask once on that conda run only, "Your window app was still running when the check
-  stopped it. Did it open and work? [Y/N]", and record a yes as `user_confirmed`; (b) never ask,
-  record nothing, and leave `PVW_PROVIDER=conda` (Item 66) as the manual route; (c) count a silent
-  timeout on the conda run as a pass without asking. Maintainer's quote that prompted it: "after I got
-  it to run after the cascade to conda, then modifying requirements.txt to add xlsxwriter and running
-  bootstrapper again it tries UV and goes deep down the rabbit hole". Agent recommendation: (a).
-  **Default until answered: (b)**, no extra prompt, nothing recorded for a window app.
+No questions are open for this report. Q1-Q10 are decided or retired.

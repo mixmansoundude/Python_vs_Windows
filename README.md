@@ -511,7 +511,9 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
   "neither" (the default). The Miniconda choice says that your program will run one more time. The
   offer is not made on the cached-EXE fast path, after a silent timeout (normal for a window app),
   when conda is already the provider, or when the earlier dependency prompt already approved a
-  cascade, and every non-interactive or CI run resolves it to "neither" without waiting.
+  cascade, and every non-interactive or CI run resolves it to "neither" without waiting. On a conda
+  run reached this way, a window app that was still running when the check stopped it is asked once
+  whether it opened and worked, so a yes can be remembered for the next run.
 - **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
 
 ---
