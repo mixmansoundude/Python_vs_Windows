@@ -626,6 +626,7 @@ $lockNoLeakPath = Join-Path $pipreqsFailDir '~bootstrap.lock'
 $lockNoLeak = -not (Test-Path $lockNoLeakPath)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_no_leak'
+  req = 'REQ-024'
   pass = $lockNoLeak
   desc = 'REQ-024: the lock directory does not persist after a normal successful bootstrap'
   details = [ordered]@{ lockDirPresent = (Test-Path $lockNoLeakPath) }
@@ -663,6 +664,7 @@ $lockHeldNoStatus = -not (Test-Path $lockHeldStatusPath)
 $lockHeldAllPass = ($lockHeldMsgFound -and $lockHeldDeclined -and $lockHeldNotDeleted -and $lockHeldNoStatus)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_decline'
+  req = 'REQ-024'
   pass = $lockHeldAllPass
   desc = 'REQ-024: a fresh (non-stale) lock directory causes a second instance to decline gracefully without touching the lock it does not own'
   details = [ordered]@{
@@ -719,6 +721,7 @@ if (Test-Path $lockStaleStatusPath) {
 $lockStaleAllPass = ($lockStaleEvictedFound -and $lockStaleBootstrapOk)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_stale_evict'
+  req = 'REQ-024'
   pass = $lockStaleAllPass
   desc = 'REQ-024: HP_TEST_FORCE_LOCK_STALE evicts a pre-existing lock directory and the bootstrap proceeds normally'
   details = [ordered]@{
@@ -777,6 +780,7 @@ $lockIndeterminatePreserved = Test-Path $lockIndeterminatePreexisting
 $lockIndeterminateAllPass = ($lockIndeterminateExit -eq 0 -and $lockIndeterminateWarnFound -and $lockIndeterminateBootstrapOk -and $lockIndeterminatePreserved)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_indeterminate'
+  req = 'REQ-024'
   pass = $lockIndeterminateAllPass
   desc = 'REQ-024 (CLAUDE.md Item 49): an indeterminate lock-staleness result continues without the lock, without evicting the pre-existing lock directory'
   details = [ordered]@{
@@ -831,6 +835,7 @@ if (Test-Path $lowDiskStatusPath) {
 $lowDiskAllPass = ($lowDiskWarnFound -and $lowDiskBootstrapOk)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_warn'
+  req = 'REQ-025'
   pass = $lowDiskAllPass
   desc = 'REQ-025: HP_TEST_FORCE_LOW_DISK forces the low-disk-space WARN and the bootstrap still completes normally (warn-only, never abort)'
   details = [ordered]@{

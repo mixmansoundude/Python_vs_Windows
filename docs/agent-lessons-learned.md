@@ -525,6 +525,9 @@ a bug**; flags should only suppress, divert for tests, or add super-user overrid
 and `HP_SKIP_*` (disable-only) are all correctly scoped as suppression-only. **Standing directive:
 re-run this specific check whenever a new `HP_*`/`PVW_*` flag is added** (see CLAUDE.md's
 "Periodic Maintenance Checks" for the cadence).
+The mechanical half is now enforced by `tests/test_flag_inventory.py` (every `HP_TEST_*` hook the batch
+reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are
+documented); whether a flag *enables* a Prime Directive behavior still needs a human reading.
 
 ## CI-safe interactive gates: echo the prompt, then resolve the answer
 
