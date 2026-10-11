@@ -20,6 +20,18 @@
 # this test does not force (HP_TEST_FORCE_EMBED_REAL is not set), so venv is the first
 # tier actually reachable.
 #
+# derived requirement (Item 35, PR for gap 0): this test used to set HP_SKIP_PIPREQS=1 and create no
+# requirements.txt, expecting nothing to install xlrd before warnfix. Under venv mode that premise is
+# false: :venv_canary_ok resets HP_SKIP_PIPREQS to empty (as does the embed success path), so pipreqs
+# runs, finds xlrd, and :after_pipreqs_run promotes requirements.auto.txt to requirements.txt because
+# none exists -- the main dependency install then installs xlrd up front and warnfix has nothing to
+# repair (the 2026-10-09 uv-lane setup log shows "Collecting xlrd~=2.0.2 (from -r requirements.txt
+# (line 1))"). The fix is a precondition, not a flag: a user requirements.txt that names a harmless
+# other package. pipreqs may still run, but with a requirements.txt present it only writes
+# requirements.auto.txt, so xlrd stays missing until warnfix repairs it. The test also checks that
+# premise (preconditionOk) so a future change to pipreqs promotion fails loudly instead of silently
+# proving nothing.
+#
 # Lane: uv (non-gating for first landing -- matches this repo's established graduation
 # pattern for a new PowerShell scenario not yet proven stable across several real runs).
 # Skips in conda-full (HP_FORCE_CONDA_ONLY=1 blocks all non-conda fallbacks unconditionally).
@@ -101,9 +113,9 @@ New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
 # derived requirement: xlrd is not covered by any heuristic (same choice as
-# selfapps_warnfix.ps1's own real_warnfix scenario) -- no requirements.txt is created,
-# so there is nothing for prep_requirements to pre-install. warnfix must fire to install
-# xlrd, and it must do so via the new venv-mode branch, not silently no-op.
+# selfapps_warnfix.ps1's own real_warnfix scenario). warnfix must fire to install xlrd, and
+# it must do so via the venv-mode branch, not silently no-op. requirements.txt (written below)
+# names only `six`, so nothing installs xlrd before the PyInstaller build reports it missing.
 $appCode = @'
 import xlrd
 import os as _os
@@ -116,20 +128,22 @@ with open(_os.path.join(_here, '~warnfix_venv_token.txt'), 'w') as _f:
 print('xlrd ok')
 '@
 Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
+# derived requirement: a user requirements.txt stops :after_pipreqs_run from promoting pipreqs's own
+# result (which would name xlrd). `six` is a pure-Python wheel the app never imports.
+Set-Content -Path (Join-Path $workDir 'requirements.txt') -Value 'six' -Encoding ASCII
 
 $savedCondaFail = $env:HP_TEST_FORCE_CONDA_FAIL
 $savedOffline   = $env:HP_OFFLINE_MODE
-$savedSkipPR    = $env:HP_SKIP_PIPREQS
 $savedSkipAP    = $env:HP_SKIP_AUTOPEP_DISCOVERY
 $savedLane      = $env:HP_CI_LANE
 $env:HP_TEST_FORCE_CONDA_FAIL   = '1'
 $env:HP_OFFLINE_MODE            = '1'
-$env:HP_SKIP_PIPREQS            = '1'
 # derived requirement: HP_SKIP_AUTOPEP_DISCOVERY=1 for the same reason
 # selfapps_warnfix.ps1 sets it -- without it, REQ-005.12's autopep723-check discovery
 # (uv lane, default-on) would statically discover xlrd from the stub app's own import
 # and merge it into requirements.txt before warnfix ever gets a chance to fire, defeating
-# this test's whole "isolate the warnfix repair path" premise.
+# this test's whole "isolate the warnfix repair path" premise. (It only runs under uv mode,
+# which this test never reaches; kept so the premise survives a provider change.)
 $env:HP_SKIP_AUTOPEP_DISCOVERY  = '1'
 $env:HP_CI_LANE                 = 'test'
 
@@ -141,7 +155,6 @@ try {
 } finally {
     $env:HP_TEST_FORCE_CONDA_FAIL   = $savedCondaFail
     $env:HP_OFFLINE_MODE            = $savedOffline
-    $env:HP_SKIP_PIPREQS            = $savedSkipPR
     $env:HP_SKIP_AUTOPEP_DISCOVERY  = $savedSkipAP
     $env:HP_CI_LANE                 = $savedLane
     Pop-Location
@@ -166,6 +179,15 @@ $warnRebuildFired = $combined -match [regex]::Escape('[REPAIR] rebuild complete 
 # though the rebuild-complete line above still fired unconditionally.
 $installedXlrd    = $combined -match [regex]::Escape('[INFO] Installed: xlrd')
 $repairFailed     = $combined -match [regex]::Escape('[WARN] Repair failed:')
+# derived requirement (Item 35): split "the dispatch never ran" from "pip ran and failed". The repair
+# dispatch logs "[INFO] Attempting to install: <module>" for every module it tries, in every mode that
+# has a branch, and "[WARN] System fallback: skipping warnfix repair installation." when it deliberately
+# does nothing. Seeing the [REPAIR] marker with NEITHER line means the dispatch matched no branch.
+$attemptedXlrd    = $combined -match [regex]::Escape('[INFO] Attempting to install: xlrd')
+$systemSkipWarn   = $combined -match [regex]::Escape('[WARN] System fallback: skipping warnfix repair installation.')
+$reqPath          = Join-Path $workDir 'requirements.txt'
+$reqText          = if (Test-Path -LiteralPath $reqPath) { Get-Content -LiteralPath $reqPath -Raw -Encoding ASCII } else { '' }
+$preconditionOk   = -not ($reqText -match 'xlrd')
 
 $envLeaf  = Split-Path $workDir -Leaf
 $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
@@ -196,7 +218,7 @@ $exeLogPath    = Join-Path $distDir '~warnfix_venv_repair_exe.log'
 $exeLogContent = if (Test-Path $exeLogPath) { Get-Content -LiteralPath $exeLogPath -Raw -Encoding ASCII } else { '' }
 $infraError    = $exeLogContent -match 'Failed to parse|uv error|pip error'
 
-$pass = $venvProviderLog -and $warnInstallFired -and $warnRebuildFired -and $installedXlrd -and (-not $repairFailed) -and $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
+$pass = $preconditionOk -and $venvProviderLog -and $warnInstallFired -and $warnRebuildFired -and $installedXlrd -and (-not $repairFailed) -and $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.venv_repair'
@@ -208,6 +230,9 @@ Write-NdjsonRow ([ordered]@{
         venvProviderLog  = $venvProviderLog
         warnInstallFired = $warnInstallFired
         warnRebuildFired = $warnRebuildFired
+        attemptedXlrd    = $attemptedXlrd
+        systemSkipWarn   = $systemSkipWarn
+        preconditionOk   = $preconditionOk
         installedXlrd    = $installedXlrd
         repairFailed     = $repairFailed
         exeExists        = $exeExists

@@ -165,6 +165,19 @@ This dominates the completeness number but is not a new test, so it stays with I
 - Suggested order inside Item 35: fix the test-side venv_repair precondition, root-cause
   `self.cascade.exec`, then remove `continue-on-error` from "Enforce aggregate self-test verdict".
   Until the last step, the baseline's 3 reds are invisible to merges.
+- **Update 2026-10-11, from reading the baseline `uv` job log in full (diagnosis; the CI proof is the
+  next run's `uv`-lane rows).** The two `uv` reds are not independent. In the cascade log the embed
+  tier prints `[REPAIR] missing modules detected; installing and rebuilding.` and then goes straight
+  to `Rebuilding standalone executable after warnfix`, with no `Attempting to install:` line and no
+  `System fallback: skipping warnfix repair installation.` line, so no repair install ran, no failure
+  flag was set, no cascade candidate was raised, and the chain stopped at embed (`offersSkipped` 2,
+  not 4). The dispatch in `run_setup.bat` (`) else if "%HP_ENV_MODE%"=="conda" if defined CONDA_BAT (`,
+  the only nested `if` in an else-chain in the file) puts the venv, embed and system branches in the
+  else of the inner `if defined`, so when the mode is not `conda` the whole chain is skipped. That is
+  the Item 36 bug again, reintroduced by Item 36's own review fix. `self.exe.warnfix.venv_repair`
+  could not show it because its precondition was stale (pipreqs installed xlrd up front); with the
+  precondition fixed it is the regression test for this. The fix is in `run_setup.bat` and belongs to
+  the lane that owns that file, test first.
 
 ---
 
@@ -334,6 +347,14 @@ rather than edit requirements).
 
 **Prove red.** Remove one tag in the first push.
 
+**Status (2026-10-11): landed.** `tests/test_req_trace.py` is the pytest. Its exemption tables are
+`NO_ROW_TAG_YET` (REQ-019, 026, 027: no row yet) and `NOT_IN_README` (REQ-024 and REQ-025, which the
+batch uses but the README has no section for; they stay listed until the maintainer approves README
+stubs). Each rule is proven able to fail by the synthetic cases
+in the same file, and a stale exemption warns instead of failing. The tag-only follow-up is done too:
+the four REQ-024 lock rows and `self.stub.low_disk_warn` (REQ-025) in `tests/selftest.ps1` now carry
+`req`.
+
 ### T6. Flag-inventory ratchet (REQ-019)
 
 **Missing.** `run_setup.bat` references 391 `HP_*`/`PVW_*` names, 51 of them `HP_TEST_*` hooks. The
@@ -349,6 +370,9 @@ real rule (a flag must never *enable* a Prime Directive behavior); that review s
 the mechanical half enforced.
 
 **Lane.** pytest step, all lanes. Cost: none.
+
+**Status (2026-10-11): landed** as `tests/test_flag_inventory.py` with a third rule (every `PVW_*`
+override the batch reads is documented). `UNTESTED_HOOKS` holds `HP_TEST_DISABLE_LOCK` only.
 
 ### T7. Replace vacuous and false-pass rows
 
