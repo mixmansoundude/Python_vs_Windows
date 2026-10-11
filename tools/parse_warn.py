@@ -1,13 +1,9 @@
-"""parse_warn v4 (2026-10-10)
-Reads the PyInstaller warn file; prints one package name per line for warnfix to install.
-Usage: python ~parse_warn.py <envname>
-Reads 5.x "W: no module named 'foo'" and 6.x "missing module named foo - imported by bar
-(top-level|delayed|conditional)" lines, never "excluded module named" ones. Never printed
-(README REQ-005.9): names starting with _, SKIP, the standard library, PyInstaller's own
-pyimod*/pyi_* modules, and X.attr when X is already installed. SKIP group rationale:
-docs/agent-closed-backlog.md, Dependency Strategy Rationale.
+"""parse_warn v5 (2026-10-11)
+Prints one package name per line for warnfix, from the PyInstaller warn file (5.x and 6.x formats).
+Never printed (README REQ-005.9): names starting with _, SKIP, stdlib, pyimod*/pyi_*, X.attr when
+X is installed, and a name only the stdlib or installed packages import.
 """
-__version__ = "parse_warn v4 (2026-10-10)"
+__version__ = "parse_warn v5 (2026-10-11)"
 __all__ = ["main", "parse_warn_file", "TRANSLATIONS", "SKIP"]
 
 import importlib.util
@@ -49,15 +45,11 @@ TRANSLATIONS.update(dict.fromkeys((
     "win32inet win32gui_struct winxpgui ntsecuritycon").split(), "pywin32"))
 
 SKIP = frozenset((
-    # stdlib/setuptools machinery and packages whose submodules surface as "missing"
+    # rationale per group: docs/agent-closed-backlog.md, Dependency Strategy Rationale
     "pkg_resources distutils setuptools importlib importlib.metadata importlib.resources "
     "importlib.abc collections "
-    # Unix-only platform modules, absent on Windows
     "grp pwd posix resource fcntl readline termios tty pty crypt spwd nis syslog ossaudiodev "
-    # Python 2 shims real packages still reference (xlrd does conditional cStringIO imports)
     "cStringIO StringIO "
-    # Item 64: stdlib removed in Python 3, other interpreters and operating systems (Jython,
-    # OpenVMS, macOS, classic Mac), and the Python 2 standard library: on no index for Windows
     "imp uu test java vms_lib org ce os2 riscos riscospath Foundation AppKit objc Cocoa Quartz "
     "CoreFoundation PyObjCTools MacOS EasyDialogs Carbon tkFileDialog tkMessageBox tkSimpleDialog "
     "tkColorChooser tkCommonDialog tkFont Tkinter Tkconstants Tix ScrolledText FileDialog gdbm "
@@ -83,13 +75,38 @@ def _is_stdlib(name):
     return spec is not None and "-packages" not in where
 
 
-def parse_warn_file(warn_path):
-    """Parse a PyInstaller warn file; return list of conda package names (deduplicated, ordered).
+def _pkgdir(path):
+    # whole path component: a user's folder called my-packages is not site-packages
+    return any(c in ("site-packages", "dist-packages") for c in re.split(r"[\\/]", path.lower()))
 
-    Returns an empty list if warn_path does not exist.
-    Each entry in TRANSLATIONS maps an import-name to a conda package name.
-    Unknown import names pass through unchanged.
-    """
+
+def _lib(imp):
+    # True when the importer is the stdlib or an installed package, never the user's own code.
+    if re.search(r"[\\/]", imp):
+        return _pkgdir(imp)
+    top = imp.split(".")[0]
+    s = _spec(top)
+    o = getattr(s, "origin", None) or ""
+    if any(_pkgdir(p) for p in [o] + list(getattr(s, "submodule_search_locations", None) or ())):
+        return True
+    if top not in (getattr(sys, "stdlib_module_names", None) or ()):
+        return False
+    if re.match(r"([A-Za-z]:)?[\\/]", o):  # a file outside the interpreter: the user's, borrowing a stdlib name
+        n = os.path.normcase(o)
+        return any(n.startswith(os.path.normcase(p).rstrip("\\/") + os.sep) for p in (sys.prefix, sys.base_prefix))
+    return True
+
+
+def _wanted(line):
+    kinds = r"top-level|delayed|conditional"
+    ents = re.findall(r"(.+?) \(([^)]*)\)(?:, |$)", line.partition(" - imported by ")[2])
+    if not ents:
+        return bool(re.search(kinds, line))
+    return any(re.search(kinds, k) and not _lib(i) for i, k in ents)
+
+
+def parse_warn_file(warn_path):
+    """Return the install names (deduplicated, in order) a PyInstaller warn file asks for."""
     if not os.path.exists(warn_path):
         return []
     seen = set()
@@ -102,12 +119,10 @@ def parse_warn_file(warn_path):
             if m:
                 raw = m.group(1)
             else:
-                # 6.x: top-level, delayed and conditional imports are required; an entry that is
-                # only (optional) is a try-except guard, resilient by design, so it is skipped.
+                # 6.x: required only when the user's own code imports it at top level, in a
+                # function or under an if; (optional) alone is a try-except guard, skipped.
                 m = re.match(r"missing module named (\S+)", line)
-                if not m:
-                    continue
-                if not re.search(r'\([^)]*(?:top-level|delayed|conditional)[^)]*\)', line):
+                if not m or not _wanted(line):
                     continue
                 raw = m.group(1).strip("'\"")
             mod = raw.split(".")[0]

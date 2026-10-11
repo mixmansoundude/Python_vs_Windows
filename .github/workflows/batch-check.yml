@@ -827,6 +827,16 @@ jobs:
         run: |
           & tests\selfapps_warnfix_noise.ps1
 
+      # derived requirement: CLAUDE.md Item 64 slice 2 (README REQ-005.9) -- warnfix must not install
+      # the optional backends of a library the program only uses (a pandas-only app). Gating on
+      # purpose, real lane only: the filter is provider-independent and the stdlib scenario above
+      # already covers both repair-install paths, so conda-full (slowest lane) is not given a pandas build.
+      - name: "Self-test: warnfix never installs a library's optional backends (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_warnfix_library.ps1
+
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2043,6 +2053,16 @@ jobs:
             tests\~selftest_warnfix_noise\dist\~noise_token.txt
             tests/~selftest_warnfix_noise/dist/~noise_exe.log
             tests\~selftest_warnfix_noise\dist\~noise_exe.log
+            tests/~selftest_warnfix_library/~library_bootstrap.log
+            tests\~selftest_warnfix_library\~library_bootstrap.log
+            tests/~selftest_warnfix_library/~setup.log
+            tests\~selftest_warnfix_library\~setup.log
+            tests/~selftest_warnfix_library/~warnfile.txt
+            tests\~selftest_warnfix_library\~warnfile.txt
+            tests/~selftest_warnfix_library/dist/~library_token.txt
+            tests\~selftest_warnfix_library\dist\~library_token.txt
+            tests/~selftest_warnfix_library/dist/~library_exe.log
+            tests\~selftest_warnfix_library\dist\~library_exe.log
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log

@@ -630,8 +630,30 @@ replace the stdlib rule with "try the install and see": `multiprocessing` exists
 unbuildable Python 2 backport. A bare undotted name is deliberately not skipped just because it resolves
 (that would blunt the cascade signal). Unit tests of this filter must patch `importlib.util.find_spec`
 (`tests/test_parse_warn.py::_parse_lines`), or they pass or fail depending on what the machine has
-installed. `HP_PARSE_WARN` has a 535-character payload margin; keep rationale text in
+installed. `HP_PARSE_WARN` is only ~95 characters under the 8191 limit (after the importer rule and its
+review fixes): shrink the source or split the payload before the next change, and keep rationale text in
 `docs/agent-closed-backlog.md`, not in the source.
+
+**Who imports a missing module decides whether it is ours to install (Item 64 slice 2).** The importer
+list on a 6.x line (`- imported by A (kinds), B (kinds)`) separates the program's own code from a
+library's optional backends: a real pandas build lists about 30 names (pyarrow, numba, sqlalchemy, tables,
+qtpy, PyQt4, pytest...) all imported by `pandas.*` or `numpy.*`, and `--collect-submodules=plotly` makes
+PyInstaller list narwhals' and plotly's backends too. `_wanted()` in `parse_warn.py` keeps a line only when
+some importer is NOT library-owned and its kinds include top-level/delayed/conditional. Library-owned =
+`find_spec` places the top-level name (origin or search locations), or a path importer sits, under a
+`site-packages` or `dist-packages` path COMPONENT (never a substring: a user's `C:\my-packages\app.py`
+is the program's), or the name is in `sys.stdlib_module_names` and `find_spec` does not resolve it to a
+real file outside `sys.prefix`/`sys.base_prefix` (a user's own `code.py` or `statistics.py` borrows a
+stdlib name and stays the program's; `frozen`/`built-in`/unresolved origins stay stdlib). Two traps: library `(top-level)`
+entries exist (plotly.basewidget imports traitlets at the top of a module nobody loads, narwhals imports
+numpy at the top of its pandas-like backend), so the rule must not stop at delayed/conditional; and an
+importer nothing can locate must count as the PROGRAM's (fail toward installing), or a user's helper
+module would hide its own dependencies. Before Python 3.10 there is no stdlib list, so a stdlib importer
+is treated as the program's and the old behaviour applies (the `_is_stdlib` origin fallback is not reused
+here because it would call a helper module in the app folder "stdlib"). Library hard dependencies are not
+lost: the package manager installs them with the library, and a missing one surfaces at run time
+(Item 65). Fixture lines come from real builds (a Linux PyInstaller 6.22.3 pandas build and the CI plotly
+scenario's warn file), importer lists shortened.
 
 ---
 
