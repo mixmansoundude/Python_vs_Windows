@@ -656,9 +656,11 @@ set "HP_ENTRY_FILE_ARG="
 if "%~1"=="" goto :entry_arg_checked
 echo "%~1"| findstr /l /c:"*" /c:"?" >nul
 if not errorlevel 1 goto :entry_arg_usage
-if /i "%~x1"==".py" if exist "%~1" set "HP_ENTRY_FILE_ARG=%~1"
+rem A folder named like a script also passes if exist, so each name is also tested with a trailing
+rem backslash, which is true only for a folder.
+if /i "%~x1"==".py" if exist "%~1" if not exist "%~1\" set "HP_ENTRY_FILE_ARG=%~1"
 if defined HP_ENTRY_FILE_ARG goto :entry_arg_checked
-if exist "%~1.py" set "HP_ENTRY_FILE_ARG=%~1.py"
+if exist "%~1.py" if not exist "%~1.py\" set "HP_ENTRY_FILE_ARG=%~1.py"
 if not defined HP_ENTRY_FILE_ARG goto :entry_arg_usage
 call :log "[INFO] REQ-002: first argument had no .py extension; using the .py file of that name."
 goto :entry_arg_checked

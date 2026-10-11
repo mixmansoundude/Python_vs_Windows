@@ -841,7 +841,8 @@ the value contains literal embedded double-quotes per token that would corrupt n
 **Touch the pre-flight order, the fast path, or either `:determine_entry` call site, must understand
 the others.** The block after the REQ-011 check validates `%1` (empty is fine; a `*` or `?` is
 rejected because `if exist` treats them as patterns; otherwise it must be an existing `.py` as typed,
-or `%1.py` must exist) and stops with a usage message, status `error`, exit 1 and a released lock.
+or `%1.py` must exist, and neither may be a folder: `if exist` is true for a folder, so each test is paired
+with `if not exist "<name>\"`, which is true only for a file) and stops with a usage message, status `error`, exit 1 and a released lock.
 Order matters: REQ-011 (cross-folder) first, then this check, then `:compute_interactive_run`, then
 `:try_fast_exe`. The forwarded program arguments still start at `%2` (`HP_APP_ARGS`), so a first
 argument that was silently dropped used to shift every argument by one, which is what made the

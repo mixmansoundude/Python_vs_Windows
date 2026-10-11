@@ -165,15 +165,21 @@ Update Workflow" below; use it instead of a one-off inline snippet for every pay
 
 ---
 
-## `if exist` treats `*` and `?` as patterns, and `~setup.log` is not rotated per run
+## `if exist` treats `*` and `?` as patterns and is true for folders, and `~setup.log` is not rotated per run
 
-Two small facts from Item 67, both of which would have made a test or a check pass for the wrong
+Small facts from Item 67, each of which would have made a test or a check pass for the wrong
 reason. (1) `if exist "%~1.py"` is a PATTERN match: an argument of `*` becomes `*.py` and is "found"
 as soon as any `.py` exists, so user-supplied names must be screened for `*` and `?` before any
-`exist` test (`echo "%~1"| findstr /l /c:"*" /c:"?"`). (2) `~setup.log` is only rotated past 10 MB,
+`exist` test (`echo "%~1"| findstr /l /c:"*" /c:"?"`). (1b) `if exist` is also true for a FOLDER, so a
+folder named `folder.py` is "found" too; pair the test with `if not exist "<name>\"` (a trailing
+backslash is true only for a folder). (2) `~setup.log` is only rotated past 10 MB,
 so it accumulates across runs in one folder; a test that runs the bootstrapper several times in one
 scratch folder and checks the log for the absence of a line must read only the bytes that run
 appended (record the length before the run), or an earlier run's line is read as this run's.
+(3) cmd.exe has no `*>` operator: `cmd /c "run_setup.bat *> log"` hands the bootstrapper a literal `*` as its
+first argument and only redirects stdout. `tests/selftests.ps1` did this for months unnoticed (the argument was
+ignored); the Item 67 wildcard check rejected it and turned `self.bootstrap.state` and `self.empty_repo.msg`
+red on every lane. Use `> log 2>&1` inside a cmd string; `*>` is correct only in PowerShell, outside the string.
 
 ---
 
