@@ -885,9 +885,21 @@ window that is still open is expected. Did it open and work? [y/N]". A yes is re
 
 Conditions added the same day, from a third-party review the maintainer relayed (checked against the
 code; each one held up):
-- **Ask only on the silent timeout.** The question is asked only when `HP_EXE_EXIT` was `-1`, read through
-  `HP_EXE_TIMEDOUT_SILENT`, which `:run_exe_smokerun` sets for exactly that case and which survives the
-  `HP_EXE_EXIT` clear at the end of `:smokerun_ndjson`. Exit 0 is already a pass (`exe_ok`) and any other
+- **Ask only after the runner really stopped a silent process.** `HP_EXE_EXIT=-1` alone is not proof.
+  `:run_exe_smokerun` starts `HP_EXE_EXIT` at `-1` and keeps it when `~exe_smokerun.ps1` could not be
+  written ("could not emit") or when the result file is missing (the runner died before writing it, for
+  example `Start()` throwing), and `~exe_smokerun.ps1` writes `$p.ExitCode` unchanged for a program that
+  exits by itself, so a program that exits with `-1` reads the same. `HP_EXE_TIMEDOUT_SILENT` is set from
+  `HP_EXE_EXIT=-1` alone, so it is set in all three cases too (CodeRabbit finding on PR #486, checked
+  against `run_setup.bat` and `tools/exe_smokerun.ps1`). The prompt therefore gates on a separate marker
+  that only the runner can produce: it writes a small file, for example `~smokerun_killed.txt`, in the
+  same branch that kills the process (`$killed`), and the batch clears that file before the launch and
+  sets the marker only if the file exists afterwards. A second line in the result file would not work,
+  because the `for /f` loop that reads it overwrites `HP_EXE_EXIT` on every line. This changes the
+  `HP_EXE_SMOKERUN` payload, so it is re-synced with `tools/sync_payload.py`. The existing
+  `HP_EXE_TIMEDOUT_SILENT` flag, which only drives the caveat panel with its "not necessarily broken"
+  wording, is left as it is. The marker must survive the `HP_EXE_EXIT` clear at the end of
+  `:smokerun_ndjson`, as `HP_EXE_TIMEDOUT_SILENT` does. Exit 0 is already a pass (`exe_ok`) and any other
   non-zero exit is already a failure, so neither needs the question. The asymmetry with the uv run is
   deliberate: on uv nothing needs recording because uv is the default order, while on conda the answer
   decides whether anything is remembered.
@@ -903,5 +915,8 @@ The first slice only logs the answer and puts it on the NDJSON row, like the oth
 row (8): a fixture that stays silent like a window app (a script that sleeps without printing;
 `HP_SMOKERUN_KILL_MS` shortens the 30 second wait for CI) on the cascade-reached conda tier, with answers
 Y (logged as `user_confirmed`), N and an empty answer (nothing logged), plus no TTY and no override
-(resolves to no without waiting); the same fixture on the uv tier asserting the question is absent; and a
-conda-tier fixture that exits 0 and one that exits non-zero, asserting the question is absent.
+(resolves to no without waiting); the same fixture on the uv tier asserting the question is absent; and
+conda-tier fixtures that exit 0, exit non-zero, exit by themselves with `-1`, and fail to launch
+(`HP_TEST_FORCE_EMIT_FAIL=HP_EXE_SMOKERUN`, the existing hook that simulates a failed write of one
+payload), each asserting the question is absent. The red run shows which of the `-1` fixtures really
+produce `HP_EXE_EXIT=-1` on Windows before the marker exists, so the old gate is proven wrong first.
