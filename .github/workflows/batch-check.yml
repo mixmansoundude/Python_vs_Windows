@@ -1147,6 +1147,16 @@ jobs:
         run: |
           & tests\selfapps_pipreqs_output.ps1
 
+      # derived requirement: CLAUDE.md Item 67 -- the first argument must be an existing .py file in
+      # the bootstrapper folder (as typed, or with .py appended); anything else stops the run before
+      # the cached-EXE fast path. Gating on purpose (real lane); these rows are the regression test
+      # the fix must turn green. One lane is enough: the check runs before provider selection.
+      - name: "Self-test: first argument must be a .py file in this folder (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_entryarg.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
@@ -1933,6 +1943,30 @@ jobs:
             tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_direct.log
             tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_precheck.txt
             tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_precheck.txt
+            tests/~selftest_entryarg/~entryarg_run1.log
+            tests\~selftest_entryarg\~entryarg_run1.log
+            tests/~selftest_entryarg/~entryarg_run1_setup.log
+            tests\~selftest_entryarg\~entryarg_run1_setup.log
+            tests/~selftest_entryarg/~entryarg_run2.log
+            tests\~selftest_entryarg\~entryarg_run2.log
+            tests/~selftest_entryarg/~entryarg_run2_setup.log
+            tests\~selftest_entryarg\~entryarg_run2_setup.log
+            tests/~selftest_entryarg/~entryarg_run3.log
+            tests\~selftest_entryarg\~entryarg_run3.log
+            tests/~selftest_entryarg/~entryarg_run3_setup.log
+            tests\~selftest_entryarg\~entryarg_run3_setup.log
+            tests/~selftest_entryarg/~entryarg_run4.log
+            tests\~selftest_entryarg\~entryarg_run4.log
+            tests/~selftest_entryarg/~entryarg_run4_setup.log
+            tests\~selftest_entryarg\~entryarg_run4_setup.log
+            tests/~selftest_entryarg/~entryarg_run5.log
+            tests\~selftest_entryarg\~entryarg_run5.log
+            tests/~selftest_entryarg/~entryarg_run5_setup.log
+            tests\~selftest_entryarg\~entryarg_run5_setup.log
+            tests/~selftest_entryarg/~entryarg_run6.log
+            tests\~selftest_entryarg\~entryarg_run6.log
+            tests/~selftest_entryarg/~entryarg_run6_setup.log
+            tests\~selftest_entryarg\~entryarg_run6_setup.log
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

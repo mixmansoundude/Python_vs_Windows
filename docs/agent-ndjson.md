@@ -782,6 +782,29 @@ folder name and treats a surviving old file as untrusted.
 self.pipreqs.output.readonly_replaced, self.pipreqs.output.temp_isolated, self.pipreqs.output.locked_named, self.pipreqs.output.locked_crash
 ```
 
+## selfapps-entryarg NDJSON rows (selfapps_entryarg.ps1, real lane only, GATING)
+
+CLAUDE.md Item 67 regression test (`docs/plan-field-report-2026-10.md`; README REQ-002, REQ-026). One
+real bootstrap builds a two-file app (`main.py` and `entry.py`, both exit 2 when they receive any
+argument), then five quick runs drive the cached-EXE path with bad first arguments. Every run's
+checks read only that run's output: the console capture, and the bytes the run appended to
+`~setup.log` (which is not rotated per run). `noext` (run 1, `run_setup.bat entry`: `entry.py` is
+chosen over `main.py`, the `.py` is appended and logged), `csv` (run 2, an existing `data.csv`:
+non-zero exit, `Usage: run_setup.bat your_script.py` on the console, status `error`, EXE byte-for-byte
+and timestamp unchanged, no `Fast path` or `discarding cached EXE` line), `missing` (run 3, `arg1
+arg2`, the 2026-08-31 command: same checks, and the good EXE is never run with the wrong arguments or
+discarded), `wildcard` (run 4, `*`: a wildcard matches every file so it must be rejected, same checks),
+`stops_release_lock` (run 5 is a file from another folder, the REQ-011 stop; run 6 is `entry` again
+and must see no REQ-024 lock message and reuse the EXE). Skips with `skip=true,
+reason=non-windows-host` off Windows. Expected red on the commit that adds it (the old code takes a
+missing first argument as no argument and an existing non-Python file as the entry, launches the
+cached EXE with the wrong arguments, and leaves the lock behind after the REQ-011 stop) and green once
+the first argument is validated before the fast path and every early stop releases the lock.
+
+```
+self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.stops_release_lock
+```
+
 ## selfapps-warnfix-noise NDJSON rows (selfapps_warnfix_noise.ps1, real and conda-full lanes, GATING)
 
 CLAUDE.md Item 64 (slice 1) regression test, README REQ-005.9. One real bootstrap (no skip hooks) of
