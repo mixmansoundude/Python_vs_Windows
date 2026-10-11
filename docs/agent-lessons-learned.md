@@ -165,6 +165,18 @@ Update Workflow" below; use it instead of a one-off inline snippet for every pay
 
 ---
 
+## `if exist` treats `*` and `?` as patterns, and `~setup.log` is not rotated per run
+
+Two small facts from Item 67, both of which would have made a test or a check pass for the wrong
+reason. (1) `if exist "%~1.py"` is a PATTERN match: an argument of `*` becomes `*.py` and is "found"
+as soon as any `.py` exists, so user-supplied names must be screened for `*` and `?` before any
+`exist` test (`echo "%~1"| findstr /l /c:"*" /c:"?"`). (2) `~setup.log` is only rotated past 10 MB,
+so it accumulates across runs in one folder; a test that runs the bootstrapper several times in one
+scratch folder and checks the log for the absence of a line must read only the bytes that run
+appended (record the length before the run), or an earlier run's line is read as this run's.
+
+---
+
 ## `rem` needs a space after it -- `rem-word` is parsed as a command, not a comment
 
 cmd.exe only treats a line as a comment when `rem` is followed by whitespace (or EOL) --

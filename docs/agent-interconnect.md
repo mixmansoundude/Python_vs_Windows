@@ -836,6 +836,26 @@ it (it launches a brand-new, never-before-executed Nuitka binary) -- but reads `
 directly in PowerShell rather than cmd.exe-substituting `%HP_APP_ARGS%` into `-Command` text, since
 the value contains literal embedded double-quotes per token that would corrupt naive substitution.
 
+### First-argument check (Item 67): runs before the fast path, hands `:determine_entry` a normalized name
+
+**Touch the pre-flight order, the fast path, or either `:determine_entry` call site, must understand
+the others.** The block after the REQ-011 check validates `%1` (empty is fine; a `*` or `?` is
+rejected because `if exist` treats them as patterns; otherwise it must be an existing `.py` as typed,
+or `%1.py` must exist) and stops with a usage message, status `error`, exit 1 and a released lock.
+Order matters: REQ-011 (cross-folder) first, then this check, then `:compute_interactive_run`, then
+`:try_fast_exe`. The forwarded program arguments still start at `%2` (`HP_APP_ARGS`), so a first
+argument that was silently dropped used to shift every argument by one, which is what made the
+cached EXE fail fast and get discarded.
+- `HP_ENTRY_FILE_ARG` (not `HP_ENTRY_ARGS`, the py-launcher arguments) is the normalized name; both
+  `call :determine_entry` sites (inside `:ci_skip_entry`'s caller and `:after_env_bootstrap`) pass
+  it instead of `%~1`. Any new reader of the entry argument must use it, or a name typed without
+  `.py` would be seen raw. The `HP_CI_SKIP_ENV` path never reads `%1` for entry selection, but the
+  validation still runs there.
+- Every early top-level stop that can happen after `:acquire_lock` must `call :release_lock` (the
+  REQ-011 stop did not, so a rejected drag-and-drop blocked the next run in that folder for up to
+  two hours; `self.entryarg.stops_release_lock`).
+- Regression: `tests/selfapps_entryarg.ps1` (`real` lane, gating).
+
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 
 `:print_no_exe_briefing`'s header now dispatches on `HP_NOEXE_VERIFY_FAILED` (set in both branches

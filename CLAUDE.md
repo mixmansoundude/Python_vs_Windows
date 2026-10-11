@@ -696,7 +696,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62 and 63 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63 and 67 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -724,9 +724,6 @@ the original symptom (see that doc's "CI-first testing policy").
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
   Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
   and the memory-invalidation rules are in the plan doc. A failed forced solve stops; it does not cascade.
-- **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
-  (any existing file) or silently ignored, dropping the user's first real argument; this deleted
-  a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09: validate and stop; program arguments stay optional).
 - **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to

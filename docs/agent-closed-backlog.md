@@ -3384,6 +3384,36 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   copy: a failed staging scan leaves `<log tail unavailable>` in `~pipreqs.summary.txt` (visible in the green
   run's `locked_crash` summary) and no traceback in the setup log.
 
+### Item 67 (closed 2026-10-11; PR #488)
+
+- **A first argument that is not an existing `.py` file in the folder now stops the run with a usage
+  message.** Symptom (2026-08-31 field note): `run_setup.bat arg1 arg2`, typed with no entry file, took
+  `arg1` as the entry if any file of that name existed, or ignored it otherwise; with the cached EXE
+  present the fast path launched it with `arg2` as its only argument, the EXE exited non-zero, the
+  bootstrapper discarded a working EXE and rebuilt it. Cause: nothing validated `%1` before `:try_fast_exe`
+  or either `:determine_entry` call. Fix: a block after the REQ-011 check (empty is fine; `*` or `?` is
+  rejected because `if exist` treats them as patterns; otherwise `%1` must be an existing `.py` as typed, or
+  `%1.py` must exist, which is logged as the resolved name) that stops with a usage message, status
+  `error`, exit 1 and a released REQ-024 lock. `HP_ENTRY_FILE_ARG` carries the normalized name to both
+  `:determine_entry` call sites. Program arguments (`%2` onward) stay optional and are forwarded as before.
+  README REQ-002 item 0, REQ-011 and REQ-026 describe it; the interconnect map has a "First-argument check"
+  entry.
+- **Found while testing, fixed in the same change.** The REQ-011 stop (a dragged file from another folder)
+  did not release the REQ-024 lock, so the next double-click in that folder met "setup already running" for
+  up to two hours. Row `self.entryarg.stops_release_lock` covers it.
+- **Test-first, as required.** `tests/selfapps_entryarg.ps1` (`real` lane, gating; rows
+  `self.entryarg.noext`, `.csv`, `.missing`, `.wildcard`, `.stops_release_lock`) landed alone and was red
+  in blocking CI (run `38147523685`, head `d1402bc`): on `real` exactly those five rows failed and no other
+  row did. For the expected reasons: `noext` built from `main.py` (`helloEntry:false`, `resolvedMsg:false`);
+  `csv`, `missing` and `wildcard` exited 0 with no usage line and `Fast path: reusing` in the log; `missing`
+  discarded and rebuilt the good EXE (`exeUntouched:false`, the original symptom, and the run's log ends in
+  a full SETUP COMPLETE banner), which is also why `wildcard` read a changed EXE after it; the run after
+  `stops_release_lock`'s early stop met `REQ-024: setup already running (lock held, not stale)`. Fix run:
+  recorded in the PR #488 description.
+- **Two things the test taught.** `~setup.log` is rotated only past 10 MB, so a per-run absence check has to
+  read only the bytes the run appended; and `if exist "%~1.py"` with `%1` = `*` matches any `.py`, so a
+  wildcard argument needed its own rejection and row. See `docs/agent-lessons-learned.md`.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

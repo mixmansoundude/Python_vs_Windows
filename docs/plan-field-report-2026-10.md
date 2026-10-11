@@ -443,6 +443,11 @@ and change nothing on disk. Never fall back silently.
 **CI proof**: rows for `%1` = `main` (resolves to `main.py`), `%1` = an existing `.csv` (stops,
 EXE untouched), `%1` = a missing name (stops, EXE untouched).
 
+**Shipped (2026-10-11, PR #488)**: `tests/selfapps_entryarg.ps1` rows `self.entryarg.noext`, `.csv`,
+`.missing`, `.wildcard` (a `*` or `?` is rejected, because `if exist` treats them as patterns) and
+`.stops_release_lock` (the REQ-011 stop now releases the lock too). Detail in
+`docs/agent-closed-backlog.md`.
+
 ### Item 68 -- Small honest-wording fixes (Confirmed, tiny, one PR)
 
 Each was checked against current text:

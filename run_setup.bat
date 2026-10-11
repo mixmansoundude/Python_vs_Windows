@@ -641,8 +641,39 @@ if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (
   echo [ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.
   call :log "[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder."
   call :write_status "error" 1 %PYCOUNT%
+  call :release_lock
   exit /b 1
 )
+rem derived requirement: CLAUDE.md Item 67 -- the first argument, when given, must be an existing
+rem .py file in this folder, as typed or with .py appended. Anything else stops here, BEFORE the
+rem cached-EXE fast path: the forwarded program arguments start at the second argument, so a
+rem forgotten entry file, as in run_setup.bat arg1 arg2, used to run the good EXE with the wrong
+rem arguments, see it fail fast, and delete it. An existing non-Python file used to be taken as the entry, and a missing name
+rem was silently ignored. A wildcard is rejected first because exist treats * and ? as patterns
+rem and would match any file. HP_ENTRY_FILE_ARG is the normalized name handed to :determine_entry.
+rem Top-level lines and gotos only, no parenthesized block around the set-then-test sequence.
+set "HP_ENTRY_FILE_ARG="
+if "%~1"=="" goto :entry_arg_checked
+echo "%~1"| findstr /l /c:"*" /c:"?" >nul
+if not errorlevel 1 goto :entry_arg_usage
+if /i "%~x1"==".py" if exist "%~1" set "HP_ENTRY_FILE_ARG=%~1"
+if defined HP_ENTRY_FILE_ARG goto :entry_arg_checked
+if exist "%~1.py" set "HP_ENTRY_FILE_ARG=%~1.py"
+if not defined HP_ENTRY_FILE_ARG goto :entry_arg_usage
+call :log "[INFO] REQ-002: first argument had no .py extension; using the .py file of that name."
+goto :entry_arg_checked
+:entry_arg_usage
+echo.
+echo *** [ERROR] The first argument must be one of your Python files in this folder.
+echo ***   You gave: "%~1"
+echo ***   Usage: run_setup.bat your_script.py [arguments for your program]
+echo ***   You can leave off the .py. Nothing was built, installed, or run.
+call :log "[ERROR] REQ-002: first argument is not an existing .py file in this folder; stopping before any build or run."
+call :write_status "error" 1 %PYCOUNT%
+call :release_lock
+if not defined HP_CI_LANE pause
+exit /b 1
+:entry_arg_checked
 set "HP_CONDA_PROBE_STATUS=skipped"
 set "HP_CONDA_PROBE_REASON=not-requested"
 
@@ -1366,7 +1397,7 @@ set "PEP723_ACTIVE="
 set "PEP723_BLOCK_FOUND="
 set "PEP723_REQ=~requirements.pep723.txt"
 if exist "%PEP723_REQ%" del "%PEP723_REQ%" >nul 2>&1
-call :determine_entry "%~1"
+call :determine_entry "%HP_ENTRY_FILE_ARG%"
 if errorlevel 11 (
   call :write_status "error" 1 %PYCOUNT%
   exit /b 1
@@ -2182,7 +2213,7 @@ goto :after_env_bootstrap
 
 :after_env_bootstrap
 if defined HP_CI_SKIP_ENV goto :after_env_skip
-call :determine_entry "%~1"
+call :determine_entry "%HP_ENTRY_FILE_ARG%"
 if errorlevel 11 (
   call :write_status "error" 1 %PYCOUNT%
   exit /b 1
