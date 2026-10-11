@@ -165,8 +165,10 @@ This dominates the completeness number but is not a new test, so it stays with I
 - Suggested order inside Item 35: fix the test-side venv_repair precondition, root-cause
   `self.cascade.exec`, then remove `continue-on-error` from "Enforce aggregate self-test verdict".
   Until the last step, the baseline's 3 reds are invisible to merges.
-- **Update 2026-10-11, from reading the baseline `uv` job log in full (diagnosis; the CI proof is the
-  next run's `uv`-lane rows).** The two `uv` reds are not independent. In the cascade log the embed
+- **Update 2026-10-11, from reading the baseline `uv` job log in full (diagnosis; proven by run
+  `38157663037`: `venv_repair` `attemptedXlrd:false`, `systemSkipWarn:false`, `preconditionOk:true`;
+  `cascade.exec` `repairMarkers:3`, `installAttempts:2`, `repairWithoutAttempt:1`; fixed on the follow-up
+  PR).** The two `uv` reds are not independent. In the cascade log the embed
   tier prints `[REPAIR] missing modules detected; installing and rebuilding.` and then goes straight
   to `Rebuilding standalone executable after warnfix`, with no `Attempting to install:` line and no
   `System fallback: skipping warnfix repair installation.` line, so no repair install ran, no failure

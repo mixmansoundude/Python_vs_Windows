@@ -639,7 +639,15 @@ but several represent real gaps worth closing before calling the path fully rele
   finds `xlrd`, and `requirements.txt` installs it up front (`~setup.log`: `Collecting xlrd~=2.0.2
   (from -r requirements.txt (line 1))`); warnfix never has anything to repair. The test's
   precondition is stale, not warnfix's venv branch, so the fix is test-side. (a) is NOT explained
-  by this and stays open.
+  by this and stays open. **Update 2026-10-11 (run `38157663037`, PR #490; both reds share one cause,
+  fixed on the follow-up PR)**: with the precondition fixed, `venv_repair` showed `warnInstallFired:true`,
+  `attemptedXlrd:false`, `systemSkipWarn:false`, `preconditionOk:true`, and `cascade.exec` showed
+  `repairMarkers:3`, `installAttempts:2`, `repairWithoutAttempt:1`. The warnfix repair dispatch in
+  `run_setup.bat` had a second `if` nested in the else-if chain (`else if conda if defined CONDA_BAT (`),
+  so cmd bound every later `else` to the inner `if defined` and the venv, embed and system branches never
+  ran outside conda mode: no install, no failure flag, no cascade candidate, the chain stopped at embed.
+  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. Re-soak both rows, then
+  remove `continue-on-error` from the aggregate gate per the discipline below.
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
