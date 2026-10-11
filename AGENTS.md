@@ -80,6 +80,20 @@ When adding a new branch or fallback:
 - Exception: pure documentation changes, and fixes where no CI check can observe the symptom. For
   the exception, say why in the PR description and name the check that would have caught it.
 
+## New tests gate immediately (mandatory)
+- A new test gates from its first run. A red new test usually means the test is still being written,
+  and red holds auto-merge, which is the safe outcome. Do not park a new test in a non-gating lane or
+  behind `continue-on-error` so that it can "soak" first, and do not hide a red row to look green.
+- Only a test whose failure can come from a transient network or provider condition rather than from
+  the code (a download, a third-party installer, a test that deliberately bypasses a fallback) may start
+  non-gating. Say why in the PR description, keep its row visible in the diagnostics, and watch it on
+  every run: a failure that looks transient can turn out to be permanent.
+- No false green. Putting a test in a non-gating lane, or dropping a row from the shared results,
+  never turns a failing result green: the check either asserts the expected failure and its reason, or
+  the row stays red.
+- Promoting an EXISTING non-gating lane or row (CLAUDE.md Item 35) still needs several consecutive
+  complete green matrices first; that is a different question from how a new test starts.
+
 ## Conda policy (mandatory)
 - Enforce conda-forge only.
 - Before any update/install:

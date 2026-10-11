@@ -668,7 +668,9 @@ but several represent real gaps worth closing before calling the path fully rele
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
   completion several consecutive times before treating it as proven, only then take the gating
-  step; (2) no shortcuts on "let CI run to completion" -- a partial or cancelled run never counts.
+  step; (2) no shortcuts on "let CI run to completion" -- a partial or cancelled run never counts;
+  (3) this soak applies to PROMOTING an existing non-gating lane or row, not to a new test: a new test
+  gates from its first run and a red one holds auto-merge (see AGENTS.md, "New tests gate immediately").
   `docs/agent-ndjson.md`'s own notes on each currently-inert row already diagnose why it's inert;
   `docs/agent-closed-backlog.md`'s Item 19 entry is relevant prior art for the `cache` lane's own
   non-gating history.
@@ -866,6 +868,22 @@ the original symptom (see that doc's "CI-first testing policy").
   prompt says the check stops the program after about 30 seconds, and the CI fixture is a silent script.
   Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
+
+### Item 83: the pre-flight syntax check aborts a valid program when `__pycache__` is not writable (filed 2026-10-11 from the test-suite gap map)
+
+- **Item 83 (Confirmed bug, small; README REQ-021 says "never aborts a run that would otherwise have
+  succeeded"; reproduced with a plain file named `__pycache__`)**: `:preflight_compile` runs
+  `python -m py_compile` on the entry file. py_compile writes `__pycache__\<entry>.cpython-*.pyc`; when it
+  cannot (a read-only folder, a locked-down machine, a file where the folder should be) it exits 1 for a
+  perfectly valid program, and the bootstrapper prints "Your Python program has a syntax error" and stops
+  with status `error`. When it can write, it leaves the `.pyc` in the user's folder. Two slices, test first:
+  (1) `tests/selfapps_preflight_pycache.ps1` (real lane, gating) with rows `self.preflight.pycache.unwritable`
+  (REQ-021.4) and `self.preflight.pycache.litter` (REQ-021.5), pushed alone and read red; (2) the fix: check
+  the syntax in memory with an emitted helper (`~preflight_check.py`, `HP_PREFLIGHT_CHECK`, source
+  `tools/preflight_check.py`: exit 0 valid, 1 syntax error with the interpreter's own message, anything else
+  means the check could not run and the bootstrapper continues), so nothing is written and nothing can fail
+  on the folder's state. Touches `:preflight_compile` only (one call site) plus one payload line in
+  `:define_helper_payloads`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
