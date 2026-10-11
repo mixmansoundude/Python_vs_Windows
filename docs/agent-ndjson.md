@@ -782,6 +782,27 @@ folder name and treats a surviving old file as untrusted.
 self.pipreqs.output.readonly_replaced, self.pipreqs.output.temp_isolated, self.pipreqs.output.locked_named, self.pipreqs.output.locked_crash
 ```
 
+## selfapps-warnfix-noise NDJSON rows (selfapps_warnfix_noise.ps1, real and conda-full lanes, GATING)
+
+CLAUDE.md Item 64 (slice 1) regression test, README REQ-005.9. One real bootstrap (no skip hooks) of
+a program with no third-party imports whose PyInstaller warn file still lists noise: `from
+multiprocessing import Pool, freeze_support` gives `missing module named multiprocessing.Pool`,
+`import pkgutil` gives PyInstaller's own `pyimod02_importers`, `import platform` gives `java` and
+`vms_lib`. `self.warnfix.noise.stdlib` first proves its precondition (`warnHasMultiprocessing` and
+`warnHasPyimod`: the copied `~warnfile.txt` really lists them, so a PyInstaller that stops printing
+them cannot make the row pass vacuously), then requires no `Attempting to install:` line at all
+(`attempted` lists every name tried), no `Repair failed:` line, no `[REPAIR] missing modules
+detected` block, no `REQ-009: cascade candidate detected`, and an EXE that was built and ran
+(`exeExit` 0, token file written). Skips with `skip=true, reason=non-windows-host` off Windows.
+Expected red on the commit that adds it (`tools/parse_warn.py` forwards every top-level name to
+warnfix, so multiprocessing, pyimod02_importers, java and vms_lib are all tried and the failed
+repair raises the cascade prompt) and green once stdlib, PyInstaller-internal and other-interpreter
+names are filtered.
+
+```
+self.warnfix.noise.stdlib
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full

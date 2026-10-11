@@ -616,6 +616,25 @@ or `\`.
 
 ---
 
+## A stdlib-only program still gets a warn file full of "missing" modules; `parse_warn.py` filters them by rule, not by install attempt
+
+A real PyInstaller 6.22 build of a ten-line program that imports only `pkgutil`, `platform` and
+`from multiprocessing import Pool, freeze_support` lists `pyimod02_importers` (PyInstaller's own runtime
+hook, (delayed)), `multiprocessing.Pool`/`.freeze_support`/`.get_context`... (a name created at import
+time, so the graph cannot see it), `java`, `'java.lang'`, `vms_lib` (platform.py's other-interpreter
+branches), `'collections.abc'`, and on a non-Windows host `winreg`, `msvcrt`, `nt`, `_winapi`. Before
+Item 64 every top-level name went to warnfix, which failed on all of them and raised the cascade prompt.
+Rules now (README REQ-005.9): `sys.stdlib_module_names` (fallback before 3.10: `find_spec` origin outside
+`*-packages`), `pyimod*`/`pyi_*` prefixes, the `SKIP` set, and `X.attr` with `X` already installed. Do NOT
+replace the stdlib rule with "try the install and see": `multiprocessing` exists on PyPI as an
+unbuildable Python 2 backport. A bare undotted name is deliberately not skipped just because it resolves
+(that would blunt the cascade signal). Unit tests of this filter must patch `importlib.util.find_spec`
+(`tests/test_parse_warn.py::_parse_lines`), or they pass or fail depending on what the machine has
+installed. `HP_PARSE_WARN` has a 535-character payload margin; keep rationale text in
+`docs/agent-closed-backlog.md`, not in the source.
+
+---
+
 ## Heuristic dep-augmentation must strip pip extras before name lookup
 
 `HP_PREP_REQUIREMENTS`'s `names_lower` list must strip `[...]` (pip extras, e.g. `pandas[excel]`)
