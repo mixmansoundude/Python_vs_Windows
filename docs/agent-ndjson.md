@@ -845,6 +845,19 @@ green once the scan exists.
 self.runtime.modnotfound
 ```
 
+## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
+
+CLAUDE.md Item 65 slice 1. `:report_runtime_missing_module` writes `self.runtime.module_missing`
+(`pass` always true, it is a finding not a verdict) once per module per bootstrap run, with
+`details.module` (a plain identifier), `details.site` (`exe`, `interpreter`, `fastpath` or `checkpoint`)
+and `details.provider`. No lane puts it in a shared artifact: `selfapps_runtime_modnotfound.ps1` points
+`HP_NDJSON` at a private file and reports what it found in its own row `self.runtime.modnotfound`
+(`rowIds`, `rowModules`).
+
+```
+self.runtime.module_missing
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full

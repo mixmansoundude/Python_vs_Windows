@@ -64,6 +64,7 @@ tests/
   selfapps_pipgap.ps1          pip gap-fill safety net (runs run_setup.bat: conda misses opencv-python, pip fills it)
   selfapps_pipreqs_encoding.ps1 Item 63: pipreqs scan survives unreadable files (real lane, gating; PYTHONUTF8=0)
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
+  selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -173,6 +174,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_MIGRATE_GITATTRIBUTES` | `~migrate_gitattributes.ps1` | Item 60: replaces a pre-existing `.gitattributes`' stale `*.bat eol=crlf`/`*.cmd eol=crlf` lines with `-text`, in place, EXACT-line-match only so unrelated/user-hand-edited content is never touched; called unconditionally from `:merge_git_config` regardless of whether the append block ran or was skipped | `tools/migrate_gitattributes.ps1` |
    | `HP_PIPREQS_PRECHECK` | `~pipreqs_precheck.py` | Item 63: reads every `.py` before pipreqs does (declared/detected encoding, then `ast.parse`); exit 0 = all clean UTF-8, scan in place; exit 10 = write a UTF-8 copy of the tree (re-encoded files, empty stubs for unreadable ones so their module names stay local) for pipreqs to scan; writes `~pipreqs_precheck.txt` (one INFO line per file capped at 100, a `[WARN]` per file left out capped at 25); every name it prints is stripped to a safe ASCII alphabet because the batch echoes it; run via `%HP_PY%` from `:pipreqs_precheck` | `tools/pipreqs_precheck.py` |
    | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays), decodes TOML escapes in double-quoted items, and rejects an array with no closing bracket; a nonzero result leaves no output file (the batch subroutine deletes it); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
+   | `HP_RUNTIME_MODULE_SCAN` | `~runtime_module_scan.py` | Item 65 slice 1: reads the stderr of a run that just finished and prints, one per line, each module it names as missing (`No module named 'X'`, top-level name) that the interpreter does not have; skips stdlib names, modules found next to the script, and anything that is not a plain identifier (the batch echoes the names unquoted); exit 0 always except 3 for an internal error; run via `%HP_PY%` from `:scan_runtime_missing_module` | `tools/runtime_module_scan.py` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
    byte-equality between the embedded base64 and the source file (see the Testing section
@@ -276,6 +278,7 @@ Test files and what they cover:
 | `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
 | `test_pipreqs_precheck.py` | Item 63: pipreqs pre-check (U+201D file ok as UTF-8, declared-cp1252 re-encoded, no-cookie cp1252 and unparseable left out, BOM, ignore folders, staged tree contents, exit codes 0/10/3, report hygiene and caps, `--encoding utf-8` on every pipreqs invocation, HP_PIPREQS_PRECHECK payload sync) |
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
+| `test_runtime_module_scan.py` | Item 65 slice 1: runtime missing-module scan (top-level name from a traceback, submodule, repeats, ImportError wording, cap; installed/on-path/stdlib/non-identifier names not reported; local module next to the helper; CLI exit codes; the three batch call sites and the reminder order; Python 3.9 grammar guard; HP_RUNTIME_MODULE_SCAN payload sync) |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -704,8 +707,9 @@ The maintainer cannot hand-test, so every item ships with a Windows CI scenario 
 the original symptom (see that doc's "CI-first testing policy").
 
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
-  when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
-  (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
+  when the run exits 0 (GUI callbacks do this). Slice 1 (name the missing package) is built on PR #487
+  (red run `38146234107`; `HP_RUNTIME_MODULE_SCAN` has little payload room left, see the interconnect
+  doc). Slice 2 (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
   install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
 - **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
