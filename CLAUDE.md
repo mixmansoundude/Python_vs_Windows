@@ -656,10 +656,14 @@ but several represent real gaps worth closing before calling the path fully rele
   before the cascade moves to conda; the conda tier's own `self.exe.smokerun` (`exitCode:0`) follows. The
   cache NDJSON shows exactly that order: uv `env.mode`, `pass:false`/`exitCode:1`, conda `env.mode`, DLL
   rows, `pass:true`/`exitCode:0`. It was the only red row on the lane for weeks. The test now gives the
-  sub-bootstrap a private stream and forwards every row except an earlier failing `self.exe.smokerun`, and
-  only when the log shows the cascade really left uv; the last verification row is always forwarded, so a
-  failing final run still shows red, and the exit codes are kept as `smokerunExits`/`smokerunDropped` on
-  `self.layered_e2e.chain`.
+  sub-bootstrap a private stream and forwards every row except an earlier `self.exe.smokerun` that matches
+  the expected uv-tier failure on every point: `pass:false` with `exitCode:1`, the log shows the cascade
+  left uv, and the setup log before the uv to conda hop holds `[HINT][HIDDEN_IMPORT] Hidden import likely
+  missing: pygrib` (the bootstrapper's own read of the EXE's output, so the reason is checked, not just
+  the code). Anything else stays in the stream and stays red, the last verification row is always
+  forwarded, and `self.layered_e2e.chain` now also requires exactly one dropped row plus a passing last
+  row (`smokeSequencePass`), so an unexpected uv-tier failure or a missing conda-tier pass fails the chain.
+  The exit codes are kept as `smokerunExits`/`smokerunDropped` on that row.
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to

@@ -397,10 +397,14 @@ Item 35, 2026-10-11). The uv tier builds an EXE that cannot import `pygrib`, so 
 1 by design and `run_setup.bat` emits `self.exe.smokerun` `pass:false` before the cascade moves to conda
 (run `38157663037` cache NDJSON: uv `env.mode`, `pass:false`/`exitCode:1`, conda `env.mode`, DLL rows,
 `pass:true`/`exitCode:0`). That row was the `cache` lane's only red row. The test forwards every row of
-`~layered_e2e_sub.ndjson` unchanged except an EARLIER `self.exe.smokerun` with `pass:false`, dropped only
-when the log shows `uvInstallFailed`, the cascade approved and exactly one uv to conda hop; the LAST
-`self.exe.smokerun` is always forwarded as emitted, so a failing final verification stays red. The chain
-row carries `smokerunExits` (every exit code in order, for example `1,0`) and `smokerunDropped`.
+`~layered_e2e_sub.ndjson` unchanged except an EARLIER `self.exe.smokerun` that matches the expected uv-tier
+failure on every point: `pass:false` with `exitCode:1`, `uvInstallFailed`, the cascade approved with exactly
+one uv to conda hop, and `[HINT][HIDDEN_IMPORT] Hidden import likely missing: pygrib` in the setup log before
+that hop (`:hint_hidden_import` reads it out of the EXE's own output). Any other failing row, including an
+unexpected uv-tier failure, is forwarded and stays red; the LAST `self.exe.smokerun` is always forwarded as
+emitted. The chain row carries `smokerunExits` (every exit code in order, for example `1,0`),
+`smokerunDropped`, `uvTierPygribHint`, `condaSmokePass` and `smokeSequencePass`, and `chainPass` requires
+`smokeSequencePass` (exactly one dropped row and a passing last row).
 
 ```
 self.layered_e2e.chain
