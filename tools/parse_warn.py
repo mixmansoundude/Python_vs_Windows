@@ -1,9 +1,7 @@
 """parse_warn v5 (2026-10-11)
-Prints one package name per line for warnfix, from the PyInstaller warn file (5.x "W: no module
-named 'foo'", 6.x "missing module named foo - imported by bar (top-level|delayed|conditional)").
-Never printed (README REQ-005.9, rationale in docs/agent-closed-backlog.md): names starting
-with _, SKIP, stdlib, pyimod*/pyi_*, X.attr when X is installed, and a name only the stdlib or
-installed packages import (6.x lines with no importer of the user's own).
+Prints one package name per line for warnfix, from the PyInstaller warn file (5.x and 6.x formats).
+Never printed (README REQ-005.9): names starting with _, SKIP, stdlib, pyimod*/pyi_*, X.attr when
+X is installed, and a name only the stdlib or installed packages import.
 """
 __version__ = "parse_warn v5 (2026-10-11)"
 __all__ = ["main", "parse_warn_file", "TRANSLATIONS", "SKIP"]
@@ -77,16 +75,26 @@ def _is_stdlib(name):
     return spec is not None and "-packages" not in where
 
 
+def _pkgdir(path):
+    # whole path component: a user's folder called my-packages is not site-packages
+    return any(c in ("site-packages", "dist-packages") for c in re.split(r"[\\/]", path.lower()))
+
+
 def _lib(imp):
     # True when the importer is the stdlib or an installed package, never the user's own code.
-    where = imp
-    if "/" not in imp and "\\" not in imp:
-        top = imp.split(".")[0]
-        if top in (getattr(sys, "stdlib_module_names", None) or ()):
-            return True
-        s = _spec(top)
-        where = "%s %s" % (getattr(s, "origin", ""), getattr(s, "submodule_search_locations", ""))
-    return "-packages" in where.lower()
+    if re.search(r"[\\/]", imp):
+        return _pkgdir(imp)
+    top = imp.split(".")[0]
+    s = _spec(top)
+    o = getattr(s, "origin", None) or ""
+    if any(_pkgdir(p) for p in [o] + list(getattr(s, "submodule_search_locations", None) or ())):
+        return True
+    if top not in (getattr(sys, "stdlib_module_names", None) or ()):
+        return False
+    if re.match(r"([A-Za-z]:)?[\\/]", o):  # a file outside the interpreter: the user's, borrowing a stdlib name
+        n = os.path.normcase(o)
+        return any(n.startswith(os.path.normcase(p).rstrip("\\/") + os.sep) for p in (sys.prefix, sys.base_prefix))
+    return True
 
 
 def _wanted(line):
