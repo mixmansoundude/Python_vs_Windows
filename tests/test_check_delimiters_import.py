@@ -686,3 +686,129 @@ def test_backtick_continued_and_across_multiple_lines_is_not_flagged(tmp_path, c
 
     assert result == 0
     assert "No delimiter issues found." in captured.out
+
+
+# derived requirement (CLAUDE.md Item 35, 2026-10-11): `) else if "%MODE%"=="conda" if defined
+# CONDA_BAT (` bound every later `else` to the inner `if`, so the venv, embed and system branches
+# of the warnfix repair dispatch were skipped outside conda mode and two uv-lane rows stayed red.
+# _check_bat_else_if_second_if pins the SHAPE because the system branch has no gating row.
+def _run_bat(tmp_path, capsys, text):
+    bat = tmp_path / "sample.bat"
+    bat.write_bytes(text.replace("\n", "\r\n").encode("ascii"))
+    result = check_delimiters.main([str(bat)])
+    return result, capsys.readouterr().out
+
+
+def test_else_if_with_second_if_on_same_line_is_flagged(tmp_path, capsys):
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if \"%MODE%\"==\"uv\" (\n"
+        "  echo uv\n"
+        ") else if \"%MODE%\"==\"conda\" if defined CONDA_BAT (\n"
+        "  echo conda\n"
+        ") else if \"%MODE%\"==\"venv\" (\n"
+        "  echo venv\n"
+        ")\n",
+    )
+    assert result == 1
+    assert "second \"if\" on the same line as \"else if\"" in out
+    assert ":4:" in out
+
+
+def test_else_if_slash_i_with_second_if_is_flagged(tmp_path, capsys):
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if defined A (\n"
+        "  echo a\n"
+        ") else if /i \"%B%\"==\"x\" if not defined C (\n"
+        "  echo b\n"
+        ")\n",
+    )
+    assert result == 1
+    assert "captures every later" in out
+
+
+def test_else_if_with_flag_test_is_not_flagged(tmp_path, capsys):
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "set \"HP_REPAIR_CONDA=\"\n"
+        "if \"%MODE%\"==\"conda\" if defined CONDA_BAT set \"HP_REPAIR_CONDA=1\"\n"
+        "if \"%MODE%\"==\"uv\" (\n"
+        "  echo uv\n"
+        ") else if defined HP_REPAIR_CONDA (\n"
+        "  echo conda\n"
+        ") else if \"%MODE%\"==\"venv\" (\n"
+        "  echo venv\n"
+        ")\n",
+    )
+    assert result == 0
+    assert "No delimiter issues found." in out
+
+
+def test_if_inside_else_if_parenthesised_body_is_not_flagged(tmp_path, capsys):
+    # The inner if sits in the first statement's own body, so its else binds correctly.
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if defined A (\n"
+        "  echo a\n"
+        ") else if defined B (\n"
+        "  if exist x (echo yes) else (echo no)\n"
+        ")\n",
+    )
+    assert result == 0
+    assert "No delimiter issues found." in out
+
+
+def test_quoted_if_text_after_else_if_is_not_flagged(tmp_path, capsys):
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if defined A (\n"
+        "  echo a\n"
+        ") else if \"%B%\"==\"x if y\" (\n"
+        "  echo b\n"
+        ")\n",
+    )
+    assert result == 0
+    assert "No delimiter issues found." in out
+
+
+def test_echo_prose_mentioning_else_if_is_not_flagged(tmp_path, capsys):
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "echo never write else if A if B on one line\n",
+    )
+    assert result == 0
+    assert "No delimiter issues found." in out
+
+
+def test_and_style_if_chain_without_else_if_is_not_flagged(tmp_path, capsys):
+    # `if A if B cmd` is the intended AND idiom; only the else-if form is the trap.
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if \"%MODE%\"==\"conda\" if defined CONDA_BAT set \"X=1\"\n",
+    )
+    assert result == 0
+    assert "No delimiter issues found." in out
+
+
+def test_else_if_second_if_text_outside_bat_file_is_not_flagged(tmp_path, capsys):
+    py = tmp_path / "sample.py"
+    py.write_text("# else if A if B\nprint('ok')\n", encoding="ascii")
+    result = check_delimiters.main([str(py)])
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "No delimiter issues found." in captured.out

@@ -503,7 +503,10 @@ repair dispatch's venv, embed and system branches for the file's whole life afte
 second `if` on the same line as an `else if` inside a chain. Compute the combined condition into a flag
 first (`set "FLAG="`, then `if A if B set "FLAG=1"`) and test `if defined FLAG`.** The symptom is a log
 that says an action is starting and never says it ran; a row that counts "started" markers against
-"attempted" lines (`repairWithoutAttempt` in `self.cascade.exec`) catches it.
+"attempted" lines (`repairWithoutAttempt` in `self.cascade.exec`) catches it. **Mechanically enforced**:
+`tools/check_delimiters.py`'s `_check_bat_else_if_second_if` flags the shape (the system branch of that
+dispatch has no gating row, so the shape is pinned rather than each branch); tests in
+`tests/test_check_delimiters_import.py`.
 
 ---
 
