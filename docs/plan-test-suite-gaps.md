@@ -161,7 +161,8 @@ This dominates the completeness number but is not a new test, so it stays with I
 - The Item 35 note already explains `self.exe.warnfix.venv_repair`: the test-side precondition is
   stale (`HP_SKIP_PIPREQS=1` is reset by `:venv_canary_ok`), so the fix is test-only and can go
   first. `self.cascade.exec` is unexplained and stays open there. `self.exe.smokerun` (cache) is the
-  third baseline red.
+  third baseline red; it is the layered chain's deliberately failing uv tier leaking into the shared
+  stream (CLAUDE.md Item 35, read from run `38157663037`), fixed test-side.
 - Suggested order inside Item 35: fix the test-side venv_repair precondition, root-cause
   `self.cascade.exec`, then remove `continue-on-error` from "Enforce aggregate self-test verdict".
   Until the last step, the baseline's 3 reds are invisible to merges.

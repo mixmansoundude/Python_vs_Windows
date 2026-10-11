@@ -649,6 +649,18 @@ but several represent real gaps worth closing before calling the path fully rele
   The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. Re-soak both rows, then
   remove `continue-on-error` from the aggregate gate per the discipline below.
 
+  **The `cache` lane's `self.exe.smokerun` red is explained (2026-10-11, run `38157663037`) and is a test
+  artifact, not a product failure.** `selfapps_layered_e2e.ps1` (cache lane only) points its sub-bootstrap
+  at the shared `HP_NDJSON` (Item 37). The uv tier of that chain builds an EXE that cannot import `pygrib`,
+  so its verification run exits 1 by design and `:smokerun_ndjson` emits `self.exe.smokerun` `pass:false`
+  before the cascade moves to conda; the conda tier's own `self.exe.smokerun` (`exitCode:0`) follows. The
+  cache NDJSON shows exactly that order: uv `env.mode`, `pass:false`/`exitCode:1`, conda `env.mode`, DLL
+  rows, `pass:true`/`exitCode:0`. It was the only red row on the lane for weeks. The test now gives the
+  sub-bootstrap a private stream and forwards every row except an earlier failing `self.exe.smokerun`, and
+  only when the log shows the cascade really left uv; the last verification row is always forwarded, so a
+  failing final run still shows red, and the exit codes are kept as `smokerunExits`/`smokerunDropped` on
+  `self.layered_e2e.chain`.
+
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
   completion several consecutive times before treating it as proven, only then take the gating
@@ -663,7 +675,9 @@ but several represent real gaps worth closing before calling the path fully rele
   previously never fired in any real CI run at all -- `selfapps_layered_e2e.ps1`'s sub-bootstrap
   ran with `HP_NDJSON` unset. Fixed by setting `HP_NDJSON` there (pointed at the same shared
   `~test-results.ndjson` the test's own rows already use, restored in `finally`) and diffing the
-  file before/after to record, as an informational `details` field on `self.layered_e2e.chain`
+  file before/after to record (since 2026-10-11 the sub-bootstrap writes a private
+  `~layered_e2e_sub.ndjson` and the test forwards the rows, see Item 35), as an informational
+  `details` field on `self.layered_e2e.chain`
   (deliberately NOT folded into that test's own pass/fail, so a wiring hiccup can't turn an
   already-proven test red). Confirmed via a real published diagnostics artifact: the row fired
   TWICE with `state:"repaired"` in one run. One confirmed run is not yet the "several consecutive

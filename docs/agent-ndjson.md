@@ -251,7 +251,8 @@ full mechanism. `details.state` is one of `skipped_nuitka`, `skipped_non_conda`,
 the two `failed_*` states. Now wired for real observation and confirmed via real CI (CLAUDE.md
 Item 37, PR #452): `selfapps_layered_e2e.ps1` explicitly sets `HP_NDJSON` for its own
 sub-bootstrap (the opposite of most other isolated-sub-bootstrap tests, which deliberately unset
-it) so this row fires for real, recorded as an informational (non-gating) detail on
+it; since 2026-10-11 it is a private `~layered_e2e_sub.ndjson` whose rows the test forwards to the
+shared stream, see the layered section below) so this row fires for real, recorded as an informational (non-gating) detail on
 `self.layered_e2e.chain`'s own row rather than folded into that test's pass/fail. One confirmed
 run is not yet enough for Item 35's promotion-out-of-`continue-on-error` bar.
 
@@ -390,6 +391,16 @@ line (which is written to both).
 Lane: `cache` only (already caches Miniconda across runs, amortizing the one-time download this
 test's own cascade triggers). Non-gating for its first landing -- promote once proven stable
 across several real runs (CLAUDE.md's "CI lane gating maturity" periodic check).
+
+**The sub-bootstrap's own rows reach the shared stream through the test, not directly** (CLAUDE.md
+Item 35, 2026-10-11). The uv tier builds an EXE that cannot import `pygrib`, so its verification run exits
+1 by design and `run_setup.bat` emits `self.exe.smokerun` `pass:false` before the cascade moves to conda
+(run `38157663037` cache NDJSON: uv `env.mode`, `pass:false`/`exitCode:1`, conda `env.mode`, DLL rows,
+`pass:true`/`exitCode:0`). That row was the `cache` lane's only red row. The test forwards every row of
+`~layered_e2e_sub.ndjson` unchanged except an EARLIER `self.exe.smokerun` with `pass:false`, dropped only
+when the log shows `uvInstallFailed`, the cascade approved and exactly one uv to conda hop; the LAST
+`self.exe.smokerun` is always forwarded as emitted, so a failing final verification stays red. The chain
+row carries `smokerunExits` (every exit code in order, for example `1,0`) and `smokerunDropped`.
 
 ```
 self.layered_e2e.chain

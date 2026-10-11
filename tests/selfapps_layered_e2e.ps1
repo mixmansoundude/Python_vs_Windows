@@ -193,10 +193,20 @@ $env:HP_TEST_CASCADE_ANSWER = 'Y'
 # it incidentally also emits -- pipreqs.install, env.mode, helper.find_entry.syntax, conda.url,
 # self.warnfix.platform_filter, self.exe.smokerun -- all already-expected occurrences for a
 # real full bootstrap run) belong IN the shared stream.
+#
+# derived requirement (CLAUDE.md Item 35, read from run 38157663037's cache-lane rows): the
+# sub-bootstrap writes to a PRIVATE file, and only the rows below are copied into the shared
+# stream. The uv tier of this chain builds an EXE that cannot import pygrib, so its verification
+# run exits non-zero BY DESIGN and :run_entry_smoke emits self.exe.smokerun pass=false before the
+# cascade moves on to conda. Written straight into the shared stream, that expected intermediate
+# failure was the only red row on the cache lane (it sits between the uv tier's env.mode row and
+# the conda tier's env.mode row, followed by a passing self.exe.smokerun) and read as a product
+# regression. Every other sub-row reaches the shared stream unchanged; see the merge step after
+# the run for the one exception and why a failing FINAL verification still shows red.
 $prevNdjson = if (Test-Path Env:HP_NDJSON) { $env:HP_NDJSON } else { $null }
-$env:HP_NDJSON = $nd
-$ndLinesBefore = if (Test-Path -LiteralPath $nd) { @(Get-Content -LiteralPath $nd -Encoding ASCII) } else { @() }
-$ndCountBefore = $ndLinesBefore.Count
+$subNd = Join-Path $workDir '~layered_e2e_sub.ndjson'
+Remove-Item -LiteralPath $subNd -Force -ErrorAction SilentlyContinue
+$env:HP_NDJSON = $subNd
 
 $bootstrapLog = '~layered_e2e_bootstrap.log'
 # derived requirement: guard the location push -- under $ErrorActionPreference = 'Continue', a
@@ -296,27 +306,54 @@ $dllBundleComplete = $combined -match [regex]::Escape('[REPAIR][DLL_BUNDLE] Nati
 # itself must not turn a currently-green, closely-watched test red on its own first real CI
 # run. This is the row's first-ever real-CI observation; once proven stable across several runs
 # it can graduate to a hard assertion via Item 35's own promotion process.
-$ndLinesAfterRun  = if (Test-Path -LiteralPath $nd) { @(Get-Content -LiteralPath $nd -Encoding ASCII) } else { @() }
-$ndNewLines       = if ($ndLinesAfterRun.Count -gt $ndCountBefore) { $ndLinesAfterRun[$ndCountBefore..($ndLinesAfterRun.Count - 1)] } else { @() }
+# Read the private stream, forward it to the shared one, and keep the original dll-bundle check.
+# The ONLY rows not forwarded are earlier self.exe.smokerun rows with pass=false, and only when
+# the log shows the cascade really moved this run off the uv tier (uvInstallFailed, cascade
+# approved, one uv to conda hop): those are verification runs of a build the cascade replaced.
+# The LAST self.exe.smokerun row is always forwarded as emitted, so a failing final verification
+# still shows red; the dropped exit codes stay visible as smokerunExits on the chain row.
+# derived requirement: wrap the whole expression, not just the cmdlet -- an if-expression unrolls a
+# one-element array to a bare string, and indexing a string yields a Char.
+$ndNewLines = @(if (Test-Path -LiteralPath $subNd) { Get-Content -LiteralPath $subNd -Encoding ASCII })
+$cascadedAwayFromUv = $uvInstallFailed -and $cascadeApproved -and ($uvToConda -eq 1)
 # derived requirement (CodeRabbit review, PR #452): parse each new NDJSON line as its own
 # object and require the state check to apply to the SAME row that carries the
-# self.dll_bundle.recover id -- a plain substring match across the whole $ndNewCombined text
+# self.dll_bundle.recover id -- a plain substring match across the whole text
 # (the original approach) could not tell "this row's own details.state is repaired" apart from
 # "some OTHER unrelated row emitted during this same run also happens to contain the substring
 # "state":"repaired"" (e.g. a coincidentally identically-shaped field on a different id).
 $dllBundleRowSeen     = $false
 $dllBundleRowRepaired = $false
-foreach ($ndLine in $ndNewLines) {
-    if (-not $ndLine.Trim()) { continue }
-    try {
-        $ndRow = $ndLine | ConvertFrom-Json
-    } catch {
-        continue
+$ndRows        = New-Object System.Collections.Generic.List[object]
+$lastSmokeIdx  = -1
+$smokerunExits = New-Object System.Collections.Generic.List[string]
+for ($ndIdx = 0; $ndIdx -lt $ndNewLines.Count; $ndIdx++) {
+    $ndRow = $null
+    if ($ndNewLines[$ndIdx].Trim()) {
+        try { $ndRow = $ndNewLines[$ndIdx] | ConvertFrom-Json } catch { $ndRow = $null }
     }
+    $ndRows.Add($ndRow)
+    if ($null -eq $ndRow) { continue }
     if ($ndRow.id -eq 'self.dll_bundle.recover') {
         $dllBundleRowSeen = $true
         if ($ndRow.details.state -eq 'repaired') { $dllBundleRowRepaired = $true }
     }
+    if ($ndRow.id -eq 'self.exe.smokerun') {
+        $lastSmokeIdx = $ndIdx
+        $smokeCode = $ndRow.details.exitCode
+        $smokerunExits.Add($(if ($null -eq $smokeCode) { 'none' } else { [string]$smokeCode }))
+    }
+}
+$smokerunDropped = 0
+for ($ndIdx = 0; $ndIdx -lt $ndNewLines.Count; $ndIdx++) {
+    if (-not $ndNewLines[$ndIdx].Trim()) { continue }
+    $ndRow = $ndRows[$ndIdx]
+    if ($cascadedAwayFromUv -and $null -ne $ndRow -and $ndRow.id -eq 'self.exe.smokerun' -and
+        $ndIdx -ne $lastSmokeIdx -and $ndRow.pass -eq $false) {
+        $smokerunDropped++
+        continue
+    }
+    Add-Content -LiteralPath $nd -Value $ndNewLines[$ndIdx] -Encoding Ascii -ErrorAction Stop
 }
 
 $infraError = $combined -match 'Failed to parse|uv error|pip error'
@@ -463,6 +500,8 @@ Write-NdjsonRow ([ordered]@{
         dllBundleComplete  = $dllBundleComplete
         dllBundleRowSeen     = $dllBundleRowSeen
         dllBundleRowRepaired = $dllBundleRowRepaired
+        smokerunExits        = ($smokerunExits -join ',')
+        smokerunDropped      = $smokerunDropped
         exePass          = $exePass
         exeExists        = $exeExists
         exeExit          = $exeExit
