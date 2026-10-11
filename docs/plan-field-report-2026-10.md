@@ -840,9 +840,12 @@ the rest of the review; confirm or change when the first slice is picked up):**
    interpreter only runs if the user answers Y at the checkpoint (untimed, default N), so this branch
    is the rare one; the common case is "EXE failed, checkpoint declined".
 5. **Last error line.** Taken from `~run.err.txt` (the first EXE run), passed through a small emitted
-   helper that keeps a safe ASCII alphabet and writes one file that is then shown with `type`, like
-   `~pipreqs_precheck.py`'s `safe()`. Never through `:log` or an unquoted `echo`: a traceback line can
-   hold `<`, `>`, `&`, `%` and `^` (see "`:log` echoes UNQUOTED" in `docs/agent-lessons-learned.md`).
+   helper that writes the line to one file with printable ASCII kept literally, `<`, `>`, `&`, `|`, `%`
+   and `^` included (anything else becomes `?`), and the file is then shown with `type`, which never
+   parses its content. Unlike `~pipreqs_precheck.py`'s `safe()`, which turns those characters and
+   quotes into `?` (fine for file names, wrong for an error message the user has to read). Never
+   through `:log` or an unquoted `echo`: a traceback line can hold `<`, `>`, `&`, `%` and `^` (see
+   "`:log` echoes UNQUOTED" in `docs/agent-lessons-learned.md`).
    Item 65 slice 1 needs the same stderr scan, so build the helper once and share it.
 6. **Do not contradict the existing hint.** `:exe_smokerun_hints` logs `[HINT][RUNTIME_MISMATCH]
    ... not your environment or dependencies` on every non-timeout EXE failure, even when no
