@@ -774,6 +774,19 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
 
 ---
 
+## One elevation test (`:detect_elevation`, Item 78) feeds the per-run log line and the Miniconda AllUsers branch
+
+`:detect_elevation` (next to `:log`) sets `HP_ELEVATED=1` when `fsutil dirty query %systemdrive%` succeeds
+and leaves it empty otherwise; `HP_TEST_NOT_ELEVATED=1` forces "not elevated" for CI. Two callers must stay in
+step: the main flow logs `[INFO] Elevated: yes|no` exactly once per run (right after the Host PowerShell
+line; `self.elevation.logged` counts it in the stub run's `~setup.log`), and `:try_conda_install`'s AllUsers
+branch skips straight to JustMe when it is empty. Test with `if defined`/`if not defined`, never `%HP_ELEVATED%`
+inside a parenthesized block. The NI-VISA failure `[WARN]` lines (`pyvisa.nivisa.warn`) are console
+`call :log "[WARN] ..."` lines at the two `[VISA] install_failed` sites; the elevation line is what lets a
+reader of a field log tell an elevated failure (the reported `-125202`) from a non-elevated one.
+
+---
+
 ## Single-verification smoke model (REQ-018 2b-A.2)
 
 The bootstrapper runs the user's code for MANDATORY verification exactly ONCE per invocation (the
