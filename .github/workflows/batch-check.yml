@@ -1196,6 +1196,16 @@ jobs:
         run: |
           & tests\selfapps_pep723_uverr.ps1
 
+      # derived requirement: CLAUDE.md Item 68 -- the bootstrapper must say what happened: the
+      # pipreqs auto-detect warning (its gate was dead code), a notice when a stale cached EXE is
+      # rebuilt, and a pipreqs diff placeholder that names the missing file. Gating on purpose (real
+      # lane); one lane is enough because none of it depends on the provider.
+      - name: "Self-test: honest wording (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_honest_wording.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
@@ -2024,6 +2034,22 @@ jobs:
             tests\~selftest_pep723_uverr\~setup.log
             tests/~selftest_pep723_uverr/~bootstrap.status.json
             tests\~selftest_pep723_uverr\~bootstrap.status.json
+            tests/~selftest_honest_wording/~wording_run1.log
+            tests\~selftest_honest_wording\~wording_run1.log
+            tests/~selftest_honest_wording/~wording_run1_setup.log
+            tests\~selftest_honest_wording\~wording_run1_setup.log
+            tests/~selftest_honest_wording/~wording_run2.log
+            tests\~selftest_honest_wording\~wording_run2.log
+            tests/~selftest_honest_wording/~wording_run2_setup.log
+            tests\~selftest_honest_wording\~wording_run2_setup.log
+            tests/~selftest_honest_wording/~wording_run3.log
+            tests\~selftest_honest_wording\~wording_run3.log
+            tests/~selftest_honest_wording/~wording_run3_setup.log
+            tests\~selftest_honest_wording\~wording_run3_setup.log
+            tests/~selftest_honest_wording/~pipreqs.diff.txt
+            tests\~selftest_honest_wording\~pipreqs.diff.txt
+            tests/~selftest_honest_wording/~dependency_source.txt
+            tests\~selftest_honest_wording\~dependency_source.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

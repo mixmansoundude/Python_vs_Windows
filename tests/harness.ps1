@@ -380,6 +380,13 @@ Write-Result -Id 'batch.script_root.trailing_backslash' -Desc 'HP_SCRIPT_ROOT tr
 $warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected via pipreqs', 'pipreqs augmenting')
 $hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
 Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}
+# CLAUDE.md Item 68: the two Nuitka messages used to promise a minute or two while a real build took
+# about an hour with its output only in ~setup.log. Both must now say it can take a long time (tens of
+# minutes) and point at ~setup.log. The leading phrases the uv-lane scenarios match on stay unchanged.
+$nuitkaMsgLines = @($AllText -split "\r?\n" | Where-Object { $_ -match '^\s*call :log ".*(Optimized build: accepted|attempting a fallback build)' })
+$nuitkaMsgGood = @($nuitkaMsgLines | Where-Object { ($_ -notmatch 'minute or two') -and ($_ -match 'tens of minutes') -and ($_ -match '~setup\.log') })
+$nuitkaMsgOk = ($nuitkaMsgLines.Count -eq 2) -and ($nuitkaMsgGood.Count -eq 2)
+Write-Result -Id 'batch.wording.nuitka_duration' -Desc 'Item 68: the Nuitka fallback and optimized-build messages say the build can take a long time and point at ~setup.log' -Pass $nuitkaMsgOk -Details @{ messageLines = $nuitkaMsgLines.Count; honestLines = $nuitkaMsgGood.Count }
 # derived requirement: the Miniconda URL probe must be deferred to after uv detection
 # so uv-first runs do not waste ~99 MB downloading Miniconda when it will not be used.
 # Verified by: (a) probe call appears after UV_PYTHON_PREFERENCE in the file, and

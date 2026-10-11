@@ -35,7 +35,7 @@ self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exed
 self.exe.smokerun.cwd_consistency,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
-self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe,
+self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
 self.checkpoint.accept, self.checkpoint.decline,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
@@ -197,6 +197,7 @@ batch.conda.warmup,
 batch.req013.connectivity,
 batch.req014.consent,
 batch.req005.warn_gate,
+batch.wording.nuitka_duration,
 batch.conda.probe.deferred,
 uv.python.preference.configured,
 batch.script_root.trailing_backslash,
@@ -842,6 +843,26 @@ the first argument is validated before the fast path and every early stop releas
 
 ```
 self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.directory, self.entryarg.stops_release_lock
+## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)
+
+CLAUDE.md Item 68 regression test (`docs/plan-field-report-2026-10.md`; README REQ-005, REQ-005.5, REQ-007).
+One tiny standard-library app, three real runs in one folder; each run's checks read only the bytes
+that run appended to `~setup.log` plus its console capture. `dep_source_warn_shown` (run 1, no
+`requirements.txt`, pipreqs on: the console carries `Dependencies were auto-detected via pipreqs` and
+`~dependency_source.txt` reads `dependency_source=pipreqs`; before the fix the warning's gate tested a
+variable that is initialized to `unknown`, so neither happened), `rebuild_notice` (runs 2 and 3 edit
+`main.py`, so the cached EXE is stale and is rebuilt: the log must say `Fast path: not reusing`, the
+EXE must really change and print the new output, and run 1, with no EXE yet, must not print the line),
+`diff_placeholder` (run 2 has neither requirements file, run 3 has `requirements.txt` only, pipreqs
+skipped in both: `~pipreqs.diff.txt` names the missing file instead of "requirements files not both
+present"). Skips with `skip=true, reason=non-windows-host` off Windows. Expected red on the commit
+that adds it. The other Item 68 fixes are covered elsewhere: `self.failfast.probe.seconds` (the probe
+line states its window in seconds, in `selfapps_failfast_probe.ps1`) and `batch.wording.nuitka_duration`
+(static, `tests/harness.ps1`: the Nuitka fallback and optimized-build messages say the build can take a
+long time and point at `~setup.log`).
+
+```
+self.wording.dep_source_warn_shown, self.wording.rebuild_notice, self.wording.diff_placeholder
 ```
 
 ## selfapps-warnfix-noise NDJSON rows (selfapps_warnfix_noise.ps1, real and conda-full lanes, GATING)

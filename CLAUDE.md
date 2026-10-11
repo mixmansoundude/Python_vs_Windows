@@ -67,6 +67,7 @@ tests/
   selfapps_entryarg.ps1        Item 67: first argument must be an existing .py in this folder (real lane, gating)
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
+  selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
