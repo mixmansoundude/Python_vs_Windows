@@ -183,6 +183,19 @@ red on every lane. Use `> log 2>&1` inside a cmd string; `*>` is correct only in
 
 ---
 
+## A static "this text exists" row can pass on dead code -- test the behavior of both branches
+
+`batch.req005.warn_gate` checked that `run_setup.bat` contained `if not defined DEP_SOURCE (` and the
+text of the pipreqs auto-detect warning, and stayed green for months while that gate could never be true:
+`DEP_SOURCE` is initialized to `unknown` near the top of the file, so the warning never printed and
+`dependency_source.txt` never said `pipreqs` (Item 68). **Rule: a feature that is gated on a variable
+needs a behavior row for the branch that shows and the branch that is suppressed** (here
+`self.wording.dep_source_warn_shown` and `self.pipreqs.warn.gated`), and a sentinel initial value means
+every `defined` test on that variable must be re-read. A static text row is fine for a message whose
+wording is the contract (`batch.wording.nuitka_duration`), not for proving a condition can fire.
+
+---
+
 ## `rem` needs a space after it -- `rem-word` is parsed as a command, not a comment
 
 cmd.exe only treats a line as a comment when `rem` is followed by whitespace (or EOL) --

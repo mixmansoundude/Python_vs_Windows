@@ -486,6 +486,13 @@ Each was checked against current text:
   opens an interactive prompt; to run pip use `"<python>" -m pip ...`." (This is the "one line in
   the post-flight panel later" from the do-not-add list; it is cheap enough to do here.)
 
+**Shipped (2026-10-11, slice 1)**: probe line in seconds (`self.failfast.probe.seconds`), Nuitka fallback and
+optimized-build messages (`batch.wording.nuitka_duration`), pipreqs diff placeholder
+(`self.wording.diff_placeholder`), rebuild notice (`self.wording.rebuild_notice`), and the DEP_SOURCE gate
+(`self.wording.dep_source_warn_shown`; the static row `batch.req005.warn_gate` is retired). Not done yet:
+the cascade prompt wording (goes with Item 82) and the post-flight panel line about the interpreter
+prompt (after Item 65 slice 1 merges).
+
 ### Item 69 -- Post-flight "run it yourself" command fails when pasted into PowerShell (Inferred, tiny)
 
 **Symptom**: the briefing's `"C:\...\python.exe" "main.py"` failed when typed manually; dropping

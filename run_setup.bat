@@ -711,6 +711,10 @@ set "HP_SMOKE_RC="
 if not "%PYCOUNT%"=="0" (
   call :try_fast_exe
 )
+rem Item 68: a cached EXE that is not reused used to be rebuilt without a word. Say so once, here at the
+rem first check; :try_fast_exe runs again later in the build gate and would repeat it. HP_FAST_EXE_PATH is
+rem set only when the EXE exists, so a first build prints nothing.
+if not "%PYCOUNT%"=="0" if defined HP_FAST_EXE_PATH if not defined HP_FASTPATH_USED call :log "[INFO] Fast path: not reusing %HP_FAST_EXE_PATH% because your .py or requirements files changed since it was built, or no build record was found; it will be rebuilt."
 rem Slice 2b-C: HP_FASTPATH_USED alone is no longer proof of a clean run -- the interactive
 rem fail-fast probe can leave it set even when the reused EXE later exited non-zero (it is
 rem classified alive/healthy at the probe and is never discarded/rebuilt for a later failure;
@@ -1566,9 +1570,11 @@ if defined PEP723_ACTIVE (
   goto :after_pipreqs_run
 )
 rem REQ-005: Only warn when no user-provided dep source was detected (no requirements.txt /
-rem pyproject / PEP 723). If DEP_SOURCE is already set, pipreqs runs as an augmentation
+rem pyproject / PEP 723). If a source is already recorded, pipreqs runs as an augmentation
 rem pass but the user has explicit deps -- the WARN is misleading and must be suppressed.
-if not defined DEP_SOURCE (
+rem derived requirement: DEP_SOURCE is initialized to the word unknown near the top of this file, so
+rem "not defined" was never true and this warning never printed (Item 68); test for unknown instead.
+if "%DEP_SOURCE%"=="unknown" (
   echo *** [WARN] Dependencies were auto-detected via pipreqs
   echo *** [WARN] Auto-detection may be incomplete or incorrect
   echo *** [INFO] Consider adding requirements.txt or PEP 723 metadata for reliability
@@ -1786,7 +1792,10 @@ if not exist "%REQ%" if exist "requirements.auto.txt" if not defined HP_PIPREQS_
     call :log "[WARN] Failed to copy requirements.auto.txt to requirements.txt; continuing without dependency installation."
   )
 )
-echo (no diff: requirements files not both present) > "~pipreqs.diff.txt"
+rem Item 68: say which file is missing instead of "not both present".
+if not exist "requirements.txt" if not exist "requirements.auto.txt" echo (no diff: neither requirements.txt nor requirements.auto.txt exists) > "~pipreqs.diff.txt"
+if exist "requirements.txt" if not exist "requirements.auto.txt" echo (no diff: requirements.auto.txt does not exist, nothing to compare requirements.txt with) > "~pipreqs.diff.txt"
+if not exist "requirements.txt" if exist "requirements.auto.txt" echo (no diff: requirements.txt does not exist, nothing to compare requirements.auto.txt with) > "~pipreqs.diff.txt"
 if exist "requirements.txt" if exist "requirements.auto.txt" (
   fc "requirements.txt" "requirements.auto.txt" > "~pipreqs.diff.txt" 2>&1
   rem derived requirement: use fc.exe's own exit code -- 0=identical, 1=differ, 2=comparison
@@ -3386,8 +3395,14 @@ if errorlevel 1 (
 if "%HP_PROBE_EXCEEDED%"=="0" set "HP_PROBE_EXCEEDED="
 if not defined HP_SMOKE_RC set "HP_SMOKE_RC=-1"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
+rem Item 68: say the probe window in seconds, rounded up and never below one. A person reads seconds,
+rem and 10000ms looks like a typo. Computed on top-level lines, before the block that prints it.
+set /a HP_PROBE_SEC=(%HP_FAILFAST_PROBE_MS%+999)/1000
+if %HP_PROBE_SEC% LSS 1 set "HP_PROBE_SEC=1"
+set "HP_PROBE_UNIT=seconds"
+if "%HP_PROBE_SEC%"=="1" set "HP_PROBE_UNIT=second"
 if defined HP_PROBE_EXCEEDED (
-  call :log "[INFO] Fail-fast probe: still running after %HP_FAILFAST_PROBE_MS%ms; this is your program's real run, not a rebuild trigger. If it has a GUI it may have opened minimized or on another window; if it is a background/console app with no window, that is expected. The bootstrapper is waiting for it to finish so it can report the final result -- it will not force-stop it."
+  call :log "[INFO] Fail-fast probe: still running after %HP_PROBE_SEC% %HP_PROBE_UNIT%; this is your program's real run, not a rebuild trigger. If it has a GUI it may have opened minimized or on another window; if it is a background/console app with no window, that is expected. The bootstrapper is waiting for it to finish so it can report the final result -- it will not force-stop it."
 )
 if "%HP_SMOKE_RC%"=="0" (
   call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
@@ -3539,7 +3554,7 @@ if /I not "%HP_OPTBUILD_CHOICE%"=="Y" (
 )
 set "HP_OPTBUILD_RAW="
 set "HP_OPTBUILD_CHOICE="
-call :log "[INFO] Optimized build: accepted; building now (this may take a minute or two)."
+call :log "[INFO] Optimized build: accepted; building now. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
 rem Build to a distinct temp filename first -- the already-working dist\%ENVNAME%.exe is never
 rem touched until a build AND a verification run both succeed. HP_OPTBUILD_TMP is set before
 rem the test-hook check below so :optbuild_cleanup can always reference it safely, including in
@@ -5942,7 +5957,7 @@ rem :warn_build_incomplete site (CLAUDE.md Item 46 Bucket B migrated these calle
 rem see that subroutine's own header comment for why it is not a :die call anymore).
 rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
 rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
-call :log "[INFO] Standard build did not complete; attempting a fallback build (this may take a minute or two)."
+call :log "[INFO] Standard build did not complete; attempting a fallback build. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
 if defined HP_TEST_FORCE_NUITKA_FAIL (
   call :log "[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure."
   exit /b 1

@@ -540,6 +540,31 @@ the same run still genuinely reflects the current source. Both the read (`:try_f
 change to file enumeration/hashing logic stays in sync automatically; only a change to the CALL
 SITES themselves risks drift.
 
+### `~dependency_source.txt`: the dependency-source record (Item 76)
+
+`:success` writes `dependency_source=<DEP_SOURCE>` to `~dependency_source.txt` (tilde: it is
+bootstrapper-internal, and the standard ignores' `~*` keeps it out of the user's git history) unless
+`DEP_SOURCE` is still the `unknown` sentinel. Three CI points collect it by exact name (the test-logs
+upload, `publish_diag`'s file list, and its copy pair in `batch-check.yml`);
+`tests/test_dependency_source_file.py` fails if the writer and any of those drift apart, and
+`self.litter.appfolder` (`selftest.ps1`, every lane) fails on any other non-tilde file the
+bootstrapper leaves in the app folder, and also requires the stub entry and the tilde record in the
+listing so an empty or wrong listing cannot pass. A copy named `dependency_source.txt` left by an older version
+stays where it is; nothing deletes it.
+
+**`:try_fast_exe` runs twice per stale-EXE run, so its "not reusing" notice lives at the first call
+site only** (Item 68). The top-of-file call and the one in `:run_entry_smoke`'s build gate both get an
+empty `HP_FASTPATH_TOKEN` for a stale EXE. The `[INFO] Fast path: not reusing ...` line is printed right
+after the first call, keyed on `HP_FAST_EXE_PATH` defined (set only when `dist\<env>.exe` exists, so a
+first build prints nothing) and `HP_FASTPATH_USED` unset; putting it inside `:try_fast_exe` would print
+it twice. `self.wording.rebuild_notice` reads it.
+
+**`DEP_SOURCE` is a sentinel, not an unset flag.** It is initialized to `unknown` at the top of the file
+and later set to `requirements.txt`, `pyproject`, `pep723`, `pvw_idempotent` or `pipreqs`. Any gate must
+test `"%DEP_SOURCE%"=="unknown"`; `if not defined DEP_SOURCE` is never true (it hid the pipreqs
+auto-detect warning until Item 68). `:success` writes `~dependency_source.txt` only when the value is not
+`unknown`, so a fast-path or no-source run leaves the previous run's file alone (Item 76).
+
 ### `~dependency_installed.txt`: pip freeze output and its consumers
 
 Written after install via `pip freeze` (uv: `uv pip freeze --python "%HP_PY%"`; conda/venv:

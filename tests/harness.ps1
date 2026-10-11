@@ -377,9 +377,12 @@ Write-Result -Id 'batch.script_root.trailing_backslash' -Desc 'HP_SCRIPT_ROOT tr
     hasScriptRootFixedForm = $hasScriptRootFixedForm
     hasScriptRootBuggyForm = $hasScriptRootBuggyForm
 }
-$warnGatePatterns = @('if not defined DEP_SOURCE (', 'Dependencies were auto-detected via pipreqs', 'pipreqs augmenting')
-$hasWarnGate = ($warnGatePatterns | Where-Object { -not ($AllText -match [regex]::Escape($_)) }).Count -eq 0
-Write-Result 'batch.req005.warn_gate' 'REQ-005: pipreqs auto-detect WARN gated on DEP_SOURCE unset (suppressed when requirements.txt/pyproject present)' $hasWarnGate @{}
+# CLAUDE.md Item 68: the static row batch.req005.warn_gate that stood here matched the text of the
+# pipreqs auto-detect warning and its gate, and passed for years while the gate (`if not defined
+# DEP_SOURCE`) was dead code, because DEP_SOURCE is initialized to unknown near the top of the batch. It is
+# retired; behavior now decides: self.wording.dep_source_warn_shown (selfapps_honest_wording.ps1, warning
+# shown when pipreqs is the only source) and self.pipreqs.warn.gated (selftest.ps1, absent when the user
+# has a requirements.txt).
 # CLAUDE.md Item 68: the two Nuitka messages used to promise a minute or two while a real build took
 # about an hour with its output only in ~setup.log. Both must now say it can take a long time (tens of
 # minutes) and point at ~setup.log. The leading phrases the uv-lane scenarios match on stay unchanged.
