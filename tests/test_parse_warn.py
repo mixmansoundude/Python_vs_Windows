@@ -43,13 +43,21 @@ class _LocalSpec(object):
     origin = "C:\\app\\helper.py"
 
 
-def _parse_lines(lines, installed=(), local=()):
+class _SpecAt(object):
+    """A module spec with a chosen origin (and optional package folders)."""
+    def __init__(self, origin, locations=None):
+        self.origin = origin
+        self.submodule_search_locations = locations
+
+
+def _parse_lines(lines, installed=(), local=(), origins=None):
     """Write lines to a temp warn file and return parse_warn_file() output.
 
     The result must not depend on what happens to be installed where the tests run, so by
     default importlib.util.find_spec reports every name as not installed; pass `installed`
     (an iterable of top-level names) to make some resolve, or None to use the real find_spec.
     `local` names resolve too, but to a file in the user's own folder (their helper modules).
+    `origins` maps a name to the exact origin its spec reports (a _SpecAt), overriding the above.
     """
     with tempfile.TemporaryDirectory() as tmp:
         warn_path = Path(tmp) / "warn-env.txt"
@@ -58,9 +66,11 @@ def _parse_lines(lines, installed=(), local=()):
             return parse_warn_file(str(warn_path))
         have = set(installed)
         mine = set(local)
+        at = dict(origins or {})
         with mock.patch.object(
             importlib.util, "find_spec",
             side_effect=lambda name, *a, **k: (
+                _SpecAt(at[name]) if name in at else
                 _FakeSpec() if name in have else _LocalSpec() if name in mine else None),
         ):
             return parse_warn_file(str(warn_path))
@@ -772,6 +782,63 @@ class LibraryImportsAreNotTargetsTest(unittest.TestCase):
     def test_translation_still_applies_to_the_users_import(self):
         lines = [r"missing module named cv2 - imported by C:\app\app.py (top-level)"]
         self.assertEqual(_parse_lines(lines), ["opencv"])
+
+
+class ImporterOwnershipTest(unittest.TestCase):
+    """Item 64 slice 2 review follow-up: what counts as an installed package, and what is the user's.
+
+    Two ways the library-owned test could swallow the user's own import, found in review of the
+    importer rule: a folder whose name merely ends in "-packages", and a user module that borrows
+    a standard library name (a local statistics.py, test.py or types.py).
+    """
+
+    def test_a_project_folder_ending_in_packages_is_still_the_users(self):
+        lines = [r"missing module named requests - imported by C:\my-packages\app\app.py (top-level)"]
+        self.assertEqual(_parse_lines(lines), ["requests"])
+
+    def test_a_project_folder_that_only_starts_with_site_packages_is_still_the_users(self):
+        lines = [r"missing module named requests - imported by C:\site-packages-demo\app.py (delayed)"]
+        self.assertEqual(_parse_lines(lines), ["requests"])
+
+    def test_a_helper_module_in_a_folder_ending_in_packages_is_still_the_users(self):
+        lines = ["missing module named requests - imported by helper (top-level)"]
+        self.assertEqual(
+            _parse_lines(lines, origins={"helper": r"C:\my-packages\helper.py"}), ["requests"])
+
+    def test_dist_packages_is_an_installed_package_folder(self):
+        lines = ["missing module named foo_xyz - imported by /usr/lib/python3/dist-packages/pkg/mod.py (delayed)"]
+        self.assertEqual(_parse_lines(lines), [])
+
+    def test_the_folder_name_is_matched_whatever_the_case_and_slash(self):
+        lines = [r"missing module named foo_xyz - imported by C:\Env\Lib\Site-Packages/pkg/mod.py (delayed)"]
+        self.assertEqual(_parse_lines(lines), [])
+
+    def test_a_module_resolved_into_site_packages_is_installed(self):
+        lines = ["missing module named foo_xyz - imported by pkg.mod (delayed)"]
+        self.assertEqual(
+            _parse_lines(lines, origins={"pkg": r"C:\env\Lib\site-packages\pkg\__init__.py"}), [])
+
+    def test_a_local_module_named_like_a_stdlib_module_is_still_the_users(self):
+        lines = ["missing module named requests - imported by statistics (top-level)"]
+        self.assertEqual(
+            _parse_lines(lines, origins={"statistics": r"C:\app\statistics.py"}), ["requests"])
+
+    def test_a_local_code_module_is_still_the_users(self):
+        # "code" is a standard library name and a plausible name for a user's own helper.
+        lines = ["missing module named requests - imported by code (delayed)"]
+        self.assertEqual(_parse_lines(lines, origins={"code": r"C:\app\code.py"}), ["requests"])
+
+    @unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "needs Python 3.10+")
+    def test_the_real_stdlib_module_is_not_the_users(self):
+        lines = ["missing module named foo_xyz - imported by statistics (delayed)"]
+        real = os.path.join(sys.base_prefix, "Lib", "statistics.py")
+        self.assertEqual(_parse_lines(lines, origins={"statistics": real}), [])
+
+    @unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "needs Python 3.10+")
+    def test_frozen_and_builtin_stdlib_modules_are_not_the_users(self):
+        for where in ("frozen", "built-in"):
+            lines = ["missing module named foo_xyz - imported by posixpath (delayed)"]
+            self.assertEqual(_parse_lines(lines, origins={"posixpath": where}), [], where)
 
 
 class ParseWarnPayloadSync(unittest.TestCase):
