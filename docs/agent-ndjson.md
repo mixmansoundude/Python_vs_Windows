@@ -58,6 +58,8 @@ self.exe.warnfix.real_warnfix_delayed,
 self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
+self.preflight.pycache.unwritable, self.preflight.pycache.litter (real lane only -- selfapps_preflight_pycache.ps1;
+REQ-021.4 and REQ-021.5, CLAUDE.md Item 83),
 self.preflight.no_powershell, self.preflight.ps_check_fail, self.preflight.lf_only,
 self.preflight.cwd_not_writable, self.preflight.ps_capability_fail,
 self.entrysmoke.no_interpreter_guard,
