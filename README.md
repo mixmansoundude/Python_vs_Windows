@@ -319,6 +319,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
   - Success (application runs), or
   - Hard failure (unresolvable within the current provider)
   - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> embedded Python, embedded Python exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier).
+  - A run that fails under uv can also reach the uv -> conda cascade after the run, through the last-chance offer described under REQ-018 (planned, not yet built), with the same consent rule.
 
 ---
 
@@ -503,6 +504,18 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
   fails with `No module named X` for a package that is not installed, the bootstrapper asks once
   before it installs X, edits `requirements.txt`, or rebuilds. A yes covers those steps and one
   verification run of the rebuilt EXE. A no changes nothing and only names the missing package.
+- **Last-chance offer to try conda (planned, not yet built; shape agreed 2026-10-11).** If a fresh
+  build that ran under uv ends with your program stopping on a real error, the bootstrapper asks once,
+  after the verification run and the optional interpreter re-run, with no timer: it shows the last
+  line of your program's error output and offers "it actually worked", "try again with Miniconda" or
+  "neither" (the default). The Miniconda choice says that your program will run one more time. The
+  offer is not made on the cached-EXE fast path, after a silent timeout (normal for a window app),
+  when conda is already the provider, or when the earlier dependency prompt already approved a
+  cascade, and every non-interactive or CI run resolves it to "neither" without waiting. On a conda
+  run reached this way, a window app that was still running when the check stopped it is asked once
+  whether it opened and worked; the question says the check stops the program after about 30 seconds,
+  so a window that stays open is expected. Only an explicit yes is remembered for the next run; pressing
+  Enter alone, or any other answer, remembers nothing.
 - **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
 
 ---
