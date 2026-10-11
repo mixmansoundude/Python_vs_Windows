@@ -1187,6 +1187,14 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_entryarg.ps1
+      # derived requirement: CLAUDE.md Item 73 -- a failed PEP 723 write-back must log the reason uv
+      # gave, not only ERROR:uv_rc_1. Gating on purpose (real lane, uv-first); the row is the
+      # regression test the fix must turn green. Uses the helper's HP_TEST_PEP723_UV_ERR hook.
+      - name: "Self-test: PEP 723 write-back failure logs uv's reason (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_uverr.ps1
 
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
@@ -2010,6 +2018,12 @@ jobs:
             tests\~selftest_entryarg\~run.out.txt
             tests/~selftest_entryarg/~bootstrap.status.json
             tests\~selftest_entryarg\~bootstrap.status.json
+            tests/~selftest_pep723_uverr/~uverr_bootstrap.log
+            tests\~selftest_pep723_uverr\~uverr_bootstrap.log
+            tests/~selftest_pep723_uverr/~setup.log
+            tests\~selftest_pep723_uverr\~setup.log
+            tests/~selftest_pep723_uverr/~bootstrap.status.json
+            tests\~selftest_pep723_uverr\~bootstrap.status.json
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

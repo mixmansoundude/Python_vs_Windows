@@ -309,6 +309,19 @@ self.pep723.writeback.warnfix, self.pep723.writeback.roundtrip
 dependency source, the header the REAL uv wrote on run 1 (not a hand-typed fixture), so a uv layout
 change that the bootstrapper's extractor cannot read turns CI red. Same skip rules as the others.
 
+## selfapps-pep723-uverr NDJSON rows (selfapps_pep723_uverr.ps1, real lane, gating)
+
+Item 73: a failed PEP 723 header write-back must log uv's reason. One real bootstrap with the
+test hook `HP_TEST_PEP723_UV_ERR` (the helper acts as if uv exited 1 with that text on stderr);
+the row needs the `[WARN] REQ-005.11 ... (ERROR:uv_rc_1)` line, both injected reason lines in
+`~setup.log`, the entry file byte-identical, and bootstrap state `ok`. If `HP_ENV_MODE` did not
+resolve to uv the row fails with `reason=provider_not_uv` on the real lane (a run that never reached the
+write-back proved nothing) and records `skip=true` only off the real lane.
+
+```
+self.pep723.writeback.uverr
+```
+
 ## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
 
 Two scenarios (`QUICKSTART_SCENARIO`) -- a dry-run test for README's "PVW QuickStart" copy-paste
