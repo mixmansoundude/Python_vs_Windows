@@ -1,14 +1,16 @@
-"""parse_warn v3 (2026-05-03)
-Reads PyInstaller warn file, extracts missing module names, applies translations.
+"""parse_warn v4 (2026-10-10)
+Reads the PyInstaller warn file; prints one package name per line for warnfix to install.
 Usage: python ~parse_warn.py <envname>
-Prints one conda package name per line to stdout.
-Skips internal modules (starting with _) and known-safe/unix-only names.
-Supports PyInstaller 5.x format (W: no module named 'foo') and
-PyInstaller 6.x format (missing module named foo - imported by ... (delayed|top-level|conditional)).
+Reads 5.x "W: no module named 'foo'" and 6.x "missing module named foo - imported by bar
+(top-level|delayed|conditional)" lines, never "excluded module named" ones. Never printed
+(README REQ-005.9): names starting with _, SKIP, the standard library, PyInstaller's own
+pyimod*/pyi_* modules, and X.attr when X is already installed. SKIP group rationale:
+docs/agent-closed-backlog.md, Dependency Strategy Rationale.
 """
-__version__ = "parse_warn v3 (2026-05-03)"
+__version__ = "parse_warn v4 (2026-10-10)"
 __all__ = ["main", "parse_warn_file", "TRANSLATIONS", "SKIP"]
 
+import importlib.util
 import os
 import re
 import sys
@@ -30,16 +32,6 @@ TRANSLATIONS = {
     "jwt": "pyjwt",
     "usb": "pyusb",
     "attr": "attrs",
-    "win32api": "pywin32",
-    "win32con": "pywin32",
-    "win32com": "pywin32",
-    "win32gui": "pywin32",
-    "win32file": "pywin32",
-    "win32process": "pywin32",
-    "win32event": "pywin32",
-    "pywintypes": "pywin32",
-    "pythoncom": "pywin32",
-    "winerror": "pywin32",
     "fitz": "pymupdf",
     "docx": "python-docx",
     "pptx": "python-pptx",
@@ -48,50 +40,47 @@ TRANSLATIONS = {
     "Cryptodome": "pycryptodome",
     "zmq": "pyzmq",
 }
+# pywin32 ships dozens of top-level modules; every one of them is the one package pywin32.
+TRANSLATIONS.update(dict.fromkeys((
+    "win32api win32con win32com win32gui win32file win32process win32event pywintypes pythoncom "
+    "winerror win32pdh win32pdhutil win32pipe win32service win32serviceutil servicemanager win32clipboard "
+    "win32print win32security win32net win32netcon win32ui win32uiole win32timezone win32crypt "
+    "win32evtlog win32evtlogutil win32job win32profile win32ts win32wnet win32console win32cred "
+    "win32inet win32gui_struct winxpgui ntsecuritycon").split(), "pywin32"))
 
-SKIP = frozenset([
-    "pkg_resources",
-    "distutils",
-    "setuptools",
-    "importlib",
-    "importlib.metadata",
-    "importlib.resources",
-    "importlib.abc",
-    # stdlib packages whose submodules surface as "missing" in the warn file
-    # (e.g. collections.abc -> collections). They are never conda packages, so
-    # forwarding them to "conda install" only produces a noisy PackagesNotFound.
-    "collections",
-    # Unix-only platform modules absent on Windows; these appear as optional/delayed
-    # stdlib imports in the warn file and are safe to ignore.
-    "grp",
-    "pwd",
-    "posix",
-    "resource",
-    "fcntl",
-    "readline",
-    "termios",
-    "tty",
-    "pty",
-    "crypt",
-    "spwd",
-    "nis",
-    "syslog",
-    "ossaudiodev",
-    # Python-2-only stdlib modules (removed entirely in Python 3, never a real PyPI/conda
-    # package) that still appear as conditional imports inside real packages' own Python
-    # 2/3 compatibility shims -- e.g. xlrd/timemachine.py does
-    # "try: from cStringIO import StringIO except ImportError: from io import StringIO",
-    # a dead code path under any Python 3 interpreter, but PyInstaller's warn file flags it
-    # regardless. Confirmed via a real, unflagged CI run of the layered-dependency-chain
-    # E2E test (self.layered_e2e.chain): "missing module named cStringIO - imported by
-    # xlrd.timemachine (conditional)" -- warnfix genuinely attempted and failed to install
-    # a package literally named "cStringIO", which can never exist, forcing an unnecessary
-    # extra provider cascade past conda. Different axis from the Unix-only list above
-    # (Python-version-only, not platform-only), but the same "guaranteed to never be a
-    # real installable package" property that makes it safe to filter unconditionally.
-    "cStringIO",
-    "StringIO",
-])
+SKIP = frozenset((
+    # stdlib/setuptools machinery and packages whose submodules surface as "missing"
+    "pkg_resources distutils setuptools importlib importlib.metadata importlib.resources "
+    "importlib.abc collections "
+    # Unix-only platform modules, absent on Windows
+    "grp pwd posix resource fcntl readline termios tty pty crypt spwd nis syslog ossaudiodev "
+    # Python 2 shims real packages still reference (xlrd does conditional cStringIO imports)
+    "cStringIO StringIO "
+    # Item 64: stdlib removed in Python 3, other interpreters and operating systems (Jython,
+    # OpenVMS, macOS, classic Mac), and the Python 2 standard library: on no index for Windows
+    "imp uu test java vms_lib org ce os2 riscos riscospath Foundation AppKit objc Cocoa Quartz "
+    "CoreFoundation PyObjCTools MacOS EasyDialogs Carbon tkFileDialog tkMessageBox tkSimpleDialog "
+    "tkColorChooser tkCommonDialog tkFont Tkinter Tkconstants Tix ScrolledText FileDialog gdbm "
+    "dumbdbm dbhash anydbm whichdb cPickle ConfigParser Queue SocketServer urllib2 urlparse "
+    "httplib HTMLParser htmlentitydefs Cookie cookielib xmlrpclib SimpleXMLRPCServer UserDict "
+    "UserList UserString copy_reg commands thread md5 sha sets exceptions repr").split())
+
+
+def _spec(name):
+    # find_spec on a top-level name never imports it; any failure means "not found".
+    try:
+        return importlib.util.find_spec(name)
+    except Exception:
+        return None
+
+
+def _is_stdlib(name):
+    names = getattr(sys, "stdlib_module_names", None)  # Python 3.10+
+    if names is not None:
+        return name in names
+    spec = _spec(name)  # older Python: found outside site/dist-packages means stdlib
+    where = (getattr(spec, "origin", None) or "").replace("\\", "/").lower()
+    return spec is not None and "-packages" not in where
 
 
 def parse_warn_file(warn_path):
@@ -111,26 +100,22 @@ def parse_warn_file(warn_path):
             # PyInstaller 5.x format: W: no module named 'foo'
             m = re.match(r"W: no module named '([^']+)'", line)
             if m:
-                mod = m.group(1).split(".")[0]
+                raw = m.group(1)
             else:
-                # PyInstaller 6.x format:
-                # missing module named foo - imported by bar (top-level)
-                # missing module named foo - imported by bar (delayed)
-                # missing module named foo - imported by bar (conditional)
-                # Skip entries that are ONLY optional (try-except guards with no
-                # other qualifier) -- those are intentionally resilient to missing
-                # modules. top-level, delayed, and conditional imports are required
-                # at runtime. Unix-only stdlib shims (grp, pwd, posix, etc.) land
-                # in those categories too but are already filtered by SKIP.
+                # 6.x: top-level, delayed and conditional imports are required; an entry that is
+                # only (optional) is a try-except guard, resilient by design, so it is skipped.
                 m = re.match(r"missing module named (\S+)", line)
                 if not m:
                     continue
                 if not re.search(r'\([^)]*(?:top-level|delayed|conditional)[^)]*\)', line):
                     continue
-                mod = m.group(1).strip("'\"").split(".")[0]
-            if mod.startswith("_"):
+                raw = m.group(1).strip("'\"")
+            mod = raw.split(".")[0]
+            if not mod or mod.startswith(("_", "pyimod", "pyi_")):
                 continue
-            if mod in SKIP:
+            if mod in SKIP or _is_stdlib(mod):
+                continue
+            if "." in raw and _spec(mod) is not None:
                 continue
             pkg = TRANSLATIONS.get(mod, mod)
             if pkg not in seen:

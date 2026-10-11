@@ -706,7 +706,11 @@ the original symptom (see that doc's "CI-first testing policy").
 - **Item 64 (Confirmed, medium)**: `tools/parse_warn.py` sends stdlib/never-installable names
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
-  the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written.
+  the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written. Slice 1 (stdlib, never-installable
+  names, PyInstaller's own modules, installed `X.attr`, pywin32 names) is on PR #482; slice 2 is
+  open: library-internal optional imports (importer rule; needs more `HP_PARSE_WARN` payload room
+  than the 535-character margin, so a multi-part emit comes first, test first) plus a pandas
+  scenario that asserts a small install count.
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
   (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any

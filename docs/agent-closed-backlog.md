@@ -3624,6 +3624,37 @@ extending this filter:
   `(conditional)`/`(delayed)`/`(top-level)` PyInstaller 6.x forms -- any future `SKIP` addition
   is covered automatically, no separate test needed per entry.
 
+**Item 64 slice 1 (2026-10-11) added three more mechanisms, all in `parse_warn.py`, and grew `SKIP`**
+(README REQ-005.9 lists them; field evidence in `docs/plan-field-report-2026-10.md`, Item 64):
+- The standard library, by `sys.stdlib_module_names` (Python 3.10+). Before 3.10 the fallback treats a
+  name as stdlib when `importlib.util.find_spec` finds it outside a `site-packages` or `dist-packages`
+  folder. A list is required, not an install attempt: `multiprocessing` resolves on PyPI to a Python 2
+  backport that cannot build, so asking the index cannot tell a stdlib name from a package.
+- PyInstaller's own modules, by prefix (`pyimod*`, `pyi_*`): `pyimod02_importers` is listed (delayed)
+  as imported by PyInstaller's `pyi_rth_pkgutil.py` in every build that imports `pkgutil`, and exists on
+  no index.
+- `X.attr` entries whose top-level `X` is already installed (`find_spec`, which never imports `X`; any
+  lookup error counts as not installed). PyInstaller reports `from X import name` as a missing module
+  `X.name` when `name` is created at import time; installing `X` again cannot supply it. Undotted names
+  are NOT given this rule, so the cascade signal for a bare module the provider cannot supply (the
+  `self.layered_e2e.chain` pygrib case) is unchanged.
+- `SKIP` grew by the names a Windows CPython can never install: removed stdlib (`imp`, `uu`, `test`),
+  other interpreters and operating systems (`java`, `vms_lib`, `org`, `Foundation`, `AppKit`, `objc`),
+  and the Python 2 standard library (`tkFileDialog`, `gdbm`, `urllib2`, `ConfigParser`, ...). `future`
+  and `six` are real packages and are deliberately NOT in the list.
+- `TRANSLATIONS` maps every pywin32 module (`win32pdh`, `win32pipe`, `servicemanager`, ...) to `pywin32`.
+- Tests: `tests/test_parse_warn.py` (`NoiseIsNeverAnInstallTargetTest`, `StdlibListFallbackTest`,
+  `InstalledTopLevelTest`, `Pywin32ModulesTest`; `_parse_lines` patches `importlib.util.find_spec` so no
+  result depends on what is installed where the tests run) and the Windows scenario
+  `tests/selfapps_warnfix_noise.ps1` (`self.warnfix.noise.stdlib`, real and conda-full).
+- Payload budget: `HP_PARSE_WARN` has a 535-character margin after the SKIP comments were moved here;
+  a slice that adds importer parsing needs more room than that.
+- Red run before the fix (PR #482, run `38089448746`, tests only): `self.warnfix.noise.stdlib` failed on
+  `real` and `conda-full` with `attempted` = `pyimod02_importers`, `multiprocessing`, `vms_lib` (each
+  twice), `repairFailed` 6, `cascadeCandidate` true, while the EXE still built and ran. Those are the
+  same three names the old parser yields from that run's own `~warnfile.txt`; the new parser yields none.
+  The only other failing rows were `self.parse_warn.pytest` and `self.pytest.unit` (14 new unit tests).
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a

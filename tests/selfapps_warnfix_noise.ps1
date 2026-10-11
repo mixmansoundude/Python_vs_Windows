@@ -139,7 +139,7 @@ if ($exeExists) {
     }
 }
 
-$noisePass = $warnHasMultiprocessing -and $warnHasPyimod -and ($attempted.Count -eq 0) -and
+$noisePass = ($run1Exit -eq 0) -and $warnHasMultiprocessing -and $warnHasPyimod -and ($attempted.Count -eq 0) -and
              ($repairFailed -eq 0) -and (-not $repairBlockRan) -and (-not $cascadeCandidate) -and
              $exeExists -and ($exeExit -eq 0) -and $tokenFound -and (-not $infraError)
 
