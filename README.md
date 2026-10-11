@@ -513,7 +513,9 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
   when conda is already the provider, or when the earlier dependency prompt already approved a
   cascade, and every non-interactive or CI run resolves it to "neither" without waiting. On a conda
   run reached this way, a window app that was still running when the check stopped it is asked once
-  whether it opened and worked, so a yes can be remembered for the next run.
+  whether it opened and worked; the question says the check stops the program after about 30 seconds,
+  so a window that stays open is expected. Only an explicit yes is remembered for the next run; pressing
+  Enter alone, or any other answer, remembers nothing.
 - **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
 
 ---

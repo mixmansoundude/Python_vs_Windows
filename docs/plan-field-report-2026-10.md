@@ -879,10 +879,29 @@ holding `<>&|%^` is shown intact, the setup log is intact and no stray file appe
 check run is stopped after about 30 silent seconds (exit `-1`), so on a cascade-reached conda run it can
 never end in a clean exit 0 and would never count as a verified pass for Item 66. So on that tier only
 (current provider conda, reached through the cascade, never on the uv tier where the silent timeout gets
-no prompt), a silent timeout asks once: "Your window app was still running when the check stopped it. Did
-it open and work? [Y/N]". A yes is recorded as pass type `user_confirmed` (so the next run can start on
-conda once Item 66 exists); a no records nothing. Same guards as the main prompt: `HP_CI_LANE`, `NOINPUT`
-and `HP_NONINTERACTIVE` resolve to "no" without waiting, with a `HP_TEST_*_ANSWER` override. The first
-slice only logs the answer and puts it on the NDJSON row, like the other pass types. Extra CI row (8): a
-silent-running fixture on the cascade-reached conda tier, answers Y and N, plus the same fixture on the
-uv tier asserting the question is absent.
+no prompt), a silent timeout asks once: "The check stops your program after about 30 seconds, so a
+window that is still open is expected. Did it open and work? [y/N]". A yes is recorded as pass type
+`user_confirmed` (so the next run can start on conda once Item 66 exists).
+
+Conditions added the same day, from a third-party review the maintainer relayed (checked against the
+code; each one held up):
+- **Ask only on the silent timeout.** The question is asked only when `HP_EXE_EXIT` was `-1`, read through
+  `HP_EXE_TIMEDOUT_SILENT`, which `:run_exe_smokerun` sets for exactly that case and which survives the
+  `HP_EXE_EXIT` clear at the end of `:smokerun_ndjson`. Exit 0 is already a pass (`exe_ok`) and any other
+  non-zero exit is already a failure, so neither needs the question. The asymmetry with the uv run is
+  deliberate: on uv nothing needs recording because uv is the default order, while on conda the answer
+  decides whether anything is remembered.
+- **Only an explicit yes records.** A bare Enter means no, and so do N and every guard. A silent timeout
+  looks the same for a healthy window app and a hung program (the run status line for it already says
+  "force-stopped, not necessarily broken"), so counting it as a pass would pin conda
+  for the wrong reason and hide the real problem on later runs. `HP_CI_LANE`, `NOINPUT` and
+  `HP_NONINTERACTIVE` resolve to no without waiting, and a `HP_TEST_*_ANSWER` override is checked first so
+  a test can answer Y even in CI. Echo the prompt text unconditionally, as the other gates do.
+- **A CI fixture that stays silent.** Without one the `-1` path through this prompt is never exercised.
+
+The first slice only logs the answer and puts it on the NDJSON row, like the other pass types. Extra CI
+row (8): a fixture that stays silent like a window app (a script that sleeps without printing;
+`HP_SMOKERUN_KILL_MS` shortens the 30 second wait for CI) on the cascade-reached conda tier, with answers
+Y (logged as `user_confirmed`), N and an empty answer (nothing logged), plus no TTY and no override
+(resolves to no without waiting); the same fixture on the uv tier asserting the question is absent; and a
+conda-tier fixture that exits 0 and one that exits non-zero, asserting the question is absent.

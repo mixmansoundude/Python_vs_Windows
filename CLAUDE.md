@@ -829,7 +829,9 @@ the original symptom (see that doc's "CI-first testing policy").
   discarded interpreter result (`:run_postexec_checkpoint`) must be captured. The nine proposed
   defaults, the CI row per branch and the sequencing with Items 64, 65, 66 and 68 are in the plan doc.
   Decided 2026-10-11 (was Q10, option a): on the cascade-reached conda tier only, a window app's silent
-  timeout asks once whether it opened and worked, and a yes is recorded as `user_confirmed`. Test first.
+  timeout (exit `-1` only) asks once whether it opened and worked, and only an explicit yes (a bare Enter
+  means no) is recorded as `user_confirmed`; the prompt says the check stops the program after about 30
+  seconds, and the CI fixture is a silent script. Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
