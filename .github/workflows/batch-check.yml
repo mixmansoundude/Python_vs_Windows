@@ -1308,6 +1308,16 @@ jobs:
         run: |
           & tests\selfapps_honest_wording.ps1
 
+      # derived requirement: CLAUDE.md Item 77 -- a "DLL load failed" run on a machine without Microsoft's
+      # Visual C++ runtime must say what the runtime is and where to get it. Gating on purpose (real
+      # lane): nothing here depends on the network beyond what every real-lane bootstrap already needs.
+      # CI runners have the runtime, so the missing half is simulated with HP_TEST_VCRT_MISSING.
+      - name: "Self-test: Visual C++ runtime warning on a DLL load failure (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_vcruntime.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
@@ -2190,6 +2200,36 @@ jobs:
             tests\~selftest_pvw_builder_both\~pvw_builder_both_bootstrap.log
             tests/~selftest_pvw_builder_both/~setup.log
             tests\~selftest_pvw_builder_both\~setup.log
+            tests/~selftest_vcruntime_interp/~vcruntime_interp_bootstrap.log
+            tests\~selftest_vcruntime_interp\~vcruntime_interp_bootstrap.log
+            tests/~selftest_vcruntime_interp/~setup.log
+            tests\~selftest_vcruntime_interp\~setup.log
+            tests/~selftest_vcruntime_interp/~run.err.txt
+            tests\~selftest_vcruntime_interp\~run.err.txt
+            tests/~selftest_vcruntime_interp_probe/~vcruntime_interp_probe_bootstrap.log
+            tests\~selftest_vcruntime_interp_probe\~vcruntime_interp_probe_bootstrap.log
+            tests/~selftest_vcruntime_interp_probe/~setup.log
+            tests\~selftest_vcruntime_interp_probe\~setup.log
+            tests/~selftest_vcruntime_interp_probe/~run.err.txt
+            tests\~selftest_vcruntime_interp_probe\~run.err.txt
+            tests/~selftest_vcruntime_exe/~vcruntime_exe_bootstrap.log
+            tests\~selftest_vcruntime_exe\~vcruntime_exe_bootstrap.log
+            tests/~selftest_vcruntime_exe/~setup.log
+            tests\~selftest_vcruntime_exe\~setup.log
+            tests/~selftest_vcruntime_exe/~run.err.txt
+            tests\~selftest_vcruntime_exe\~run.err.txt
+            tests/~selftest_vcruntime_present/~vcruntime_present_bootstrap.log
+            tests\~selftest_vcruntime_present\~vcruntime_present_bootstrap.log
+            tests/~selftest_vcruntime_present/~setup.log
+            tests\~selftest_vcruntime_present\~setup.log
+            tests/~selftest_vcruntime_present/~run.err.txt
+            tests\~selftest_vcruntime_present\~run.err.txt
+            tests/~selftest_vcruntime_unrelated/~vcruntime_unrelated_bootstrap.log
+            tests\~selftest_vcruntime_unrelated\~vcruntime_unrelated_bootstrap.log
+            tests/~selftest_vcruntime_unrelated/~setup.log
+            tests\~selftest_vcruntime_unrelated\~setup.log
+            tests/~selftest_vcruntime_unrelated/~run.err.txt
+            tests\~selftest_vcruntime_unrelated\~run.err.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log

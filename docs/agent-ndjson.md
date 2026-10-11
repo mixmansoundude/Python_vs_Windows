@@ -324,6 +324,24 @@ write-back proved nothing) and records `skip=true` only off the real lane.
 self.pep723.writeback.uverr
 ```
 
+## selfapps-vcruntime NDJSON rows (selfapps_vcruntime.ps1, real lane, gating)
+
+Item 77: a run that prints `DLL load failed` on a machine without Microsoft's Visual C++ runtime
+(`msvcp140.dll` or `vcruntime140_1.dll` missing from System32) must print a console `[WARN]` naming the
+runtime and the download link, once. CI runners have the runtime, so the test hook
+`HP_TEST_VCRT_MISSING=1` reports it as missing. Five scenarios, each its own scratch folder; the
+fixture raises the exact message the field run printed. `interp` and `interp_probe` force the build to
+fail so the interpreter runs the program (legacy branch, and the fail-fast probe a double-click user
+gets); `exe` pays for a real EXE build; `runtime_present` has no simulation and expects the warning
+exactly when this runner's System32 really lacks the files; `unrelated_error` has the simulation on and a
+non-DLL failure and expects no warning. Every row also requires proof the program ran (its captured
+stderr holds the fixture text).
+
+```
+self.vcruntime.warn.interp, self.vcruntime.warn.interp_probe, self.vcruntime.warn.exe,
+self.vcruntime.warn.runtime_present, self.vcruntime.warn.unrelated_error
+```
+
 ## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
 
 Two scenarios (`QUICKSTART_SCENARIO`) -- a dry-run test for README's "PVW QuickStart" copy-paste
