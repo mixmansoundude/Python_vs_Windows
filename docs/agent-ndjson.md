@@ -826,6 +826,25 @@ counts only when the user's own code imports it.
 self.warnfix.noise.library
 ```
 
+## selfapps-runtime-modnotfound NDJSON rows (selfapps_runtime_modnotfound.ps1, real lane only, GATING)
+
+CLAUDE.md Item 65 slice 1 regression test, README REQ-018. One real bootstrap of a fixture that
+stands in for a GUI callback: it catches the `ImportError` for `xlsxwriter` itself (module name joined
+at run time, no `requirements.txt`, so nothing installs it), prints the traceback to stderr and exits 0.
+`self.runtime.modnotfound` first proves its precondition (`symptomReproduced`: `Entry smoke exit=0`
+in `~setup.log` AND `ModuleNotFoundError: No module named 'xlsxwriter'` in `~run.err.txt`), then
+requires a console `[WARN]` line that names `xlsxwriter` as not installed (`consoleLine`,
+`namedModules` must list only that module), the bootstrapper's own `self.runtime.module_missing` row in
+the private `HP_NDJSON` file the test points the run at (`rowIds`, `rowModules`), and
+`~bootstrap.status.json` state `ok`. Skips with `skip=true, reason=non-windows-host` off Windows.
+Real lane only on purpose: the scan is provider-independent and the fixture needs no third-party
+package. Expected red on the commit that adds it (nothing reads the stderr of a run that exits 0) and
+green once the scan exists.
+
+```
+self.runtime.modnotfound
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
