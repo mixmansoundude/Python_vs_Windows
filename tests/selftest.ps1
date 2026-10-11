@@ -353,6 +353,22 @@ Write-NdjsonRow ([ordered]@{
   }
 })
 if ($diffLogFound -and $diffCorrect) { $summary.Add('self.dep.diff.trace: PASS') } else { $summary.Add('self.dep.diff.trace: FAIL') }
+# CLAUDE.md Item 78: every run logs whether it is elevated, exactly once (the field run was elevated and
+# the NI-VISA installer still failed; without this line nobody could tell from the log). The setup log at
+# this point holds only the initial bootstrap's entries.
+$elevText = if (Test-Path $stubSetupLog) { Get-Content -LiteralPath $stubSetupLog -Encoding ASCII -Raw } else { '' }
+$elevMatches = [regex]::Matches($elevText, '\[INFO\] Elevated: (yes|no)\b')
+$elevOnce = ($elevMatches.Count -eq 1)
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.elevation.logged'
+  req  = 'REQ-008'
+  pass = $elevOnce
+  desc = 'The setup log states once per run whether the process is elevated'
+  details = [ordered]@{
+    count = $elevMatches.Count
+    value = if ($elevMatches.Count -ge 1) { $elevMatches[0].Groups[1].Value } else { $null }
+  }
+})
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
 if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {
