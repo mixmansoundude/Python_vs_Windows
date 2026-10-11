@@ -279,6 +279,8 @@ Test files and what they cover:
 | `test_pipreqs_precheck.py` | Item 63: pipreqs pre-check (U+201D file ok as UTF-8, declared-cp1252 re-encoded, no-cookie cp1252 and unparseable left out, BOM, ignore folders, staged tree contents, exit codes 0/10/3, report hygiene and caps, `--encoding utf-8` on every pipreqs invocation, HP_PIPREQS_PRECHECK payload sync) |
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 | `test_runtime_module_scan.py` | Item 65 slice 1: runtime missing-module scan (top-level name from a traceback, submodule, repeats, ImportError wording, cap; installed/on-path/stdlib/non-identifier names not reported; local module next to the helper; CLI exit codes; the three batch call sites and the reminder order; Python 3.9 grammar guard; HP_RUNTIME_MODULE_SCAN payload sync) |
+| `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
+| `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -708,8 +710,8 @@ the original symptom (see that doc's "CI-first testing policy").
 
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1 (name the missing package) is built on PR #487
-  (red run `38146234107`; `HP_RUNTIME_MODULE_SCAN` has little payload room left, see the interconnect
-  doc). Slice 2 (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
+  (red run `38146234107`, green rows on `real` in run `38157389535`; `HP_RUNTIME_MODULE_SCAN` has little
+  payload room left, see the interconnect doc). Slice 2 (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
   install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
 - **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.

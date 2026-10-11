@@ -87,7 +87,9 @@ print('wrote token')
 '@
 Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 
-# HP_SKIP_PIPREQS=1: keep the fake module out of pipreqs/conda install so warnfix is the path.
+# HP_SKIP_PIPREQS=1: keeps the fake module out of pipreqs on the first (uv) tier only. The conda, embed and
+#   venv tiers reset it, so later tiers may scan and try to install the fake module up front; that is
+#   harmless here, warnfix still has to report it unresolved after its own failed repair install.
 # HP_DISABLE_HEURISTICS=1: no heuristic can touch the fake module; warnfix is the only repair.
 # HP_TEST_CASCADE_ANSWER=Y: grant cascade consent deterministically (no prompt, no CI auto-decline).
 # HP_TEST_SYSCON_ANSWER=N: the cascade now reaches the venv -> system tier; decline the REQ-014
@@ -143,6 +145,18 @@ $noLoop = ($uvToConda -le 1) -and ($condaToEmbed -le 1) -and ($embedToVenv -le 1
 $offersSkipped = ([regex]::Matches($setupText, [regex]::Escape('REQ-009: cascade approved; skipping the post-verification offers'))).Count
 $offersSkippedOk = ($offersSkipped -eq 4)
 
+# derived requirement (Item 35, gap 0): the 2026-10-11 baseline run ended at the embed tier with
+# offersSkipped=2 and the 80-line evidence cap hid why. A cascade hop needs a FAILED repair install in
+# the tier before it (warnfix_repair_failed.flag -> :warnfix_cascade_detect), so count the two lines
+# that prove the repair dispatch ran: every "[REPAIR] missing modules detected" marker should be
+# followed by an "Attempting to install: fake_pkg_cascade_xyz" line in the same tier. A marker with no
+# attempt (repairWithoutAttempt > 0) means that tier's dispatch matched no branch, so nothing was
+# installed, no failure flag was set and the cascade stopped there. Diagnostic only; not part of
+# execPass. Counted against $setupText for the same single-source reason as above.
+$repairMarkers   = ([regex]::Matches($setupText, [regex]::Escape('[REPAIR] missing modules detected'))).Count
+$installAttempts = ([regex]::Matches($setupText, [regex]::Escape('Attempting to install: fake_pkg_cascade_xyz'))).Count
+$repairWithoutAttempt = $repairMarkers - $installAttempts
+
 # Bootstrap status: the run must end gracefully (exitCode 0) despite the unresolvable dep.
 $statusPath = Join-Path $workDir '~bootstrap.status.json'
 $statusExit = $null
@@ -166,8 +180,11 @@ $execPass = ($uvToConda -eq 1) -and $condaSelected -and $terminated -and $noLoop
 Write-Host "=== self.cascade.exec evidence ==="
 Write-Host ("uvToConda={0} condaToEmbed={1} embedToVenv={2} venvToSystem={3} condaSelected={4} terminated={5} noLoop={6} offersSkipped={7} statusExit={8} statusState={9} runExit={10} execPass={11}" -f `
     $uvToConda, $condaToEmbed, $embedToVenv, $venvToSystem, $condaSelected, $terminated, $noLoop, $offersSkipped, $statusExit, $statusState, $runExit, $execPass)
+Write-Host ("repairMarkers={0} installAttempts={1} repairWithoutAttempt={2}" -f $repairMarkers, $installAttempts, $repairWithoutAttempt)
 Write-Host "=== REQ-009 / provider / warnfix lines (setup log) ==="
-($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|warnfix|cascade|Trying the next Python provider|Installing Miniconda' } | Select-Object -First 80 | ForEach-Object { Write-Host $_ }
+($setupText -split "`n") | Where-Object { $_ -match 'REQ-009|Selected Python provider|REPAIR|HP_ENV_MODE|warnfix|cascade|Trying the next Python provider|Installing Miniconda' } | Select-Object -First 250 | ForEach-Object { Write-Host $_ }
+Write-Host "=== setup log tail (60) ==="
+($setupText -split "`n") | Select-Object -Last 60 | ForEach-Object { Write-Host $_ }
 Write-Host "=== bootstrap stdout log tail (50) ==="
 $logLines | Select-Object -Last 50 | ForEach-Object { Write-Host $_ }
 Write-Host "=== end self.cascade.exec evidence ==="
@@ -189,6 +206,9 @@ Write-NdjsonRow ([ordered]@{
         statusExit    = $statusExit
         statusState   = $statusState
         runExit       = $runExit
+        repairMarkers = $repairMarkers
+        installAttempts = $installAttempts
+        repairWithoutAttempt = $repairWithoutAttempt
     }
 })
 
