@@ -841,8 +841,18 @@ Real lane only on purpose: the scan is provider-independent and the fixture need
 package. Expected red on the commit that adds it (nothing reads the stderr of a run that exits 0) and
 green once the scan exists.
 
+A second scenario in the same script (`self.runtime.modnotfound.pyproject`, CodeRabbit finding on PR #487)
+bootstraps the same fixture with a `pyproject.toml` that lists one dependency, so `DEP_SOURCE=pyproject`.
+Setup copies those dependencies over `requirements.txt` on every run, so advice to edit `requirements.txt`
+would be lost on the next run. The row proves its precondition (`DEP_SOURCE=pyproject` in `~setup.log`, run
+exits 0, traceback in `~run.err.txt`) and requires both advice lines (the second `[WARN]` line and the closing
+reminder, `adviceLines`) to name `pyproject.toml` and neither to name `requirements.txt`. The first row now
+requires exactly one report per module (console and row), not at least one. Expected red on the commit that
+adds the pyproject scenario and green once the advice names the active source.
+
 ```
 self.runtime.modnotfound
+self.runtime.modnotfound.pyproject
 ```
 
 ## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)

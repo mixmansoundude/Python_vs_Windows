@@ -17,6 +17,11 @@
 # bootstrapper writes to HP_NDJSON (self.runtime.module_missing) naming the same module. HP_NDJSON
 # points at a private file so the bootstrapper's own rows do not land in the lane artifact twice.
 #
+# Row self.runtime.modnotfound.pyproject (CodeRabbit finding on PR #487): the same fixture with a
+# pyproject.toml that lists a dependency. When pyproject.toml supplies the dependencies the bootstrapper
+# overwrites requirements.txt from it on every run, so advice to edit requirements.txt would be lost on
+# the next run. The advice must name pyproject.toml (the active dependency source) instead.
+#
 # Lane: real only. The scan is provider-independent (it reads the run's captured stderr after the
 # EXE verification run), and the fixture needs only the standard library, so it adds a tiny build.
 param()
@@ -46,6 +51,13 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         desc    = 'a runtime ModuleNotFoundError in stderr is reported although the run exits 0 (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.modnotfound.pyproject'
+        req     = 'REQ-018'
+        pass    = $true
+        desc    = 'the missing-module advice names pyproject.toml when it is the dependency source (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
     exit 0
 }
 
@@ -60,11 +72,6 @@ if (-not (Test-Path $batchPath)) {
     })
     exit 1
 }
-
-$workDir = Join-Path $here '~selftest_runtime_modnotfound'
-if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
-New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-Copy-Item -Path $batchPath -Destination $workDir -Force
 
 # The module name is joined at run time: a literal import_module("xlsxwriter") could be seen by a
 # future static scan and installed up front, which would remove the failure this test needs.
@@ -87,33 +94,77 @@ if __name__ == "__main__":
     on_click()
     print("runtime app ok")
 '@
-Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 
-$bootstrapLog = '~modnotfound_bootstrap.log'
-$subNdjson    = Join-Path $workDir '~sub.ndjson'
-$savedNdjson  = [Environment]::GetEnvironmentVariable('HP_NDJSON')
-Push-Location $workDir
-try {
-    [Environment]::SetEnvironmentVariable('HP_NDJSON', $subNdjson)
-    cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
-    $runExit = $LASTEXITCODE
-} finally {
-    [Environment]::SetEnvironmentVariable('HP_NDJSON', $savedNdjson)
-    Pop-Location
+# One real bootstrap of the fixture in its own folder; returns everything the rows need. HP_NDJSON
+# points at a private file so the bootstrapper's own rows do not land in the lane artifact.
+function Invoke-ModNotFoundScenario {
+    param([string]$FolderName, [string]$Pyproject)
+    $workDir = Join-Path $here $FolderName
+    if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
+    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+    Copy-Item -Path $batchPath -Destination $workDir -Force
+    Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
+    if ($Pyproject) { Set-Content -Path (Join-Path $workDir 'pyproject.toml') -Value $Pyproject -Encoding ASCII }
+
+    $bootstrapLog = if ($Pyproject) { '~modnotfound_pyproject_bootstrap.log' } else { '~modnotfound_bootstrap.log' }
+    $subNdjson    = Join-Path $workDir '~sub.ndjson'
+    $savedNdjson  = [Environment]::GetEnvironmentVariable('HP_NDJSON')
+    Push-Location $workDir
+    try {
+        [Environment]::SetEnvironmentVariable('HP_NDJSON', $subNdjson)
+        cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
+        $runExit = $LASTEXITCODE
+    } finally {
+        [Environment]::SetEnvironmentVariable('HP_NDJSON', $savedNdjson)
+        Pop-Location
+    }
+
+    $logPath   = Join-Path $workDir $bootstrapLog
+    $setupLog  = Join-Path $workDir '~setup.log'
+    $errPath   = Join-Path $workDir '~run.err.txt'
+    $logLines  = if (Test-Path $logPath)  { Get-Content -LiteralPath $logPath  -Encoding ASCII } else { @() }
+    $setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw -Encoding ASCII } else { '' }
+    $errText   = if (Test-Path $errPath)  { Get-Content -LiteralPath $errPath  -Raw -Encoding ASCII } else { '' }
+
+    $rowModules = @()
+    $rowIds = @()
+    if (Test-Path -LiteralPath $subNdjson) {
+        foreach ($line in (Get-Content -LiteralPath $subNdjson -Encoding ASCII)) {
+            if (-not $line.Trim()) { continue }
+            try { $obj = $line | ConvertFrom-Json } catch { continue }
+            if ($obj.id) { $rowIds += [string]$obj.id }
+            if ($obj.id -eq 'self.runtime.module_missing' -and $obj.details -and $obj.details.module) {
+                $rowModules += [string]$obj.details.module
+            }
+        }
+    }
+    $statusPath = Join-Path $workDir '~bootstrap.status.json'
+    $statusState = $null
+    if (Test-Path -LiteralPath $statusPath) {
+        try { $statusState = (Get-Content -LiteralPath $statusPath -Raw -Encoding ASCII | ConvertFrom-Json).state } catch { $statusState = $null }
+    }
+    [pscustomobject]@{
+        RunExit     = $runExit
+        LogLines    = $logLines
+        Console     = ($logLines -join "`n")
+        SetupText   = $setupText
+        ErrText     = $errText
+        RowIds      = $rowIds
+        RowModules  = $rowModules
+        StatusState = $statusState
+    }
 }
 
-$logPath   = Join-Path $workDir $bootstrapLog
-$setupLog  = Join-Path $workDir '~setup.log'
-$errPath   = Join-Path $workDir '~run.err.txt'
-$logLines  = if (Test-Path $logPath)  { Get-Content -LiteralPath $logPath  -Encoding ASCII } else { @() }
-$setupText = if (Test-Path $setupLog) { Get-Content -LiteralPath $setupLog -Raw -Encoding ASCII } else { '' }
-$errText   = if (Test-Path $errPath)  { Get-Content -LiteralPath $errPath  -Raw -Encoding ASCII } else { '' }
-$consoleText = ($logLines -join "`n")
+# ---- scenario 1: no dependency file (pipreqs finds nothing); the advice names requirements.txt ----
+$r = Invoke-ModNotFoundScenario -FolderName '~selftest_runtime_modnotfound' -Pyproject $null
+$runExit = $r.RunExit
+$logLines = $r.LogLines
+$consoleText = $r.Console
 
 # Precondition: the program ran, exited 0, and its stderr holds the traceback. Without this the
 # row could pass or fail for a reason that has nothing to do with the new report.
-$smokeExit0     = $setupText -match 'Entry smoke exit=0'
-$stderrHasTrace = $errText -match "ModuleNotFoundError: No module named 'xlsxwriter'"
+$smokeExit0     = $r.SetupText -match 'Entry smoke exit=0'
+$stderrHasTrace = $r.ErrText -match "ModuleNotFoundError: No module named 'xlsxwriter'"
 $symptomReproduced = $smokeExit0 -and $stderrHasTrace
 
 # (a) The console names the module as not installed. Matched on the [WARN] tag plus the module
@@ -124,36 +175,20 @@ foreach ($line in $logLines) {
     if ($line -match '\[WARN\].*\bxlsxwriter\b.*not installed') { $moduleLine = $line; break }
 }
 $consoleNamesModule = [bool]$moduleLine
-# Nothing else may be named: the only missing module is xlsxwriter.
+# Exactly one module is named, once: the only missing module is xlsxwriter and it is reported once
+# per bootstrap run (CodeRabbit finding on PR #487: a duplicate report must fail the row).
 $namedModules = @()
 foreach ($m in [regex]::Matches($consoleText, '\[WARN\] Your program needed the module (\S+)')) {
     $namedModules += $m.Groups[1].Value
 }
-$onlyThatModule = ($namedModules.Count -ge 1) -and (@($namedModules | Where-Object { $_ -ne 'xlsxwriter' }).Count -eq 0)
+$onlyThatModule = ($namedModules.Count -eq 1) -and ($namedModules[0] -eq 'xlsxwriter')
 
-# (b) The bootstrapper's own row, written because HP_NDJSON was set for this run.
-$rowModules = @()
-$rowIds = @()
-if (Test-Path -LiteralPath $subNdjson) {
-    foreach ($line in (Get-Content -LiteralPath $subNdjson -Encoding ASCII)) {
-        if (-not $line.Trim()) { continue }
-        try { $obj = $line | ConvertFrom-Json } catch { continue }
-        if ($obj.id) { $rowIds += [string]$obj.id }
-        if ($obj.id -eq 'self.runtime.module_missing' -and $obj.details -and $obj.details.module) {
-            $rowModules += [string]$obj.details.module
-        }
-    }
-}
-$rowNamesModule = ($rowModules.Count -ge 1) -and (@($rowModules | Where-Object { $_ -ne 'xlsxwriter' }).Count -eq 0)
-
-$statusPath = Join-Path $workDir '~bootstrap.status.json'
-$statusState = $null
-if (Test-Path -LiteralPath $statusPath) {
-    try { $statusState = (Get-Content -LiteralPath $statusPath -Raw -Encoding ASCII | ConvertFrom-Json).state } catch { $statusState = $null }
-}
+# (b) The bootstrapper's own row, written because HP_NDJSON was set for this run: exactly one.
+$rowModules = @($r.RowModules)
+$rowNamesModule = ($rowModules.Count -eq 1) -and ($rowModules[0] -eq 'xlsxwriter')
 
 $modPass = ($runExit -eq 0) -and $symptomReproduced -and $consoleNamesModule -and $onlyThatModule -and
-           $rowNamesModule -and ($statusState -eq 'ok')
+           $rowNamesModule -and ($r.StatusState -eq 'ok')
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.modnotfound'
@@ -169,12 +204,52 @@ Write-NdjsonRow ([ordered]@{
         consoleLine        = $moduleLine
         namedModules       = @($namedModules)
         onlyThatModule     = $onlyThatModule
-        rowIds             = @($rowIds)
+        rowIds             = @($r.RowIds)
         rowModules         = @($rowModules)
         rowNamesModule     = $rowNamesModule
-        statusState        = $statusState
+        statusState        = $r.StatusState
     }
 })
 
-if (-not $modPass) { exit 1 }
+# ---- scenario 2: pyproject.toml supplies the dependencies; the advice must name it, not requirements.txt ----
+# The bootstrapper copies pyproject.toml's dependencies over requirements.txt on every run, so an edit
+# to requirements.txt would be overwritten. six is a tiny pure-Python package, only here so the
+# dependency list is not empty (an empty list is not treated as a dependency source).
+$pyprojectText = @'
+[project]
+name = "rtmfixture"
+version = "0.0.0"
+dependencies = ["six"]
+'@
+$p = Invoke-ModNotFoundScenario -FolderName '~selftest_runtime_modnotfound_pyproject' -Pyproject $pyprojectText
+$pSmokeExit0     = $p.SetupText -match 'Entry smoke exit=0'
+$pStderrHasTrace = $p.ErrText -match "ModuleNotFoundError: No module named 'xlsxwriter'"
+$pSourceIsPyproject = $p.SetupText -match 'DEP_SOURCE=pyproject'
+$pSymptomReproduced = $pSmokeExit0 -and $pStderrHasTrace -and $pSourceIsPyproject
+# The advice sits on the second [WARN] line and again in the closing reminder. Both must name
+# pyproject.toml, and neither may send the user to requirements.txt.
+$pAdviceLines = @($p.LogLines | Where-Object { $_ -match '\[WARN\] The program may have kept running' -or $_ -match '^\*\*\* Add them, or the packages that provide them' })
+$pAdviceNamesPyproject = ($pAdviceLines.Count -eq 2) -and (@($pAdviceLines | Where-Object { $_ -notmatch 'pyproject\.toml' }).Count -eq 0)
+$pAdviceNoRequirements = (@($pAdviceLines | Where-Object { $_ -match 'requirements\.txt' }).Count -eq 0)
+$pPass = ($p.RunExit -eq 0) -and $pSymptomReproduced -and $pAdviceNamesPyproject -and $pAdviceNoRequirements -and
+         ($p.StatusState -eq 'ok')
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.runtime.modnotfound.pyproject'
+    req     = 'REQ-018'
+    pass    = $pPass
+    desc    = 'with pyproject.toml as the dependency source, the missing-module advice names pyproject.toml and not requirements.txt'
+    details = [ordered]@{
+        exitCode              = $p.RunExit
+        smokeExit0            = $pSmokeExit0
+        stderrHasTrace        = $pStderrHasTrace
+        sourceIsPyproject     = $pSourceIsPyproject
+        symptomReproduced     = $pSymptomReproduced
+        adviceLines           = @($pAdviceLines)
+        adviceNamesPyproject  = $pAdviceNamesPyproject
+        adviceNoRequirements  = $pAdviceNoRequirements
+        statusState           = $p.StatusState
+    }
+})
+
+if (-not ($modPass -and $pPass)) { exit 1 }
 exit 0

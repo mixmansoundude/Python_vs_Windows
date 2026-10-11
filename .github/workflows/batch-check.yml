@@ -2081,6 +2081,14 @@ jobs:
             tests\~selftest_runtime_modnotfound\~run.err.txt
             tests/~selftest_runtime_modnotfound/~sub.ndjson
             tests\~selftest_runtime_modnotfound\~sub.ndjson
+            tests/~selftest_runtime_modnotfound_pyproject/~modnotfound_pyproject_bootstrap.log
+            tests\~selftest_runtime_modnotfound_pyproject\~modnotfound_pyproject_bootstrap.log
+            tests/~selftest_runtime_modnotfound_pyproject/~setup.log
+            tests\~selftest_runtime_modnotfound_pyproject\~setup.log
+            tests/~selftest_runtime_modnotfound_pyproject/~run.err.txt
+            tests\~selftest_runtime_modnotfound_pyproject\~run.err.txt
+            tests/~selftest_runtime_modnotfound_pyproject/~sub.ndjson
+            tests\~selftest_runtime_modnotfound_pyproject\~sub.ndjson
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log
