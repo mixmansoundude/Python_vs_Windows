@@ -794,7 +794,7 @@ non-zero exit, `Usage: run_setup.bat your_script.py` on the console, status `err
 and timestamp unchanged, no `Fast path` or `discarding cached EXE` line), `missing` (run 3, `arg1
 arg2`, the 2026-08-31 command: same checks, and the good EXE is never run with the wrong arguments or
 discarded), `wildcard` (run 4, `*`: a wildcard matches every file so it must be rejected, same checks),
-`stops_release_lock` (run 5 is a file from another folder, the REQ-011 stop; run 6 is `entry` again
+`directory` (a folder named `folder.py` exists for two runs: `folder.py` and `folder` must each be rejected with the usage line, status `error`, EXE untouched, because `if exist` is true for a folder), `stops_release_lock` (run 5 is a file from another folder, the REQ-011 stop; run 6 is `entry` again
 and must see no REQ-024 lock message and reuse the EXE). Skips with `skip=true,
 reason=non-windows-host` off Windows. Expected red on the commit that adds it (the old code takes a
 missing first argument as no argument and an existing non-Python file as the entry, launches the
@@ -802,7 +802,7 @@ cached EXE with the wrong arguments, and leaves the lock behind after the REQ-01
 the first argument is validated before the fast path and every early stop releases the lock.
 
 ```
-self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.stops_release_lock
+self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.directory, self.entryarg.stops_release_lock
 ```
 
 ## selfapps-warnfix-noise NDJSON rows (selfapps_warnfix_noise.ps1, real and conda-full lanes, GATING)

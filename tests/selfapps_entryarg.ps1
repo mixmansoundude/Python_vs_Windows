@@ -20,6 +20,9 @@
 #                              no "discarding cached EXE"
 #   self.entryarg.wildcard   - run 4: `*` (a wildcard matches every file, so it must never be
 #                              taken as a name): stop, EXE untouched
+#   self.entryarg.directory  - a folder named folder.py exists: `folder.py` and `folder` must be
+#                              rejected like any other non-file (if exist is true for a folder, so a
+#                              folder would otherwise be taken as the entry), EXE untouched
 #   self.entryarg.stops_release_lock - run 5 is a cross-folder file (the REQ-011 stop), run 6 is
 #                              `entry` again and must reuse the EXE: proves every early stop
 #                              releases the REQ-024 lock
@@ -65,6 +68,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $true -Desc 'First argument that is not a .py file stops the run (skipped on non-Windows)' -Details $skipDetails
     Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $true -Desc 'First argument that is not a file stops the run (skipped on non-Windows)' -Details $skipDetails
     Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $true -Desc 'Wildcard first argument stops the run (skipped on non-Windows)' -Details $skipDetails
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $true -Desc 'A folder as first argument stops the run (skipped on non-Windows)' -Details $skipDetails
     Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $true -Desc 'Early stops release the lock (skipped on non-Windows)' -Details $skipDetails
     exit 0
 }
@@ -76,6 +80,7 @@ if (-not (Test-Path $batchPath)) {
     Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $false -Desc 'First argument that is not a .py file: run_setup.bat not found' -Details $missingDetails
     Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $false -Desc 'First argument that is not a file: run_setup.bat not found' -Details $missingDetails
     Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $false -Desc 'Wildcard first argument: run_setup.bat not found' -Details $missingDetails
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $false -Desc 'A folder as first argument: run_setup.bat not found' -Details $missingDetails
     Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $false -Desc 'Early stops release the lock: run_setup.bat not found' -Details $missingDetails
     exit 1
 }
@@ -248,9 +253,34 @@ try {
         exeBuilt = $exeBase.Exists; log = $r4.Log
     })
 
+    # ---- A folder named like a script: `if exist` is true for a folder, so it must be screened out ----
+    # The folder exists only for these two runs, so run 5 and 6 see the same folder as before.
+    $dirPath = Join-Path $workDir 'folder.py'
+    New-Item -ItemType Directory -Force -Path $dirPath | Out-Null
+    try {
+        $rd1 = Invoke-EntryRun -BatArgs 'folder.py' -Tag 'dir1'
+        $rd2 = Invoke-EntryRun -BatArgs 'folder' -Tag 'dir2'
+    } finally {
+        Remove-Item -LiteralPath $dirPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $cd1 = $rd1.Console + "`n" + $rd1.Setup
+    $cd2 = $rd2.Console + "`n" + $rd2.Setup
+    $rd1Usage = $rd1.Console -match [regex]::Escape($usagePhrase)
+    $rd2Usage = $rd2.Console -match [regex]::Escape($usagePhrase)
+    $rdUntouched = Test-ExeUntouched $exeBase
+    $rdNoFast = -not ($cd1 -match [regex]::Escape($fastPathPhrase)) -and -not ($cd2 -match [regex]::Escape($fastPathPhrase))
+    $passDir = $exeBase.Exists -and ($rd1.Exit -ne 0) -and ($rd2.Exit -ne 0) -and $rd1Usage -and $rd2Usage -and ($rd1.State -eq 'error') -and ($rd2.State -eq 'error') -and $rdUntouched -and $rdNoFast
+    if (-not $passDir) { $allPass = $false }
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $passDir -Desc 'A first argument that names a folder (folder.py, or folder) is rejected like any other non-file and leaves the EXE alone' -Details ([ordered]@{
+        dotPyExit = $rd1.Exit; dotPyUsage = $rd1Usage; dotPyStatus = $rd1.State
+        bareExit = $rd2.Exit; bareUsage = $rd2Usage; bareStatus = $rd2.State
+        exeUntouched = $rdUntouched; noFastPath = $rdNoFast; exeBuilt = $exeBase.Exists; log1 = $rd1.Log; log2 = $rd2.Log
+    })
+
     # ---- Run 5: cross-folder file (REQ-011 stop), then run 6: a normal run must not meet a stale lock ----
     $extPy = Join-Path $extDir 'external.py'
-    $r5 = Invoke-EntryRun -BatArgs $extPy -Tag 'run5'
+    # Quoted: cmd /c would split a checkout path that holds a space and test the wrong input.
+    $r5 = Invoke-EntryRun -BatArgs ('"' + $extPy + '"') -Tag 'run5'
     $r5Req011 = ($r5.Console + "`n" + $r5.Setup) -match 'REQ-011'
     $r6 = Invoke-EntryRun -BatArgs 'entry' -Tag 'run6'
     $c6 = $r6.Console + "`n" + $r6.Setup

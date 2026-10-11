@@ -1967,6 +1967,18 @@ jobs:
             tests\~selftest_entryarg\~entryarg_run6.log
             tests/~selftest_entryarg/~entryarg_run6_setup.log
             tests\~selftest_entryarg\~entryarg_run6_setup.log
+            tests/~selftest_entryarg/~entryarg_dir1.log
+            tests\~selftest_entryarg\~entryarg_dir1.log
+            tests/~selftest_entryarg/~entryarg_dir1_setup.log
+            tests\~selftest_entryarg\~entryarg_dir1_setup.log
+            tests/~selftest_entryarg/~entryarg_dir2.log
+            tests\~selftest_entryarg\~entryarg_dir2.log
+            tests/~selftest_entryarg/~entryarg_dir2_setup.log
+            tests\~selftest_entryarg\~entryarg_dir2_setup.log
+            tests/~selftest_entryarg/~run.out.txt
+            tests\~selftest_entryarg\~run.out.txt
+            tests/~selftest_entryarg/~bootstrap.status.json
+            tests\~selftest_entryarg\~bootstrap.status.json
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
