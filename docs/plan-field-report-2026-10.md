@@ -616,7 +616,9 @@ is a convenience, but it also makes Item 75's real-app scenarios cheaper.
   run worked. Revisit only if a real DLL load failure is seen.
 - **"Move the cascade prompt until after the interpreter run"** (3rd party): no. The prompt
   firing on noise is the real defect (Item 64); the gate design itself was already reviewed
-  (`docs/agent-closed-backlog.md` Known Findings).
+  (`docs/agent-closed-backlog.md` Known Findings). This rejection stands: the early prompt stays
+  where it is. Item 82 (filed 2026-10-11) adds a SECOND, untimed offer after a failed run and
+  moves nothing.
 - **pipreqs "only scanned main.py"** (3rd party): wrong; it scans the whole folder. The real
   issue is that one bad file aborts the scan (Item 63).
 - **Defender/Nuitka "looks like malware, signing is the only fix"** (3rd party): unsupported;
@@ -786,3 +788,88 @@ itself still continues (never fatal, as today). (c) Do not add a retry loop or a
 elevation prompt. (d) Scan scope: see the decision above; it ships as its own slice. **CI proof**: the
 existing `pyvisa.nivisa` scenario already reaches `install_failed` in CI; assert the new `[WARN]`
 text there, and assert the `Elevated:` line appears in the log on every lane.
+
+### Item 82 -- Last-chance offer to try conda after a failed run (planned, medium; filed 2026-10-11)
+
+**Where it came from**: a maintainer brainstorm plus a 3rd-party analysis that could not see the repo.
+This section is our own check of both against `main` at `55ec545`; the line-by-line table is in
+`/mnt/project-files/brainstorm/last-chance-cascade-review.md` (project files, not in the repo).
+
+**Symptom (August note)**: "had issues where even from interpreter it couldn't run, this was a clean
+run in terms of it tried and stuck with UV, no cascade per default no." The early cascade prompt (30 s,
+default N) is easy to miss, and it is narrower than it looks: `:warnfix_cascade_detect` raises
+`HP_CASCADE_CANDIDATE` only when warnfix left an import unresolved AND a repair install failed. A
+failure that only shows at run time (a DLL load error, a runtime `ModuleNotFoundError`) never reaches
+any cascade offer, and a user who misses the prompt gets no second chance.
+
+**Agreed shape (maintainer, 2026-10-11, option A): one new prompt**, asked after the verification run
+and the optional checkpoint, untimed, default "neither". Mock-up (wording is the implementer's):
+```
+Your program stopped with an error (exit code 1). Last line:
+  ModuleNotFoundError: No module named 'xlsxwriter'
+[W] it actually worked
+[C] try again with Miniconda (downloads it if needed, runs your program once more)
+[N] neither (default)
+```
+The brainstorm's two Y/N prompts ("did it work?" then "try conda?") were rejected: the checkpoint
+already asks once, so a failed run would show three questions in a row. One prompt means one test
+override and three branches.
+
+**Proposed defaults, not yet confirmed one by one (the maintainer picked A and raised no objection to
+the rest of the review; confirm or change when the first slice is picked up):**
+1. **uv to conda only.** The maintainer's own note: "Still seems like the Try next python provider to
+   resolve them VERBIAGE should just be for UV to Conda, nothing else is going to make deps better..."
+   (Known Findings in `docs/agent-closed-backlog.md` agree: later hops lack a mechanism.) This removes
+   the "no tier left" case: current provider not uv means no prompt. The early prompt keeps offering
+   every hop, unchanged.
+2. **Where.** End of `:run_entry_smoke`, right after `call :verify_no_exe_interpreter`. Setting
+   `HP_CASCADE_APPROVED` there needs no cascade code change: the main line reads it with `if defined
+   HP_CASCADE_APPROVED goto :provider_cascade` after `:run_entry_smoke` returns, and
+   `:provider_cascade` clears it itself. `HP_EXE_EXIT` is cleared at the end of `:smokerun_ndjson`, so
+   snapshot the verdict before that.
+3. **When it appears (all must hold).** A fresh build this run (never on the cached-EXE fast path, the
+   zero-friction rule in README REQ-018); `HP_ENV_MODE` is uv and `HP_CASCADE_TRIED_UV` is unset; the
+   early prompt did not already approve a cascade; the EXE or interpreter run ended with a real
+   non-zero exit (not 0, and not the silent-timeout `-1`, which is the normal result for a window app
+   and already has the GUI hint); the run is interactive (guards below).
+4. **One `run_ok` test.** Exit 0 AND no traceback naming an uninstalled module in stderr. The second
+   half arrives with Item 65 slice 1; until then it is exit 0 only. If the user accepted the
+   checkpoint and its interpreter run exits 0, no prompt is shown (EXE packaging problem, not the
+   environment; the REQ-016 caveat panel already says so). That needs the checkpoint's result, which
+   `:run_postexec_checkpoint` currently discards when it restores `HP_SMOKE_RC`. With an EXE the
+   interpreter only runs if the user answers Y at the checkpoint (untimed, default N), so this branch
+   is the rare one; the common case is "EXE failed, checkpoint declined".
+5. **Last error line.** Taken from `~run.err.txt` (the first EXE run), passed through a small emitted
+   helper that keeps a safe ASCII alphabet and writes one file that is then shown with `type`, like
+   `~pipreqs_precheck.py`'s `safe()`. Never through `:log` or an unquoted `echo`: a traceback line can
+   hold `<`, `>`, `&`, `%` and `^` (see "`:log` echoes UNQUOTED" in `docs/agent-lessons-learned.md`).
+   Item 65 slice 1 needs the same stderr scan, so build the helper once and share it.
+6. **Do not contradict the existing hint.** `:exe_smokerun_hints` logs `[HINT][RUNTIME_MISMATCH]
+   ... not your environment or dependencies` on every non-timeout EXE failure, even when no
+   interpreter run happened. Offering a new environment on the same screen contradicts it. Reword it
+   (fits Item 68) or hold it back when the prompt is shown.
+7. **README REQ-018.** The conda tier runs the program again, and any extra run needs consent that
+   names the risk of running the program twice, so the `[C]` line must say so.
+8. **Guards (README REQ-019).** `HP_CI_LANE`, `NOINPUT` and `HP_NONINTERACTIVE` resolve to "neither"
+   with no wait; a `HP_TEST_*_ANSWER` override (W, C or N) is checked first; a test-only flag forces
+   the real `set /p` branch, like `HP_TEST_FORCE_INTERACTIVE_CASCADE`. Echo the prompt text
+   unconditionally so prompt assertions see it (see "CI-safe interactive gates" in
+   `docs/agent-lessons-learned.md`).
+9. **Records (Item 66).** Written only after a pass by a cascade-reached provider; a plain uv pass tells
+   the next run nothing. Carry the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
+   The state file itself waits for Item 66, so the first slice only logs the pass type and puts it on
+   the NDJSON row.
+
+**Sequencing**: after Item 65 slice 1 (shared stderr helper and the `run_ok` test) is the cheapest
+order, but nothing forces it. Item 64 (fewer false cascade candidates) is independent. Item 68's
+"cascade prompt should name the next provider" is the same wording work.
+
+**CI proof (test first, one row per branch; `uv` lane, non-gating until it has soaked, per Item 35)**:
+(1) answer W: no cascade, build kept, pass type `user_confirmed` logged; (2) answer C: the cascade runs
+and ends on conda, reusing the existing uv-fails-conda-passes fixture of the cascade scenarios;
+(3) answer N: build kept, caveat panel as today; (4) checkpoint accepted and the interpreter exits 0:
+prompt absent; (5) not offered: silent timeout, fast path, provider already conda, early prompt
+already approved; (6) no TTY and no override: resolves to "neither" without waiting; (7) an error line
+holding `<>&|%^` is shown intact, the setup log is intact and no stray file appears.
+
+**Open**: Q10 in `docs/open-questions.md` (recording a window app's pass on the cascade-reached conda run).

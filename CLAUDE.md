@@ -808,6 +808,21 @@ the original symptom (see that doc's "CI-first testing policy").
   `locked_crash` to require a traceback line in the summary or setup log; (2) make the log path absolute.
   Detail: `docs/agent-interconnect.md`'s pipreqs pre-check entry.
 
+### Item 82: last-chance offer to try conda after a failed run (filed 2026-10-11 from a maintainer brainstorm)
+
+- **Item 82 (planned, medium; shape agreed 2026-10-11, option A; plan in `docs/plan-field-report-2026-10.md`)**:
+  the early cascade prompt (30 s, default N) fires only when warnfix leaves an import unresolved AND a
+  repair install fails, so a missed prompt, or a failure that only shows at run time, gets no later
+  offer. Add ONE untimed prompt after the verification run and the optional checkpoint, default
+  "neither": it shows the last error line and offers worked-anyway / try Miniconda (says it runs the
+  program once more, README REQ-018) / neither. uv to conda only; never on the fast path or after a
+  silent GUI timeout; auto-declines on `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE`. Setting
+  `HP_CASCADE_APPROVED` late reuses the existing cascade with no change to it. The checkpoint's
+  discarded interpreter result (`:run_postexec_checkpoint`) must be captured. The nine proposed
+  defaults, the CI row per branch and the sequencing with Items 64, 65, 66 and 68 are in the plan doc.
+  Open: Q10 in `docs/open-questions.md` (recording a window app's pass on the conda run). Test first.
+  Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
