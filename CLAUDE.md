@@ -765,8 +765,6 @@ the original symptom (see that doc's "CI-first testing policy").
   (`:offer_optimized_build`) gets one sentence naming the risk of the second run: "Building it starts
   your program once more for up to 30 seconds to check it works, so say no if running it twice could
   cause harm." README REQ-018 stays as written; add a prompt-text row to the `self.optbuild.*` scenarios.
-- **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
-  no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
   override only, no prompt (decided 2026-10-09, Q6 = A).
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow

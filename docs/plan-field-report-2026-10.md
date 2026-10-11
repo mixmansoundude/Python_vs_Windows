@@ -526,7 +526,7 @@ line as printed in both lanes, reproduced the curly-quote failure, and showed Wi
 needs a leading `& `. No code change and no PowerShell hint. The result is in
 `docs/agent-closed-backlog.md` under Item 69.
 
-### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
+### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small; reworded, shipped)
 
 The `[HINT][DATA_FILE] Consider adding: --add-data X;.` and `[HINT][HIDDEN_IMPORT] Consider
 adding: --hidden-import=X` lines name PyInstaller flags, but every PyInstaller build command (the
@@ -535,6 +535,15 @@ fresh build, the warnfix rebuild, and the two repair-loop rebuilds) builds from 
 user can take (the CWD-relative branch added in PR #470 already does this for data files), or
 add one supported way to pass extra PyInstaller flags (a `PVW_` super-user override, per
 REQ-019). The CWD half of the Aug 27 report is already fixed (see "Already fixed" below).
+
+**Shipped as a reword only** (decided 2026-10-11): the genuine-`_MEI` data-file hint now says
+`run_setup.bat` does not bundle data files and what to do instead; the hidden-import hint now points at
+`requirements.txt` (the bootstrapper installs the module and rebuilds when the file changes). No flag is
+named in either. A `PVW_` passthrough for extra PyInstaller flags is NOT built: it would have to be threaded
+into every PyInstaller rebuild line (`:hidden_import_recover`, `:dll_bundle_recover`, the warnfix rebuild and
+Item 65's `:rti_rebuild`), the same rule the five `HP_PYI_*` accumulators follow. File it as its own item if
+a user ever needs it. Tests: `self.hint.hidden_import.wording` in `selfapps_exedyn_fail.ps1`, and the
+`mei_genuine` scenario of `selfapps_exedata_fail.ps1`.
 
 ### Item 71 -- Builder choice for power users (Confirmed gap, medium)
 

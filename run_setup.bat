@@ -5262,7 +5262,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "exit [int](-not ($env:HP
 if errorlevel 1 (
   call :log "[HINT][DATA_FILE] --add-data will not fix this: it bundles into a temp extraction folder, not the current directory. Place a copy of '%HP_HINT_FILE_NAME%' next to the built .exe instead, or read the file via a path relative to your own script file, not the working directory."
 ) else (
-  call :log "[HINT][DATA_FILE] Consider adding: --add-data %HP_HINT_FILE_NAME%;."
+  call :log "[HINT][DATA_FILE] The program reads '%HP_HINT_FILE_NAME%' from inside the EXE, and run_setup.bat does not bundle data files into the EXE. Keep the file next to the built .exe and make the program open it from there, or run your script with Python instead of the EXE."
 )
 if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='DATA_FILE';file=$env:HP_HINT_FILE_NAME}|ConvertTo-Json -Compress)"
 :hint_check_mod
@@ -5272,7 +5272,7 @@ goto :hint_packaging
 :hint_hidden_import
 for /f "usebackq delims=" %%M in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$t=[IO.File]::ReadAllText('%HP_HINT_FILE%');$m=[regex]::Match($t,'No module named ''([^'']+)''');if($m.Success){$m.Groups[1].Value}else{'<module>'}"`) do set "HP_HINT_MOD=%%M"
 call :log "[HINT][HIDDEN_IMPORT] Hidden import likely missing: %HP_HINT_MOD%"
-call :log "[HINT][HIDDEN_IMPORT] Consider adding: --hidden-import=%HP_HINT_MOD%"
+call :log "[HINT][HIDDEN_IMPORT] If your program needs %HP_HINT_MOD%, add it to requirements.txt and run again. The bootstrapper installs it and rebuilds the EXE when requirements.txt changes."
 if defined HINT_JSON powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Host ([PSCustomObject]@{hint_type='HIDDEN_IMPORT';module=$env:HP_HINT_MOD}|ConvertTo-Json -Compress)"
 :hint_packaging
 call :log "[HINT][RUNTIME_MISMATCH] Standalone EXE behavior differs from the Python runtime (possible PyInstaller packaging issue in the EXE, not your environment or dependencies)"
