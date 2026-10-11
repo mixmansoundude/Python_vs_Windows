@@ -707,7 +707,8 @@ the original symptom (see that doc's "CI-first testing policy").
   (`multiprocessing`, `tkinter`, `pyimod02_importers`, `AppKit`...) and every library-internal
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
   the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written. Slice 1 (stdlib, never-installable
-  names, PyInstaller's own modules, installed `X.attr`, pywin32 names) is on PR #482; slice 2 is
+  names, PyInstaller's own modules, installed `X.attr`, pywin32 names) shipped on PR #482 (red run
+  `38089448746`, green run `38098172664`; detail in `docs/agent-closed-backlog.md`); slice 2 is
   open: library-internal optional imports (importer rule; needs more `HP_PARSE_WARN` payload room
   than the 535-character margin, so a multi-part emit comes first, test first) plus a pandas
   scenario that asserts a small install count.
@@ -794,6 +795,13 @@ the original symptom (see that doc's "CI-first testing policy").
   small), or build Nuitka under a separate uv-managed 3.14 (heavier; two interpreters, cuts against
   the two-layer rule in `docs/agent-lessons-learned.md`). Related: the "Embed version table"
   periodic check below, since `EMBED_PYTHON_TABLE` stops at 3.14 and 3.15.0 now exists.
+  **Update 2026-10-11 (CI rows, run `38098172664`)**: the three rows pass again on the `uv` lane
+  (`self.exe.build.tiera`, `self.exe.tiera.hidden_skip`, all four `self.optbuild.offer` scenarios)
+  while `self.uv.managed.interpreter` still reports `cpython-3.15`, and PyPI now lists Nuitka 4.3
+  (4.2.2 was the latest on 2026-10-10). Likely cause, inferred and not read from a log: 4.3
+  accepts 3.15. Confirm the Nuitka version in a `uv`-lane setup log before closing; the slice 1
+  row (Nuitka skipped cleanly on an unsupported Python) is still worth adding, since the next
+  Python minor will repeat this.
 
 ### Item 81: the older pipreqs staging fallback loses its own log (filed 2026-10-10, found while closing PR #480)
 
