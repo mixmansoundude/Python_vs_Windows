@@ -559,7 +559,7 @@ not adopt the 3rd party's "signing is the only fix" claim. (c) Long C compiles o
 `scipy.stats` and similar are expected Nuitka behavior; record the observed hour as a data point
 in `docs/prd-av-safe-build-path.md` rather than "fixing" it.
 
-### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny)
+### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 
 `[WARN] REQ-005.11: PEP 723 header write-back failed (ERROR:uv_rc_1)` gives no reason because
 `tools/pep723_writeback.py` captures uv's stderr and discards it (`rc, _stderr = run_uv_add(...)`).

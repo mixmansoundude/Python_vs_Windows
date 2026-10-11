@@ -602,6 +602,16 @@ subset of a failed bulk install actually succeeded. Does not touch venv/conda/em
 all -- a future extension needs an `HP_UV_INSTALL_OK`-equivalent per provider plus a matching scope
 relaxation in this subroutine's own first line.
 
+**The helper's reason for a failure reaches the setup log through stderr** (Item 73). The batch call is
+`"%HP_PY%" "~pep723_writeback.py" ... > "~pep723_result.txt" 2>> "%LOG%"`: stdout is the one result line
+(`OK:`/`SKIP:`/`ERROR:`), stderr is appended to `~setup.log`. `tools/pep723_writeback.py` writes the last
+five non-blank lines of a failed uv call's stderr there (each cut to 200 ASCII characters, prefixed `uv: `),
+for the first call and the strip-and-retry call alike; a successful call logs nothing, because uv can warn
+at exit 0 (astral-sh/uv#15956). Never route that text through `:log` (it can hold `<>|&%^`). The helper has
+one test hook, `HP_TEST_PEP723_UV_ERR` (treated as uv exiting 1 with that stderr, no uv call), because no
+public package installs but cannot be added to a header; `tests/selfapps_pep723_uverr.ps1` (real lane,
+gating) is its only user. The payload line is far under the 8191 limit (about 800 characters of margin).
+
 ### Dep-check + uv mode lock file interconnection
 
 `dep_check.py` runs for both `HP_ENV_MODE=conda` and `HP_ENV_MODE=uv` (skipped for venv/system --
