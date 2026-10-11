@@ -568,6 +568,13 @@ technique in a fresh scratch dir, using the same `xlrd`-importing stub app as
 even though the rebuild-complete marker fired unconditionally regardless. Skips on non-Windows and
 in the conda-full lane.
 
+Precondition (Item 35): the test writes a user `requirements.txt` naming only `six`. Under venv mode
+`HP_SKIP_PIPREQS` is reset by `:venv_canary_ok`, so without a `requirements.txt` pipreqs would find
+xlrd and promote it, and the main install would install xlrd up front. `details.preconditionOk` is
+false if `requirements.txt` ever names xlrd. `details.attemptedXlrd` (the dispatch's
+`Attempting to install: xlrd` line) and `details.systemSkipWarn` separate "the repair dispatch ran no
+branch" (`warnInstallFired` true, both false) from "pip ran and failed" (`repairFailed` true).
+
 ```
 self.exe.warnfix.venv_repair
 ```
