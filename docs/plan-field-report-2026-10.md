@@ -879,10 +879,44 @@ holding `<>&|%^` is shown intact, the setup log is intact and no stray file appe
 check run is stopped after about 30 silent seconds (exit `-1`), so on a cascade-reached conda run it can
 never end in a clean exit 0 and would never count as a verified pass for Item 66. So on that tier only
 (current provider conda, reached through the cascade, never on the uv tier where the silent timeout gets
-no prompt), a silent timeout asks once: "Your window app was still running when the check stopped it. Did
-it open and work? [Y/N]". A yes is recorded as pass type `user_confirmed` (so the next run can start on
-conda once Item 66 exists); a no records nothing. Same guards as the main prompt: `HP_CI_LANE`, `NOINPUT`
-and `HP_NONINTERACTIVE` resolve to "no" without waiting, with a `HP_TEST_*_ANSWER` override. The first
-slice only logs the answer and puts it on the NDJSON row, like the other pass types. Extra CI row (8): a
-silent-running fixture on the cascade-reached conda tier, answers Y and N, plus the same fixture on the
-uv tier asserting the question is absent.
+no prompt), a silent timeout asks once: "The check stops your program after about 30 seconds, so a
+window that is still open is expected. Did it open and work? [y/N]". A yes is recorded as pass type
+`user_confirmed` (so the next run can start on conda once Item 66 exists).
+
+Conditions added the same day, from a third-party review the maintainer relayed (checked against the
+code; each one held up):
+- **Ask only after the runner really stopped a silent process.** `HP_EXE_EXIT=-1` alone is not proof.
+  `:run_exe_smokerun` starts `HP_EXE_EXIT` at `-1` and keeps it when `~exe_smokerun.ps1` could not be
+  written ("could not emit") or when the result file is missing (the runner died before writing it, for
+  example `Start()` throwing), and `~exe_smokerun.ps1` writes `$p.ExitCode` unchanged for a program that
+  exits by itself, so a program that exits with `-1` reads the same. `HP_EXE_TIMEDOUT_SILENT` is set from
+  `HP_EXE_EXIT=-1` alone, so it is set in all three cases too (CodeRabbit finding on PR #486, checked
+  against `run_setup.bat` and `tools/exe_smokerun.ps1`). The prompt therefore gates on a separate marker
+  that only the runner can produce: it writes a small file, for example `~smokerun_killed.txt`, in the
+  same branch that kills the process (`$killed`), and the batch clears that file before the launch and
+  sets the marker only if the file exists afterwards. A second line in the result file would not work,
+  because the `for /f` loop that reads it overwrites `HP_EXE_EXIT` on every line. This changes the
+  `HP_EXE_SMOKERUN` payload, so it is re-synced with `tools/sync_payload.py`. The existing
+  `HP_EXE_TIMEDOUT_SILENT` flag, which only drives the caveat panel with its "not necessarily broken"
+  wording, is left as it is. The marker must survive the `HP_EXE_EXIT` clear at the end of
+  `:smokerun_ndjson`, as `HP_EXE_TIMEDOUT_SILENT` does. Exit 0 is already a pass (`exe_ok`) and any other
+  non-zero exit is already a failure, so neither needs the question. The asymmetry with the uv run is
+  deliberate: on uv nothing needs recording because uv is the default order, while on conda the answer
+  decides whether anything is remembered.
+- **Only an explicit yes records.** A bare Enter means no, and so do N and every guard. A silent timeout
+  looks the same for a healthy window app and a hung program (the run status line for it already says
+  "force-stopped, not necessarily broken"), so counting it as a pass would pin conda
+  for the wrong reason and hide the real problem on later runs. `HP_CI_LANE`, `NOINPUT` and
+  `HP_NONINTERACTIVE` resolve to no without waiting, and a `HP_TEST_*_ANSWER` override is checked first so
+  a test can answer Y even in CI. Echo the prompt text unconditionally, as the other gates do.
+- **A CI fixture that stays silent.** Without one the `-1` path through this prompt is never exercised.
+
+The first slice only logs the answer and puts it on the NDJSON row, like the other pass types. Extra CI
+row (8): a fixture that stays silent like a window app (a script that sleeps without printing;
+`HP_SMOKERUN_KILL_MS` shortens the 30 second wait for CI) on the cascade-reached conda tier, with answers
+Y (logged as `user_confirmed`), N and an empty answer (nothing logged), plus no TTY and no override
+(resolves to no without waiting); the same fixture on the uv tier asserting the question is absent; and
+conda-tier fixtures that exit 0, exit non-zero, exit by themselves with `-1`, and fail to launch
+(`HP_TEST_FORCE_EMIT_FAIL=HP_EXE_SMOKERUN`, the existing hook that simulates a failed write of one
+payload), each asserting the question is absent. The red run shows which of the `-1` fixtures really
+produce `HP_EXE_EXIT=-1` on Windows before the marker exists, so the old gate is proven wrong first.
