@@ -708,10 +708,13 @@ the original symptom (see that doc's "CI-first testing policy").
   optional import to warnfix. Causes the 30-minute install storm, the noisy cascade prompt, and
   the PyQt5+PyQt6 build failure. Violates REQ-005.9 as written. Slice 1 (stdlib, never-installable
   names, PyInstaller's own modules, installed `X.attr`, pywin32 names) shipped on PR #482 (red run
-  `38089448746`, green run `38098172664`; detail in `docs/agent-closed-backlog.md`); slice 2 is
-  open: library-internal optional imports (importer rule; needs more `HP_PARSE_WARN` payload room
-  than the 535-character margin, so a multi-part emit comes first, test first) plus a pandas
-  scenario that asserts a small install count.
+  `38089448746`, green run `38098172664`; detail in `docs/agent-closed-backlog.md`). Slice 2
+  (library-internal optional imports: a missing module is an install target only when some importer
+  is the program's own code, plus the pandas row `self.warnfix.noise.library`) is on PR #485; its
+  red run `38110474824` failed as intended (30 install attempts, cascade candidate, 6 unit tests
+  red). No multi-part `HP_PARSE_WARN` emit was needed (503-character margin left). Once #485
+  merges, Item 64 is fully done: a docs follow-up with the green run moves it to
+  `docs/agent-closed-backlog.md`.
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1: name the missing package. Slice 2
   (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
