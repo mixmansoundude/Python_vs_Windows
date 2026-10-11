@@ -38,12 +38,18 @@ class _FakeSpec(object):
     origin = "site-packages"
 
 
-def _parse_lines(lines, installed=()):
+class _LocalSpec(object):
+    """A module that lives next to the user's script, not in an environment's site-packages."""
+    origin = "C:\\app\\helper.py"
+
+
+def _parse_lines(lines, installed=(), local=()):
     """Write lines to a temp warn file and return parse_warn_file() output.
 
     The result must not depend on what happens to be installed where the tests run, so by
     default importlib.util.find_spec reports every name as not installed; pass `installed`
     (an iterable of top-level names) to make some resolve, or None to use the real find_spec.
+    `local` names resolve too, but to a file in the user's own folder (their helper modules).
     """
     with tempfile.TemporaryDirectory() as tmp:
         warn_path = Path(tmp) / "warn-env.txt"
@@ -51,9 +57,11 @@ def _parse_lines(lines, installed=()):
         if installed is None:
             return parse_warn_file(str(warn_path))
         have = set(installed)
+        mine = set(local)
         with mock.patch.object(
             importlib.util, "find_spec",
-            side_effect=lambda name, *a, **k: _FakeSpec() if name in have else None,
+            side_effect=lambda name, *a, **k: (
+                _FakeSpec() if name in have else _LocalSpec() if name in mine else None),
         ):
             return parse_warn_file(str(warn_path))
 
@@ -603,6 +611,167 @@ class InstalledTopLevelTest(unittest.TestCase):
                              installed=None)
             self.assertFalse(marker.exists())
             sys.modules.pop("boom_pkg_xyz", None)
+
+
+# Real warn-file lines from a PyInstaller 6.22.3 build of `import pandas as pd; print(df.sum())`,
+# one line per name the pre-Item-64-slice-2 parser sent to warnfix, importer lists shortened to the
+# first three and build-machine paths left out. Every importer is pandas or numpy: pandas lazy-imports
+# its optional backends (Excel readers, SQL, HDF, plotting, clipboard) from functions, under
+# `if`, or in try-except, and a few as plain top-level imports in submodules nobody uses.
+# Field report 2026-08/09: warnfix installed pyarrow, numba, tables, sqlalchemy, matplotlib, qtpy...
+# for a program that only uses pandas, took more than 30 minutes and tried PyQt4 and PyQt5/6 together.
+PANDAS_WARN_6X = [
+    "missing module named numba - imported by pandas.core.util.numba_ (delayed, conditional), pandas.core._numba.executor (delayed, conditional), pandas.core.groupby.numba_ (delayed, conditional)",
+    "missing module named 'numba.extending' - imported by pandas.core._numba.kernels.sum_ (top-level)",
+    "missing module named numexpr - imported by pandas.core.computation.expressions (conditional), pandas.core.computation.engines (delayed)",
+    "missing module named pyarrow - imported by pandas.core.arrays._arrow_string_mixins (conditional), pandas.core.arrays.masked (delayed), pandas.core.arrays.boolean (delayed, conditional)",
+    "missing module named threadpoolctl - imported by numpy.lib._utils_impl (delayed, optional)",
+    "missing module named typing_extensions - imported by numpy._typing._nested_sequence (conditional), numpy.random.bit_generator (top-level)",
+    "missing module named scipy - imported by pandas.core.dtypes.common (delayed, conditional, optional), pandas.core.missing (delayed)",
+    "missing module named traitlets - imported by pandas.io.formats.printing (delayed, conditional)",
+    "missing module named IPython - imported by pandas.io.formats.printing (delayed)",
+    "missing module named botocore - imported by pandas.io.common (delayed, conditional, optional)",
+    "missing module named xlsxwriter - imported by pandas.io.excel._xlsxwriter (delayed)",
+    "missing module named openpyxl - imported by pandas.io.excel._openpyxl (delayed, conditional)",
+    "missing module named odf - imported by pandas.io.excel._odfreader (conditional)",
+    "missing module named xlrd - imported by pandas.io.excel._xlrd (delayed, conditional), pandas.io.excel._base (delayed, conditional)",
+    "missing module named pyxlsb - imported by pandas.io.excel._pyxlsb (delayed, conditional)",
+    "missing module named python_calamine - imported by pandas.io.excel._calamine (delayed, conditional)",
+    "missing module named matplotlib - imported by pandas.plotting._core (conditional)",
+    "missing module named markupsafe - imported by pandas.io.formats.style_render (top-level)",
+    "missing module named PyQt4 - imported by pandas.io.clipboard (delayed, conditional, optional)",
+    "missing module named qtpy - imported by pandas.io.clipboard (delayed, conditional, optional)",
+    "missing module named adbc_driver_manager - imported by pandas.io.sql (delayed)",
+    "missing module named sqlalchemy - imported by pandas.io.sql (delayed, conditional)",
+    "missing module named tables - imported by pandas.io.pytables (delayed, conditional)",
+    "missing module named lxml - imported by pandas.io.xml (conditional)",
+    "missing module named fsspec - imported by pandas.io.orc (conditional)",
+    "missing module named psutil - imported by numpy.testing._private.utils (delayed, optional)",
+    "missing module named win32pdh - imported by numpy.testing._private.utils (delayed, conditional)",
+    "missing module named yaml - imported by numpy.__config__ (delayed)",
+    "missing module named bs4 - imported by pandas.io.html (delayed)",
+    "missing module named pytest - imported by pandas._testing (delayed, optional)",
+    "missing module named charset_normalizer - imported by numpy.f2py.crackfortran (optional)",
+    "missing module named Foundation - imported by pandas.io.clipboard (delayed, conditional, optional)",
+    "missing module named AppKit - imported by pandas.io.clipboard (delayed, conditional, optional)",
+]
+
+# Real lines from the CI plotly scenario (tests/selfapps_collect.ps1, `real` lane): the build runs
+# with --collect-submodules=plotly, so PyInstaller analyses every plotly and narwhals submodule and
+# lists their optional backends, several as (top-level) imports inside the unused submodule.
+PLOTLY_WARN_6X = [
+    "missing module named pyarrow - imported by narwhals.dependencies (conditional), narwhals._native (conditional), narwhals._utils (delayed, conditional)",
+    "missing module named polars - imported by narwhals.dependencies (conditional), narwhals._native (conditional), narwhals._utils (conditional)",
+    "missing module named numpy - imported by narwhals.typing (conditional), narwhals._arrow.dataframe (delayed), narwhals._pandas_like.dataframe (top-level)",
+    "missing module named duckdb - imported by narwhals.dependencies (conditional), narwhals._native (conditional), narwhals._arrow.dataframe (delayed, conditional)",
+    "missing module named sqlframe - imported by narwhals._native (conditional)",
+    "missing module named cupy - imported by narwhals._pandas_like.utils (delayed, conditional)",
+    "missing module named modin - imported by narwhals.dependencies (conditional)",
+    "missing module named dask - imported by narwhals.dependencies (conditional), narwhals._utils (delayed, conditional)",
+    "missing module named 'ibis.expr' - imported by narwhals._ibis.dataframe (top-level), narwhals._ibis.utils (top-level), narwhals._ibis.expr_dt (conditional)",
+    "missing module named skimage - imported by plotly.figure_factory._ternary_contour (top-level)",
+    "missing module named statsmodels - imported by plotly.express.trendline_functions (delayed)",
+    "missing module named sphinx - imported by plotly.io._sg_scraper (delayed, optional)",
+    "missing module named kaleido - imported by plotly.io._kaleido (delayed), plotly.io._sg_scraper (delayed, optional)",
+    "missing module named choreographer - imported by plotly.io._kaleido (delayed, conditional)",
+    "missing module named ipywidgets - imported by plotly.graph_objects (delayed, conditional, optional), plotly.graph_objs (delayed, conditional, optional)",
+    "missing module named anywidget - imported by plotly.basewidget (top-level)",
+    "missing module named traitlets - imported by plotly.basewidget (top-level)",
+    "missing module named PIL - imported by _plotly_utils.data_utils (optional)",
+    "missing module named xarray - imported by plotly.express._imshow (optional)",
+]
+
+
+class LibraryImportsAreNotTargetsTest(unittest.TestCase):
+    """Item 64 slice 2 / README REQ-005.9: a name only an installed package imports is not ours to install.
+
+    A missing module is a dependency of the user's program only when the user's own code imports
+    it. Whatever else is missing is an optional backend of a library that the installer already
+    resolved with that library's own metadata. The importer list on the warn-file line says who
+    asked: the stdlib and installed packages (module names that resolve into site-packages, or a
+    path inside it) are the library's, anything else is the user's.
+    """
+
+    def test_real_pandas_warn_lines_yield_no_install_target(self):
+        self.assertEqual(
+            _parse_lines(PANDAS_WARN_6X, installed=("pandas", "numpy")), [])
+
+    def test_real_plotly_warn_lines_yield_no_install_target(self):
+        self.assertEqual(
+            _parse_lines(PLOTLY_WARN_6X, installed=("plotly", "narwhals", "_plotly_utils")), [])
+
+    def test_top_level_import_inside_a_library_is_not_a_target(self):
+        # plotly.basewidget imports traitlets at the top of a module nobody loads by default.
+        lines = ["missing module named traitlets - imported by plotly.basewidget (top-level)"]
+        self.assertEqual(_parse_lines(lines, installed=("plotly",)), [])
+
+    def test_the_users_own_delayed_import_is_a_target(self):
+        lines = [r"missing module named xlrd - imported by C:\app\app.py (delayed)"]
+        self.assertEqual(_parse_lines(lines, installed=("pandas",)), ["xlrd"])
+
+    def test_the_users_own_top_level_import_is_a_target(self):
+        lines = [r"missing module named requests - imported by C:\app\app.py (top-level)"]
+        self.assertEqual(_parse_lines(lines), ["requests"])
+
+    def test_the_users_own_conditional_import_is_a_target(self):
+        lines = [r"missing module named colorama - imported by C:\app\app.py (conditional)"]
+        self.assertEqual(_parse_lines(lines), ["colorama"])
+
+    def test_one_user_importer_among_library_importers_makes_it_a_target(self):
+        lines = [r"missing module named xlrd - imported by pandas.io.excel._xlrd (delayed, conditional), "
+                 r"pandas.io.excel._base (delayed, conditional), C:\app\app.py (delayed)"]
+        self.assertEqual(_parse_lines(lines, installed=("pandas",)), ["xlrd"])
+
+    def test_a_helper_module_next_to_the_script_counts_as_the_users(self):
+        lines = ["missing module named requests - imported by helper (top-level)"]
+        self.assertEqual(_parse_lines(lines, local=("helper",)), ["requests"])
+
+    def test_a_submodule_of_the_users_own_package_counts_as_the_users(self):
+        lines = ["missing module named requests - imported by mypkg.sub.tools (delayed)"]
+        self.assertEqual(_parse_lines(lines, local=("mypkg",)), ["requests"])
+
+    def test_an_importer_nothing_can_locate_counts_as_the_users(self):
+        # Fail toward installing: only an importer proven to be the stdlib or an installed
+        # package is trusted to be optional.
+        lines = ["missing module named requests - imported by mystery_module (delayed)"]
+        self.assertEqual(_parse_lines(lines), ["requests"])
+
+    @unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "needs Python 3.10+")
+    def test_a_stdlib_importer_is_not_the_users(self):
+        lines = ["missing module named foo_xyz - imported by shutil (delayed), tarfile (conditional)"]
+        self.assertEqual(_parse_lines(lines), [])
+
+    def test_a_runtime_hook_inside_site_packages_is_not_the_users(self):
+        lines = [r"missing module named foo_xyz - imported by C:\env\Lib\site-packages\PyInstaller"
+                 r"\hooks\rthooks\pyi_rth_foo.py (delayed)"]
+        self.assertEqual(_parse_lines(lines), [])
+
+    def test_a_conda_env_path_inside_site_packages_is_not_the_users(self):
+        lines = [r"missing module named foo_xyz - imported by C:\Miniconda3\envs\app\Lib\site-packages"
+                 r"\somepkg\mod.py (conditional)"]
+        self.assertEqual(_parse_lines(lines), [])
+
+    def test_the_users_path_with_spaces_and_parentheses_is_read_whole(self):
+        lines = [r"missing module named requests - imported by C:\Program Files (x86)\My App\app.py (top-level)"]
+        self.assertEqual(_parse_lines(lines), ["requests"])
+
+    def test_the_users_optional_only_import_is_still_skipped(self):
+        # Unchanged: a try-except guard in the user's own code is resilient by design.
+        lines = [r"missing module named foo_xyz - imported by C:\app\app.py (optional)"]
+        self.assertEqual(_parse_lines(lines), [])
+
+    def test_a_line_without_an_importer_list_keeps_the_old_rule(self):
+        # Unknown shape: stay conservative, the kind in the parentheses decides as before.
+        self.assertEqual(
+            _parse_lines(["missing module named foo_xyz (delayed)"]), ["foo_xyz"])
+        self.assertEqual(_parse_lines(["missing module named foo_xyz (optional)"]), [])
+
+    def test_the_5x_format_is_unaffected(self):
+        self.assertEqual(_parse_lines(["W: no module named 'foo_xyz'"]), ["foo_xyz"])
+
+    def test_translation_still_applies_to_the_users_import(self):
+        lines = [r"missing module named cv2 - imported by C:\app\app.py (top-level)"]
+        self.assertEqual(_parse_lines(lines), ["opencv"])
 
 
 class ParseWarnPayloadSync(unittest.TestCase):

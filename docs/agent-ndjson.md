@@ -803,6 +803,29 @@ names are filtered.
 self.warnfix.noise.stdlib
 ```
 
+## selfapps-warnfix-library NDJSON rows (selfapps_warnfix_library.ps1, real lane only, GATING)
+
+CLAUDE.md Item 64 slice 2 regression test, README REQ-005.9. One real bootstrap (no skip hooks) of a
+program whose only third-party import is pandas, with no `requirements.txt`. PyInstaller's pandas hook
+pulls the whole package in, so the warn file lists dozens of modules that pandas imports lazily or
+under a guard (pyarrow, numba, numexpr, sqlalchemy, tables, matplotlib, scipy, the Excel readers,
+qtpy and PyQt4 for the clipboard...). `self.warnfix.noise.library` first proves its precondition
+(`warnHasPandasImports`: the copied `~warnfile.txt` really has `missing module named ... imported by
+...pandas.` lines, so a PyInstaller that stops printing them cannot make the row pass vacuously;
+`pandasWarnLineCount` is the number of such lines), then requires no `Attempting to install:` line at
+all (`attempted` lists every name tried), no `Repair failed:` line, no `[REPAIR] missing modules
+detected` block, no `REQ-009: cascade candidate detected`, and an EXE that was built and ran
+(`exeExit` 0, token file written). Skips with `skip=true, reason=non-windows-host` off Windows.
+Real lane only on purpose: the filter in `tools/parse_warn.py` is provider-independent, the stdlib row
+above already covers both repair-install paths, and a pandas build under conda-forge would lengthen
+the slowest lane. Expected red on the commit that adds it (the parser sends every name that no
+`SKIP`/stdlib rule catches, library backends included, to warnfix) and green once a missing module
+counts only when the user's own code imports it.
+
+```
+self.warnfix.noise.library
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
