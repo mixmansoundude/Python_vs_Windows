@@ -277,6 +277,8 @@ Test files and what they cover:
 | `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
 | `test_pipreqs_precheck.py` | Item 63: pipreqs pre-check (U+201D file ok as UTF-8, declared-cp1252 re-encoded, no-cookie cp1252 and unparseable left out, BOM, ignore folders, staged tree contents, exit codes 0/10/3, report hygiene and caps, `--encoding utf-8` on every pipreqs invocation, HP_PIPREQS_PRECHECK payload sync) |
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
+| `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
+| `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
