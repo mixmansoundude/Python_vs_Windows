@@ -2269,10 +2269,10 @@ goto :success
 
 :success
 rem derived requirement: skip write when DEP_SOURCE=unknown (EXE fast path / no-python-files paths
-rem fire before dep resolution; preserve any existing dependency_source.txt from previous run).
+rem fire before dep resolution; preserve any existing ~dependency_source.txt from previous run).
 if not "%DEP_SOURCE%"=="unknown" (
-  echo dependency_source=%DEP_SOURCE%> "dependency_source.txt"
-  echo *** [INFO] Dependency source logged to dependency_source.txt
+  echo dependency_source=%DEP_SOURCE%> "~dependency_source.txt"
+  echo *** [INFO] Dependency source logged to ~dependency_source.txt
 )
 rem REQ-016: show post-flight briefing when a full EXE build completed. HP_BUILD_OK is only
 rem set once :run_entry_smoke actually attempts a build (undefined if no entry file was ever

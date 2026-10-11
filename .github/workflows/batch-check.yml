@@ -1924,7 +1924,7 @@ jobs:
             bootstrap.log
             ~setup.log
             runtime.txt
-            dependency_source.txt
+            ~dependency_source.txt
             ~dependency_resolved.txt
             ~dependency_installed.txt
             ~pipreqs.diff.txt
@@ -3193,7 +3193,7 @@ jobs:
             'tests\~selftest_empty\~empty_bootstrap.log',
             'tests\~selftest_stub\~setup.log',
             'dynamic_tests.log',
-            'dependency_source.txt',
+            '~dependency_source.txt',
             'tests\~test-summary.txt',
             'iterate_gate.json',
             'iterate_auth.json',
@@ -3643,7 +3643,7 @@ jobs:
             @{ Source = (Join-Path 'tests' '~test-results.ndjson'); Destination = (Join-Path $testsDir '~test-results.ndjson') }
             @{ Source = (Join-Path 'tests' '~test-summary.txt');    Destination = (Join-Path $testsDir '~test-summary.txt') }
             @{ Source = 'dynamic_tests.log';                        Destination = (Join-Path $stage 'dynamic_tests.log') }
-            @{ Source = 'dependency_source.txt';                    Destination = (Join-Path $stage 'dependency_source.txt') }
+            @{ Source = '~dependency_source.txt';                   Destination = (Join-Path $stage '~dependency_source.txt') }
           )
 
           foreach ($pair in $pairs) {
