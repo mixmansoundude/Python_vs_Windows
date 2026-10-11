@@ -492,6 +492,21 @@ is parsed as a redirection and silently eats the log line.
 
 ---
 
+## A second `if` on the same line as an `else if` captures every later `else` (cmd dangling else)
+
+`) else if "%MODE%"=="conda" if defined CONDA_BAT (` looks like one condition with two parts, but cmd
+parses it as `else if A (if B ( ... ) else if C ( ... ) else ( ... ))`: the later `else` branches bind to
+the NEAREST `if`, which is the inner `if defined`. Whenever `A` is false the whole inner statement,
+including those branches, is skipped, so no branch runs and nothing is logged. This hid the warnfix
+repair dispatch's venv, embed and system branches for the file's whole life after Item 36's review fix
+(two uv-lane rows were red for it, CLAUDE.md Item 35). **Rule: never put a
+second `if` on the same line as an `else if` inside a chain. Compute the combined condition into a flag
+first (`set "FLAG="`, then `if A if B set "FLAG=1"`) and test `if defined FLAG`.** The symptom is a log
+that says an action is starting and never says it ran; a row that counts "started" markers against
+"attempted" lines (`repairWithoutAttempt` in `self.cascade.exec`) catches it.
+
+---
+
 ## A declined/failed fallback tier must clear its own "selected provider" variable, not just return failure
 
 `:try_system_fallback` set `HP_PY=%HP_SYS_EXE%` BEFORE the REQ-014 consent gate (ready to use

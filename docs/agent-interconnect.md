@@ -329,8 +329,13 @@ before the system-only catch-all, or embed would silently get zero installed dep
 `"%HP_PY%" -m pip install %%M`) plus a `system`-mode catch-all that stays a no-op but now logs
 `[WARN] System fallback: skipping warnfix repair installation.` -- previously venv/embed/system all
 silently no-opped while still logging as if the repair succeeded (CLAUDE.md's former Item 36).
-Regression: `tests/selfapps_warnfix_venv_repair.ps1` (uv lane, non-gating) proves the venv branch
-genuinely installs, not just that the EXE eventually builds.
+The conda test is decided once into `HP_REPAIR_CONDA` before the chain (`HP_ENV_MODE=conda` and
+`CONDA_BAT` defined) and the chain tests that flag: a second `if` nested inside the else-if chain captures
+every later `else`, so the venv, embed and system branches were silently skipped outside conda mode until
+2026-10-11 (see `docs/agent-lessons-learned.md`). Regression:
+`tests/selfapps_warnfix_venv_repair.ps1` (uv lane, non-gating) proves the venv branch genuinely installs,
+not just that the EXE eventually builds, and `tests/selfapps_cascade.ps1` reports `repairWithoutAttempt`
+(a `[REPAIR]` marker with no `Attempting to install:` line) for the embed tier.
 
 ---
 
