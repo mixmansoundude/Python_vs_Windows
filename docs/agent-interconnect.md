@@ -876,6 +876,20 @@ installs exactly as before. Regression: `tests/test_detect_visa.py` and `tests/s
 
 ---
 
+## Visual C++ runtime warning (`:warn_runtime_dll`, Item 77) reads the captured run output at three call sites
+
+`:warn_runtime_dll` scans `~run.err.txt` and `~run.out.txt` for `DLL load failed` and warns only when
+System32 also lacks `msvcp140.dll` or `vcruntime140_1.dll` (`HP_TEST_VCRT_MISSING=1` reports both missing, since CI
+runners have the runtime); it never installs the runtime. It is called where a failed verification run is
+reported: `:smokerun_ndjson`'s FAILED branch (EXE path), `:verify_no_exe_interpreter`'s legacy else branch,
+and the line after `:run_failfast_probe interpreter` (the path a double-click user takes). Any new
+verification site that writes a failed run's output to `~run.*` should call it too. Not covered on purpose:
+`:try_fast_exe` (a cached EXE that fails is discarded and rebuilt, so the rebuilt run reports it) and
+`:hidden_import_recover`'s diagnostic re-run. A DLL failure with another cause stays silent. Regression:
+`tests/selfapps_vcruntime.ps1` (`real` lane, gating).
+
+---
+
 ## Single-verification smoke model (REQ-018 2b-A.2)
 
 The bootstrapper runs the user's code for MANDATORY verification exactly ONCE per invocation (the

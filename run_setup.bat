@@ -4540,6 +4540,7 @@ if "%HP_SMOKE_RC%"=="0" (
   rem [REQ-027] P2 honest messaging: :print_no_exe_briefing reads this to stop claiming
   rem "your code ran successfully" when it did not.
   set "HP_NOEXE_VERIFY_FAILED=1"
+  call :warn_runtime_dll
 )
 call :scan_runtime_missing_module interpreter "~run.err.txt"
 call :runtime_install_offer interpreter
@@ -4567,6 +4568,7 @@ rem [REQ-027] P2 honest messaging: same flag as the legacy branch above. No -1/t
 rem ambiguity at this call site -- :run_failfast_probe never kills, so HP_SMOKE_RC is always
 rem the interpreter's true final exit code once it exits, not a force-stopped placeholder.
 if not "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED=1"
+if not "%HP_SMOKE_RC%"=="0" call :warn_runtime_dll
 rem derived requirement: clear a stale flag from an earlier failed REQ-009 cascade tier's
 rem no-EXE run -- mirrors HP_EXE_VERIFY_FAILED's own clear-on-success at :smokerun_ok.
 if "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED="
@@ -5423,6 +5425,7 @@ if "%HP_EXE_EXIT%"=="0" (
   call :log "[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap; force-stopped, not necessarily broken)"
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_EXE_EXIT%)"
+  call :warn_runtime_dll
 )
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -6195,6 +6198,27 @@ set "HP_ELEVATED="
 if "%HP_TEST_NOT_ELEVATED%"=="1" exit /b 0
 fsutil dirty query %systemdrive% <nul >nul 2>&1
 if not errorlevel 1 set "HP_ELEVATED=1"
+exit /b 0
+:warn_runtime_dll
+rem Item 77: "DLL load failed" is Windows' generic text for a .pyd, or a DLL it needs, not loading; it never
+rem names the file. On a clean Windows image the usual cause is the missing Microsoft Visual C++ runtime
+rem (msvcp140.dll, vcruntime140_1.dll), which packages such as PyMuPDF need. A conda env carries its own copy,
+rem a uv or venv env relies on the machine. Scans the captured run output and warns only when BOTH the text
+rem is there AND System32 lacks one of the two files, so a DLL failure with another cause stays silent here.
+rem Never installs the runtime: that needs administrator rights and the core flow does not.
+rem HP_TEST_VCRT_MISSING=1 reports both files as missing (CI runners have the runtime). No setlocal.
+set "HP_VCRT_GONE="
+findstr /i /l /c:"DLL load failed" "~run.err.txt" "~run.out.txt" >nul 2>&1
+if errorlevel 1 exit /b 0
+if "%HP_TEST_VCRT_MISSING%"=="1" set "HP_VCRT_GONE=msvcp140.dll and vcruntime140_1.dll"
+if defined HP_VCRT_GONE goto :warn_runtime_dll_say
+if not exist "%SystemRoot%\System32\msvcp140.dll" set "HP_VCRT_GONE=msvcp140.dll"
+if not exist "%SystemRoot%\System32\vcruntime140_1.dll" if defined HP_VCRT_GONE set "HP_VCRT_GONE=%HP_VCRT_GONE% and vcruntime140_1.dll"
+if not exist "%SystemRoot%\System32\vcruntime140_1.dll" if not defined HP_VCRT_GONE set "HP_VCRT_GONE=vcruntime140_1.dll"
+if not defined HP_VCRT_GONE exit /b 0
+:warn_runtime_dll_say
+call :log "[WARN] Windows could not load a DLL that your program needs, and the Microsoft Visual C++ runtime does not look installed here, missing from System32: %HP_VCRT_GONE%. Some packages, PyMuPDF among them, will not load without it. Install the Visual C++ Redistributable for x64 from https://aka.ms/vc14/vc_redist.x64.exe and run again. Setup does not install it for you because that needs administrator rights."
+set "HP_VCRT_GONE="
 exit /b 0
 :log
 rem derived requirement (CLAUDE.md Item 42, lever 1): DEBUG/TRACE/INSTALL-tagged lines are
