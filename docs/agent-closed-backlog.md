@@ -3665,6 +3665,35 @@ extending this filter:
   only failing rows anywhere were the known baseline ones (`cache`: `self.exe.smokerun`; `uv`:
   `self.cascade.exec`, `self.exe.warnfix.venv_repair`).
 
+**Item 64 slice 2 (2026-10-11): a missing module is installed only when the program's own code imports it.**
+- Rule in `parse_warn.py` (`_wanted`, `_lib`): a 6.x line is read per importer entry; it counts when some
+  importer is not library-owned and its kinds include top-level, delayed or conditional. Library-owned means
+  the standard library (`sys.stdlib_module_names`, 3.10+), a module `find_spec` places under a
+  `*-packages` folder, or a path importer inside one. A line with no readable importer list keeps the old
+  rule (the kind in the parentheses decides); an importer nothing can locate counts as the program's. The
+  5.x `W: no module named` format has no importer and is unchanged. The plan's first wording (only
+  delayed/conditional entries need the importer test) was widened to (top-level) after the real data:
+  `plotly.basewidget` imports `traitlets` and `anywidget`, narwhals imports `numpy`/`pyarrow.compute`/`ibis.expr`,
+  and pandas imports `markupsafe` and `numba.extending` at top level inside submodules nobody loads.
+- Evidence behind the rule, measured before it was written: a PyInstaller 6.22.3 build of
+  `import pandas as pd; print(df.sum())` (Linux, Python 3.13, 267 `missing module` lines) makes the v4 parser
+  print 29 names (numba, numexpr, pyarrow, threadpoolctl, scipy, traitlets, IPython, botocore, xlsxwriter,
+  openpyxl, odf, xlrd, pyxlsb, python_calamine, matplotlib, markupsafe, PyQt4, qtpy, adbc_driver_manager,
+  sqlalchemy, tables, lxml, fsspec, psutil, pywin32, pyyaml, beautifulsoup4, pytest, typing_extensions); v5
+  prints none. The CI plotly scenario's own warn file (`selfapps_collect`, run `38098172664`, `real` lane,
+  65 `missing module` lines) goes from 22 names to none when the parser runs over it with plotly, narwhals,
+  `_plotly_utils` and packaging reported installed (a simulation of the install state, not a Windows run).
+- Payload budget: no multi-part `:emit_from_base64` was needed. `HP_PARSE_WARN` is 7688 characters, 503 under the
+  limit, after the SKIP group comments moved here (the one-line pointer in the source says where).
+- Tests: `tests/test_parse_warn.py` `LibraryImportsAreNotTargetsTest` (real pandas and plotly fixtures, the
+  program's own top-level/delayed/conditional imports, helper modules, unplaceable importers, paths with
+  spaces and parentheses) and the Windows scenario `tests/selfapps_warnfix_library.ps1`
+  (`self.warnfix.noise.library`, `real` lane only: the filter is provider-independent).
+- Limits, deliberately not handled: Python before 3.10 treats a stdlib importer as the program's (the old
+  behaviour); a project folder whose path contains `-packages` would be read as library-owned; a library's hard
+  dependency that is genuinely missing is no longer repaired from the warn file and surfaces at run time
+  (Item 65 names it).
+
 ## Closed Backlog
 
 - **Cascade-vs-postexec fix (Active Backlog item 9), 2026-07-25, owner-directed follow-up to a
