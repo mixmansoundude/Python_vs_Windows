@@ -3654,6 +3654,16 @@ extending this filter:
   twice), `repairFailed` 6, `cascadeCandidate` true, while the EXE still built and ran. Those are the
   same three names the old parser yields from that run's own `~warnfile.txt`; the new parser yields none.
   The only other failing rows were `self.parse_warn.pytest` and `self.pytest.unit` (14 new unit tests).
+- Green run after the fix (PR #482, run `38098172664`, merged 2026-10-11 02:19Z), rows read from the
+  published diagnostics site, not the check colour: `self.warnfix.noise.stdlib` passed on `real` and
+  `conda-full` with `attemptedCount` 0, `repairFailed` 0, `repairBlockRan` false, `cascadeCandidate`
+  false, bootstrap exit 0, EXE built and ran (the warn file still listed `multiprocessing` and
+  `pyimod02_importers`, so the precondition held). `self.parse_warn.pytest` and `self.pytest.unit`
+  passed. `real` and `conda-full` had zero failing rows. `self.layered_e2e.chain` (cache lane) still
+  reports `cascadeDetected` true and `condaSelected` true; the `self.exe.warnfix.*`,
+  `self.cascade.detect`/`consent` and `self.collect.submodules` rows are unchanged from the red run. The
+  only failing rows anywhere were the known baseline ones (`cache`: `self.exe.smokerun`; `uv`:
+  `self.cascade.exec`, `self.exe.warnfix.venv_repair`).
 
 ## Closed Backlog
 
