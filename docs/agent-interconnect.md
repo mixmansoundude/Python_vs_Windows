@@ -900,6 +900,11 @@ toolkit catches an exception raised in a callback and keeps running), so the exi
   `~runtime_missing_modules.txt`), the file itself (one name per line, so each module is reported once per
   run even if the checkpoint run repeats it), and `HP_RTM_FOUND`. `:success` prints
   `:print_runtime_missing_reminder` before `:release_lock`, which also deletes the file.
+- **Which file the advice names**: `:rtm_where` sets `HP_RTM_WHERE` from `DEP_SOURCE` for both advice lines
+  (the second `[WARN]` line and the closing reminder): `requirements.txt` by default, `the dependencies in
+  pyproject.toml` for `pyproject`, the PEP 723 header for `pep723`. Those two sources are copied over
+  `requirements.txt` on every run, so advice to edit `requirements.txt` would be lost (CodeRabbit, PR #487).
+  A new place that tells the user to edit a dependency file must use the same variable.
 - **Diagnostic only**: no install, no `requirements.txt` edit, no extra run of the program. The install step
   is Item 65 slice 2 and needs its own consent prompt (README REQ-018).
 - **NDJSON**: the bootstrapper writes `self.runtime.module_missing` to `HP_NDJSON` when it is defined;

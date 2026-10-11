@@ -165,6 +165,18 @@ class BatchCallSites(unittest.TestCase):
     def test_the_helper_is_emitted_from_its_payload(self):
         self.assertIn('call :emit_from_base64 "~runtime_module_scan.py" HP_RUNTIME_MODULE_SCAN', self.bat)
 
+    def test_the_advice_names_the_active_dependency_source(self):
+        # pyproject.toml and a PEP 723 header overwrite requirements.txt every run (CodeRabbit, PR #487).
+        for marker in ("call :log \"[WARN] The program may have kept running anyway.",
+                       "echo *** Add them, or the packages that provide them"):
+            line = next(x for x in self.bat.splitlines() if marker in x)
+            self.assertIn("%HP_RTM_WHERE%", line)
+            self.assertNotIn("requirements.txt", line)
+        i = re.search(r"(?m)^:rtm_where", self.bat).start()
+        body = self.bat[i:self.bat.index("exit /b 0", i)]
+        self.assertIn('"%DEP_SOURCE%"=="pyproject"', body)
+        self.assertIn('"%DEP_SOURCE%"=="pep723"', body)
+
     def test_the_reminder_is_printed_before_the_lock_is_released(self):
         i = self.bat.index("if defined HP_RTM_FOUND call :print_runtime_missing_reminder")
         j = self.bat.index("call :release_lock", i)

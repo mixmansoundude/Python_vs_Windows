@@ -506,7 +506,10 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
   `ModuleNotFoundError: No module named X` and still exit 0, because a window toolkit catches an error
   raised in a button handler, prints it and keeps running. When X is not installed in the environment,
   the console says so right after the run and again at the end, and tells you to add X, or the package
-  that provides it, to `requirements.txt` and run again. This step only reads; nothing is installed or
+  that provides it, to the file your dependencies come from and run again: `requirements.txt`, the
+  `[project]` dependencies in `pyproject.toml`, or the PEP 723 header of your script, whichever the run
+  reported as its dependency source (the last two are copied over `requirements.txt` on every run, so
+  editing `requirements.txt` would not last). This step only reads; nothing is installed or
   edited and your program is not run again. Standard library names (such as `tkinter`) and modules
   that sit next to your script are not reported. The cached-EXE fast path skips this check, because it
   runs before any interpreter is chosen.

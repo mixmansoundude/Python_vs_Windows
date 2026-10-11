@@ -5236,7 +5236,8 @@ if not errorlevel 1 exit /b 0
 >> "~runtime_missing_modules.txt" echo.%HP_RTM_MOD%
 set "HP_RTM_FOUND=1"
 call :log "[WARN] Your program needed the module %HP_RTM_MOD% while it was running, and that module is not installed."
-call :log "[WARN] The program may have kept running anyway. To fix it, add %HP_RTM_MOD%, or the package that provides it, to requirements.txt and run this file again."
+call :rtm_where
+call :log "[WARN] The program may have kept running anyway. To fix it, add %HP_RTM_MOD%, or the package that provides it, to %HP_RTM_WHERE% and run this file again."
 if not defined HP_NDJSON exit /b 0
 set "HP_RTM_SITE=%~2"
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -5244,11 +5245,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "Add-Content -Path '%HP_NDJSON%' -Value $r -Encoding ASCII" >> "%LOG%" 2>&1
 exit /b 0
 :print_runtime_missing_reminder
+call :rtm_where
 echo.
 echo *** HEADS UP: while your program ran it asked for modules that are not installed: ***
 if exist "~runtime_missing_modules.txt" for /f "usebackq delims=" %%M in ("~runtime_missing_modules.txt") do echo ***   %%M
-echo *** Add them, or the packages that provide them, to requirements.txt and run this file again. ***
+echo *** Add them, or the packages that provide them, to %HP_RTM_WHERE% and run this file again. ***
 if exist "~runtime_missing_modules.txt" del "~runtime_missing_modules.txt" >nul 2>&1
+exit /b 0
+:rtm_where
+rem Item 65 slice 1 review (CodeRabbit, PR #487): say which file the user must edit. pyproject.toml and a PEP 723
+rem header both overwrite requirements.txt on every run, so advice to edit requirements.txt would be lost.
+set "HP_RTM_WHERE=requirements.txt"
+if /I "%DEP_SOURCE%"=="pyproject" set "HP_RTM_WHERE=the dependencies in pyproject.toml"
+if /I "%DEP_SOURCE%"=="pep723" set "HP_RTM_WHERE=the dependencies in the PEP 723 header of your script"
 exit /b 0
 :pipreqs_precheck
 rem CLAUDE.md Item 63: pipreqs 0.4.13 opens every .py with the locale encoding (cp1252 on Western Windows
