@@ -666,6 +666,28 @@ copies of the logs go to `tests\~selftest_unicode_path_evidence`. Skips on non-W
 self.prime.unicode-path
 ```
 
+## selfapps-noflag-default NDJSON rows (selfapps_noflag_default.ps1, real lane only, gating)
+
+Gap T12 of `docs/plan-test-suite-gaps.md` (README REQ-019, REQ-018). Every other scenario runs under
+`HP_CI_LANE`, so the branches a double-click user takes (the elective prompts reaching `set /p`, the
+end-of-run `pause`, the interactive fast-path probe) never ran in CI. This script removes every `HP_*`,
+`PVW_*` and `NOINPUT` variable from its own environment (restored afterwards; the lane tag is captured
+first so rows keep it) and starts the bootstrapper with standard input closed (`< nul`, so `set /p` and
+`pause` get end-of-file, which is the closest stand-in for nobody answering) and a hard time limit. A
+stub program appends one line per launch to `~noflag_ledger.jsonl`. Scenario F is a fresh folder, G the
+same folder again. `.run`: finished within the limit, exit code, state `ok`, both `[Y/N]` prompts and the
+end-of-run `Press any key` line shown, and no flag left in the environment. `.once`: the unanswered
+prompts decline and the ledger holds exactly one launch (EXE). `.rerun`: the repeat run takes the
+interactive probe branch ("Launching your program now via the cached standalone EXE", not "Fast path:
+reusing") and starts the program once more. Limits: only the happy path through the provider chain is
+exercised (REQ-019 asks the default run to reach every fallback tier that gets the code running). Skips on non-Windows.
+
+```
+self.noflag.default.run
+self.noflag.default.once
+self.noflag.default.rerun
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to
