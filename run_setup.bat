@@ -286,6 +286,17 @@ if defined PVW_UV_EXE call :log "[DEBUG] Using super-user override for PVW_UV_EX
 if defined PVW_CONDA_EXE call :log "[DEBUG] Using super-user override for PVW_CONDA_EXE: %PVW_CONDA_EXE%"
 if defined PVW_TARGET_PY call :log "[DEBUG] Using super-user override for PVW_TARGET_PY: %PVW_TARGET_PY%"
 if defined PVW_WORKSPACE call :log "[DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%"
+rem --- PVW_BUILDER (CLAUDE.md Item 71): super-user choice of build tool, auto|pyinstaller|nuitka|both ---
+rem derived requirement: absent or auto is today's behavior (README REQ-019: a flag may add a super-user
+rem override, never gate a Prime Directive outcome). HP_BUILDER is the normalized choice. An unrecognized
+rem value is reported once WITHOUT echoing it, because :log echoes unquoted and the text is whatever the user
+rem typed, and then treated as auto. Single-line ifs, no block, for the same reason as the lines above.
+set "HP_BUILDER=auto"
+if /I "%PVW_BUILDER%"=="pyinstaller" set "HP_BUILDER=pyinstaller"
+if /I "%PVW_BUILDER%"=="nuitka" set "HP_BUILDER=nuitka"
+if /I "%PVW_BUILDER%"=="both" set "HP_BUILDER=both"
+if defined PVW_BUILDER if /I not "%PVW_BUILDER%"=="auto" if "%HP_BUILDER%"=="auto" call :log "[WARN] PVW_BUILDER is not one of auto, pyinstaller, nuitka or both; using auto."
+if not "%HP_BUILDER%"=="auto" call :log "[INFO] Using super-user override for PVW_BUILDER: %HP_BUILDER%"
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
 if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
@@ -3658,8 +3669,14 @@ rem (auto-decline on HP_CI_LANE/NOINPUT/HP_NONINTERACTIVE, since like the checkp
 rem on essentially every successful bootstrap run) -- see that subroutine's own header comment
 rem for why this broader 4-way auto-decline set is used here instead of the narrower 3-branch
 rem gates elsewhere in this file (:system_build_consent_gate etc.).
+rem CLAUDE.md Item 71 (PVW_BUILDER): pyinstaller never offers Nuitka. both skips the question, because the
+rem override is the user's consent (same reasoning as HP_PVW_KNOWN_IDEMPOTENT), and still builds to a temp
+rem name, verifies, and swaps only on success, so a verified EXE is never replaced by an unverified one.
+if /I "%HP_BUILDER%"=="pyinstaller" exit /b 0
 if defined HP_NUITKA_FALLBACK_USED exit /b 0
+if /I "%HP_BUILDER%"=="both" if not "%HP_EXE_EXIT%"=="0" call :log "[INFO] PVW_BUILDER=both: the optimized build is skipped because the standard build did not run cleanly."
 if not "%HP_EXE_EXIT%"=="0" exit /b 0
+if /I "%HP_BUILDER%"=="both" goto :optbuild_both
 echo.
 echo *** Your app is ready. ***
 echo *** Want to build an optimized version too? It takes a bit longer to build right now, ***
@@ -3687,6 +3704,10 @@ if /I not "%HP_OPTBUILD_CHOICE%"=="Y" (
 set "HP_OPTBUILD_RAW="
 set "HP_OPTBUILD_CHOICE="
 call :log "[INFO] Optimized build: accepted; building now. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+goto :optbuild_build
+:optbuild_both
+call :log "[INFO] PVW_BUILDER=both: building the optimized version now without asking. It starts your program once more for up to 30 seconds to check it works. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+:optbuild_build
 rem Build to a distinct temp filename first -- the already-working dist\%ENVNAME%.exe is never
 rem touched until a build AND a verification run both succeed. HP_OPTBUILD_TMP is set before
 rem the test-hook check below so :optbuild_cleanup can always reference it safely, including in
@@ -3803,6 +3824,7 @@ if /I "%HP_FASTPATH_TOKEN%"=="fresh" (
   set "HP_FASTPATH_USED=1"
 )
 if not defined HP_FASTPATH_USED exit /b 0
+if /I not "%HP_BUILDER%"=="auto" call :log "[INFO] PVW_BUILDER=%HP_BUILDER%: the cached EXE is still fresh, so no build runs this time. Delete dist\%ENVNAME%.exe to build again."
 rem REQ-012: super-user hook -- reuse the fresh cached EXE but do not run it.
 if defined HP_SKIP_EXE_SMOKERUN (
   call :log "[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; reusing cached EXE without running it (skipped by request)."
@@ -4104,7 +4126,20 @@ if not defined HP_BUILD_OK (
     rem verification must not leak a stale hint into a later provider tier's own caveat panel.
     set "HP_EXE_TIMEDOUT_SILENT="
     set "HP_EXE_KILLED_SILENT="
-    if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
+    rem CLAUDE.md Item 71: PVW_BUILDER=nuitka skips the PyInstaller build and builds with Nuitka only. The
+    rem result is handled like the Tier A success below. A stale PyInstaller warn file is removed so warnfix
+    rem cannot rebuild over this Nuitka EXE with PyInstaller, which the user asked not to run.
+    if /I "%HP_BUILDER%"=="nuitka" (
+      call :log "[INFO] PVW_BUILDER=nuitka: skipping the standard PyInstaller build."
+      if exist "build\%ENVNAME%\warn-%ENVNAME%.txt" del "build\%ENVNAME%\warn-%ENVNAME%.txt" >nul 2>&1
+      call :try_nuitka_tier_a
+      if errorlevel 1 (
+        call :warn_build_incomplete "[WARN] The fallback build failed and PVW_BUILDER=nuitka skipped PyInstaller; will verify your code directly via Python instead. reason=builder_nuitka"
+      ) else (
+        set "HP_NUITKA_FALLBACK_USED=1"
+        set "HP_FRESH_BUILD_OK=1"
+      )
+    ) else if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
       if errorlevel 1 (
@@ -6291,7 +6326,18 @@ rem :warn_build_incomplete site (CLAUDE.md Item 46 Bucket B migrated these calle
 rem see that subroutine's own header comment for why it is not a :die call anymore).
 rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
 rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
-call :log "[INFO] Standard build did not complete; attempting a fallback build. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+rem CLAUDE.md Item 71 (PVW_BUILDER): pyinstaller switches this fallback off, so a PyInstaller failure stands
+rem and the caller reports it exactly as it does after a failed fallback. nuitka reaches this subroutine
+rem directly, without a failed PyInstaller build before it, so the message must not claim one.
+if /I "%HP_BUILDER%"=="pyinstaller" (
+  call :log "[INFO] PVW_BUILDER=pyinstaller: the fallback build system is switched off, so the failed standard build stands."
+  exit /b 1
+)
+if /I "%HP_BUILDER%"=="nuitka" (
+  call :log "[INFO] Building with the fallback build system only. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+) else (
+  call :log "[INFO] Standard build did not complete; attempting a fallback build. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+)
 if defined HP_TEST_FORCE_NUITKA_FAIL (
   call :log "[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure."
   exit /b 1

@@ -329,6 +329,37 @@ temp cleaned up), `decline` (prompt shown, no build attempted).
 
 ---
 
+## `PVW_BUILDER` (Item 71): the build-tool choice touches four sites in two build paths
+
+**Touch the build block, `:try_nuitka_tier_a`, `:offer_optimized_build` or `:try_fast_exe`, must understand
+the others.** `PVW_BUILDER=auto|pyinstaller|nuitka|both` is a super-user override (README REQ-019: absent
+or `auto` is today's behavior; nothing a Prime Directive run needs depends on it). It is parsed once near
+the other `PVW_` overrides into `HP_BUILDER` (lowercase, default `auto`). An unrecognized value is logged
+once as `PVW_BUILDER is not one of ...; using auto.` and is NOT echoed (`:log` echoes unquoted and the text
+is whatever the user typed). Where each choice acts:
+- `pyinstaller`: `:try_nuitka_tier_a` returns 1 at its top (before it installs Nuitka), so all three call
+  sites report the PyInstaller failure exactly as they report a failed fallback, and
+  `:offer_optimized_build` returns before its prompt, so the offer is never shown.
+- `nuitka`: the build block in `:run_entry_smoke` takes a branch ahead of the forced-PyInstaller-failure
+  hook, never runs PyInstaller, deletes a stale PyInstaller warn file (otherwise warnfix could rebuild over
+  the Nuitka EXE with PyInstaller), calls `:try_nuitka_tier_a`, and on failure reports
+  `reason=builder_nuitka` through `:warn_build_incomplete`. On success it sets
+  `HP_NUITKA_FALLBACK_USED` and `HP_FRESH_BUILD_OK` like Tier A, so the Nuitka-only repair-loop guards apply.
+- `both`: PyInstaller builds and verifies as usual, then `:offer_optimized_build` skips the question
+  (`goto :optbuild_both`; the override is the consent, same reasoning as `HP_PVW_KNOWN_IDEMPOTENT`, and the
+  log line says the program starts once more for up to 30 seconds) and continues into the unchanged
+  build-to-temp, verify, swap-on-success path, so a verified EXE is never replaced by an unverified one. It is
+  skipped, with a log line, when the verification run did not exit 0.
+- Fast path: a fresh cached EXE is still reused whatever the choice; `:try_fast_exe` logs that no build ran
+  and that deleting `dist\<env>.exe` builds again. No builder record is kept, so changing the choice does
+  not by itself trigger a rebuild.
+`tests/selfapps_pvw_builder.ps1` covers it (row `self.builder.override`); `tests/test_builder_override.py`
+pins the order of the guards (the fallback guard before the Nuitka install, the offer guards before the
+prompt). The default order (PyInstaller first, Nuitka as fallback or elective upgrade) is deliberately
+unchanged until Tier B matures (`docs/prd-av-safe-build-path.md`).
+
+---
+
 ## Standalone Python-download tier (REQ-009 Tier 5 by naming; executed 3rd in provider order)
 
 **Provider chain: `uv -> conda -> embed -> venv -> system`** (embed sits right after conda, not

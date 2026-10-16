@@ -14,11 +14,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BAT = (REPO_ROOT / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
 
 
-def _body(label: str) -> str:
-    """Text of one subroutine: from its label line to the next top-level label line."""
-    match = re.search(r"^:%s\r?\n(.*?)(?=^:[A-Za-z_][A-Za-z0-9_]*\r?$)" % re.escape(label), BAT, re.S | re.M)
-    assert match, "label :%s not found" % label
-    return match.group(1)
+def _between(start_label: str, end_label: str) -> str:
+    """Text from one label line to another. Subroutines here have inner labels, so the end is named."""
+    start = BAT.find("\n:%s\n" % start_label)
+    end = BAT.find("\n:%s\n" % end_label, start + 1)
+    assert start != -1 and end != -1, "labels :%s / :%s not found" % (start_label, end_label)
+    return BAT[start:end]
 
 
 def test_parse_sets_a_default_and_each_choice():
@@ -37,7 +38,7 @@ def test_unrecognized_value_warns_without_echoing_it():
 
 
 def test_fallback_guard_comes_before_the_nuitka_install():
-    body = _body("try_nuitka_tier_a")
+    body = _between("try_nuitka_tier_a", "die")
     guard = body.find('if /I "%HP_BUILDER%"=="pyinstaller"')
     install = body.find("-q nuitka")
     assert guard != -1 and install != -1
@@ -56,7 +57,7 @@ def test_nuitka_choice_skips_pyinstaller_in_the_build_block():
 
 
 def test_offer_guards_come_before_the_prompt():
-    body = _body("offer_optimized_build")
+    body = _between("offer_optimized_build", "try_fast_exe")
     prompt = body.find("echo *** Your app is ready. ***")
     assert prompt != -1
     pyi = body.find('if /I "%HP_BUILDER%"=="pyinstaller" exit /b 0')
@@ -72,7 +73,7 @@ def test_offer_guards_come_before_the_prompt():
 
 
 def test_fast_path_explains_why_no_build_ran():
-    body = _body("try_fast_exe")
+    body = _between("try_fast_exe", "write_fast_hash")
     assert "PVW_BUILDER=%HP_BUILDER%: the cached EXE is still fresh" in body
 
 
