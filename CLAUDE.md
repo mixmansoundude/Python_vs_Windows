@@ -737,9 +737,11 @@ the original symptom (see that doc's "CI-first testing policy").
 
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1 (name the missing package) is built on PR #487
-  (red run `38146234107`, green rows on `real` in runs `38157389535` and `38178273898`; `HP_RUNTIME_MODULE_SCAN` has little
-  payload room left, see the interconnect doc). Slice 2 (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
-  install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
+  (merged, PR #487; red run `38146234107`, green rows on `real` in runs `38157389535`, `38178273898` and
+  `38878638543`; `HP_RUNTIME_MODULE_SCAN` has little payload room left, see the interconnect doc). Slice 2
+  (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any install, requirements
+  edit, or rebuild; a yes also covers one verification run; a no changes nothing. Slice 2 is built on PR #493
+  (red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with `prompted:false`, nothing else red there).
 - **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
   Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
