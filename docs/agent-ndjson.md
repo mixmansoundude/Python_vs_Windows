@@ -651,6 +651,21 @@ self.runtests.selftests_unreported
 self.runtests.summary_locked
 ```
 
+## selfapps-unicode-path NDJSON rows (selfapps_unicode_path.ps1, real lane only, gating)
+
+Gap T8 of `docs/plan-test-suite-gaps.md` (README REQ-001). The stub program is bootstrapped from
+`<tests>\~selftest_unicode_path\Caf<U+00E9> Test\Jos<U+00E9>` (an accented e in two components, one with
+a space; built at run time so repo files stay ASCII) through a generated `~unicode_launch.cmd`, so no
+non-ASCII text is typed into a command line by the script. The row passes only if the bootstrap exits 0,
+`~bootstrap.status.json` says `ok`, an EXE exists under `dist`, the log shows `Entry smoke exit=0` with no
+path error, and the frozen program's own record (`~unicode_token.json`) names the same two folder
+components (compared by code points, so a lossy `?` would not match) and carries the expected token. ASCII
+copies of the logs go to `tests\~selftest_unicode_path_evidence`. Skips on non-Windows.
+
+```
+self.prime.unicode-path
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to
