@@ -173,6 +173,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_DLL_PCT_SANITIZE` | `~dll_pct_sanitize.ps1` | Strips `%`/`^` from env var values for `:log`'s UNQUOTED-echo safety in the native-DLL bundling loop; emitted as a real `.ps1` (invoked via `-File`) so cmd.exe's own tokenizer never parses its body -- see `docs/agent-lessons-learned.md`'s ":log echoes UNQUOTED" entry for why the earlier inline `-Command` version needed three separate fixes | `tools/dll_pct_sanitize.ps1` |
    | `HP_MIGRATE_GITATTRIBUTES` | `~migrate_gitattributes.ps1` | Item 60: replaces a pre-existing `.gitattributes`' stale `*.bat eol=crlf`/`*.cmd eol=crlf` lines with `-text`, in place, EXACT-line-match only so unrelated/user-hand-edited content is never touched; called unconditionally from `:merge_git_config` regardless of whether the append block ran or was skipped | `tools/migrate_gitattributes.ps1` |
    | `HP_PIPREQS_PRECHECK` | `~pipreqs_precheck.py` | Item 63: reads every `.py` before pipreqs does (declared/detected encoding, then `ast.parse`); exit 0 = all clean UTF-8, scan in place; exit 10 = write a UTF-8 copy of the tree (re-encoded files, empty stubs for unreadable ones so their module names stay local) for pipreqs to scan; writes `~pipreqs_precheck.txt` (one INFO line per file capped at 100, a `[WARN]` per file left out capped at 25); every name it prints is stripped to a safe ASCII alphabet because the batch echoes it; run via `%HP_PY%` from `:pipreqs_precheck` | `tools/pipreqs_precheck.py` |
+   | `HP_PREFLIGHT_CHECK` | `~preflight_check.py` | Item 83: the REQ-021 pre-flight syntax check; compiles the entry in memory with the interpreter's own parser, so it writes no `.pyc` and cannot fail on a read-only or file-shaped `__pycache__` (the old `py_compile` call did both); exit 0 valid, 1 syntax error with the interpreter's own message on stderr, anything else means it could not decide and the run continues with a `[WARN]`; run via `%HP_PY%` from `:preflight_compile` | `tools/preflight_check.py` |
    | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays), decodes TOML escapes in double-quoted items, and rejects an array with no closing bracket; a nonzero result leaves no output file (the batch subroutine deletes it); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
    | `HP_RUNTIME_MODULE_SCAN` | `~runtime_module_scan.py` | Item 65 slice 1: reads the stderr of a run that just finished and prints, one per line, each module it names as missing (`No module named 'X'`, top-level name) that the interpreter does not have; skips stdlib names, modules found next to the script, and anything that is not a plain identifier (the batch echoes the names unquoted); exit 0 always except 3 for an internal error; run via `%HP_PY%` from `:scan_runtime_missing_module` | `tools/runtime_module_scan.py` |
 
@@ -277,6 +278,7 @@ Test files and what they cover:
 | `test_check_ndjson_registry.py` | NDJSON registry cross-check: brace expansion, all four code emission patterns, log-file parsing, pass/fail end-to-end paths |
 | `test_migrate_gitattributes.py` | Item 60: exact-match-only `.gitattributes` migration (fresh, idempotent, missing-file, asymmetric, already-fixed, near-miss-partial-text cases), HP_MIGRATE_GITATTRIBUTES payload sync |
 | `test_pipreqs_precheck.py` | Item 63: pipreqs pre-check (U+201D file ok as UTF-8, declared-cp1252 re-encoded, no-cookie cp1252 and unparseable left out, BOM, ignore folders, staged tree contents, exit codes 0/10/3, report hygiene and caps, `--encoding utf-8` on every pipreqs invocation, HP_PIPREQS_PRECHECK payload sync) |
+| `test_preflight_check.py` | Item 83: in-memory syntax check (valid file exits 0 and writes nothing, a FILE named `__pycache__` changes nothing, syntax/indentation/tab/encoding/null-byte errors exit 1 with the interpreter's wording, exit 3 when it cannot decide, user code never runs), `:preflight_compile` call-site wiring (no `py_compile`, only exit 1 reports a syntax error), Python 3.9 grammar guard, HP_PREFLIGHT_CHECK payload sync |
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 | `test_runtime_module_scan.py` | Item 65 slice 1: runtime missing-module scan (top-level name from a traceback, submodule, repeats, ImportError wording, cap; installed/on-path/stdlib/non-identifier names not reported; local module next to the helper; CLI exit codes; the three batch call sites and the reminder order; Python 3.9 grammar guard; HP_RUNTIME_MODULE_SCAN payload sync) |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
@@ -649,8 +651,12 @@ but several represent real gaps worth closing before calling the path fully rele
   `run_setup.bat` had a second `if` nested in the else-if chain (`else if conda if defined CONDA_BAT (`),
   so cmd bound every later `else` to the inner `if defined` and the venv, embed and system branches never
   ran outside conda mode: no install, no failure flag, no cascade candidate, the chain stopped at embed.
-  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. Re-soak both rows, then
-  remove `continue-on-error` from the aggregate gate per the discipline below.
+  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. **Fixed by PR #491; green read
+  2026-10-16**: run `38179263133` (head `4651e86`, all eight lanes read from the artifacts by run id) has
+  zero failing rows on every lane and exactly three rows changed against the red run `38157663037`, each from
+  red to green (`uv` `self.exe.warnfix.venv_repair` and `self.cascade.exec`, `cache` `self.exe.smokerun`).
+  That run is the first complete green matrix of the re-soak; remove `continue-on-error` from the aggregate
+  gate only after several consecutive complete green matrices, per the discipline below.
 
   **The `cache` lane's `self.exe.smokerun` red is explained (2026-10-11, run `38157663037`) and is a test
   artifact, not a product failure.** `selfapps_layered_e2e.ps1` (cache lane only) points its sub-bootstrap
@@ -671,7 +677,9 @@ but several represent real gaps worth closing before calling the path fully rele
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
   completion several consecutive times before treating it as proven, only then take the gating
-  step; (2) no shortcuts on "let CI run to completion" -- a partial or cancelled run never counts.
+  step; (2) no shortcuts on "let CI run to completion" -- a partial or cancelled run never counts;
+  (3) this soak applies to PROMOTING an existing non-gating lane or row, not to a new test: a new test
+  gates from its first run and a red one holds auto-merge (see AGENTS.md, "New tests gate immediately").
   `docs/agent-ndjson.md`'s own notes on each currently-inert row already diagnose why it's inert;
   `docs/agent-closed-backlog.md`'s Item 19 entry is relevant prior art for the `cache` lane's own
   non-gating history.
@@ -750,6 +758,10 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
+  Also in this PR (REQ-018.2, decided 2026-10-11, option A): the optimized-build prompt
+  (`:offer_optimized_build`) gets one sentence naming the risk of the second run: "Building it starts
+  your program once more for up to 30 seconds to check it works, so say no if running it twice could
+  cause harm." README REQ-018 stays as written; add a prompt-text row to the `self.optbuild.*` scenarios.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
@@ -858,6 +870,24 @@ the original symptom (see that doc's "CI-first testing policy").
   prompt says the check stops the program after about 30 seconds, and the CI fixture is a silent script.
   Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
+
+### Item 83: the pre-flight syntax check aborts a valid program when `__pycache__` is not writable (filed 2026-10-11 from the test-suite gap map)
+
+- **Item 83 (Confirmed bug, small; README REQ-021 says "never aborts a run that would otherwise have
+  succeeded"; reproduced with a plain file named `__pycache__`)**: `:preflight_compile` runs
+  `python -m py_compile` on the entry file. py_compile writes `__pycache__\<entry>.cpython-*.pyc`; when it
+  cannot (a read-only folder, a locked-down machine, a file where the folder should be) it exits 1 for a
+  perfectly valid program, and the bootstrapper prints "Your Python program has a syntax error" and stops
+  with status `error`. When it can write, it leaves the `.pyc` in the user's folder. Two slices, test first:
+  (1) `tests/selfapps_preflight_pycache.ps1` (real lane, gating) with rows `self.preflight.pycache.unwritable`
+  (REQ-021.4) and `self.preflight.pycache.litter` (REQ-021.5), pushed alone and read red, plus a guard row
+  `self.preflight.syntax.compiler` (REQ-021.6, a `return` outside a function must still fail pre-flight: the
+  parser accepts it and only the compiler rejects it, so it passes before and after the fix by design); (2) the fix: check
+  the syntax in memory with an emitted helper (`~preflight_check.py`, `HP_PREFLIGHT_CHECK`, source
+  `tools/preflight_check.py`: exit 0 valid, 1 syntax error with the interpreter's own message, anything else
+  means the check could not run and the bootstrapper continues), so nothing is written and nothing can fail
+  on the folder's state. Touches `:preflight_compile` only (one call site) plus one payload line in
+  `:define_helper_payloads`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

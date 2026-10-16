@@ -2154,8 +2154,9 @@ the bug documented below.
 **Source:** REAL CI CAPTURE, run `30328748330`, job `90179708091` (`real` lane).
 
 **The ordinary case**: before ever attempting a doomed PyInstaller build, `:preflight_compile`
-byte-compiles the entry file with the SAME parser the interpreter itself uses (`py_compile`,
-zero false positives), reporting a genuine `SyntaxError` clearly and stopping before the build:
+compiles the entry file in memory with the SAME parser the interpreter itself uses (the emitted
+`~preflight_check.py`, zero false positives; before Item 83 this was `py_compile`, which wrote a
+`.pyc`), reporting a genuine `SyntaxError` clearly and stopping before the build:
 
 ```
 *** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***
