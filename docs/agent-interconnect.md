@@ -856,6 +856,23 @@ inside a parenthesized block. The NI-VISA failure `[WARN]` lines (`pyvisa.nivisa
 `call :log "[WARN] ..."` lines at the two `[VISA] install_failed` sites; the elevation line is what lets a
 reader of a field log tell an elevated failure (the reported `-125202`) from a non-elevated one.
 
+## NI-VISA scanner contract `0|1|2` and `:visa_subfolder_gate` (Item 78 slice 2)
+
+**Touch `tools/detect_visa.py` (`HP_DETECT_VISA`), the VISA block in `:lock_done`'s tail, or the gate, must
+understand the others.** The scanner prints `0` (no match), `1` (a match in the folder next to `run_setup.bat`)
+or `2` (every match below a subfolder), logs up to three `[VISA] pyvisa/visa import found in: <path> (top
+folder|subfolder)` lines on stderr (the batch appends stderr to `%LOG%`, so they never pass through `:log`), and
+writes the first path to `~visa.where`. Every path is reduced to ASCII letters, digits and `. _ - space \`
+before it is printed, because the batch echoes it unquoted in the prompt; a new output field must get the same
+treatment. The batch lets both `1` and `2` through the first check, but the install step still requires
+`NEED_VISA` to be exactly `1`: `:visa_subfolder_gate` is `call`ed for `2` after the `HP_SKIP_NIVISA` and
+already-installed checks, sets `NEED_VISA=1` only on an explicit yes, and leaves it at `2` (logging
+`[VISA] skipped (subfolder_only)`) otherwise. The gate follows the CI-safe pattern (prompt echoed first,
+`HP_TEST_VISA_ANSWER`, then `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` decline, then a 30 second `choice` that
+defaults to no; `HP_TEST_FORCE_INTERACTIVE_VISA` forces the real prompt at 2 seconds). It remembers its answer
+in `HP_VISA_DECISION` so a cascade re-entry does not ask twice. A top-folder match (`1`) never prompts and
+installs exactly as before. Regression: `tests/test_detect_visa.py` and `tests/selfapps_pyvisa_subfolder.ps1`.
+
 ---
 
 ## Single-verification smoke model (REQ-018 2b-A.2)
