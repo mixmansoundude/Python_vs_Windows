@@ -763,6 +763,10 @@ class DelimiterChecker:
         if ECHO_LINE_RE.match(line.lstrip()):
             return
         blanked = re.sub(r'"[^"]*"', '""', line)
+        # An echo inside a block is prose up to the closing parenthesis: `if x (echo else if A if B)`
+        # holds no second if command. Text before the echo is kept, so a real trap earlier on the
+        # line is still found.
+        blanked = re.sub(r"\becho\b[^)]*", "echo", blanked, flags=re.IGNORECASE)
         match = re.search(r"\belse\s+if\b[^()]*?\sif\s", blanked, re.IGNORECASE)
         if not match:
             return

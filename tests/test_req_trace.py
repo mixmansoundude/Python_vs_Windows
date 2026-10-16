@@ -128,7 +128,7 @@ CRIT_TAG = re.compile(r"\[(?:critical|major|minor)\]")
 
 def goal_problems(readme_text: str) -> List[str]:
     """Rules for a converted README section: a goal worded with 'should', at least one numbered shall,
-    and every tagged numbered line carrying 'shall'. Sections without a `**Goal.**` paragraph are not
+    every tagged numbered line carrying 'shall', and every numbered line carrying 'shall' tagged. Sections without a `**Goal.**` paragraph are not
     converted yet and are left alone."""
     problems: List[str] = []
     marks = list(SECTION.finditer(readme_text))
@@ -148,8 +148,11 @@ def goal_problems(readme_text: str) -> List[str]:
         if not any("shall" in m.group(3) for m in own):
             problems.append("REQ-%s: a converted section needs at least one numbered shall (REQ-%s.1, ...)" % (num, num))
         for m in own:
-            if CRIT_TAG.search(m.group(3)) and not re.search(r"\*\*shall(?: not)?\*\*", m.group(3)):
+            tagged = bool(CRIT_TAG.search(m.group(3)))
+            if tagged and not re.search(r"\*\*shall(?: not)?\*\*", m.group(3)):
                 problems.append("REQ-%s.%s: a tagged requirement line must say **shall**" % (num, m.group(2)))
+            if not tagged and re.search(r"\bshall\b", m.group(3)):
+                problems.append("REQ-%s.%s: a numbered shall needs a criticality tag [critical], [major] or [minor]" % (num, m.group(2)))
     return problems
 
 
@@ -277,6 +280,11 @@ def test_shall_for_another_requirement_does_not_count() -> None:
 def test_tagged_line_without_shall_fails() -> None:
     bad = GOOD_SECTION + "- **REQ-021.2** [major] The bootstrapper will report the error.\n"
     assert any("REQ-021.2" in p and "**shall**" in p for p in goal_problems(bad))
+
+
+def test_numbered_shall_without_a_criticality_tag_fails() -> None:
+    bad = GOOD_SECTION + "- **REQ-021.2** The bootstrapper **shall** report the error.\n"
+    assert any("REQ-021.2" in p and "criticality tag" in p for p in goal_problems(bad))
 
 
 def test_group_heading_without_a_tag_needs_no_shall() -> None:

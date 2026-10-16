@@ -41,5 +41,6 @@ try:
     sys.exit(0)
 except SystemExit:
     raise
-except BaseException:
+except Exception:
+    # Exception, not BaseException: Ctrl+C (KeyboardInterrupt) must stop the check, not turn into exit 3.
     sys.exit(3)

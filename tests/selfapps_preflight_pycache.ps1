@@ -142,7 +142,10 @@ function Invoke-Scenario {
         # The unwritable case once failed here, not in the entry check: the helper check used py_compile too.
         entryNotFound    = [bool]($combined -match 'Could not determine entry point')
         helperCheckFailed = [bool]($combined -match 'find_entry helper syntax error')
-        reachedBuild     = [bool]($combined -match 'PyInstaller execution failed')
+        # Any sign that the run entered the build: the start line, either end line, or what a build leaves.
+        reachedBuild     = [bool](($combined -match 'Building standalone executable') -or ($combined -match 'PyInstaller (execution failed|produced)') -or
+                               (Test-Path -LiteralPath (Join-Path $workDir 'build')) -or
+                               (@(Get-ChildItem -LiteralPath $workDir -Filter '*.spec' -File -ErrorAction SilentlyContinue).Count -gt 0))
         exeBuilt         = [bool](Test-Path -LiteralPath (Join-Path $workDir 'dist'))
         programRan       = [bool](($combined -match [regex]::Escape($token)) -or ($runOut -match [regex]::Escape($token)))
         pycFiles         = ($pyc -join ',')
@@ -152,9 +155,10 @@ function Invoke-Scenario {
 
 # --- scenario 1: unwritable __pycache__ (REQ-021.4) ---
 $u = Invoke-Scenario -Name 'unwritable' -BlockPycache $true
-# A valid program must reach its run: no false syntax error, a state other than error, and the
-# program's own output seen at least once (the verification run).
-$uPass = (-not $u.falseSyntaxError) -and ($u.state -ne 'error') -and $u.programRan
+# A valid program must reach its run: no false syntax error, a bootstrap that finished with status
+# ok and exit code 0 (an unreadable or missing status is not a pass), and the program's own output
+# seen at least once (the verification run).
+$uPass = (-not $u.falseSyntaxError) -and ($u.state -eq 'ok') -and ($u.runExit -eq 0) -and $u.programRan
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.pycache.unwritable'
     req     = 'REQ-021.4'
@@ -173,7 +177,7 @@ Write-NdjsonRow ([ordered]@{
 
 # --- scenario 2: nothing left behind (REQ-021.5) ---
 $l = Invoke-Scenario -Name 'litter' -BlockPycache $false
-$lPass = ($l.pycFiles -eq '') -and (-not $l.falseSyntaxError) -and $l.programRan
+$lPass = ($l.pycFiles -eq '') -and (-not $l.falseSyntaxError) -and ($l.state -eq 'ok') -and ($l.runExit -eq 0) -and $l.programRan
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.pycache.litter'
     req     = 'REQ-021.5'

@@ -793,6 +793,31 @@ def test_echo_prose_mentioning_else_if_is_not_flagged(tmp_path, capsys):
     assert "No delimiter issues found." in out
 
 
+def test_echo_inside_a_block_mentioning_else_if_is_not_flagged(tmp_path, capsys):
+    # The echo text runs to the closing parenthesis; it holds no second if command.
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if defined DEBUG (echo never write else if A if B on one line)\n",
+    )
+    assert result == 0
+    assert "No delimiter issues found." in out
+
+
+def test_trap_before_an_echo_on_the_same_line_is_still_flagged(tmp_path, capsys):
+    result, out = _run_bat(
+        tmp_path,
+        capsys,
+        "@echo off\n"
+        "if defined A (\n"
+        "  echo a\n"
+        ") else if \"%B%\"==\"x\" if defined C (echo hi)\n",
+    )
+    assert result == 1
+    assert "second \"if\" on the same line as \"else if\"" in out
+
+
 def test_and_style_if_chain_without_else_if_is_not_flagged(tmp_path, capsys):
     # `if A if B cmd` is the intended AND idiom; only the else-if form is the trap.
     result, out = _run_bat(

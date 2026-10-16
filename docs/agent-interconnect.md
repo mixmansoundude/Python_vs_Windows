@@ -67,7 +67,11 @@ in `tests/harness.ps1`, `BatchCallSite` in `tests/test_preflight_check.py`). The
 run `py_compile` too, so an unwritable `__pycache__` failed it and the run stopped with `Could not determine entry
 point` before `:preflight_compile` was ever reached (found by `self.preflight.pycache.unwritable`, whose row reports
 `entryNotFound`/`helperCheckFailed`). Any new check of a file in the app folder must go through this helper, never
-`py_compile`. Unlike the entry check this one counts only exit 0 as verified (`helper.find_entry.syntax` stays honest).
+`py_compile`. Same fail-open rule as the entry check (REQ-021.4): exit 0 verifies the helper, exit 1 is a real syntax error
+in it, and anything else (or a checker that could not be written) logs `[WARN] REQ-021: the find_entry syntax
+check could not run` and goes on. The `helper.find_entry.syntax` row says which happened with `details.checked`
+(`false` = not verified), so a pass never hides an unchecked helper. The exit code is copied to `HP_HELPER_RC`
+at top level first (`if errorlevel N` is signed, so a negative code would read as 0).
 The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and discards the result.
 
 ---

@@ -573,7 +573,8 @@ program that is valid.
 >   left the `.pyc` behind when it could (CLAUDE.md Item 83); that is why REQ-021.4 and REQ-021.5 exist.
 >   The same `py_compile` call also verified the bootstrapper's own `~find_entry.py` helper, so an
 >   unwritable `__pycache__` stopped the run with "Could not determine entry point" before the entry
->   check was reached; that verification now uses the same in-memory helper.
+>   check was reached; that verification now uses the same in-memory helper and follows the same rule: only
+>   exit 1 is a syntax error, and a check that could not run is logged and skipped.
 > - REQ-021.6: the parser alone accepts some programs the compiler rejects, for example a `return`
 >   statement outside a function, so a check that only parsed would let a real syntax error through to the
 >   build.

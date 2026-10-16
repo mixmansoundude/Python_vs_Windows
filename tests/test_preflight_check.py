@@ -237,10 +237,27 @@ class FindEntryHelperCheck(unittest.TestCase):
         self.assertIn('call :emit_from_base64 "~preflight_check.py" HP_PREFLIGHT_CHECK', self.body)
         self.assertIn('"~preflight_check.py" "%HP_FIND_ENTRY_ABS%"', self.body)
 
-    def test_only_exit_0_counts_as_verified(self):
-        # A helper that could not be written or run leaves HP_HELPER_SYNTAX_PASS at 0 (as py_compile
-        # failing did); there is exactly one place it becomes 1.
-        self.assertEqual(self.body.count('set "HP_HELPER_SYNTAX_PASS=1"'), 1)
+    def test_exit_1_is_the_only_failure(self):
+        # Exit 0 verifies the helper; exit 1 leaves HP_HELPER_SYNTAX_PASS at 0 (a real syntax error in
+        # it); any other code, or a checker that could not be written, is "could not run": a [WARN] is
+        # logged and the run goes on (REQ-021.4), as the entry check does.
+        self.assertIn('if "%HP_HELPER_RC%"=="0" set "HP_HELPER_SYNTAX_PASS=1"', self.body)
+        self.assertIn('if "%HP_HELPER_RC%"=="1" goto :vfeh_record', self.body)
+        self.assertIn("[WARN] REQ-021: the find_entry syntax check could not run", self.body)
+        unchecked = self.body[self.body.index("\n:vfeh_unchecked\n"):self.body.index("\n:vfeh_record\n")]
+        self.assertIn('set "HP_HELPER_SYNTAX_PASS=1"', unchecked)
+        self.assertIn('set "HP_HELPER_SYNTAX_UNCHECKED=1"', unchecked)
+
+    def test_exit_code_is_read_at_top_level(self):
+        # if errorlevel N is signed, so a negative exit code would read as 0; the code is copied first.
+        self.assertIn('set "HP_HELPER_RC=%ERRORLEVEL%"', self.body)
+        self.assertNotIn("if errorlevel 1 goto :vfeh", self.body)
+
+    def test_row_says_whether_the_helper_was_really_checked(self):
+        bat = (REPO / "run_setup.bat").read_text(encoding="ascii", errors="replace")
+        start = bat.index("\n:append_helper_syntax_row")
+        row = bat[start:start + 3000]
+        self.assertIn("checked=(-not $unchecked)", row)
 
 
 class EmbeddedHelperBaseline(unittest.TestCase):
