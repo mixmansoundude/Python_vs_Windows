@@ -197,7 +197,7 @@ batch.conda.warmup,
 batch.req013.connectivity,
 batch.req014.consent,
 batch.req005.warn_gate,
-batch.wording.nuitka_duration,
+batch.wording.nuitka_duration, batch.wording.optbuild_rerun, batch.optbuild.noninteractive_default, batch.wording.interpreter_prompt_note,
 batch.conda.probe.deferred,
 uv.python.preference.configured,
 batch.script_root.trailing_backslash,
@@ -857,9 +857,17 @@ EXE must really change and print the new output, and run 1, with no EXE yet, mus
 skipped in both: `~pipreqs.diff.txt` names the missing file instead of "requirements files not both
 present"). Skips with `skip=true, reason=non-windows-host` off Windows. Expected red on the commit
 that adds it. The other Item 68 fixes are covered elsewhere: `self.failfast.probe.seconds` (the probe
-line states its window in seconds, in `selfapps_failfast_probe.ps1`) and `batch.wording.nuitka_duration`
+line states its window in seconds, in `selfapps_failfast_probe.ps1`), `batch.wording.nuitka_duration`
 (static, `tests/harness.ps1`: the Nuitka fallback and optimized-build messages say the build can take a
-long time and point at `~setup.log`).
+long time and point at `~setup.log`), `batch.wording.optbuild_rerun` (static: the optimized-build prompt
+says, in an echo line before the question, that accepting starts the program once more for up to 30
+seconds; README REQ-018.2), `batch.optbuild.noninteractive_default` (static: under `HP_CI_LANE`,
+`NOINPUT` and `HP_NONINTERACTIVE` the answer resolves to no without reaching `set /p`; the prompt text is
+still echoed by design, see the CI-safe gate pattern, but nothing is asked or run) and
+`batch.wording.interpreter_prompt_note` (static: both panels that print the interpreter run command add
+that a bare interpreter opens a Python prompt and that pip is run as `-m pip`). The decline scenario of
+`selfapps_optimized_build.ps1` also counts launches: a fixture that appends to `~launches.txt` on every
+start must have been started exactly once when the offer is declined.
 
 ```
 self.wording.dep_source_warn_shown, self.wording.rebuild_notice, self.wording.diff_placeholder

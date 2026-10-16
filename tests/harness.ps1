@@ -387,6 +387,37 @@ $nuitkaMsgLines = @($AllText -split "\r?\n" | Where-Object { $_ -match '^\s*call
 $nuitkaMsgGood = @($nuitkaMsgLines | Where-Object { ($_ -notmatch 'minute or two') -and ($_ -match 'tens of minutes') -and ($_ -match '~setup\.log') })
 $nuitkaMsgOk = ($nuitkaMsgLines.Count -eq 2) -and ($nuitkaMsgGood.Count -eq 2)
 Write-Result -Id 'batch.wording.nuitka_duration' -Desc 'Item 68: the Nuitka fallback and optimized-build messages say the build can take a long time and point at ~setup.log' -Pass $nuitkaMsgOk -Details @{ messageLines = $nuitkaMsgLines.Count; honestLines = $nuitkaMsgGood.Count }
+# CLAUDE.md Item 68 / README REQ-018.2: accepting the optimized-build offer starts the user's program once
+# more (a 30 second verification launch of the new binary), which can matter for a program that sends mail or
+# writes files. The prompt must say so before the question, in the echo lines above the set /p.
+$optOfferStart = $AllText.IndexOf(':offer_optimized_build')
+$optOfferAsk = if ($optOfferStart -ge 0) { $AllText.IndexOf('set /p "HP_OPTBUILD_RAW=', $optOfferStart) } else { -1 }
+$optRerunSentence = 'Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm.'
+$optRerunPos = if ($optOfferStart -ge 0) { $AllText.IndexOf($optRerunSentence, $optOfferStart) } else { -1 }
+$optRerunLineOk = $false
+if ($optRerunPos -ge 0) {
+    $optLineStart = $AllText.LastIndexOf("`n", $optRerunPos) + 1
+    $optRerunLineOk = $AllText.Substring($optLineStart, [Math]::Min(8, $AllText.Length - $optLineStart)) -match '^echo '
+}
+$optRerunOk = ($optRerunPos -gt $optOfferStart) -and ($optOfferAsk -gt $optRerunPos) -and $optRerunLineOk
+Write-Result -Id 'batch.wording.optbuild_rerun' -Desc 'Item 68: the optimized-build prompt says, in an echo line before the question, that accepting runs the program once more' -Pass $optRerunOk -Details @{ sentenceAfterLabel = ($optRerunPos -gt $optOfferStart); beforeQuestion = ($optOfferAsk -gt $optRerunPos); isEchoLine = $optRerunLineOk }
+# CLAUDE.md Item 68 (maintainer 2026-10-16): the optimized-build offer never asks and never starts the program
+# in a non-interactive run. Source order check: the answer is resolved from the test hook, then the CI lane,
+# NOINPUT and HP_NONINTERACTIVE (each defaulting to n), and only the final else reaches the set /p question.
+$optGateRx = 'else if defined HP_CI_LANE \(\s*set "HP_OPTBUILD_RAW=n"\s*\) else if defined NOINPUT \(\s*set "HP_OPTBUILD_RAW=n"\s*\) else if defined HP_NONINTERACTIVE \(\s*set "HP_OPTBUILD_RAW=n"\s*\) else \(\s*set /p "HP_OPTBUILD_RAW='
+$optGateOk = ($optOfferStart -ge 0) -and ($AllText.Substring($optOfferStart) -match $optGateRx)
+Write-Result -Id 'batch.optbuild.noninteractive_default' -Desc 'Item 68: the optimized-build offer defaults to no without prompting under HP_CI_LANE, NOINPUT and HP_NONINTERACTIVE' -Pass $optGateOk -Details @{ gateChainFound = $optGateOk }
+# CLAUDE.md Item 68 (second report, 2026-10-09): running the printed interpreter path with no script opens a
+# Python prompt, and a user read "pipreqs and pip are not defined" there as "not installed in this env". Both
+# panels that print the run command (the EXE briefing and the no-EXE briefing) must follow it with a note that
+# a bare interpreter opens a prompt and that pip is run as -m pip.
+$ipLines = @($AllText -split "\r?\n")
+$ipCmdIdx = @(for ($ipI = 0; $ipI -lt $ipLines.Count; $ipI++) { if ($ipLines[$ipI] -match '^\s*echo\s+"%HP_PY%" "%HP_ENTRY%"\s*$') { $ipI } })
+$ipNoteIdx = @(for ($ipI = 0; $ipI -lt $ipLines.Count; $ipI++) { if ($ipLines[$ipI] -match 'opens an interactive Python prompt') { $ipI } })
+$ipPipIdx = @(for ($ipI = 0; $ipI -lt $ipLines.Count; $ipI++) { if ($ipLines[$ipI] -match '^\s*echo\s+"%HP_PY%" -m pip ') { $ipI } })
+$ipEachFollows = ($ipCmdIdx.Count -eq 2) -and ($ipNoteIdx.Count -eq 2) -and ($ipPipIdx.Count -eq 2)
+if ($ipEachFollows) { for ($ipK = 0; $ipK -lt 2; $ipK++) { if (-not (($ipNoteIdx[$ipK] -gt $ipCmdIdx[$ipK]) -and ($ipNoteIdx[$ipK] - $ipCmdIdx[$ipK] -le 3) -and ($ipPipIdx[$ipK] -gt $ipNoteIdx[$ipK]))) { $ipEachFollows = $false } } }
+Write-Result -Id 'batch.wording.interpreter_prompt_note' -Desc 'Item 68: both run-command panels say a bare interpreter opens a Python prompt and show python -m pip for pip' -Pass $ipEachFollows -Details @{ commandLines = $ipCmdIdx.Count; noteLines = $ipNoteIdx.Count; pipLines = $ipPipIdx.Count }
 # derived requirement: the Miniconda URL probe must be deferred to after uv detection
 # so uv-first runs do not waste ~99 MB downloading Miniconda when it will not be used.
 # Verified by: (a) probe call appears after UV_PYTHON_PREFERENCE in the file, and
