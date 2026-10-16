@@ -47,6 +47,35 @@ plausible future addition. (History: `docs/agent-closed-backlog.md`, CLAUDE.md I
 
 ---
 
+## Pre-flight syntax check (`:preflight_compile`, REQ-021) is a fail-open emitted helper
+
+`:preflight_compile` emits `~preflight_check.py` (`HP_PREFLIGHT_CHECK`, `tools/preflight_check.py`) and runs
+it on `%HP_ENTRY%` via `%HP_PY%`. **Exit 1 is the only code that reports a syntax error and sets
+`HP_PREFLIGHT_FAILED`**; exit 0 continues; any other code, or a helper that could not be written
+(`HP_TEST_FORCE_EMIT_FAIL=HP_PREFLIGHT_CHECK` simulates it), logs a `[WARN] REQ-021:` line and continues
+(`:preflight_undecided`, `:preflight_no_helper`), so a broken check can never stop a program that may be valid
+(REQ-021.4). The helper compiles in memory and writes nothing, which is what keeps `__pycache__` out of the
+picture (REQ-021.5); do not go back to `py_compile`/`compileall`, which write a `.pyc` and exit 1 when they
+cannot (Item 83). Coupled by exact strings: `Your Python program has a syntax error` and `REQ-021: entry failed`
+(`self.preflight.syntax`, `self.preflight.pycache.*`), and the call site line `"%HP_PY%" "~preflight_check.py"
+"%HP_ENTRY%"` plus the comment text `REQ-021: static pre-flight -- check the entry syntax` (`batch.preflight.compile`
+in `tests/harness.ps1`, `BatchCallSite` in `tests/test_preflight_check.py`). The call to `:define_helper_payloads`
+(see the first section) already precedes this subroutine.
+
+**A second caller of the same helper: `:verify_find_entry_helper`** (checks the bootstrapper's own
+`~find_entry.py` before entry selection) emits `~preflight_check.py` itself and runs it on the helper. It used to
+run `py_compile` too, so an unwritable `__pycache__` failed it and the run stopped with `Could not determine entry
+point` before `:preflight_compile` was ever reached (found by `self.preflight.pycache.unwritable`, whose row reports
+`entryNotFound`/`helperCheckFailed`). Any new check of a file in the app folder must go through this helper, never
+`py_compile`. Same fail-open rule as the entry check (REQ-021.4): exit 0 verifies the helper, exit 1 is a real syntax error
+in it, and anything else (or a checker that could not be written) logs `[WARN] REQ-021: the find_entry syntax
+check could not run` and goes on. The `helper.find_entry.syntax` row says which happened with `details.checked`
+(`false` = not verified), so a pass never hides an unchecked helper. The exit code is copied to `HP_HELPER_RC`
+at top level first (`if errorlevel N` is signed, so a negative code would read as 0).
+The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and discards the result.
+
+---
+
 ## Concurrent-instance lock (REQ-024) touches every exit path
 
 The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`) is released only at `:die` and

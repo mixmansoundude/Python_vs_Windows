@@ -1,9 +1,9 @@
 # ASCII only
-# selfapps_preflight.ps1 - REQ-021: static py_compile pre-flight.
+# selfapps_preflight.ps1 - REQ-021: static syntax pre-flight.
 # A user entry with a SyntaxError must be reported clearly and EARLY (attributed to the
 # user's code) and stop the run gracefully BEFORE the doomed PyInstaller build -- not surface
-# later as a confusing "[ERROR] PyInstaller execution failed". py_compile shares the
-# interpreter's parser, so this has zero false positives for the entry file.
+# later as a confusing "[ERROR] PyInstaller execution failed". The check compiles the entry in memory
+# with the interpreter's own parser, so it has zero false positives for the entry file.
 #
 # Lane: real and conda-full only.
 param()
@@ -29,7 +29,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.syntax'
-        req     = 'REQ-021'
+        req     = 'REQ-021.2'
         pass    = $true
         desc    = 'REQ-021 pre-flight: syntax error reported + graceful stop (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
@@ -41,7 +41,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.syntax'
-        req     = 'REQ-021'
+        req     = 'REQ-021.2'
         pass    = $false
         desc    = 'REQ-021 pre-flight: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
@@ -54,8 +54,8 @@ if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
-# derived requirement: entry.py has an unambiguous SyntaxError (unclosed paren). py_compile
-# exits non-zero with a SyntaxError on stderr; the pre-flight surfaces it and stops the run.
+# derived requirement: entry.py has an unambiguous SyntaxError (unclosed paren). The check
+# exits 1 with a SyntaxError on stderr; the pre-flight surfaces it and stops the run.
 # HP_SKIP_PIPREQS=1 keeps pipreqs from any network lookup.
 Set-Content -Path (Join-Path $workDir 'entry.py') -Value @'
 print("this program has a syntax error"
@@ -89,7 +89,7 @@ $combined = ($logLines -join "`n") + "`n" + $setupTxt
 
 # Assertions:
 #  - REQ-021 error message present and mentions a syntax error
-#  - the SyntaxError detail (py_compile stderr) made it through
+#  - the SyntaxError detail (the check's stderr) made it through
 #  - bootstrap status state == error (graceful stop, not a crash)
 #  - the run did NOT reach the doomed PyInstaller build (no "PyInstaller execution failed")
 #  - no EXE was produced
@@ -108,7 +108,7 @@ $pass = $req021Fired -and $syntaxDetail -and $stateError -and $noPyiCrash
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.syntax'
-    req     = 'REQ-021'
+    req     = 'REQ-021.2'
     pass    = $pass
     desc    = 'REQ-021 pre-flight: SyntaxError reported clearly and run stops gracefully before the build'
     details = [ordered]@{

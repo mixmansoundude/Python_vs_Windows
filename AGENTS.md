@@ -80,6 +80,57 @@ When adding a new branch or fallback:
 - Exception: pure documentation changes, and fixes where no CI check can observe the symptom. For
   the exception, say why in the PR description and name the check that would have caught it.
 
+## New tests gate immediately (mandatory)
+- A new test gates from its first run. A red new test usually means the test is still being written,
+  and red holds auto-merge, which is the safe outcome. Do not park a new test in a non-gating lane or
+  behind `continue-on-error` so that it can "soak" first, and do not hide a red row to look green.
+- Only a test whose failure can come from a transient network or provider condition rather than from
+  the code (a download, a third-party installer, a test that deliberately bypasses a fallback) may start
+  non-gating. Say why in the PR description, keep its row visible in the diagnostics, and watch it on
+  every run: a failure that looks transient can turn out to be permanent.
+- No false green. Putting a test in a non-gating lane, or dropping a row from the shared results,
+  never turns a failing result green: the check either asserts the expected failure and its reason, or
+  the row stays red.
+- Promoting an EXISTING non-gating lane or row (CLAUDE.md Item 35) still needs several consecutive
+  complete green matrices first; that is a different question from how a new test starts.
+
+## Writing README requirements (mandatory)
+The README is the specification, so a requirement in it has to be something a test, a demonstration, an
+inspection or an analysis can settle. This is a light reference to formal practice (NASA Systems Engineering
+Handbook, SP-2016-6105, Appendix C on writing requirements; the INCOSE Guide to Writing Requirements); when
+a case is unclear, read those and keep the intent of the existing text.
+- **Keywords.** `shall` is a binding, verifiable requirement. `should` is a goal or preference. `will` is a
+  statement of fact. Use no other modal verb in a requirement, and never `must`, `may` or `might` in a shall.
+- **Section shape.** A `[REQ-nnn]` section opens with its goal, written with `should`, and keeps that id.
+  Beneath it, each verifiable requirement is one `shall` with its own id `REQ-nnn.m`, a criticality tag
+  (`[critical]`, `[major]` or `[minor]`) and nothing else in its bullet. Rationale, mechanism, file names,
+  commands, flags and examples go in a "Notes (non-normative)" block after the shalls, never in a shall.
+  Every goal has at least one shall under it (`tests/test_req_trace.py` fails a converted section without
+  one), and every shall has a stable id: do not renumber or reuse one.
+- **One shall, one thought** (NASA Appendix C): one subject and one predicate, so a sentence joined by "and"
+  or "when ... otherwise" becomes two ids. Active voice with a named subject ("the bootstrapper shall").
+  State the need, not the means. Positive form ("shall complete", not "shall never abort"), unless the
+  prohibition is the need. Use defined terms from the README's Terms section and the definite article.
+- **No vague or open words in a shall**: "about", "such as", "etc.", "and/or", "as appropriate", "fast",
+  "user-friendly", "TBD". Give limits as numbers (10 seconds, 3 rebuilds) and lists in full. A figure or
+  a list in a shall is checked against the code before it is written.
+- **Verifiable means any of four methods**: test, demonstration, inspection (read the code, the log or the
+  command line) or analysis. A shall is not demoted to a goal because no CI row covers it today; a missing
+  row is a gap in the trace, which `tests/test_req_trace.py` and `docs/plan-test-suite-gaps.md` track. An
+  absolute negative that no method can settle (for example "contains only the libraries the program uses")
+  is a goal; keep a shall for the part that can be checked (which libraries are excluded, and when).
+- **Tests trace to shalls.** A row's `req` tag names the sub-id it verifies (`REQ-021.4`), and one shall may
+  have several rows. A new shall gets its row in the same change, written first and read red.
+- **Terms, flags and status.** Words such as "interactive run" are defined once in the Terms section, by the
+  documented controls (`NOINPUT`, `HP_NONINTERACTIVE`, and the CI marker `HP_CI_LANE`); `HP_TEST_*` hooks
+  never appear in a shall. Words about build status ("built", "planned", "decided, not yet built") do not
+  belong in the README; status lives in CLAUDE.md and the traceability notes.
+- **README and code disagree.** If the difference is only how a goal is reached, raise the shall to the
+  goal and move the mechanism to the notes. If the code does not meet the goal, that is a bug: file it and
+  keep the shall. If the owner has to choose, add the question to `docs/open-questions.md`.
+- **Convert incrementally.** Rewrite a requirement's section in the change that works on its tests, not in
+  a bulk restructure, and keep its existing prose where the intent is not yet restated.
+
 ## Conda policy (mandatory)
 - Enforce conda-forge only.
 - Before any update/install:
