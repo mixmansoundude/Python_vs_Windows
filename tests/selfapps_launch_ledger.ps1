@@ -321,7 +321,9 @@ Write-NdjsonRow ([ordered]@{
     desc = 'REQ-018: an accepted post-execution checkpoint adds exactly one interpreter run after the EXE run'
     details = [ordered]@{ exitCode = $exitD; ledgerLines = $linesD.Count; expectedLines = 2; checkpointAccepted = [bool]$checkpointAccepted; firstFrozen = if ($d0) { $d0.frozen } else { $null }; secondFrozen = if ($d1) { $d1.frozen } else { $null } }
 })
-$dArgvPass = ($linesD.Count -eq 2) -and ($null -ne $d1) -and ($d1.frozen -eq $false) -and (Test-ArgvEqual $d1.argv $expectedArgv)
+# REQ-026.4: the checkpoint run gets the SAME arguments as the first run, so both launches are checked (CodeRabbit, PR #494).
+$dArgvPass = ($linesD.Count -eq 2) -and ($null -ne $d0) -and ($null -ne $d1) -and ($d1.frozen -eq $false) -and
+    (Test-ArgvEqual $d0.argv $expectedArgv) -and (Test-ArgvEqual $d1.argv $d0.argv)
 Write-NdjsonRow ([ordered]@{
     id = 'self.launch.argv.checkpoint'; req = 'REQ-026.4'; pass = [bool]$dArgvPass
     desc = 'REQ-026: the accepted post-execution checkpoint run receives the same forwarded arguments'
