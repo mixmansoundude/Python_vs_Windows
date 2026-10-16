@@ -151,6 +151,67 @@ class CommandLine(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class PackagesAndAppend(unittest.TestCase):
+    """Slice 2 modes: module -> package for the consented install, and the requirements.txt edit."""
+
+    def _run(self, files, *args):
+        d = Path(tempfile.mkdtemp())
+        try:
+            for name, data in files.items():
+                (d / name).write_bytes(data)
+            r = subprocess.run([sys.executable, str(SOURCE)] + list(args), cwd=str(d),
+                               capture_output=True, text=True)
+            return r, {n.name: n.read_bytes() for n in d.iterdir()}
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_packages_maps_known_names_and_passes_the_rest_through(self):
+        r, _ = self._run({"m.txt": b"xlsxwriter\ncv2\nsklearn\n"}, "--packages", "m.txt", "uv")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.splitlines(),
+                         ["xlsxwriter xlsxwriter", "cv2 opencv-python", "sklearn scikit-learn"])
+
+    def test_conda_uses_the_conda_forge_name_for_cv2_only(self):
+        r, _ = self._run({"m.txt": b"cv2\nsklearn\n"}, "--packages", "m.txt", "conda")
+        self.assertEqual(r.stdout.splitlines(), ["cv2 opencv", "sklearn scikit-learn"])
+
+    def test_packages_drops_anything_that_is_not_a_plain_identifier(self):
+        r, _ = self._run({"m.txt": b"ok_mod\nbad name\nx&y\n..\n"}, "--packages", "m.txt", "uv")
+        self.assertEqual(r.stdout.splitlines(), ["ok_mod ok_mod"])
+
+    def test_append_adds_only_what_is_not_declared_and_keeps_line_endings(self):
+        req = b"numpy==1.26\r\nPillow>=10 ; python_version > '3.8'"  # no trailing newline, CRLF file
+        ok = b"PIL pillow\nxlsxwriter xlsxwriter\nfoo_bar foo_bar\n"
+        r, files = self._run({"requirements.txt": req, "ok.txt": ok}, "--append", "requirements.txt", "ok.txt")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split(), ["xlsxwriter", "foo_bar"])
+        self.assertEqual(files["requirements.txt"],
+                         b"numpy==1.26\r\nPillow>=10 ; python_version > '3.8'\r\nxlsxwriter\r\nfoo_bar\r\n")
+
+    def test_append_treats_dash_underscore_and_case_as_the_same_name(self):
+        r, files = self._run({"requirements.txt": b"Foo_Bar==1\n", "ok.txt": b"foo-bar foo-bar\n"},
+                             "--append", "requirements.txt", "ok.txt")
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(files["requirements.txt"], b"Foo_Bar==1\n")
+
+    def test_append_creates_the_file_when_there_is_none(self):
+        r, files = self._run({"ok.txt": b"xlsxwriter xlsxwriter\n"}, "--append", "requirements.txt", "ok.txt")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(files["requirements.txt"], b"xlsxwriter\n")
+
+
+class TableMatchesWarnfix(unittest.TestCase):
+    def test_every_name_but_cv2_agrees_with_parse_warn(self):
+        spec = importlib.util.spec_from_file_location("parse_warn_for_table", REPO / "tools" / "parse_warn.py")
+        pw = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pw)
+        for mod, pkg in scan._PIP.items():
+            if mod == "cv2":
+                continue  # warnfix says opencv (the conda-forge name); PyPI's name is opencv-python
+            with self.subTest(module=mod):
+                self.assertEqual(pw.TRANSLATIONS.get(mod), pkg)
+
+
 class BatchCallSites(unittest.TestCase):
     def setUp(self):
         self.bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
@@ -176,6 +237,18 @@ class BatchCallSites(unittest.TestCase):
         body = self.bat[i:self.bat.index("exit /b 0", i)]
         self.assertIn('"%DEP_SOURCE%"=="pyproject"', body)
         self.assertIn('"%DEP_SOURCE%"=="pep723"', body)
+
+    def test_the_install_does_not_edit_requirements_when_another_file_is_the_source(self):
+        # Slice 2: a pyproject.toml or PEP 723 dependency source is copied over requirements.txt on every
+        # run, so an appended line would be lost. The edit is skipped and the user told which file to edit.
+        i = re.search(r"(?m)^:runtime_install_offer", self.bat).start()
+        block = self.bat[i:self.bat.index("\n:rti_install_one", i)]
+        self.assertIn('if /I "%DEP_SOURCE%"=="pyproject" set "HP_RTI_EDITS="', block)
+        self.assertIn('if /I "%DEP_SOURCE%"=="pep723" set "HP_RTI_EDITS="', block)
+        skip = block.index("if not defined HP_RTI_EDITS goto :rti_not_edited")
+        self.assertLess(skip, block.index('--append "requirements.txt"'))
+        self.assertIn("did not edit %HP_RTM_WHERE%", block)
+        self.assertIn("depSource=[Environment]::GetEnvironmentVariable('DEP_SOURCE')", self.bat)
 
     def test_the_reminder_is_printed_before_the_lock_is_released(self):
         i = self.bat.index("if defined HP_RTM_FOUND call :print_runtime_missing_reminder")

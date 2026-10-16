@@ -688,6 +688,21 @@ prove its own precondition (`Entry smoke exit=0` AND the traceback in `~run.err.
 new report. A stdlib name in that message is not a pip problem (the embeddable Python has no tkinter), so
 `runtime_module_scan.py` skips it. See `docs/agent-interconnect.md`'s "Runtime missing-module scan".
 
+**A package the program loads by a computed name is invisible to PyInstaller, so installing it is not
+enough for an EXE** (Item 65 slice 2). The environment gets the package, but the rebuilt EXE only contains
+what the build could see, so the install flow rebuilds with `--hidden-import=X --collect-submodules=X`. The
+CI fixture proves this by accident of design: its check run can only pass if the flag was used.
+
+**Re-running the verification subroutine from inside itself needs a flag that every elective step honors.**
+`:runtime_install_offer` calls `:run_exe_smokerun`/`:verify_no_exe_interpreter` again with
+`HP_RTI_VERIFYING=1`; the nested pass must not offer again, must not ask the elective checkpoint and
+optimized-build questions, and must not clear `HP_EXE_EXIT` (the outer call reads it afterwards). When adding
+a new prompt or cleanup to those subroutines, check it against that flag. A per-bootstrap guard
+(`HP_RTI_OFFERED`) is separate and is what stops a cascade tier from asking twice.
+
+**`HP_RUNTIME_MODULE_SCAN` has 354 characters of payload headroom left.** The slice 2 modes (package table,
+requirements append) took most of it; check `tools/sync_payload.py`'s margin line before the next addition.
+
 ---
 
 ## Heuristic dep-augmentation must strip pip extras before name lookup
