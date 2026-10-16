@@ -1595,7 +1595,9 @@ set "HP_PIPREQS_BLOCKED_WARNED="
 set "HP_PIPREQS_LAST_LOG="
 set "HP_PIPREQS_DIRECT_LOG=~pipreqs_direct.log"
 if exist "%HP_PIPREQS_DIRECT_LOG%" del "%HP_PIPREQS_DIRECT_LOG%"
-set "HP_PIPREQS_STAGE_LOG=~pipreqs_stage.log"
+rem derived requirement: Item 81 -- the staging scan runs after pushd into a copy that is deleted afterwards, so a
+rem relative log name put the log inside the copy and the summary lost its tail; the absolute path keeps it in the app folder.
+set "HP_PIPREQS_STAGE_LOG=%CD%\~pipreqs_stage.log"
 if exist "%HP_PIPREQS_STAGE_LOG%" del "%HP_PIPREQS_STAGE_LOG%"
 set "HP_PIPREQS_STAGE_COPY_LOG=~pipreqs_stage_copy.log"
 if exist "%HP_PIPREQS_STAGE_COPY_LOG%" del "%HP_PIPREQS_STAGE_COPY_LOG%"
