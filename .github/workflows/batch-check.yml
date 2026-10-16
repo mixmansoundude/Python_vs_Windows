@@ -1543,6 +1543,12 @@ jobs:
         run: |
           & tests\selfapps_pyvisa.ps1
 
+      - name: "Self-test: NI-VISA install asks before running for a subfolder-only import (real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pyvisa_subfolder.ps1
+
       - name: "Self-test: pyproject.toml Python version precedence (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2544,6 +2550,22 @@ jobs:
             tests\~pyvisa_disabled\~pyvisa_disabled_bootstrap.log
             tests/~pyvisa_disabled/~setup.log
             tests\~pyvisa_disabled\~setup.log
+            tests/~selftest_pyvisa_sub_declined/~pyvisa_sub_declined.log
+            tests\~selftest_pyvisa_sub_declined\~pyvisa_sub_declined.log
+            tests/~selftest_pyvisa_sub_declined/~setup.log
+            tests\~selftest_pyvisa_sub_declined\~setup.log
+            tests/~selftest_pyvisa_sub_accepted/~pyvisa_sub_accepted.log
+            tests\~selftest_pyvisa_sub_accepted\~pyvisa_sub_accepted.log
+            tests/~selftest_pyvisa_sub_accepted/~setup.log
+            tests\~selftest_pyvisa_sub_accepted\~setup.log
+            tests/~selftest_pyvisa_sub_topfolder/~pyvisa_sub_topfolder.log
+            tests\~selftest_pyvisa_sub_topfolder\~pyvisa_sub_topfolder.log
+            tests/~selftest_pyvisa_sub_topfolder/~setup.log
+            tests\~selftest_pyvisa_sub_topfolder\~setup.log
+            tests/~selftest_pyvisa_sub_timeout/~pyvisa_sub_timeout.log
+            tests\~selftest_pyvisa_sub_timeout\~pyvisa_sub_timeout.log
+            tests/~selftest_pyvisa_sub_timeout/~setup.log
+            tests\~selftest_pyvisa_sub_timeout\~setup.log
             tests/~pyproject_prec/~pyproject_prec_bootstrap.log
             tests\~pyproject_prec\~pyproject_prec_bootstrap.log
             tests/~pyproject_prec/~setup.log

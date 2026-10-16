@@ -1045,6 +1045,27 @@ self.runtime.install.decline
 self.runtime.install.pyproject
 ```
 
+## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
+
+CLAUDE.md Item 78 slice 2 (README REQ-008). An `import visa` that sits only below a subfolder (an archived
+older program) must not start a 30 to 45 minute NI-VISA driver install without asking, and the log always
+names the file that triggered the install branch. Four real runs, each in its own folder (a second run in one
+folder would take the cached-EXE fast path and never reach the VISA step); the gate sits after the
+`HP_SKIP_NIVISA` and already-installed checks, so a runner without NI-VISA reaches it, and `accepted` really
+enters the install branch like `selfapps_pyvisa.ps1` does (any ending counts). `declined` (CI lane auto-decline: the
+`found in: archive\old_tool.py (subfolder)` line in `~setup.log`, the prompt echoed on the console,
+`[VISA] skipped (subfolder_only)`, no download, no installer file), `accepted` (`HP_TEST_VISA_ANSWER=Y`: the
+accepted line, then a `[VISA]` install-branch line, no `subfolder_only`), `topfolder` (the import next to
+`run_setup.bat` with `HP_SKIP_NIVISA=1`: logged as `(top folder)`, no prompt, `skipped (disabled)`), `timeout` (`HP_TEST_FORCE_INTERACTIVE_VISA=1`
+reaches the timed `choice` prompt, shrunk to 2 seconds, nobody answers, default no). Skips with `skip=true,
+reason=non-windows-host` off Windows. Expected red on the commit that adds it (the scanner printed only 0 or
+1 and the batch never asked). The unit side is `tests/test_detect_visa.py` (the 0/1/2 contract, the three-path
+cap, the character set of the logged path).
+
+```
+self.nivisa.subfolder.declined, self.nivisa.subfolder.accepted, self.nivisa.topfolder.noprompt, self.nivisa.subfolder.timeout
+```
+
 ## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
 
 CLAUDE.md Item 65 slice 1. `:report_runtime_missing_module` writes `self.runtime.module_missing`

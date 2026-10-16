@@ -71,6 +71,7 @@ tests/
   selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
   selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
+  selfapps_pyvisa_subfolder.ps1 Item 78 slice 2: NI-VISA install asks before running when the import is only in a subfolder (real and conda-full lanes, gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
   dynamic_tests.py             Python-side entry detection and version precedence tests
