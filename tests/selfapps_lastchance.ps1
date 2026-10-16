@@ -27,6 +27,14 @@
 #   self.lastchance.cascade       answer C: the cascade runs uv to conda and the program passes on conda, with
 #                                 the prompt shown exactly once
 #   self.lastchance.cascade_again the program fails on conda too: the prompt is not shown a second time
+#   self.lastchance.window_yes    Item 82 slice 2: on the conda tier reached through the cascade, a silent program the
+#                                 smoke runner really force-stopped raises the question "Did it open and work?";
+#                                 an explicit yes is recorded as pass type user_confirmed
+#   self.lastchance.window_enter  the same question read from a real set /p, a bare Enter means no and records nothing
+#   self.lastchance.window_auto   no override in an automated run: the question is shown, resolves to no, nothing recorded
+#   self.lastchance.window_selfexit a program that exits by itself with -1 on the conda tier (the same exit code as a
+#                                 force-stop) and a stale kill marker left by the earlier tier: the question is absent,
+#                                 because only the smoke runner stopping a silent process may raise it
 #
 # The group comes from LASTCHANCE_GROUP (real or uv); unset runs both. Windows only.
 param()
@@ -141,6 +149,24 @@ print("RuntimeError: this provider cannot run the program", file=sys.stderr)
 sys.exit(3)
 '@
 
+# Fails on uv (leaving a stale kill marker first when __UV_EXTRA__ asks for it) and behaves like a window app, or exits
+# by itself with -1, on conda. HP_ENV_MODE is inherited from the bootstrapper.
+$appWindowTemplate = @'
+import os
+import sys
+import time
+
+if os.environ.get("HP_ENV_MODE", "") == "conda":
+    __CONDA_BODY__
+__UV_EXTRA__
+print("Traceback (most recent call last):", file=sys.stderr)
+print("RuntimeError: this provider cannot run the program", file=sys.stderr)
+sys.exit(3)
+'@
+$condaSilent   = 'time.sleep(600)'
+$condaSelfExit = 'print("conda tier exits by itself", flush=True); sys.exit(-1)'
+$uvStaleMarker = 'open("~smokerun_killed.txt", "w").write("stale"); print("stale marker written")'
+
 # Runs one bootstrap of a fixture and returns everything the rows need. $EnvVars is a hashtable of extra
 # environment variables for this run; $Stdin, when given, is the text the bootstrapper reads as the console.
 function Invoke-LastChance {
@@ -193,6 +219,7 @@ function Invoke-LastChance {
     }
     $offerRows = @($rows | Where-Object { $_.id -eq 'self.lastchance.offer' })
     $offerRow  = $offerRows | Select-Object -First 1
+    $lastRow   = $offerRows | Select-Object -Last 1
     $exeFiles  = @()
     $distDir = Join-Path $workDir 'dist'
     if (Test-Path -LiteralPath $distDir) { $exeFiles = @(Get-ChildItem -LiteralPath $distDir -Filter '*.exe' -ErrorAction SilentlyContinue) }
@@ -214,6 +241,12 @@ function Invoke-LastChance {
         RowExit    = if ($offerRow) { [string]$offerRow.details.exitCode } else { $null }
         PassType   = if ($offerRow) { [string]$offerRow.details.passType } else { $null }
         HasLine    = if ($offerRow) { [string]$offerRow.details.hasLine } else { $null }
+        LastState    = if ($lastRow) { [string]$lastRow.details.state } else { $null }
+        LastPassType = if ($lastRow) { [string]$lastRow.details.passType } else { $null }
+        LastProvider = if ($lastRow) { [string]$lastRow.details.provider } else { $null }
+        LastExit     = if ($lastRow) { [string]$lastRow.details.exitCode } else { $null }
+        StaleLeft    = (Test-Path -LiteralPath (Join-Path $workDir '~smokerun_killed.txt'))
+        WindowPrompt = ($console -match 'Did it open and work')
         ExeKept    = ($exeFiles.Count -gt 0)
         TopNames   = $topNames
         PromptCount = ([regex]::Matches($console, 'Your program stopped with an error')).Count
@@ -381,7 +414,7 @@ if ($runUv) {
     $t = Invoke-LastChance -Name 'timeout' -AppCode $appSilent -EnvVars @{ HP_SMOKERUN_KILL_MS = '6000'; HP_TEST_LASTCHANCE_ANSWER = 'C' }
     $tPrecond = ($t.SetupText -match 'Entry smoke exit=-1') -and ($t.SetupText -match 'Run Status: TIMED OUT')
     $tPass = $tPrecond -and ($t.Console -notmatch 'Your program stopped with an error') -and ($t.SetupText -notmatch 'Last chance') -and
-             ($t.SetupText -notmatch 'cascading provider') -and ($t.OfferRows -eq 0)
+             ($t.SetupText -notmatch 'cascading provider') -and ($t.OfferRows -eq 0) -and (-not $t.WindowPrompt)
     if (-not $tPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.timeout'
@@ -393,6 +426,7 @@ if ($runUv) {
             precondition = $tPrecond
             promptCount  = $t.PromptCount
             offerRows    = $t.OfferRows
+            windowPrompt = $t.WindowPrompt
         }
     })
 
@@ -405,7 +439,8 @@ if ($runUv) {
     $hcCascaded = ($hc.SetupText -match 'cascading provider uv to conda') -and ($hc.SetupText -match 'Last chance: cascade approved')
     $hcPassedOnConda = ($hc.SetupText -match 'Entry smoke exit=0') -and ($hc.SetupText -match 'Run Status: SUCCESS')
     $hcOnce = ($hc.PromptCount -eq 1) -and ($hc.OfferRows -eq 1)
-    $hcPass = $hcPrecond -and $hcCascaded -and $hcPassedOnConda -and $hcOnce -and ($hc.State -eq 'cascade') -and ($hc.Provider -eq 'uv')
+    $hcPass = $hcPrecond -and $hcCascaded -and $hcPassedOnConda -and $hcOnce -and ($hc.State -eq 'cascade') -and ($hc.Provider -eq 'uv') -and
+              (-not $hc.WindowPrompt)
     if (-not $hcPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.cascade'
@@ -421,6 +456,7 @@ if ($runUv) {
             offerRows     = $hc.OfferRows
             rowState      = $hc.State
             rowProvider   = $hc.Provider
+            windowPrompt  = $hc.WindowPrompt
         }
     })
 
@@ -434,7 +470,8 @@ if ($runUv) {
     $haFailedOnConda = $ha.SetupText -match 'Entry smoke exit=4'
     $haNotAgain = ($ha.PromptCount -eq 1) -and ($ha.OfferRows -eq 2)
     $haSecondRow = @($ha.SetupText -split "`n" | Where-Object { $_ -match 'Last chance: not offered \(provider\)' }).Count -ge 1
-    $haPass = $haPrecond -and $haCascaded -and $haFailedOnConda -and $haNotAgain -and $haSecondRow -and ($ha.State -eq 'cascade')
+    $haPass = $haPrecond -and $haCascaded -and $haFailedOnConda -and $haNotAgain -and $haSecondRow -and ($ha.State -eq 'cascade') -and
+              (-not $ha.WindowPrompt)
     if (-not $haPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.cascade_again'
@@ -450,6 +487,114 @@ if ($runUv) {
             offerRows      = $ha.OfferRows
             notOfferedLogged = $haSecondRow
             rowState       = $ha.State
+            windowPrompt   = $ha.WindowPrompt
+        }
+    })
+
+    # ---- window_*: Item 82 slice 2. uv fails, answer C cascades, conda runs a silent program the runner stops ----
+    $windowApp = $appWindowTemplate.Replace('__CONDA_BODY__', $condaSilent).Replace('__UV_EXTRA__', '')
+    $windowEnv = @{ HP_TEST_LASTCHANCE_ANSWER = 'C'; HP_TEST_SYSCON_ANSWER = 'N'; HP_SMOKERUN_KILL_MS = '6000' }
+    $windowQuestionShown = 'Did it open and work'
+
+    $wy = Invoke-LastChance -Name 'window_yes' -AppCode $windowApp -EnvVars ($windowEnv + @{ HP_TEST_WINDOWOK_ANSWER = 'Y' })
+    $wyPrecond = ($wy.SetupText -match 'Entry smoke exit=3') -and ($wy.SetupText -match 'cascading provider uv to conda') -and
+                 ($wy.SetupText -match 'Entry smoke exit=-1') -and ($wy.SetupText -match 'Run Status: TIMED OUT')
+    $wyAsked = $wy.WindowPrompt -and ($wy.PromptCount -eq 1)
+    $wyLogged = $wy.SetupText -match 'Last chance: you said the window opened and worked'
+    $wyRecorded = ($wy.OfferRows -eq 2) -and ($wy.LastState -eq 'window_confirmed') -and ($wy.LastPassType -eq 'user_confirmed') -and
+                  ($wy.LastProvider -eq 'conda') -and ($wy.LastExit -eq '-1') -and ($wy.State -eq 'cascade')
+    $wyPass = $wyPrecond -and $wyAsked -and $wyLogged -and $wyRecorded -and (-not $wy.StaleLeft)
+    if (-not $wyPass) { $allPass = $false }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.lastchance.window_yes'
+        req     = 'REQ-018'
+        pass    = $wyPass
+        desc    = 'on the conda tier a silent program the runner force-stopped raises the question and an explicit yes records user_confirmed'
+        details = [ordered]@{
+            exitCode     = $wy.RunExit
+            precondition = $wyPrecond
+            asked        = $wyAsked
+            logged       = $wyLogged
+            recorded     = $wyRecorded
+            offerRows    = $wy.OfferRows
+            lastState    = $wy.LastState
+            lastPassType = $wy.LastPassType
+            lastProvider = $wy.LastProvider
+            lastExitCode = $wy.LastExit
+            markerLeft   = $wy.StaleLeft
+            promptCount  = $wy.PromptCount
+        }
+    })
+
+    $we = Invoke-LastChance -Name 'window_enter' -AppCode $windowApp -Stdin "`r`n" -EnvVars ($windowEnv + @{ HP_TEST_FORCE_INTERACTIVE_WINDOWOK = '1' })
+    $wePrecond = ($we.SetupText -match 'Entry smoke exit=3') -and ($we.SetupText -match 'cascading provider uv to conda') -and
+                 ($we.SetupText -match 'Entry smoke exit=-1')
+    $weAsked = $we.WindowPrompt -and ($we.Console -match '\[y/N\]')
+    $weNothing = ($we.SetupText -match 'Last chance: window not confirmed') -and ($we.SetupText -notmatch 'user_confirmed') -and
+                 ($we.OfferRows -eq 2) -and ($we.LastState -eq 'window_declined') -and ([string]::IsNullOrEmpty($we.LastPassType))
+    $wePass = $wePrecond -and $weAsked -and $weNothing
+    if (-not $wePass) { $allPass = $false }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.lastchance.window_enter'
+        req     = 'REQ-018'
+        pass    = $wePass
+        desc    = 'a bare Enter at the real window question means no and records nothing'
+        details = [ordered]@{
+            exitCode     = $we.RunExit
+            precondition = $wePrecond
+            asked        = $weAsked
+            recordedNothing = $weNothing
+            offerRows    = $we.OfferRows
+            lastState    = $we.LastState
+            lastPassType = $we.LastPassType
+        }
+    })
+
+    $wa = Invoke-LastChance -Name 'window_auto' -AppCode $windowApp -EnvVars $windowEnv
+    $waPrecond = ($wa.SetupText -match 'Entry smoke exit=3') -and ($wa.SetupText -match 'cascading provider uv to conda') -and
+                 ($wa.SetupText -match 'Entry smoke exit=-1')
+    $waNothing = ($wa.SetupText -match 'Last chance: automated run, no window question asked') -and ($wa.OfferRows -eq 2) -and
+                 ($wa.LastState -eq 'window_automated') -and ([string]::IsNullOrEmpty($wa.LastPassType))
+    $waPass = $waPrecond -and $wa.WindowPrompt -and $waNothing
+    if (-not $waPass) { $allPass = $false }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.lastchance.window_auto'
+        req     = 'REQ-019'
+        pass    = $waPass
+        desc    = 'in an automated run with no override the window question resolves to no without waiting and records nothing'
+        details = [ordered]@{
+            exitCode     = $wa.RunExit
+            precondition = $waPrecond
+            promptShown  = $wa.WindowPrompt
+            recordedNothing = $waNothing
+            offerRows    = $wa.OfferRows
+            lastState    = $wa.LastState
+        }
+    })
+
+    # The uv tier leaves a stale kill marker behind; the conda tier's program exits by itself with -1, the same code
+    # a force-stop produces. Only the runner stopping a silent process may raise the question, so it must be absent
+    # even with a yes supplied. The precondition shows the -1 really arises and the marker really was left.
+    $selfApp = $appWindowTemplate.Replace('__CONDA_BODY__', $condaSelfExit).Replace('__UV_EXTRA__', $uvStaleMarker)
+    $ws = Invoke-LastChance -Name 'window_selfexit' -AppCode $selfApp -EnvVars ($windowEnv + @{ HP_TEST_WINDOWOK_ANSWER = 'Y' })
+    $wsPrecond = ($ws.SetupText -match 'Entry smoke exit=3') -and ($ws.SetupText -match 'cascading provider uv to conda') -and
+                 ($ws.SetupText -match 'Entry smoke exit=-1') -and ($ws.Console -match 'stale marker written') -and
+                 ($ws.Console -match 'conda tier exits by itself')
+    $wsAbsent = (-not $ws.WindowPrompt) -and ($ws.SetupText -notmatch 'Last chance: you said the window') -and
+                ($ws.SetupText -notmatch 'Last chance: window not confirmed') -and ($ws.OfferRows -eq 1) -and ($ws.State -eq 'cascade')
+    $wsPass = $wsPrecond -and $wsAbsent -and (-not $ws.StaleLeft)
+    if (-not $wsPass) { $allPass = $false }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.lastchance.window_selfexit'
+        req     = 'REQ-018'
+        pass    = $wsPass
+        desc    = 'a program that exits by itself with -1 on the conda tier does not raise the window question, and a stale kill marker is cleared'
+        details = [ordered]@{
+            exitCode     = $ws.RunExit
+            precondition = $wsPrecond
+            questionAbsent = $wsAbsent
+            offerRows    = $ws.OfferRows
+            markerLeft   = $ws.StaleLeft
         }
     })
 }

@@ -2281,6 +2281,30 @@ jobs:
             tests\~selftest_lastchance_again\~run.err.txt
             tests/~selftest_lastchance_again/~sub.ndjson
             tests\~selftest_lastchance_again\~sub.ndjson
+            tests/~selftest_lastchance_window_yes/~lc_window_yes_bootstrap.log
+            tests\~selftest_lastchance_window_yes\~lc_window_yes_bootstrap.log
+            tests/~selftest_lastchance_window_yes/~setup.log
+            tests\~selftest_lastchance_window_yes\~setup.log
+            tests/~selftest_lastchance_window_yes/~sub.ndjson
+            tests\~selftest_lastchance_window_yes\~sub.ndjson
+            tests/~selftest_lastchance_window_enter/~lc_window_enter_bootstrap.log
+            tests\~selftest_lastchance_window_enter\~lc_window_enter_bootstrap.log
+            tests/~selftest_lastchance_window_enter/~setup.log
+            tests\~selftest_lastchance_window_enter\~setup.log
+            tests/~selftest_lastchance_window_enter/~sub.ndjson
+            tests\~selftest_lastchance_window_enter\~sub.ndjson
+            tests/~selftest_lastchance_window_auto/~lc_window_auto_bootstrap.log
+            tests\~selftest_lastchance_window_auto\~lc_window_auto_bootstrap.log
+            tests/~selftest_lastchance_window_auto/~setup.log
+            tests\~selftest_lastchance_window_auto\~setup.log
+            tests/~selftest_lastchance_window_auto/~sub.ndjson
+            tests\~selftest_lastchance_window_auto\~sub.ndjson
+            tests/~selftest_lastchance_window_selfexit/~lc_window_selfexit_bootstrap.log
+            tests\~selftest_lastchance_window_selfexit\~lc_window_selfexit_bootstrap.log
+            tests/~selftest_lastchance_window_selfexit/~setup.log
+            tests\~selftest_lastchance_window_selfexit\~setup.log
+            tests/~selftest_lastchance_window_selfexit/~sub.ndjson
+            tests\~selftest_lastchance_window_selfexit\~sub.ndjson
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log

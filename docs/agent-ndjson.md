@@ -985,6 +985,22 @@ row `cascade`); `self.lastchance.cascade_again` (the program fails on conda too:
 tier writes row `not_offered` with reason `provider`). All skip with `skip=true, reason=non-windows-host` off
 Windows. Expected red on the commit that adds them (no offer exists) and green once `:last_chance_offer` exists.
 
+Item 82 slice 2 adds four more uv-lane rows for the "Did it open and work?" question of a window app on the conda
+tier reached through the cascade. Each scenario is one fixture that fails on uv (so the slice 1 prompt is raised and
+answered `C` through `HP_TEST_LASTCHANCE_ANSWER`), then on conda stays silent until the runner force-stops it
+(`HP_SMOKERUN_KILL_MS=6000`); the answer comes from `HP_TEST_WINDOWOK_ANSWER`, the automated-run guards, or a real
+`set /p` (`HP_TEST_FORCE_INTERACTIVE_WINDOWOK`). `self.lastchance.window_yes` (answer Y: the question is shown once,
+log `Last chance: you said the window opened and worked`, second offer row `window_confirmed` with `passType`
+`user_confirmed`, provider `conda`, `exitCode` `-1`); `self.lastchance.window_enter` (a bare Enter at the real prompt:
+`window_declined`, no pass type); `self.lastchance.window_auto` (no override in an automated run: the question text is
+echoed, `window_automated`, no pass type, no wait); `self.lastchance.window_selfexit` (the conda-tier program exits by
+itself with `-1`, the same code a force-stop produces, after the uv tier left a stale `~smokerun_killed.txt`: the
+question is absent even with a Y supplied, only the slice 1 row exists, and the marker is gone). The existing
+`timeout`, `cascade` and `cascade_again` rows also assert the question never shows (`windowPrompt` false). The
+`selfexit` row is a negative control, so on the red run it passes for the wrong reason; its precondition fields
+(`Entry smoke exit=-1` on conda, `stale marker written`) are what show the old `-1` gate could not tell the two cases
+apart.
+
 ```
 self.lastchance.worked
 self.lastchance.errline
@@ -994,13 +1010,19 @@ self.lastchance.exit0
 self.lastchance.timeout
 self.lastchance.cascade
 self.lastchance.cascade_again
+self.lastchance.window_yes
+self.lastchance.window_enter
+self.lastchance.window_auto
+self.lastchance.window_selfexit
 ```
 
 ## Last-chance offer row (run_setup.bat, written only when HP_NDJSON is defined)
 
 CLAUDE.md Item 82 slice 1. `:lc_row` writes `self.lastchance.offer` once per call of `:last_chance_offer` that
 reached a state, which is only after a non-zero, non-`-1` verification exit on a fresh build: `details.state` is
-`worked`, `cascade`, `neither`, `automated` (a guard answered) or `not_offered`; `details.reason` is set for
+`worked`, `cascade`, `neither`, `automated` (a guard answered) or `not_offered`; slice 2 adds `window_confirmed`,
+`window_declined` and `window_automated` for the conda-tier window question (written only when the runner really
+stopped a silent process, with `exitCode` `-1`); `details.reason` is set for
 `not_offered` (`provider`, `cascade_approved`, `checkpoint_ok`, `runtime_install`); `details.site` is `exe` or
 `interpreter`; `details.provider` is `HP_ENV_MODE`; `details.exitCode` is the failing exit; `details.passType` is
 `user_confirmed` for `worked` (the Item 66 record will carry it); `details.hasLine` says whether an error line was

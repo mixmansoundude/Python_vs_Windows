@@ -173,6 +173,59 @@ class KillTimeout(unittest.TestCase):
         self.assertIn("$killMs = 30000", text)
 
 
+SELF_EXIT_SILENT_SCRIPT = """
+import sys
+sys.exit(-1)
+"""
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class KilledMarker(unittest.TestCase):
+    # Item 82 slice 2: ~smokerun_killed.txt exists exactly when Kill() stopped a silent process. A result of -1
+    # alone is not proof, because the result file also reads -1 for a program that exits with -1 by itself.
+    def _marker(self, d):
+        return Path(d) / "~smokerun_killed.txt"
+
+    def test_a_silent_hang_that_is_killed_leaves_the_marker(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "hang", HANG_SILENT_SCRIPT)
+            env = {"HP_SMOKERUN_KILL_MS": "500"}
+            proc = _run_smokerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "-1")
+            self.assertTrue(self._marker(d).exists())
+
+    def test_a_fast_exit_leaves_no_marker(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "fast", FAST_SCRIPT)
+            proc = _run_smokerun(d, script, {})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(self._marker(d).exists())
+
+    def test_output_then_a_long_run_is_never_killed_and_leaves_no_marker(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "outlonghang", OUTPUT_THEN_LONG_SCRIPT)
+            env = {"HP_SMOKERUN_KILL_MS": "300"}
+            proc = _run_smokerun(d, script, env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(_result(d, env), "7")
+            self.assertFalse(self._marker(d).exists())
+
+    def test_a_silent_program_that_exits_by_itself_leaves_no_marker(self):
+        # sys.exit(-1) reads 255 on Linux and -1 on Windows; either way nobody stopped it.
+        with tempfile.TemporaryDirectory() as d:
+            script = _make_script(d, "selfexit", SELF_EXIT_SILENT_SCRIPT)
+            proc = _run_smokerun(d, script, {"HP_SMOKERUN_KILL_MS": "20000"})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertFalse(self._marker(d).exists())
+
+    def test_the_marker_is_written_only_in_the_kill_branch(self):
+        text = SOURCE.read_text(encoding="utf-8")
+        self.assertEqual(text.count("~smokerun_killed.txt"), 2)  # one comment line, one write
+        kill = text.index("$p.Kill()")
+        self.assertIn("~smokerun_killed.txt", text[kill:kill + 120])
+
+
 @unittest.skipUnless(PWSH, "pwsh not available")
 class ActivityAwareStop(unittest.TestCase):
     def test_output_before_deadline_prevents_kill_even_past_deadline(self):
