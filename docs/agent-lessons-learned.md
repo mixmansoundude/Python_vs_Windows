@@ -647,7 +647,10 @@ error" for it (Item 83, REQ-021.4). When the write works it leaves the `.pyc` in
 (`tools/preflight_check.py`); catch `SyntaxError` (covers `IndentationError`, `TabError`, bad encodings) and,
 before 3.12, `ValueError` for a null byte, and treat everything else as "could not decide, continue". Passing
 bytes to `compile` honours a coding cookie and a BOM exactly as the interpreter does. Reproduce locally with
-`touch __pycache__` in a scratch folder and `python3 -m py_compile good.py`.
+`touch __pycache__` in a scratch folder and `python3 -m py_compile good.py`. **Grep for every call site, not just the
+one in the report:** the first CI run of the regression test failed at a second `py_compile` (the bootstrapper's own
+`~find_entry.py` check), earlier than the entry check, and the row had no field that said so; rows for a bug class
+should record which stage stopped the run, not only that it stopped.
 
 ---
 

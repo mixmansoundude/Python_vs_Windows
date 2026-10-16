@@ -217,6 +217,32 @@ class BatchCallSite(unittest.TestCase):
         self.assertIn("[WARN] REQ-021: syntax pre-check could not decide", self.body)
 
 
+class FindEntryHelperCheck(unittest.TestCase):
+    """:verify_find_entry_helper used to py_compile ~find_entry.py in the app folder. That wrote into
+    __pycache__ too, so a read-only or file-shaped __pycache__ failed a good helper and the run stopped
+    with "Could not determine entry point" (found by self.preflight.pycache.unwritable, REQ-021.4)."""
+
+    @classmethod
+    def setUpClass(cls):
+        bat = (REPO / "run_setup.bat").read_text(encoding="ascii", errors="replace")
+        start = bat.index("\n:verify_find_entry_helper\n")
+        end = bat.index("\n:append_helper_syntax_row", start)
+        cls.body = bat[start:end]
+
+    def test_py_compile_is_not_invoked(self):
+        live = [ln for ln in self.body.splitlines() if not ln.lstrip().lower().startswith("rem ")]
+        self.assertFalse([ln for ln in live if "py_compile" in ln])
+
+    def test_helper_is_emitted_and_run_on_the_find_entry_helper(self):
+        self.assertIn('call :emit_from_base64 "~preflight_check.py" HP_PREFLIGHT_CHECK', self.body)
+        self.assertIn('"~preflight_check.py" "%HP_FIND_ENTRY_ABS%"', self.body)
+
+    def test_only_exit_0_counts_as_verified(self):
+        # A helper that could not be written or run leaves HP_HELPER_SYNTAX_PASS at 0 (as py_compile
+        # failing did); there is exactly one place it becomes 1.
+        self.assertEqual(self.body.count('set "HP_HELPER_SYNTAX_PASS=1"'), 1)
+
+
 class EmbeddedHelperBaseline(unittest.TestCase):
     def test_parses_as_python_39_grammar(self):
         # Fallback tiers can hand the bootstrapper an older interpreter; a SyntaxError there is a

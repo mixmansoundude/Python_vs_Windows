@@ -7,7 +7,10 @@
 # writes a .pyc into __pycache__; when it cannot (a read-only __pycache__, or a FILE named __pycache__)
 # it exits 1 for a perfectly valid program and the bootstrapper reported a syntax error that was not
 # there. Even when it could write, it left __pycache__\entry.cpython-*.pyc behind in the user's folder.
-# The check now compiles in memory (tools/preflight_check.py), so neither can happen.
+# The check now compiles in memory (tools/preflight_check.py), so neither can happen. The first CI run of
+# the unwritable scenario failed earlier than that: :verify_find_entry_helper also ran py_compile, on the
+# bootstrapper's own ~find_entry.py, so the run stopped with 'Could not determine entry point' before the
+# entry check was reached. Both sites now use the in-memory helper; the row reports which one fired.
 #
 # Three scenarios, each a full default bootstrap of a one-line program:
 #   unwritable : a regular FILE named __pycache__ sits in the folder (py_compile cannot create the
@@ -136,6 +139,9 @@ function Invoke-Scenario {
         state            = $state
         falseSyntaxError = [bool]($combined -match 'Your Python program has a syntax error' -or $combined -match 'REQ-021: entry failed (py_compile|the syntax check)')
         returnDetail     = [bool]($combined -match "'return' outside function")
+        # The unwritable case once failed here, not in the entry check: the helper check used py_compile too.
+        entryNotFound    = [bool]($combined -match 'Could not determine entry point')
+        helperCheckFailed = [bool]($combined -match 'find_entry helper syntax error')
         reachedBuild     = [bool]($combined -match 'PyInstaller execution failed')
         exeBuilt         = [bool](Test-Path -LiteralPath (Join-Path $workDir 'dist'))
         programRan       = [bool](($combined -match [regex]::Escape($token)) -or ($runOut -match [regex]::Escape($token)))
@@ -159,6 +165,8 @@ Write-NdjsonRow ([ordered]@{
         falseSyntaxError = $u.falseSyntaxError
         statusState      = $u.state
         programRan       = $u.programRan
+        entryNotFound    = $u.entryNotFound
+        helperCheckFailed = $u.helperCheckFailed
         log              = $u.log
     }
 })

@@ -2973,15 +2973,25 @@ if defined HP_HELPER_CMD (
     )
     set "HP_HELPER_CMD_LOGGED=1"
   )
-  if defined HP_HELPER_ARGS (
-    "%HP_HELPER_CMD%" %HP_HELPER_ARGS% -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
-  ) else (
-    "%HP_HELPER_CMD%" -m py_compile "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
-  )
+  rem derived requirement: Item 83. py_compile writes a .pyc into __pycache__ and exits 1 when it cannot,
+  rem so a read-only or file-shaped __pycache__ failed this check on a perfectly good helper and the run
+  rem stopped with "Could not determine entry point". Compile in memory with the same emitted helper the
+  rem entry pre-flight uses. Only exit 0 counts as verified, as before.
+  if exist "~preflight_check.py" del "~preflight_check.py" >nul 2>&1
+  call :emit_from_base64 "~preflight_check.py" HP_PREFLIGHT_CHECK
   if errorlevel 1 (
     set "HP_HELPER_SYNTAX_PASS=0"
   ) else (
-    set "HP_HELPER_SYNTAX_PASS=1"
+    if defined HP_HELPER_ARGS (
+      "%HP_HELPER_CMD%" %HP_HELPER_ARGS% "~preflight_check.py" "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
+    ) else (
+      "%HP_HELPER_CMD%" "~preflight_check.py" "%HP_FIND_ENTRY_ABS%" 1>nul 2>nul
+    )
+    if errorlevel 1 (
+      set "HP_HELPER_SYNTAX_PASS=0"
+    ) else (
+      set "HP_HELPER_SYNTAX_PASS=1"
+    )
   )
 ) else (
   set "HP_HELPER_SYNTAX_PASS=0"

@@ -62,6 +62,14 @@ cannot (Item 83). Coupled by exact strings: `Your Python program has a syntax er
 in `tests/harness.ps1`, `BatchCallSite` in `tests/test_preflight_check.py`). The call to `:define_helper_payloads`
 (see the first section) already precedes this subroutine.
 
+**A second caller of the same helper: `:verify_find_entry_helper`** (checks the bootstrapper's own
+`~find_entry.py` before entry selection) emits `~preflight_check.py` itself and runs it on the helper. It used to
+run `py_compile` too, so an unwritable `__pycache__` failed it and the run stopped with `Could not determine entry
+point` before `:preflight_compile` was ever reached (found by `self.preflight.pycache.unwritable`, whose row reports
+`entryNotFound`/`helperCheckFailed`). Any new check of a file in the app folder must go through this helper, never
+`py_compile`. Unlike the entry check this one counts only exit 0 as verified (`helper.find_entry.syntax` stays honest).
+The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and discards the result.
+
 ---
 
 ## Concurrent-instance lock (REQ-024) touches every exit path
