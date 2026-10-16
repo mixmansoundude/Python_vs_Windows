@@ -3,10 +3,11 @@
 # not change the outcome of a run whose entry file is valid, must leave the folder as it found it, and
 # must still reject everything the Python compiler rejects.
 #
-# Today :preflight_compile runs `python -m py_compile` on the entry. py_compile writes a .pyc into
-# __pycache__; when it cannot (a read-only __pycache__, or a FILE named __pycache__) it exits 1 for a
-# perfectly valid program and the bootstrapper reports a syntax error that is not there. Even when it
-# can write, it leaves __pycache__\entry.cpython-*.pyc behind in the user's folder.
+# History (Item 83): :preflight_compile used to run `python -m py_compile` on the entry. py_compile
+# writes a .pyc into __pycache__; when it cannot (a read-only __pycache__, or a FILE named __pycache__)
+# it exits 1 for a perfectly valid program and the bootstrapper reported a syntax error that was not
+# there. Even when it could write, it left __pycache__\entry.cpython-*.pyc behind in the user's folder.
+# The check now compiles in memory (tools/preflight_check.py), so neither can happen.
 #
 # Three scenarios, each a full default bootstrap of a one-line program:
 #   unwritable : a regular FILE named __pycache__ sits in the folder (py_compile cannot create the

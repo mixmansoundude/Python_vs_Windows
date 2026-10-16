@@ -47,6 +47,23 @@ plausible future addition. (History: `docs/agent-closed-backlog.md`, CLAUDE.md I
 
 ---
 
+## Pre-flight syntax check (`:preflight_compile`, REQ-021) is a fail-open emitted helper
+
+`:preflight_compile` emits `~preflight_check.py` (`HP_PREFLIGHT_CHECK`, `tools/preflight_check.py`) and runs
+it on `%HP_ENTRY%` via `%HP_PY%`. **Exit 1 is the only code that reports a syntax error and sets
+`HP_PREFLIGHT_FAILED`**; exit 0 continues; any other code, or a helper that could not be written
+(`HP_TEST_FORCE_EMIT_FAIL=HP_PREFLIGHT_CHECK` simulates it), logs a `[WARN] REQ-021:` line and continues
+(`:preflight_undecided`, `:preflight_no_helper`), so a broken check can never stop a program that may be valid
+(REQ-021.4). The helper compiles in memory and writes nothing, which is what keeps `__pycache__` out of the
+picture (REQ-021.5); do not go back to `py_compile`/`compileall`, which write a `.pyc` and exit 1 when they
+cannot (Item 83). Coupled by exact strings: `Your Python program has a syntax error` and `REQ-021: entry failed`
+(`self.preflight.syntax`, `self.preflight.pycache.*`), and the call site line `"%HP_PY%" "~preflight_check.py"
+"%HP_ENTRY%"` plus the comment text `REQ-021: static pre-flight -- check the entry syntax` (`batch.preflight.compile`
+in `tests/harness.ps1`, `BatchCallSite` in `tests/test_preflight_check.py`). The call to `:define_helper_payloads`
+(see the first section) already precedes this subroutine.
+
+---
+
 ## Concurrent-instance lock (REQ-024) touches every exit path
 
 The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`) is released only at `:die` and

@@ -105,7 +105,8 @@ a case is unclear, read those and keep the intent of the existing text.
   Beneath it, each verifiable requirement is one `shall` with its own id `REQ-nnn.m`, a criticality tag
   (`[critical]`, `[major]` or `[minor]`) and nothing else in its bullet. Rationale, mechanism, file names,
   commands, flags and examples go in a "Notes (non-normative)" block after the shalls, never in a shall.
-  Every goal has at least one shall under it, and every shall has a stable id: do not renumber or reuse one.
+  Every goal has at least one shall under it (`tests/test_req_trace.py` fails a converted section without
+  one), and every shall has a stable id: do not renumber or reuse one.
 - **One shall, one thought** (NASA Appendix C): one subject and one predicate, so a sentence joined by "and"
   or "when ... otherwise" becomes two ids. Active voice with a named subject ("the bootstrapper shall").
   State the need, not the means. Positive form ("shall complete", not "shall never abort"), unless the

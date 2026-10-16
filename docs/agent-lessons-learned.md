@@ -637,6 +637,20 @@ or `\`.
 
 ---
 
+## `py_compile` is not a read-only check: it writes a `.pyc` and fails when it cannot
+
+`python -m py_compile entry.py` writes `__pycache__\entry.cpython-*.pyc` next to the file. When that write is
+impossible (a read-only folder, a locked-down machine, a plain FILE named `__pycache__`) it prints an `OSError`
+and exits 1 for a perfectly valid program, and `:preflight_compile` reported "Your Python program has a syntax
+error" for it (Item 83, REQ-021.4). When the write works it leaves the `.pyc` in the user's folder (REQ-021.5).
+**Rule: to ask "does this parse", call `compile(source_bytes, path, 'exec', dont_inherit=True)` in memory**
+(`tools/preflight_check.py`); catch `SyntaxError` (covers `IndentationError`, `TabError`, bad encodings) and,
+before 3.12, `ValueError` for a null byte, and treat everything else as "could not decide, continue". Passing
+bytes to `compile` honours a coding cookie and a BOM exactly as the interpreter does. Reproduce locally with
+`touch __pycache__` in a scratch folder and `python3 -m py_compile good.py`.
+
+---
+
 ## A stdlib-only program still gets a warn file full of "missing" modules; `parse_warn.py` filters them by rule, not by install attempt
 
 A real PyInstaller 6.22 build of a ten-line program that imports only `pkgutil`, `platform` and
