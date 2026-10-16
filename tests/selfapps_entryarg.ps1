@@ -219,7 +219,7 @@ try {
     $r2Usage     = $r2.Console -match [regex]::Escape($usagePhrase)
     $r2Untouched = Test-ExeUntouched $exeBase
     $r2NoFast    = -not ($c2 -match [regex]::Escape($fastPathPhrase)) -and -not ($c2 -match [regex]::Escape($discardPhrase))
-    $pass2 = $exeBase.Exists -and ($r2.Exit -ne 0) -and $r2Usage -and ($r2.State -eq 'error') -and $r2Untouched -and $r2NoFast
+    $pass2 = $exeBase.Exists -and ($r2.Exit -eq 1) -and $r2Usage -and ($r2.State -eq 'error') -and $r2Untouched -and $r2NoFast
     if (-not $pass2) { $allPass = $false }
     Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $pass2 -Desc 'A first argument that exists but is not a .py file stops the run with a usage message and leaves the EXE alone' -Details ([ordered]@{
         exit = $r2.Exit; usage = $r2Usage; status = $r2.State; exeUntouched = $r2Untouched; noFastPath = $r2NoFast
@@ -233,7 +233,7 @@ try {
     $r3Untouched = Test-ExeUntouched $exeBase
     $r3NoDiscard = -not ($c3 -match [regex]::Escape($discardPhrase))
     $r3NoFast    = -not ($c3 -match [regex]::Escape($fastPathPhrase))
-    $pass3 = $exeBase.Exists -and ($r3.Exit -ne 0) -and $r3Usage -and ($r3.State -eq 'error') -and $r3Untouched -and $r3NoDiscard -and $r3NoFast
+    $pass3 = $exeBase.Exists -and ($r3.Exit -eq 1) -and $r3Usage -and ($r3.State -eq 'error') -and $r3Untouched -and $r3NoDiscard -and $r3NoFast
     if (-not $pass3) { $allPass = $false }
     Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $pass3 -Desc 'run_setup.bat arg1 arg2 (no entry file) stops with a usage message; the good EXE is not run with wrong arguments or discarded' -Details ([ordered]@{
         exit = $r3.Exit; usage = $r3Usage; status = $r3.State; exeUntouched = $r3Untouched
@@ -246,7 +246,7 @@ try {
     $r4Usage     = $r4.Console -match [regex]::Escape($usagePhrase)
     $r4Untouched = Test-ExeUntouched $exeBase
     $r4NoFast    = -not ($c4 -match [regex]::Escape($fastPathPhrase)) -and -not ($c4 -match [regex]::Escape($discardPhrase))
-    $pass4 = $exeBase.Exists -and ($r4.Exit -ne 0) -and $r4Usage -and ($r4.State -eq 'error') -and $r4Untouched -and $r4NoFast
+    $pass4 = $exeBase.Exists -and ($r4.Exit -eq 1) -and $r4Usage -and ($r4.State -eq 'error') -and $r4Untouched -and $r4NoFast
     if (-not $pass4) { $allPass = $false }
     Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $pass4 -Desc 'A wildcard first argument is rejected like any other non-file, never expanded to match a file' -Details ([ordered]@{
         exit = $r4.Exit; usage = $r4Usage; status = $r4.State; exeUntouched = $r4Untouched; noFastPath = $r4NoFast
@@ -269,7 +269,7 @@ try {
     $rd2Usage = $rd2.Console -match [regex]::Escape($usagePhrase)
     $rdUntouched = Test-ExeUntouched $exeBase
     $rdNoFast = -not ($cd1 -match [regex]::Escape($fastPathPhrase)) -and -not ($cd2 -match [regex]::Escape($fastPathPhrase))
-    $passDir = $exeBase.Exists -and ($rd1.Exit -ne 0) -and ($rd2.Exit -ne 0) -and $rd1Usage -and $rd2Usage -and ($rd1.State -eq 'error') -and ($rd2.State -eq 'error') -and $rdUntouched -and $rdNoFast
+    $passDir = $exeBase.Exists -and ($rd1.Exit -eq 1) -and ($rd2.Exit -eq 1) -and $rd1Usage -and $rd2Usage -and ($rd1.State -eq 'error') -and ($rd2.State -eq 'error') -and $rdUntouched -and $rdNoFast
     if (-not $passDir) { $allPass = $false }
     Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $passDir -Desc 'A first argument that names a folder (folder.py, or folder) is rejected like any other non-file and leaves the EXE alone' -Details ([ordered]@{
         dotPyExit = $rd1.Exit; dotPyUsage = $rd1Usage; dotPyStatus = $rd1.State
@@ -287,7 +287,7 @@ try {
     $r6NoLock    = -not ($c6 -match 'REQ-024')
     $r6Fast      = $c6 -match [regex]::Escape('Fast path: reusing')
     $r6Untouched = Test-ExeUntouched $exeBase
-    $pass5 = $exeBase.Exists -and ($r5.Exit -ne 0) -and $r5Req011 -and ($r6.Exit -eq 0) -and $r6NoLock -and $r6Fast -and $r6Untouched
+    $pass5 = $exeBase.Exists -and ($r5.Exit -eq 1) -and $r5Req011 -and ($r6.Exit -eq 0) -and $r6NoLock -and $r6Fast -and $r6Untouched
     if (-not $pass5) { $allPass = $false }
     Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $pass5 -Desc 'After an early argument stop, the next run in the same folder does not meet a stale lock and reuses the EXE' -Details ([ordered]@{
         run5Exit = $r5.Exit; run5Req011 = $r5Req011; run6Exit = $r6.Exit; run6NoLockMessage = $r6NoLock
