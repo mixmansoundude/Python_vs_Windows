@@ -642,7 +642,31 @@ but several represent real gaps worth closing before calling the path fully rele
   finds `xlrd`, and `requirements.txt` installs it up front (`~setup.log`: `Collecting xlrd~=2.0.2
   (from -r requirements.txt (line 1))`); warnfix never has anything to repair. The test's
   precondition is stale, not warnfix's venv branch, so the fix is test-side. (a) is NOT explained
-  by this and stays open.
+  by this and stays open. **Update 2026-10-11 (run `38157663037`, PR #490; both reds share one cause,
+  fixed on the follow-up PR)**: with the precondition fixed, `venv_repair` showed `warnInstallFired:true`,
+  `attemptedXlrd:false`, `systemSkipWarn:false`, `preconditionOk:true`, and `cascade.exec` showed
+  `repairMarkers:3`, `installAttempts:2`, `repairWithoutAttempt:1`. The warnfix repair dispatch in
+  `run_setup.bat` had a second `if` nested in the else-if chain (`else if conda if defined CONDA_BAT (`),
+  so cmd bound every later `else` to the inner `if defined` and the venv, embed and system branches never
+  ran outside conda mode: no install, no failure flag, no cascade candidate, the chain stopped at embed.
+  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. Re-soak both rows, then
+  remove `continue-on-error` from the aggregate gate per the discipline below.
+
+  **The `cache` lane's `self.exe.smokerun` red is explained (2026-10-11, run `38157663037`) and is a test
+  artifact, not a product failure.** `selfapps_layered_e2e.ps1` (cache lane only) points its sub-bootstrap
+  at the shared `HP_NDJSON` (Item 37). The uv tier of that chain builds an EXE that cannot import `pygrib`,
+  so its verification run exits 1 by design and `:smokerun_ndjson` emits `self.exe.smokerun` `pass:false`
+  before the cascade moves to conda; the conda tier's own `self.exe.smokerun` (`exitCode:0`) follows. The
+  cache NDJSON shows exactly that order: uv `env.mode`, `pass:false`/`exitCode:1`, conda `env.mode`, DLL
+  rows, `pass:true`/`exitCode:0`. It was the only red row on the lane for weeks. The test now gives the
+  sub-bootstrap a private stream and forwards every row except an earlier `self.exe.smokerun` that matches
+  the expected uv-tier failure on every point: `pass:false` with `exitCode:1`, the log shows the cascade
+  left uv, and the setup log before the uv to conda hop holds `[HINT][HIDDEN_IMPORT] Hidden import likely
+  missing: pygrib` (the bootstrapper's own read of the EXE's output, so the reason is checked, not just
+  the code). Anything else stays in the stream and stays red, the last verification row is always
+  forwarded, and `self.layered_e2e.chain` now also requires exactly one dropped row plus a passing last
+  row (`smokeSequencePass`), so an unexpected uv-tier failure or a missing conda-tier pass fails the chain.
+  The exit codes are kept as `smokerunExits`/`smokerunDropped` on that row.
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
@@ -658,7 +682,9 @@ but several represent real gaps worth closing before calling the path fully rele
   previously never fired in any real CI run at all -- `selfapps_layered_e2e.ps1`'s sub-bootstrap
   ran with `HP_NDJSON` unset. Fixed by setting `HP_NDJSON` there (pointed at the same shared
   `~test-results.ndjson` the test's own rows already use, restored in `finally`) and diffing the
-  file before/after to record, as an informational `details` field on `self.layered_e2e.chain`
+  file before/after to record (since 2026-10-11 the sub-bootstrap writes a private
+  `~layered_e2e_sub.ndjson` and the test forwards the rows, see Item 35), as an informational
+  `details` field on `self.layered_e2e.chain`
   (deliberately NOT folded into that test's own pass/fail, so a wiring hiccup can't turn an
   already-proven test red). Confirmed via a real published diagnostics artifact: the row fired
   TWICE with `state:"repaired"` in one run. One confirmed run is not yet the "several consecutive
