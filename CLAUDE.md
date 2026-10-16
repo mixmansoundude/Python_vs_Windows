@@ -876,7 +876,7 @@ the original symptom (see that doc's "CI-first testing policy").
   prompt says the check stops the program after about 30 seconds, and the CI fixture is a silent script.
   Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
-  **Slice 1 (the W/C/N prompt, built 2026-10-16, README wording in the PR body)**: `:last_chance_offer`
+  **Slice 1 (the W/C/N prompt, built 2026-10-16, PR #495, README wording in the PR body)**: `:last_chance_offer`
   at the end of `:run_entry_smoke`, own helper `HP_LAST_ERROR_LINE`, the checkpoint's interpreter result
   kept as `HP_LC_CKPT_RC`, the `RUNTIME_MISMATCH` hint reworded so it no longer rules out the
   environment. Rows `self.lastchance.*` (real lane gating, silent-timeout and cascade scenarios on the
