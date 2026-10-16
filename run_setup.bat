@@ -4011,6 +4011,13 @@ if not defined HP_BUILD_OK (
     if defined HP_WARNFIX_NEEDED (
       set "HP_WARNFIX_APPLIED=1"
       call :log "[REPAIR] missing modules detected; installing and rebuilding."
+      rem derived requirement, test-first proof self.exe.warnfix.venv_repair and self.cascade.exec:
+      rem the conda test used to sit in the else-if chain below as a second nested if. cmd binds an
+      rem else to the NEAREST if, so every later else-if branch hung off the inner defined-CONDA_BAT
+      rem test and was skipped whenever the mode was not conda. Venv, embed and system then got no
+      rem install attempt and no failure flag at all. Decide conda once, here, and test the flag.
+      set "HP_REPAIR_CONDA="
+      if "%HP_ENV_MODE%"=="conda" if defined CONDA_BAT set "HP_REPAIR_CONDA=1"
       if "%HP_ENV_MODE%"=="uv" (
         for /f "usebackq delims=" %%M in ("~missing_modules.txt") do (
           call :log "[INFO] Attempting to install: %%M"
@@ -4022,7 +4029,7 @@ if not defined HP_BUILD_OK (
             call :log "[INFO] Installed: %%M"
           )
         )
-      ) else if "%HP_ENV_MODE%"=="conda" if defined CONDA_BAT (
+      ) else if defined HP_REPAIR_CONDA (
         rem derived requirement, CodeRabbit finding on Item 36's own PR: :select_conda_bat
         rem sets CONDA_BAT purely from Miniconda binary presence on disk, never clears it once
         rem set -- so a genuine venv/embed fallback, conda env CREATE failed, cascaded past conda,
