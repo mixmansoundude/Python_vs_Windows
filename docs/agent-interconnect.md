@@ -960,11 +960,56 @@ toolkit catches an exception raised in a callback and keeps running), so the exi
   pyproject.toml` for `pyproject`, the PEP 723 header for `pep723`. Those two sources are copied over
   `requirements.txt` on every run, so advice to edit `requirements.txt` would be lost (CodeRabbit, PR #487).
   A new place that tells the user to edit a dependency file must use the same variable.
-- **Diagnostic only**: no install, no `requirements.txt` edit, no extra run of the program. The install step
-  is Item 65 slice 2 and needs its own consent prompt (README REQ-018).
+- **The scan itself is diagnostic only**: it installs nothing, edits no file and runs nothing. The install
+  is slice 2, described next, and starts from this scan's state (`HP_RTM_FOUND`, the names file).
 - **NDJSON**: the bootstrapper writes `self.runtime.module_missing` to `HP_NDJSON` when it is defined;
   `tests/selfapps_runtime_modnotfound.ps1` (`self.runtime.modnotfound`, real lane) points it at a private
   file and reads it back.
+
+### Consented install of a runtime-missing package (`:runtime_install_offer`, Item 65 slice 2)
+
+**Touch the scan's state, `:smokerun_ndjson`, either interpreter verification branch, or the PyInstaller
+accumulators, must understand this.** After the scan, `:smokerun_ndjson` (site `exe`) and both branches of
+`:verify_no_exe_interpreter` (site `interpreter`) call `:runtime_install_offer`. It runs at most once per
+bootstrap (`HP_RTI_OFFERED`, so a cascade tier does not ask again) and never for system Python, a missing
+interpreter, or a Nuitka-built EXE (`HP_NUITKA_FALLBACK_USED`, whose rebuild flags would be wrong): those log
+one `[INFO] Runtime install: not offered` line and write state `not_offered`.
+- **Prompt**: the CI-safe consent-gate pattern. The prompt text is echoed unconditionally, then
+  `HP_TEST_RTM_ANSWER` (Y or N) wins, then `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` resolve to no, then a
+  `choice /T 30 /D N`. A bare Enter, a timeout and a missing `choice.exe` all mean no.
+- **Module to package**: `~runtime_module_scan.py --packages` prints `module package` per line. The table
+  (`_PIP`, one conda difference `_CONDA`) is a subset of `tools/parse_warn.py`'s `TRANSLATIONS`; a unit test
+  fails when they disagree, except `cv2` (warnfix says the conda-forge name `opencv`, PyPI says
+  `opencv-python`). Any other name is installed as is, which is why the prompt lists every package first.
+- **Install** (`:rti_install_one`): `uv pip install --python`, `conda install --override-channels -c
+  conda-forge`, or `python -m pip install`, the same dispatch the warnfix repair uses. Successes are written
+  to `~runtime_install_ok.txt`; none succeeding stops with state `install_failed`. `--append` then adds each
+  package to `requirements.txt` unless already declared (keeps CRLF/LF, creates the file if absent) -- but
+  ONLY when `DEP_SOURCE` is neither `pyproject` nor `pep723` (`HP_RTI_EDITS`, set from `DEP_SOURCE`
+  just before the prompt, with `:rtm_where` naming the file): those two sources are copied over `requirements.txt` on every run, so the
+  appended line would vanish, and the prompt and a log line say which file the user must edit instead.
+  Do not hand-edit TOML from batch or this helper (Item 79 is about TOML reading hygiene already).
+- **Rebuild** (`:rti_rebuild`, site `exe` only): `--hidden-import=X --collect-submodules=X` for each installed
+  module, appended to `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT`, and the command threads all five
+  accumulators like every other rebuild in the lifecycle. A failure sets `HP_BOOTSTRAP_STATE=error`, clears
+  `HP_FRESH_BUILD_OK` and stops (no cascade). The `.spec` and `build\` are cleaned unless the user had a spec.
+- **Verification run**: the existing verification subroutine runs again with `HP_RTI_VERIFYING=1` set. While
+  it is set, `:runtime_install_offer` returns at once, `:smokerun_ndjson` returns before the elective
+  checkpoint and optimized-build offers and before clearing `HP_EXE_EXIT`, and the interpreter branches skip
+  the checkpoint. The outer call then continues to those elective offers once, against the final build.
+  `~runtime_missing_modules.txt` is moved to `.prev` first so the nested scan reports afresh; the result is
+  state `verified` (nothing named), `still_missing`, or `not_verified` (`HP_RTM_SCAN_RAN` never became set,
+  for example a skipped run, in which case the old names are restored for the reminder).
+- **NDJSON**: `self.runtime.install` with `details.state` (`declined`, `not_offered`, `install_failed`,
+  `rebuild_failed`, `verified`, `still_missing`, `not_verified`), `site`, `provider`, `depSource`, `packages`;
+  `pass` is always true because a state is a finding. The verdicts live in `tests/selfapps_runtime_install.ps1`
+  (`self.runtime.install.accept`/`.decline`/`.pyproject`, real lane).
+- **Payload margin**: `HP_RUNTIME_MODULE_SCAN` has 354 characters left under the 8191 limit. Item 82's
+  last-error-line extraction does not fit; give it its own payload or shrink this one first.
+- **Not covered**: a native DLL a newly installed conda package needs is not bundled (`:dll_bundle_recover`
+  does not run again), and with a `pyproject.toml` or PEP 723 dependency source the package stays installed
+  in the environment and in the rebuilt EXE, but a later source change that triggers a rebuild goes back to
+  building without the `--hidden-import` flags until the user adds the package to that file.
 
 ### Cascade signal reliability
 

@@ -847,6 +847,17 @@ jobs:
         run: |
           & tests\selfapps_runtime_modnotfound.ps1
 
+      # derived requirement: CLAUDE.md Item 65 slice 2 (README REQ-018) -- the consented install of a
+      # package a program asked for at run time. A yes installs, adds it to requirements.txt (or, for a
+      # pyproject.toml / PEP 723 source, leaves that file alone and says so), rebuilds with
+      # --hidden-import and runs the program once more; a no changes nothing. Gating on purpose, real
+      # lane only (uv provider). HP_TEST_RTM_ANSWER supplies the answer.
+      - name: "Self-test: runtime package install is consent-gated (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_runtime_install.ps1
+
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2145,6 +2156,42 @@ jobs:
             tests\~selftest_runtime_modnotfound_pyproject\~run.err.txt
             tests/~selftest_runtime_modnotfound_pyproject/~sub.ndjson
             tests\~selftest_runtime_modnotfound_pyproject\~sub.ndjson
+            tests/~selftest_runtime_install_accept/~install_accept_bootstrap.log
+            tests\~selftest_runtime_install_accept\~install_accept_bootstrap.log
+            tests/~selftest_runtime_install_accept/~setup.log
+            tests\~selftest_runtime_install_accept\~setup.log
+            tests/~selftest_runtime_install_accept/~run.err.txt
+            tests\~selftest_runtime_install_accept\~run.err.txt
+            tests/~selftest_runtime_install_accept/~run.out.txt
+            tests\~selftest_runtime_install_accept\~run.out.txt
+            tests/~selftest_runtime_install_accept/~sub.ndjson
+            tests\~selftest_runtime_install_accept\~sub.ndjson
+            tests/~selftest_runtime_install_accept/requirements.txt
+            tests\~selftest_runtime_install_accept\requirements.txt
+            tests/~selftest_runtime_install_decline/~install_decline_bootstrap.log
+            tests\~selftest_runtime_install_decline\~install_decline_bootstrap.log
+            tests/~selftest_runtime_install_decline/~setup.log
+            tests\~selftest_runtime_install_decline\~setup.log
+            tests/~selftest_runtime_install_decline/~run.err.txt
+            tests\~selftest_runtime_install_decline\~run.err.txt
+            tests/~selftest_runtime_install_decline/~run.out.txt
+            tests\~selftest_runtime_install_decline\~run.out.txt
+            tests/~selftest_runtime_install_decline/~sub.ndjson
+            tests\~selftest_runtime_install_decline\~sub.ndjson
+            tests/~selftest_runtime_install_decline/requirements.txt
+            tests\~selftest_runtime_install_decline\requirements.txt
+            tests/~selftest_runtime_install_pyproject/~install_pyproject_bootstrap.log
+            tests\~selftest_runtime_install_pyproject\~install_pyproject_bootstrap.log
+            tests/~selftest_runtime_install_pyproject/~setup.log
+            tests\~selftest_runtime_install_pyproject\~setup.log
+            tests/~selftest_runtime_install_pyproject/~run.err.txt
+            tests\~selftest_runtime_install_pyproject\~run.err.txt
+            tests/~selftest_runtime_install_pyproject/~run.out.txt
+            tests\~selftest_runtime_install_pyproject\~run.out.txt
+            tests/~selftest_runtime_install_pyproject/~sub.ndjson
+            tests\~selftest_runtime_install_pyproject\~sub.ndjson
+            tests/~selftest_runtime_install_pyproject/requirements.txt
+            tests\~selftest_runtime_install_pyproject\requirements.txt
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log
