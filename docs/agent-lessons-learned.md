@@ -736,6 +736,14 @@ user already saw scroll past. A second Item 82 detail: `set /p` on an empty line
 unchanged, and `%VAR:~0,1%` of an undefined variable is not a reliable empty string in a batch file, so compare
 against the letters you accept (W, C) and let everything else mean the default.
 
+**A signal several causes can produce must be taken where only one of them acts** (Item 82 slice 2). The smoke
+runner's result file reads `-1` for a force-stopped silent program, a failed launch, a result file that was never
+written, and a program that exits with `-1` itself, so a question gated on `-1` alone would be asked in cases where
+nothing was stopped. The runner now writes `~smokerun_killed.txt` inside the one branch that calls `Kill()`, and the
+batch clears it before the launch and reads it after. Test the negative controls (self-exit, a stale marker from an
+earlier tier) as well as the positive case; a negative control passes before the fix for the wrong reason, so the
+red proof is the positive rows.
+
 ---
 
 ## Heuristic dep-augmentation must strip pip extras before name lookup

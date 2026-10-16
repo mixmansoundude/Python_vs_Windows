@@ -66,7 +66,7 @@ tests/
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
-  selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
+  selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -285,6 +285,7 @@ Test files and what they cover:
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 | `test_runtime_module_scan.py` | Item 65 slice 1: runtime missing-module scan (top-level name from a traceback, submodule, repeats, ImportError wording, cap; installed/on-path/stdlib/non-identifier names not reported; local module next to the helper; CLI exit codes; the three batch call sites and the reminder order; Python 3.9 grammar guard; HP_RUNTIME_MODULE_SCAN payload sync); slice 2: `--packages`/`--append` modes, name table equal to warnfix's, requirements editing, batch call sites of the offer |
 | `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
+| `test_window_confirm.py` | Item 82 slice 2: the kill marker is cleared before the runner launches and read only from the file (never from the exit code), the window question's conditions and gate order, only an explicit yes records `user_confirmed`, the automated branch asks nothing |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 
@@ -883,8 +884,13 @@ the original symptom (see that doc's "CI-first testing policy").
   at the end of `:run_entry_smoke`, own helper `HP_LAST_ERROR_LINE`, the checkpoint's interpreter result
   kept as `HP_LC_CKPT_RC`, the `RUNTIME_MISMATCH` hint reworded so it no longer rules out the
   environment. Rows `self.lastchance.*` (real lane gating, silent-timeout and cascade scenarios on the
-  uv lane non-gating because of the Miniconda download and the force-stopped EXE). Slice 2 (the
-  conda-tier "Did it open and work?" question with the smoke runner's kill marker) is not built.
+  uv lane non-gating because of the Miniconda download and the force-stopped EXE).
+  **Slice 2 (built 2026-10-16)**: `:lc_window` asks "Did it open and work? [y/N]" for exit `-1` on the
+  cascade-reached conda tier only, gated on `HP_EXE_KILLED_SILENT`, which `:run_exe_smokerun` reads from
+  `~smokerun_killed.txt`, written by `tools/exe_smokerun.ps1` only inside its `Kill()` branch
+  (`HP_EXE_SMOKERUN` re-synced). Rows `self.lastchance.window_yes/_enter/_auto/_selfexit` (uv lane,
+  non-gating: Miniconda download and a force-stopped silent EXE), unit tests `tests/test_window_confirm.py`
+  and the `KilledMarker` cases in `tests/test_exe_smokerun.py`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

@@ -990,7 +990,7 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
   in the environment and in the rebuilt EXE, but a later source change that triggers a rebuild goes back to
   building without the `--hidden-import` flags until the user adds the package to that file.
 
-## Last-chance offer (`:last_chance_offer`, Item 82 slice 1)
+## Last-chance offer (`:last_chance_offer`, Item 82 slices 1 and 2)
 
 **Touch how a verification run's exit code is kept, the checkpoint's result, or the cascade flag, must
 understand this offer.** After a fresh uv build whose verification run ended with a real non-zero exit, ONE
@@ -1004,10 +1004,8 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
   `:run_postexec_checkpoint` before it restores the first run's `HP_SMOKE_RC`). `:run_entry_smoke` clears all three
   at the start of every attempt, and `:lc_cleanup` clears them after every call, so a cascade tier never judges its
   run by an earlier tier's numbers. A run that is skipped (`HP_SKIP_ENTRY_SMOKE`) never sets `HP_LC_EXIT`.
-- **Not offered** (log line `Last chance: not offered (<reason>).` and a row, only after a failing run): exit 0 and
-  exit `-1` leave nothing at all (`-1` is the smoke runner's force-stop of a silent program, normal for a window
-  app, and also what a program that exits by itself with `-1` reads as; slice 2 adds the runner's kill marker to
-  tell them apart on the conda tier). Reasons: `provider` (not uv, or `HP_CASCADE_TRIED_UV`), `cascade_approved`
+- **Not offered** (log line `Last chance: not offered (<reason>).` and a row, only after a failing run): exit 0
+  leaves nothing at all, and exit `-1` goes to the window question below instead of this prompt. Reasons: `provider` (not uv, or `HP_CASCADE_TRIED_UV`), `cascade_approved`
   (the early prompt already approved), `runtime_install` (`HP_RTI_OFFERED`, Item 65 slice 2 already asked about this
   run), `checkpoint_ok` (the accepted checkpoint ran the interpreter and it exited 0: a packaging problem, not the
   environment).
@@ -1015,6 +1013,17 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
   `HP_TEST_LASTCHANCE_ANSWER` (W, C or N, checked first so a test can answer even under `HP_CI_LANE`), then
   `HP_TEST_FORCE_INTERACTIVE_LASTCHANCE` (forces the real read), then `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`
   (state `automated`, no wait), else `set /p`, untimed on purpose (the decision). Anything but W or C is N.
+- **The window question (slice 2, `:lc_window`)**: exit `-1` is the smoke runner's force-stop of a silent program,
+  which is what a window app looks like, and also what a failed launch or a program that exits by itself with `-1`
+  reads as. The question "Did it open and work? [y/N]" is asked only on the conda tier the cascade reached
+  (`HP_ENV_MODE=conda`, `HP_CASCADE_TRIED_UV`, no `HP_CASCADE_APPROVED`) AND only when `HP_EXE_KILLED_SILENT` is set.
+  That flag comes from one place: `~exe_smokerun.ps1` writes `~smokerun_killed.txt` inside its `Kill()` branch (the
+  only code that knows it stopped a process), and `:run_exe_smokerun` clears the file before the launch, reads it
+  after (flag set, file deleted) and the flag is reset per fresh build next to `HP_EXE_TIMEDOUT_SILENT`. Never derive
+  it from `HP_EXE_EXIT=-1`. Only an explicit Y records `user_confirmed` (state `window_confirmed`); a bare Enter and
+  anything else is `window_declined`; an automated run asks nothing (`window_automated`, test
+  override `HP_TEST_WINDOWOK_ANSWER`, forced read `HP_TEST_FORCE_INTERACTIVE_WINDOWOK`). It never starts a cascade.
+  `HP_EXE_SMOKERUN` has 377 characters of margin left after the marker write.
 - **The error line** comes from `~last_error_line.py` (`HP_LAST_ERROR_LINE`, `tools/last_error_line.py`), run via
   `%HP_PY%` on `~run.err.txt`, and is shown with `type` and appended to `%LOG%` with `type`, never through `:log`
   or an unquoted echo: it can hold `< > & | % ^`. If the helper cannot be emitted (`HP_TEST_FORCE_EMIT_FAIL=
@@ -1023,7 +1032,8 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
 - **Tests read console text AFTER the offer's heading only**: `~exe_smokerun.ps1` live-tees the EXE's stderr to the
   console before the offer, so the same words appear earlier and prove nothing (`Test-AfterOffer` in
   `tests/selfapps_lastchance.ps1`).
-- **NDJSON**: `self.lastchance.offer` (`state` `worked`/`cascade`/`neither`/`automated`/`not_offered`, `reason`,
+- **NDJSON**: `self.lastchance.offer` (`state` `worked`/`cascade`/`neither`/`automated`/`not_offered`/`window_confirmed`/
+  `window_declined`/`window_automated`, `reason`,
   `site`, `provider`, `exitCode`, `passType`, `hasLine`), written only when `HP_NDJSON` is defined; verdicts live in
   `tests/selfapps_lastchance.ps1` (`self.lastchance.*`, real lane gating, `timeout`/`cascade`/`cascade_again` on the
   uv lane, non-gating). Item 66 reads `passType` (`user_confirmed` today) to decide what to remember.
