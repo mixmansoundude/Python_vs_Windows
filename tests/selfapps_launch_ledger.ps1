@@ -1,5 +1,5 @@
 # ASCII only
-# selfapps_launch_ledger.ps1 - launch ledger (docs/plan-test-suite-gaps.md gap T1, slices A to D).
+# selfapps_launch_ledger.ps1 - launch ledger (docs/plan-test-suite-gaps.md gap T1, slices A to E).
 #
 # Nothing in the suite observed WHERE and HOW OFTEN the user's program really runs. A stub program
 # appends one JSON line per launch to ~ledger.jsonl in its working directory, recording its argv,
@@ -56,10 +56,17 @@ $allIds = @(
     'self.launch.count.checkpoint', 'self.launch.argv.checkpoint', 'self.launch.argv.none'
 )
 
+$reqOf = @{
+    'self.launch.argv.fresh' = 'REQ-026.1'; 'self.launch.argv.cap' = 'REQ-026.5'; 'self.launch.count.default' = 'REQ-018'
+    'self.launch.argv.fastpath' = 'REQ-026.2'; 'self.launch.argv.interpreter' = 'REQ-026.3'
+    'self.isolation.req010.pythonhome' = 'REQ-010'; 'self.isolation.req010.path_shadow' = 'REQ-010'
+    'self.launch.count.checkpoint' = 'REQ-018'; 'self.launch.argv.checkpoint' = 'REQ-026.4'; 'self.launch.argv.none' = 'REQ-026.6'
+}
+
 function Write-AllRows {
     param([bool]$Pass, [string]$Desc, [hashtable]$Details)
     foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-026'; pass = $Pass; desc = $Desc; details = $Details })
+        Write-NdjsonRow ([ordered]@{ id = $rowId; req = $reqOf[$rowId]; pass = $Pass; desc = $Desc; details = $Details })
     }
 }
 
@@ -172,14 +179,11 @@ with open("~ledger.jsonl", "a") as f:
 print("ledger-ok")
 '@
 
-# FIRST COMMIT ONLY: this expectation is deliberately wrong (the last element, 'h', is missing). It proves the
-# argv rows fail on real ledger data, and their details show the argv the program really received. The next
-# commit restores @('a b', 'c', 'd', 'e', 'f', 'g', 'h') once those rows have been read red.
-$expectedArgv = @('a b', 'c', 'd', 'e', 'f', 'g')
+# REQ-026.5: positions 2 to 9 are forwarded, the explicitly empty one ("") is dropped, the 10th ("i") is ignored.
+$expectedArgv = @('a b', 'c', 'd', 'e', 'f', 'g', 'h')
 $argLine = 'ledger_app.py "a b" "" c d e f g h i'
-# FIRST COMMIT ONLY: deliberately wrong as well (a run without program arguments must record an EMPTY argv). The
-# next commit restores @() once the row has been read red and its details show the argv really received.
-$expectedNone = @('unexpected')
+# REQ-026.6: a run without program arguments records an EMPTY argv.
+$expectedNone = @()
 
 # Self-check: the comparator must be able to fail, or every argv row below would be vacuous.
 $comparatorOk = (Test-ArgvEqual @('a b', 'c') @('a b', 'c')) -and
@@ -219,13 +223,13 @@ $aCountOk = ($linesA.Count -eq 1)
 
 $freshPass = $comparatorOk -and $aFrozen -and $aFirstTwoOk
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.fresh'; req = 'REQ-026'; pass = [bool]$freshPass
+    id = 'self.launch.argv.fresh'; req = 'REQ-026.1'; pass = [bool]$freshPass
     desc = 'REQ-026: the EXE smoke run receives the forwarded launch arguments, an argument with a space stays one element'
     details = [ordered]@{ exitCode = $exitA; ledgerLines = $linesA.Count; frozen = $aFrozen; firstTwoOk = $aFirstTwoOk; comparatorOk = $comparatorOk; argv = if ($a0) { @($a0.argv) } else { $null }; strayLedgers = @($strayA) }
 })
 $capPass = $comparatorOk -and $aFullOk
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.cap'; req = 'REQ-026'; pass = [bool]$capPass
+    id = 'self.launch.argv.cap'; req = 'REQ-026.5'; pass = [bool]$capPass
     desc = 'REQ-026: positions 2 to 9 forwarded, an explicitly empty argument dropped, the 10th ignored'
     details = [ordered]@{ expected = $expectedArgv; argv = if ($a0) { @($a0.argv) } else { $null }; argLine = $argLine }
 })
@@ -240,7 +244,7 @@ $b1 = if ($linesB.Count -ge 2) { $linesB[1] } else { $null }
 $fastLogged = $logB -match [regex]::Escape('Fast path: reusing')
 $bPass = ($linesB.Count -eq 2) -and ($null -ne $b1) -and ($b1.frozen -eq $true) -and (Test-ArgvEqual $b1.argv $expectedArgv) -and $fastLogged
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.fastpath'; req = 'REQ-026'; pass = [bool]$bPass
+    id = 'self.launch.argv.fastpath'; req = 'REQ-026.2'; pass = [bool]$bPass
     desc = 'REQ-026: the cached-EXE fast path launches the EXE once with the same forwarded arguments'
     details = [ordered]@{ exitCode = $exitB; ledgerLines = $linesB.Count; expectedLines = 2; fastPathLogged = [bool]$fastLogged; argv = if ($b1) { @($b1.argv) } else { $null } }
 })
@@ -277,7 +281,7 @@ $cInProvider = ($null -ne $c0) -and ([string]$c0.executable).ToLowerInvariant().
 
 $cArgvPass = ($linesC.Count -eq 1) -and ($null -ne $c0) -and ($c0.frozen -eq $false) -and (Test-ArgvEqual $c0.argv $expectedArgv)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.interpreter'; req = 'REQ-026'; pass = [bool]$cArgvPass
+    id = 'self.launch.argv.interpreter'; req = 'REQ-026.3'; pass = [bool]$cArgvPass
     desc = 'REQ-026: the interpreter verification run receives the forwarded launch arguments once'
     details = [ordered]@{ exitCode = $exitC; ledgerLines = $linesC.Count; frozen = if ($c0) { $c0.frozen } else { $null }; argv = if ($c0) { @($c0.argv) } else { $null }; executable = if ($c0) { $c0.executable } else { $null } }
 })
@@ -319,7 +323,7 @@ Write-NdjsonRow ([ordered]@{
 })
 $dArgvPass = ($linesD.Count -eq 2) -and ($null -ne $d1) -and ($d1.frozen -eq $false) -and (Test-ArgvEqual $d1.argv $expectedArgv)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.checkpoint'; req = 'REQ-026'; pass = [bool]$dArgvPass
+    id = 'self.launch.argv.checkpoint'; req = 'REQ-026.4'; pass = [bool]$dArgvPass
     desc = 'REQ-026: the accepted post-execution checkpoint run receives the same forwarded arguments'
     details = [ordered]@{ ledgerLines = $linesD.Count; secondFrozen = if ($d1) { $d1.frozen } else { $null }; firstArgv = if ($d0) { @($d0.argv) } else { $null }; secondArgv = if ($d1) { @($d1.argv) } else { $null }; expected = $expectedArgv }
 })
@@ -337,11 +341,14 @@ try {
 }
 Show-Evidence -Title 'E fresh build without program arguments' -Dir $dirE -LogName '~ledger_e.log'
 $e0 = if ($linesE.Count -ge 1) { $linesE[0] } else { $null }
-$nonePass = ($linesE.Count -eq 1) -and ($null -ne $e0) -and ($e0.frozen -eq $true) -and (Test-ArgvEqual $e0.argv $expectedNone)
+# derived requirement: an empty argv must be the program's own record of an empty list, so the key has to be present.
+# A ledger line without it (a broken stub) would otherwise compare equal to the empty expectation.
+$e0HasArgv = ($null -ne $e0) -and ($e0.PSObject.Properties.Name -contains 'argv')
+$nonePass = ($linesE.Count -eq 1) -and ($null -ne $e0) -and ($e0.frozen -eq $true) -and $e0HasArgv -and (Test-ArgvEqual $e0.argv $expectedNone)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.none'; req = 'REQ-026'; pass = [bool]$nonePass
+    id = 'self.launch.argv.none'; req = 'REQ-026.6'; pass = [bool]$nonePass
     desc = 'REQ-026: without program arguments the EXE smoke run starts the program with none'
-    details = [ordered]@{ exitCode = $exitE; ledgerLines = $linesE.Count; frozen = if ($e0) { $e0.frozen } else { $null }; argv = if ($e0) { @($e0.argv) } else { $null }; expected = $expectedNone }
+    details = [ordered]@{ exitCode = $exitE; ledgerLines = $linesE.Count; frozen = if ($e0) { $e0.frozen } else { $null }; argvPresent = [bool]$e0HasArgv; argvCount = if ($e0HasArgv) { @($e0.argv).Count } else { $null }; expected = @($expectedNone) }
 })
 
 if (-not ($freshPass -and $capPass -and $countPass -and $bPass -and $cArgvPass -and $homePass -and $shadowPass -and $dCountPass -and $dArgvPass -and $nonePass)) { exit 1 }

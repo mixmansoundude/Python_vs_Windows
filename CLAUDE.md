@@ -871,24 +871,6 @@ the original symptom (see that doc's "CI-first testing policy").
   Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
 
-### Item 83: the pre-flight syntax check aborts a valid program when `__pycache__` is not writable (filed 2026-10-11 from the test-suite gap map)
-
-- **Item 83 (Confirmed bug, small; README REQ-021 says "never aborts a run that would otherwise have
-  succeeded"; reproduced with a plain file named `__pycache__`)**: `:preflight_compile` runs
-  `python -m py_compile` on the entry file. py_compile writes `__pycache__\<entry>.cpython-*.pyc`; when it
-  cannot (a read-only folder, a locked-down machine, a file where the folder should be) it exits 1 for a
-  perfectly valid program, and the bootstrapper prints "Your Python program has a syntax error" and stops
-  with status `error`. When it can write, it leaves the `.pyc` in the user's folder. Two slices, test first:
-  (1) `tests/selfapps_preflight_pycache.ps1` (real lane, gating) with rows `self.preflight.pycache.unwritable`
-  (REQ-021.4) and `self.preflight.pycache.litter` (REQ-021.5), pushed alone and read red, plus a guard row
-  `self.preflight.syntax.compiler` (REQ-021.6, a `return` outside a function must still fail pre-flight: the
-  parser accepts it and only the compiler rejects it, so it passes before and after the fix by design); (2) the fix: check
-  the syntax in memory with an emitted helper (`~preflight_check.py`, `HP_PREFLIGHT_CHECK`, source
-  `tools/preflight_check.py`: exit 0 valid, 1 syntax error with the interpreter's own message, anything else
-  means the check could not run and the bootstrapper continues), so nothing is written and nothing can fail
-  on the folder's state. Touches `:preflight_compile` only (one call site) plus one payload line in
-  `:define_helper_payloads`.
-
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
