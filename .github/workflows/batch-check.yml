@@ -2091,6 +2091,12 @@ jobs:
             tests\~selftest_launch_ledger_d\~ledger_d.log
             tests/~selftest_launch_ledger_d/~setup.log
             tests\~selftest_launch_ledger_d\~setup.log
+            tests/~selftest_launch_ledger_e/~ledger.jsonl
+            tests\~selftest_launch_ledger_e\~ledger.jsonl
+            tests/~selftest_launch_ledger_e/~ledger_e.log
+            tests\~selftest_launch_ledger_e\~ledger_e.log
+            tests/~selftest_launch_ledger_e/~setup.log
+            tests\~selftest_launch_ledger_e\~setup.log
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

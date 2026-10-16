@@ -15,6 +15,8 @@
 #        runs, and a decoy python.cmd first on PATH must never be run (every call is interpreter-anchored).
 #   D  fresh folder with HP_TEST_CHECKPOINT_ANSWER=Y: the elective second run adds exactly one more line,
 #        launched through the interpreter, with the same argv.
+#   E  fresh folder, run_setup.bat ledger_app.py with no program arguments: the EXE smoke run gets none (an
+#        empty argument must not turn into an argv element).
 #
 # The ledger is written by the program itself, so unlike the log-line counts the older tests use, a
 # second launch that logs nothing is still seen. The batch is invoked through a generated ~ledger_launch.cmd
@@ -28,7 +30,7 @@
 #
 # Emits: self.launch.argv.fresh, self.launch.argv.cap, self.launch.count.default, self.launch.argv.fastpath,
 #        self.launch.argv.interpreter, self.isolation.req010.pythonhome, self.isolation.req010.path_shadow,
-#        self.launch.count.checkpoint
+#        self.launch.count.checkpoint, self.launch.argv.checkpoint, self.launch.argv.none
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -51,7 +53,7 @@ $allIds = @(
     'self.launch.argv.fresh', 'self.launch.argv.cap', 'self.launch.count.default',
     'self.launch.argv.fastpath', 'self.launch.argv.interpreter',
     'self.isolation.req010.pythonhome', 'self.isolation.req010.path_shadow',
-    'self.launch.count.checkpoint'
+    'self.launch.count.checkpoint', 'self.launch.argv.checkpoint', 'self.launch.argv.none'
 )
 
 function Write-AllRows {
@@ -175,6 +177,9 @@ print("ledger-ok")
 # commit restores @('a b', 'c', 'd', 'e', 'f', 'g', 'h') once those rows have been read red.
 $expectedArgv = @('a b', 'c', 'd', 'e', 'f', 'g')
 $argLine = 'ledger_app.py "a b" "" c d e f g h i'
+# FIRST COMMIT ONLY: deliberately wrong as well (a run without program arguments must record an EMPTY argv). The
+# next commit restores @() once the row has been read red and its details show the argv really received.
+$expectedNone = @('unexpected')
 
 # Self-check: the comparator must be able to fail, or every argv row below would be vacuous.
 $comparatorOk = (Test-ArgvEqual @('a b', 'c') @('a b', 'c')) -and
@@ -305,13 +310,39 @@ $logD = if (Test-Path -LiteralPath (Join-Path $dirD '~ledger_d.log')) { Get-Cont
 $checkpointAccepted = $logD -match 'post-execution checkpoint \((exe|interpreter)\): accepted'
 $d0 = if ($linesD.Count -ge 1) { $linesD[0] } else { $null }
 $d1 = if ($linesD.Count -ge 2) { $linesD[1] } else { $null }
-$dPass = ($linesD.Count -eq 2) -and $checkpointAccepted -and ($null -ne $d0) -and ($null -ne $d1) -and
-    ($d0.frozen -eq $true) -and ($d1.frozen -eq $false) -and (Test-ArgvEqual $d0.argv $expectedArgv) -and (Test-ArgvEqual $d1.argv $expectedArgv)
+$dCountPass = ($linesD.Count -eq 2) -and $checkpointAccepted -and ($null -ne $d0) -and ($null -ne $d1) -and
+    ($d0.frozen -eq $true) -and ($d1.frozen -eq $false)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.count.checkpoint'; req = 'REQ-018'; pass = [bool]$dPass
-    desc = 'REQ-018: an accepted post-execution checkpoint adds exactly one interpreter run with the same arguments'
-    details = [ordered]@{ exitCode = $exitD; ledgerLines = $linesD.Count; expectedLines = 2; checkpointAccepted = [bool]$checkpointAccepted; firstFrozen = if ($d0) { $d0.frozen } else { $null }; secondFrozen = if ($d1) { $d1.frozen } else { $null }; firstArgv = if ($d0) { @($d0.argv) } else { $null }; secondArgv = if ($d1) { @($d1.argv) } else { $null } }
+    id = 'self.launch.count.checkpoint'; req = 'REQ-018'; pass = [bool]$dCountPass
+    desc = 'REQ-018: an accepted post-execution checkpoint adds exactly one interpreter run after the EXE run'
+    details = [ordered]@{ exitCode = $exitD; ledgerLines = $linesD.Count; expectedLines = 2; checkpointAccepted = [bool]$checkpointAccepted; firstFrozen = if ($d0) { $d0.frozen } else { $null }; secondFrozen = if ($d1) { $d1.frozen } else { $null } }
+})
+$dArgvPass = ($linesD.Count -eq 2) -and ($null -ne $d1) -and ($d1.frozen -eq $false) -and (Test-ArgvEqual $d1.argv $expectedArgv)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.launch.argv.checkpoint'; req = 'REQ-026'; pass = [bool]$dArgvPass
+    desc = 'REQ-026: the accepted post-execution checkpoint run receives the same forwarded arguments'
+    details = [ordered]@{ ledgerLines = $linesD.Count; secondFrozen = if ($d1) { $d1.frozen } else { $null }; firstArgv = if ($d0) { @($d0.argv) } else { $null }; secondArgv = if ($d1) { @($d1.argv) } else { $null }; expected = $expectedArgv }
 })
 
-if (-not ($freshPass -and $capPass -and $countPass -and $bPass -and $cArgvPass -and $homePass -and $shadowPass -and $dPass)) { exit 1 }
+# ---------------------------------------------------------------- Scenario E
+$dirE = New-LedgerFolder -Name '~selftest_launch_ledger_e'
+$eEnv = [ordered]@{ HP_SKIP_PIPREQS = '1' }
+if (-not [Environment]::GetEnvironmentVariable('HP_CI_LANE')) { $eEnv['HP_CI_LANE'] = 'test' }
+$savedE = Set-TestEnv $eEnv
+try {
+    $exitE = Invoke-LedgerBootstrap -Dir $dirE -ArgLine 'ledger_app.py' -LogName '~ledger_e.log'
+    $linesE = Read-Ledger -Dir $dirE
+} finally {
+    Restore-TestEnv $savedE
+}
+Show-Evidence -Title 'E fresh build without program arguments' -Dir $dirE -LogName '~ledger_e.log'
+$e0 = if ($linesE.Count -ge 1) { $linesE[0] } else { $null }
+$nonePass = ($linesE.Count -eq 1) -and ($null -ne $e0) -and ($e0.frozen -eq $true) -and (Test-ArgvEqual $e0.argv $expectedNone)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.launch.argv.none'; req = 'REQ-026'; pass = [bool]$nonePass
+    desc = 'REQ-026: without program arguments the EXE smoke run starts the program with none'
+    details = [ordered]@{ exitCode = $exitE; ledgerLines = $linesE.Count; frozen = if ($e0) { $e0.frozen } else { $null }; argv = if ($e0) { @($e0.argv) } else { $null }; expected = $expectedNone }
+})
+
+if (-not ($freshPass -and $capPass -and $countPass -and $bPass -and $cArgvPass -and $homePass -and $shadowPass -and $dCountPass -and $dArgvPass -and $nonePass)) { exit 1 }
 exit 0
