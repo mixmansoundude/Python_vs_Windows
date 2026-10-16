@@ -909,6 +909,32 @@ self.runtime.modnotfound
 self.runtime.modnotfound.pyproject
 ```
 
+## selfapps-runtime-install NDJSON rows (selfapps_runtime_install.ps1, real lane only, GATING)
+
+CLAUDE.md Item 65 slice 2 regression test, README REQ-018. The same fixture as above, bootstrapped three
+times with `HP_TEST_RTM_ANSWER` set. `self.runtime.install.accept` (answer Y) requires the first run's report, the
+echoed prompt, `Runtime install: installed xlsxwriter`, `xlsxwriter` importable from `.uv_env`, a
+`xlsxwriter` line in `requirements.txt`, `[REPAIR] rebuild complete after runtime install`, a second
+`Entry smoke exit=` line, a clean check run (`~run.err.txt` without `No module named`, `~run.out.txt` with
+`runtime app ok`, which only happens when the rebuild passed `--hidden-import`), the bootstrapper's
+`self.runtime.install` row with state `verified`, site `exe`, packages `xlsxwriter`, and status `ok`.
+`self.runtime.install.decline` (answer N) requires the report and prompt, `Runtime install: declined`,
+no `xlsxwriter` in the environment or in `requirements.txt`, exactly one `Entry smoke exit=` line, the
+end-of-run reminder still printed, row state `declined`, and status `ok`.
+`self.runtime.install.pyproject` (answer Y, a `pyproject.toml` with `dependencies = ["six"]`) requires
+`DEP_SOURCE=pyproject`, a prompt that says the file is not edited, the install, a verified clean check run,
+`pyproject.toml` byte-identical afterwards, no `xlsxwriter` in `requirements.txt`, the log line `did not edit
+the dependencies in pyproject.toml`, and row `depSource` `pyproject`: requirements.txt is overwritten from
+pyproject on every run, so an appended line would be lost (CodeRabbit, PR #487). All three skip with
+`skip=true, reason=non-windows-host` off Windows. Expected red on the commit that adds them (no prompt
+exists) and green once `:runtime_install_offer` exists.
+
+```
+self.runtime.install.accept
+self.runtime.install.decline
+self.runtime.install.pyproject
+```
+
 ## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
 
 CLAUDE.md Item 65 slice 1. `:report_runtime_missing_module` writes `self.runtime.module_missing`
@@ -920,6 +946,20 @@ and `details.provider`. No lane puts it in a shared artifact: `selfapps_runtime_
 
 ```
 self.runtime.module_missing
+```
+
+## Runtime install row (run_setup.bat, written only when HP_NDJSON is defined)
+
+CLAUDE.md Item 65 slice 2. `:rti_row` writes `self.runtime.install` once per bootstrap run when the offer
+reaches a state: `details.state` is `declined`, `not_offered`, `install_failed`, `rebuild_failed`,
+`verified`, `still_missing` or `not_verified`; `details.site` is `exe` or `interpreter`; `details.provider`
+is `HP_ENV_MODE`; `details.depSource` is `DEP_SOURCE` (what decides whether `requirements.txt` is edited);
+`details.packages` lists what was installed (empty when nothing was). `pass` is always true. As with
+`self.runtime.module_missing`, no lane puts it in a shared artifact: `selfapps_runtime_install.ps1` reads it
+from a private file and judges it in its own three rows.
+
+```
+self.runtime.install
 ```
 
 ## Key facts for debugging missing rows
