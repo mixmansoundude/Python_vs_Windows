@@ -3533,6 +3533,7 @@ echo.
 echo *** Your app is ready. ***
 echo *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 echo *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+echo *** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 set "HP_OPTBUILD_RAW="
 if defined HP_TEST_OPTBUILD_ANSWER (
   set "HP_OPTBUILD_RAW=%HP_TEST_OPTBUILD_ANSWER%"
@@ -6390,6 +6391,9 @@ rem one line is strictly safer than a guaranteed-broken command.
 if not defined HP_PY goto :pfb_runapp_noninterp
 echo    You can also run it directly via the interpreter at any time:
 echo      "%HP_PY%" "%HP_ENTRY%"
+echo      Running that interpreter with no script opens an interactive Python prompt.
+echo      To run pip, use the interpreter's -m option, for example:
+echo        "%HP_PY%" -m pip list
 :pfb_runapp_noninterp
 echo.
 echo    STARTUP MAY BE SLOW: a one-file .exe unpacks itself each time it
@@ -6530,6 +6534,9 @@ echo  below to see the full output.
 echo.
 echo  RUNNING YOUR APP (without an .exe) -- the most direct option
 echo    "%HP_PY%" "%HP_ENTRY%"
+echo    Running that interpreter with no script opens an interactive Python prompt.
+echo    To run pip, use the interpreter's -m option, for example:
+echo      "%HP_PY%" -m pip list
 echo    Need launch arguments? Add them directly after that command, e.g.
 echo      "%HP_PY%" "%HP_ENTRY%" --input file.csv
 echo.
