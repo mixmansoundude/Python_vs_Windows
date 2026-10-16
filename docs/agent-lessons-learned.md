@@ -675,6 +675,21 @@ scenario's warn file), importer lists shortened.
 
 ---
 
+## A run that exits 0 can still have failed: read its stderr, and build the fixture without a GUI toolkit
+
+tkinter (and most window toolkits) catch an exception raised in a callback, print the traceback to
+stderr and keep running, so a missing module named while the user clicks leaves exit code 0 (Item 65, Aug
+field report). Do not infer "the program worked" from the exit code alone. A CI fixture for this does not
+need tkinter: catch the `ImportError` yourself, `traceback.print_exc()`, and exit 0
+(`tests/selfapps_runtime_modnotfound.ps1`). Two details that keep the fixture honest: join the module name
+at run time (`"".join(("xlsx", "writer"))`; a plain `"xlsx" + "writer"` is folded to a constant by the
+compiler) so neither pipreqs nor PyInstaller sees the import and installs it up front, and make the row
+prove its own precondition (`Entry smoke exit=0` AND the traceback in `~run.err.txt`) before judging the
+new report. A stdlib name in that message is not a pip problem (the embeddable Python has no tkinter), so
+`runtime_module_scan.py` skips it. See `docs/agent-interconnect.md`'s "Runtime missing-module scan".
+
+---
+
 ## Heuristic dep-augmentation must strip pip extras before name lookup
 
 `HP_PREP_REQUIREMENTS`'s `names_lower` list must strip `[...]` (pip extras, e.g. `pandas[excel]`)

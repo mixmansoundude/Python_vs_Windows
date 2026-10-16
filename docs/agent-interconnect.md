@@ -883,6 +883,39 @@ fixing all of them was out of scope for this pass. A companion "dependencies may
 note (`HP_DEP_MAYBE_INCOMPLETE`, set when a cascade candidate was detected but not approved) warns
 at decision time and again right before the EXE launches -- a note, never a second gate.
 
+## Runtime missing-module scan (`:scan_runtime_missing_module`, Item 65 slice 1)
+
+**Touch how a run's stderr is captured, or add a new place that runs the user's program, must
+understand this scan.** A program can print `ModuleNotFoundError: No module named X` and exit 0 (a GUI
+toolkit catches an exception raised in a callback and keeps running), so the exit code never shows it.
+`:scan_runtime_missing_module <site> <stderr-file>` runs `~runtime_module_scan.py`
+(`HP_RUNTIME_MODULE_SCAN`, `tools/runtime_module_scan.py`) over the stderr of the run that just finished.
+- **Call sites**: `:smokerun_ndjson` (EXE verification run, `~run.err.txt`), the legacy branch of
+  `:verify_no_exe_interpreter` (`~run.err.txt`), and `:run_failfast_probe` just before its cleanup (covers
+  the interactive interpreter run, the post-execution checkpoint's `~checkpoint_run.err.txt`, and the
+  cached-EXE probe). A new launch point that captures stderr should call it too.
+- **No interpreter, no scan**: it returns at once when `HP_PY` is undefined. The cached-EXE fast path runs
+  before provider selection, so it is skipped by design (README REQ-018 says so).
+- **What it reports**: a top-level name from `No module named 'X'` that `find_spec` cannot find, is not in
+  `sys.stdlib_module_names`, and is a plain identifier. The helper runs from the app folder, so a module file
+  next to the user's script is found and not reported. A stdlib name (the embeddable Python has no tkinter)
+  is a different problem and pip advice would be wrong. Names are identifiers only because `:log` and the
+  reminder echo them unquoted.
+- **State**: `HP_RTM_INIT` (set on the first scan of a bootstrap run, which empties
+  `~runtime_missing_modules.txt`), the file itself (one name per line, so each module is reported once per
+  run even if the checkpoint run repeats it), and `HP_RTM_FOUND`. `:success` prints
+  `:print_runtime_missing_reminder` before `:release_lock`, which also deletes the file.
+- **Which file the advice names**: `:rtm_where` sets `HP_RTM_WHERE` from `DEP_SOURCE` for both advice lines
+  (the second `[WARN]` line and the closing reminder): `requirements.txt` by default, `the dependencies in
+  pyproject.toml` for `pyproject`, the PEP 723 header for `pep723`. Those two sources are copied over
+  `requirements.txt` on every run, so advice to edit `requirements.txt` would be lost (CodeRabbit, PR #487).
+  A new place that tells the user to edit a dependency file must use the same variable.
+- **Diagnostic only**: no install, no `requirements.txt` edit, no extra run of the program. The install step
+  is Item 65 slice 2 and needs its own consent prompt (README REQ-018).
+- **NDJSON**: the bootstrapper writes `self.runtime.module_missing` to `HP_NDJSON` when it is defined;
+  `tests/selfapps_runtime_modnotfound.ps1` (`self.runtime.modnotfound`, real lane) points it at a private
+  file and reads it back.
+
 ### Cascade signal reliability
 
 `HP_CASCADE_CANDIDATE` requires BOTH: (A) PyInstaller's warn file still lists an unresolved import

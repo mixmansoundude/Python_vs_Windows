@@ -3384,6 +3384,33 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   copy: a failed staging scan leaves `<log tail unavailable>` in `~pipreqs.summary.txt` (visible in the green
   run's `locked_crash` summary) and no traceback in the setup log.
 
+### Item 64 (closed 2026-10-11; PRs #482 and #485)
+
+- **Noise no longer reaches warnfix.** Symptom (Aug-Sep field report): a program that imports pandas, or only
+  `multiprocessing`, sent dozens of names to warnfix (`multiprocessing`, `tkinter`, `pyimod02_importers`,
+  `AppKit`, and pandas' own optional backends). It tried to install all of them: a run of more than 30
+  minutes, the cascade prompt, and a build failure from PyQt5 and PyQt6 installed together. This violated
+  README REQ-005.9 as written. The mechanisms (stdlib list, PyInstaller's own modules, installed `X.attr`,
+  `SKIP` growth, pywin32 translations, then the importer rule) are recorded in this file's "Dependency
+  Strategy Rationale" section under the `parse_warn.py` entries for slice 1 and slice 2; they are not
+  repeated here.
+- **Slice 1 (PR #482).** Scenario `tests/selfapps_warnfix_noise.ps1` (`self.warnfix.noise.stdlib`, `real` and
+  `conda-full`) was red alone in run `38089448746`, green after the fix in run `38098172664`.
+- **Slice 2 (PR #485).** Scenario `tests/selfapps_warnfix_library.ps1` (`self.warnfix.noise.library`, `real`
+  lane): red alone in run `38110474824` (60 install attempts, a cascade candidate, six new unit tests
+  failing), green in run `38118825368`. CodeRabbit then found two real ways the importer rule could swallow
+  the user's own import (a folder named like `my-packages`; a user module named like a stdlib module);
+  the five unit tests that pin the user's own code were red alone in run `38122977139`, green after the
+  fix in run `38136798354`. The merge-head run `38141042628` (head `0dd945e`, merged 2026-10-11 14:08Z)
+  was read from its own artifacts: `real` and `conda-full` had zero failing rows, `self.warnfix.noise.library`
+  passed with `attemptedCount` 0, `repairFailed` 0, no cascade candidate, 55 pandas warn lines present and
+  the EXE exit 0, and `self.parse_warn.pytest` and `self.pytest.unit` passed (702 passed, 2 skipped).
+- **Payload budget.** `HP_PARSE_WARN` is 8096 characters, 95 under the 8191 limit (an earlier note in
+  `CLAUDE.md` said 503, before the review fixes). The next change to it must shrink or split the payload first.
+- **Left open on purpose.** A library's hard dependency that is genuinely missing is no longer repaired from
+  the warn file; it surfaces at run time, which is Item 65's job. Item 80's Nuitka version still needs
+  confirming in a `uv`-lane setup log before that item closes.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

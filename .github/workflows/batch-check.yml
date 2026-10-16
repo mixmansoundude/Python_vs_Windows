@@ -837,6 +837,16 @@ jobs:
         run: |
           & tests\selfapps_warnfix_library.ps1
 
+      # derived requirement: CLAUDE.md Item 65 slice 1 (README REQ-018) -- a ModuleNotFoundError that
+      # a program catches and prints (a GUI callback) while still exiting 0 must be reported by name.
+      # Gating on purpose, real lane only: the scan reads the captured stderr after the EXE
+      # verification run and is provider-independent; the fixture is standard library only.
+      - name: "Self-test: runtime ModuleNotFoundError is reported although the run exits 0 (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_runtime_modnotfound.ps1
+
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2063,6 +2073,22 @@ jobs:
             tests\~selftest_warnfix_library\dist\~library_token.txt
             tests/~selftest_warnfix_library/dist/~library_exe.log
             tests\~selftest_warnfix_library\dist\~library_exe.log
+            tests/~selftest_runtime_modnotfound/~modnotfound_bootstrap.log
+            tests\~selftest_runtime_modnotfound\~modnotfound_bootstrap.log
+            tests/~selftest_runtime_modnotfound/~setup.log
+            tests\~selftest_runtime_modnotfound\~setup.log
+            tests/~selftest_runtime_modnotfound/~run.err.txt
+            tests\~selftest_runtime_modnotfound\~run.err.txt
+            tests/~selftest_runtime_modnotfound/~sub.ndjson
+            tests\~selftest_runtime_modnotfound\~sub.ndjson
+            tests/~selftest_runtime_modnotfound_pyproject/~modnotfound_pyproject_bootstrap.log
+            tests\~selftest_runtime_modnotfound_pyproject\~modnotfound_pyproject_bootstrap.log
+            tests/~selftest_runtime_modnotfound_pyproject/~setup.log
+            tests\~selftest_runtime_modnotfound_pyproject\~setup.log
+            tests/~selftest_runtime_modnotfound_pyproject/~run.err.txt
+            tests\~selftest_runtime_modnotfound_pyproject\~run.err.txt
+            tests/~selftest_runtime_modnotfound_pyproject/~sub.ndjson
+            tests\~selftest_runtime_modnotfound_pyproject\~sub.ndjson
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log
