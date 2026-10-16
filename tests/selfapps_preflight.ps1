@@ -29,7 +29,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.syntax'
-        req     = 'REQ-021'
+        req     = 'REQ-021.2'
         pass    = $true
         desc    = 'REQ-021 pre-flight: syntax error reported + graceful stop (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
@@ -41,7 +41,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.syntax'
-        req     = 'REQ-021'
+        req     = 'REQ-021.2'
         pass    = $false
         desc    = 'REQ-021 pre-flight: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
@@ -108,7 +108,7 @@ $pass = $req021Fired -and $syntaxDetail -and $stateError -and $noPyiCrash
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.syntax'
-    req     = 'REQ-021'
+    req     = 'REQ-021.2'
     pass    = $pass
     desc    = 'REQ-021 pre-flight: SyntaxError reported clearly and run stops gracefully before the build'
     details = [ordered]@{

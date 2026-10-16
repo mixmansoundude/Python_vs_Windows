@@ -77,6 +77,28 @@ illustrate a requirement but never define it. Going forward, when a section is u
 trend toward this altitude -- keep the requirement crisp and let mechanism detail live in
 **[AGENTS.md](./AGENTS.md)**, the `docs/` notes, or the diagnostics site.
 
+**How requirements are written here.** A section that has been converted opens with its goal, written
+with "should", and keeps its `[REQ-nnn]` id. Beneath it, each verifiable requirement is one numbered
+"shall" (`REQ-nnn.m`) with a criticality tag (`[critical]`, `[major]` or `[minor]`); the notes after the
+shalls explain why and how, and are not requirements. Sections not yet converted keep their older prose
+until a change that works on their tests rewrites them; where a numbered shall and older prose differ, the
+shall governs. The writing rules are in AGENTS.md, "Writing README requirements".
+
+### Terms
+
+- **program**: the user's Python code in the folder, starting from the entry file.
+- **entry file**: the `.py` file the bootstrapper selects to start the program (REQ-002).
+- **folder**: the directory that holds `run_setup.bat` and the program.
+- **working file**: a file the bootstrapper creates in the folder whose name begins with `~` (REQ-015).
+- **selected interpreter**: the Python interpreter of the provider the bootstrapper chose for the run
+  (REQ-009).
+- **non-interactive run**: a run in which `NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` is set in the
+  environment. **Interactive run**: any other run, in which the bootstrapper may wait for the user to answer.
+  `NOINPUT` and `HP_NONINTERACTIVE` are the documented user controls (see Advanced Environment Variables);
+  `HP_CI_LANE` is the marker the CI lanes set. Test hooks named `HP_TEST_*` are never part of this
+  definition. Some individual prompts read fewer of the three signals than this term lists; those
+  differences are tracked in `docs/open-questions.md`.
+
 ## [REQ-001] Prime Directive Expanded
 
 - From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
@@ -522,7 +544,36 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
 
 ## [REQ-021] Static pre-flight validation
 
-Before executing or packaging the selected entry, the bootstrapper statically validates that it is syntactically loadable (byte-compilation of the entry file). A pure code-level error in the user's own program (a SyntaxError) is reported early, in plain language, and attributed to the user's code -- distinct from a dependency-install failure or a PyInstaller packaging failure -- so a user typo does not surface as a confusing downstream error. It reports an existing, unavoidable failure (a syntax error makes the program unrunnable under both the interpreter and PyInstaller) clearly and first; it never aborts a run that would otherwise have succeeded, and it costs nothing when the code is valid.
+**Goal.** The bootstrapper should report a syntax error in the user's own program early and in plain
+language, so that a typo does not surface as a confusing downstream error, and should never stop a
+program that is valid.
+
+- **REQ-021.1** [major] Before it builds or runs the entry file, the bootstrapper **shall** determine
+  whether the entry file's syntax is valid.
+- **REQ-021.2** [major] When the entry file contains a syntax error, the bootstrapper **shall** report the
+  error, in plain language, before it builds or runs anything.
+- **REQ-021.3** [major] The report under REQ-021.2 **shall** state that the error is in the user's program
+  and not in dependency installation or in the EXE build.
+- **REQ-021.4** [critical] When the entry file's syntax is valid, the bootstrapper **shall** continue the
+  run, whatever the state of the folder.
+- **REQ-021.5** [minor] When the entry file's syntax is valid, the bootstrapper **shall** leave the folder
+  unchanged, except for working files.
+- **REQ-021.6** [major] The bootstrapper **shall** treat as a syntax error every error that the Python
+  compiler of the selected interpreter reports when it compiles the entry file.
+
+> **Notes (non-normative).**
+> - Rationale: a syntax error makes the program unrunnable under the interpreter and under PyInstaller, so
+>   reporting it first, in plain words, keeps a typo from surfacing as a confusing downstream error.
+> - Mechanism: `:preflight_compile` runs the emitted `~preflight_check.py` on the entry file with the
+>   selected interpreter. The helper compiles the source in memory, so it executes none of the user's code
+>   and writes nothing. A helper that cannot decide (it could not be written, or it exited with any code but
+>   0 or 1) logs a `[WARN]` and the run continues, so a broken check never stops a valid program.
+> - REQ-021.4 covers a read-only `__pycache__` and a plain file named `__pycache__`. The check used to run
+>   `py_compile`, which writes a `.pyc` into `__pycache__`, failed a valid program when it could not, and
+>   left the `.pyc` behind when it could (CLAUDE.md Item 83); that is why REQ-021.4 and REQ-021.5 exist.
+> - REQ-021.6: the parser alone accepts some programs the compiler rejects, for example a `return`
+>   statement outside a function, so a check that only parsed would let a real syntax error through to the
+>   build.
 
 ---
 

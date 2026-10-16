@@ -646,8 +646,12 @@ but several represent real gaps worth closing before calling the path fully rele
   `run_setup.bat` had a second `if` nested in the else-if chain (`else if conda if defined CONDA_BAT (`),
   so cmd bound every later `else` to the inner `if defined` and the venv, embed and system branches never
   ran outside conda mode: no install, no failure flag, no cascade candidate, the chain stopped at embed.
-  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. Re-soak both rows, then
-  remove `continue-on-error` from the aggregate gate per the discipline below.
+  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. **Fixed by PR #491; green read
+  2026-10-16**: run `38179263133` (head `4651e86`, all eight lanes read from the artifacts by run id) has
+  zero failing rows on every lane and exactly three rows changed against the red run `38157663037`, each from
+  red to green (`uv` `self.exe.warnfix.venv_repair` and `self.cascade.exec`, `cache` `self.exe.smokerun`).
+  That run is the first complete green matrix of the re-soak; remove `continue-on-error` from the aggregate
+  gate only after several consecutive complete green matrices, per the discipline below.
 
   **The `cache` lane's `self.exe.smokerun` red is explained (2026-10-11, run `38157663037`) and is a test
   artifact, not a product failure.** `selfapps_layered_e2e.ps1` (cache lane only) points its sub-bootstrap
@@ -760,6 +764,10 @@ the original symptom (see that doc's "CI-first testing policy").
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
   `unknown` near the top of the file, right after the preflight self-check).
+  Also in this PR (REQ-018.2, decided 2026-10-11, option A): the optimized-build prompt
+  (`:offer_optimized_build`) gets one sentence naming the risk of the second run: "Building it starts
+  your program once more for up to 30 seconds to check it works, so say no if running it twice could
+  cause harm." README REQ-018 stays as written; add a prompt-text row to the `self.optbuild.*` scenarios.
 - **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
   no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
@@ -878,7 +886,9 @@ the original symptom (see that doc's "CI-first testing policy").
   perfectly valid program, and the bootstrapper prints "Your Python program has a syntax error" and stops
   with status `error`. When it can write, it leaves the `.pyc` in the user's folder. Two slices, test first:
   (1) `tests/selfapps_preflight_pycache.ps1` (real lane, gating) with rows `self.preflight.pycache.unwritable`
-  (REQ-021.4) and `self.preflight.pycache.litter` (REQ-021.5), pushed alone and read red; (2) the fix: check
+  (REQ-021.4) and `self.preflight.pycache.litter` (REQ-021.5), pushed alone and read red, plus a guard row
+  `self.preflight.syntax.compiler` (REQ-021.6, a `return` outside a function must still fail pre-flight: the
+  parser accepts it and only the compiler rejects it, so it passes before and after the fix by design); (2) the fix: check
   the syntax in memory with an emitted helper (`~preflight_check.py`, `HP_PREFLIGHT_CHECK`, source
   `tools/preflight_check.py`: exit 0 valid, 1 syntax error with the interpreter's own message, anything else
   means the check could not run and the bootstrapper continues), so nothing is written and nothing can fail

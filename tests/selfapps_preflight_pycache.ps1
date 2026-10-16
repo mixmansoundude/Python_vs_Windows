@@ -1,18 +1,23 @@
 # ASCII only
-# selfapps_preflight_pycache.ps1 - REQ-021.4 and REQ-021.5: the pre-flight syntax check must not
-# change the outcome of a run whose entry file is valid, and must leave the folder as it found it.
+# selfapps_preflight_pycache.ps1 - REQ-021.4, REQ-021.5 and REQ-021.6: the pre-flight syntax check must
+# not change the outcome of a run whose entry file is valid, must leave the folder as it found it, and
+# must still reject everything the Python compiler rejects.
 #
 # Today :preflight_compile runs `python -m py_compile` on the entry. py_compile writes a .pyc into
 # __pycache__; when it cannot (a read-only __pycache__, or a FILE named __pycache__) it exits 1 for a
 # perfectly valid program and the bootstrapper reports a syntax error that is not there. Even when it
 # can write, it leaves __pycache__\entry.cpython-*.pyc behind in the user's folder.
 #
-# Two scenarios, each a full default bootstrap of a valid one-line program:
+# Three scenarios, each a full default bootstrap of a one-line program:
 #   unwritable : a regular FILE named __pycache__ sits in the folder (py_compile cannot create the
 #                directory). Row self.preflight.pycache.unwritable (REQ-021.4, critical).
 #   litter     : a normal folder. Nothing in this run imports a local module, so the only writer of
 #                __pycache__\entry.cpython-*.pyc is the pre-flight. Row self.preflight.pycache.litter
 #                (REQ-021.5, minor).
+#   compiler   : an entry with a `return` outside a function. The parser (ast.parse) accepts it and only the
+#                compiler rejects it, so a pre-flight that only parses would let a real syntax error through.
+#                Row self.preflight.syntax.compiler (REQ-021.6, major). It passes before and after the
+#                Item 83 fix on purpose: it pins that the in-memory check is as strict as py_compile was.
 #
 # HP_SKIP_PIPREQS=1 keeps pipreqs from any network lookup, as selfapps_preflight.ps1 does.
 # Lane: real only (the pre-flight is provider independent; one lane is enough to prove it).
@@ -38,16 +43,23 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.pycache.unwritable'
-        req     = 'REQ-021'
+        req     = 'REQ-021.4'
         pass    = $true
         desc    = 'REQ-021.4 pre-flight does not abort a valid program (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     })
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.pycache.litter'
-        req     = 'REQ-021'
+        req     = 'REQ-021.5'
         pass    = $true
         desc    = 'REQ-021.5 pre-flight leaves no file behind (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.preflight.syntax.compiler'
+        req     = 'REQ-021.6'
+        pass    = $true
+        desc    = 'REQ-021.6 pre-flight rejects what the compiler rejects (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     })
     exit 0
@@ -58,16 +70,23 @@ if (-not (Test-Path $batchPath)) {
     $missing = 'run_setup.bat not found at ' + $batchPath
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.pycache.unwritable'
-        req     = 'REQ-021'
+        req     = 'REQ-021.4'
         pass    = $false
         desc    = 'REQ-021.4 pre-flight does not abort a valid program (run_setup.bat not found)'
         details = [ordered]@{ error = $missing }
     })
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.pycache.litter'
-        req     = 'REQ-021'
+        req     = 'REQ-021.5'
         pass    = $false
         desc    = 'REQ-021.5 pre-flight leaves no file behind (run_setup.bat not found)'
+        details = [ordered]@{ error = $missing }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.preflight.syntax.compiler'
+        req     = 'REQ-021.6'
+        pass    = $false
+        desc    = 'REQ-021.6 pre-flight rejects what the compiler rejects (run_setup.bat not found)'
         details = [ordered]@{ error = $missing }
     })
     exit 1
@@ -77,12 +96,12 @@ $token = 'preflight pycache token'
 
 # Runs one default bootstrap in a fresh folder and returns what the assertions need.
 function Invoke-Scenario {
-    param([string]$Name, [bool]$BlockPycache)
+    param([string]$Name, [bool]$BlockPycache, [string]$EntrySource = ("print('" + $token + "')"))
     $workDir = Join-Path $here ('~selftest_preflight_' + $Name)
     if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
     New-Item -ItemType Directory -Force -Path $workDir | Out-Null
     Copy-Item -Path $batchPath -Destination $workDir -Force
-    Set-Content -Path (Join-Path $workDir 'entry.py') -Value ("print('" + $token + "')") -Encoding ASCII
+    Set-Content -Path (Join-Path $workDir 'entry.py') -Value $EntrySource -Encoding ASCII
     if ($BlockPycache) {
         # A regular file where py_compile wants a directory: it cannot create __pycache__ or write into it.
         Set-Content -Path (Join-Path $workDir '__pycache__') -Value 'not a directory' -Encoding ASCII
@@ -114,7 +133,10 @@ function Invoke-Scenario {
     return [ordered]@{
         runExit          = $runExit
         state            = $state
-        falseSyntaxError = [bool]($combined -match 'Your Python program has a syntax error' -or $combined -match 'REQ-021: entry failed py_compile')
+        falseSyntaxError = [bool]($combined -match 'Your Python program has a syntax error' -or $combined -match 'REQ-021: entry failed (py_compile|the syntax check)')
+        returnDetail     = [bool]($combined -match "'return' outside function")
+        reachedBuild     = [bool]($combined -match 'PyInstaller execution failed')
+        exeBuilt         = [bool](Test-Path -LiteralPath (Join-Path $workDir 'dist'))
         programRan       = [bool](($combined -match [regex]::Escape($token)) -or ($runOut -match [regex]::Escape($token)))
         pycFiles         = ($pyc -join ',')
         log              = $bootstrapLog
@@ -128,7 +150,7 @@ $u = Invoke-Scenario -Name 'unwritable' -BlockPycache $true
 $uPass = (-not $u.falseSyntaxError) -and ($u.state -ne 'error') -and $u.programRan
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.pycache.unwritable'
-    req     = 'REQ-021'
+    req     = 'REQ-021.4'
     pass    = [bool]$uPass
     desc    = 'REQ-021.4: a valid entry next to a FILE named __pycache__ is not reported as a syntax error and the run continues'
     details = [ordered]@{
@@ -145,7 +167,7 @@ $l = Invoke-Scenario -Name 'litter' -BlockPycache $false
 $lPass = ($l.pycFiles -eq '') -and (-not $l.falseSyntaxError) -and $l.programRan
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.pycache.litter'
-    req     = 'REQ-021'
+    req     = 'REQ-021.5'
     pass    = [bool]$lPass
     desc    = 'REQ-021.5: a valid entry leaves no __pycache__\entry.cpython-*.pyc behind (the pre-flight is its only possible writer)'
     details = [ordered]@{
@@ -158,5 +180,28 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not ($uPass -and $lPass)) { exit 1 }
+# --- scenario 3: what the compiler rejects, the pre-flight rejects (REQ-021.6) ---
+# `return` outside a function is not a parser error: ast.parse accepts it and only compile() raises it.
+# The program must be reported as a syntax error before any build, must not run, and must not leave a dist folder.
+$cSource = "print('" + $token + "')`nreturn 1"
+$c = Invoke-Scenario -Name 'compiler' -BlockPycache $false -EntrySource $cSource
+$cPass = $c.falseSyntaxError -and ($c.state -eq 'error') -and $c.returnDetail -and (-not $c.programRan) -and (-not $c.reachedBuild) -and (-not $c.exeBuilt)
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.preflight.syntax.compiler'
+    req     = 'REQ-021.6'
+    pass    = [bool]$cPass
+    desc    = 'REQ-021.6: a `return` outside a function (accepted by the parser, rejected by the compiler) is reported as a syntax error before any build'
+    details = [ordered]@{
+        bootstrapExit = $c.runExit
+        reported      = $c.falseSyntaxError
+        statusState   = $c.state
+        returnDetail  = $c.returnDetail
+        programRan    = $c.programRan
+        reachedBuild  = $c.reachedBuild
+        exeBuilt      = $c.exeBuilt
+        log           = $c.log
+    }
+})
+
+if (-not ($uPass -and $lPass -and $cPass)) { exit 1 }
 exit 0
