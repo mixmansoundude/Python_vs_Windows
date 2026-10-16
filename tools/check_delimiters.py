@@ -610,6 +610,7 @@ class DelimiterChecker:
                 self._check_bat_set_quoting(line_no, line)
                 self._check_bat_unquoted_path_var(line_no, line)
                 self._check_bat_rem_comment_spacing(line_no, line)
+                self._check_bat_else_if_second_if(line_no, line)
 
         return self.issues
 
@@ -739,6 +740,44 @@ class DelimiterChecker:
             f"try to run \"{match.group(1)}{match.group(2)}...\" as a literal command, "
             "leaving a stray nonzero errorlevel behind. Add a space after \"rem\" if "
             "this was meant to be a comment.",
+        )
+
+    def _check_bat_else_if_second_if(self, line_no: int, line: str) -> None:
+        """Flag `else if A if B` on one line: the dangling-else trap.
+
+        cmd.exe binds every later `else` in a chain to the NEAREST `if`, so a second
+        `if` written straight after an `else if` condition swallows the rest of the
+        chain: whenever the first condition is false the whole inner statement,
+        branches included, is skipped and nothing runs or is logged.
+        """
+        # derived requirement (CLAUDE.md Item 35, 2026-10-11): `) else if "%MODE%"=="conda"
+        # if defined CONDA_BAT (` hid the warnfix repair dispatch's venv, embed and system
+        # branches for the file's whole life and held two uv-lane rows red. No gating row
+        # can pin every branch of such a chain (the system branch has none), so the SHAPE is
+        # checked instead. Quoted text is blanked first so a `"if"` inside a string is not
+        # read as a command; the match stops at the first `(`, because an `if` inside the
+        # first statement's own parenthesised body is nested on purpose and binds correctly.
+        # Echo lines are prose, not commands. Intentionally blunt: compute the combined
+        # condition into a flag first, then test `if defined FLAG` (see
+        # docs/agent-lessons-learned.md, the cmd dangling else entry).
+        if ECHO_LINE_RE.match(line.lstrip()):
+            return
+        blanked = re.sub(r'"[^"]*"', '""', line)
+        # An echo inside a block is prose up to the closing parenthesis: `if x (echo else if A if B)`
+        # holds no second if command. Text before the echo is kept, so a real trap earlier on the
+        # line is still found.
+        blanked = re.sub(r"\becho\b[^)]*", "echo", blanked, flags=re.IGNORECASE)
+        match = re.search(r"\belse\s+if\b[^()]*?\sif\s", blanked, re.IGNORECASE)
+        if not match:
+            return
+        self.add_issue(
+            line_no,
+            match.start() + 1,
+            "Batch: a second \"if\" on the same line as \"else if\" captures every later "
+            "\"else\" in the chain (cmd binds an else to the nearest if), so the later "
+            "branches are skipped whenever the first condition is false. Decide the "
+            "combined condition into a flag with \"set\" first, then use "
+            "\"else if defined FLAG (\".",
         )
 
     def _check_ps1_boolean_operators(self, line_no: int, line: str) -> None:

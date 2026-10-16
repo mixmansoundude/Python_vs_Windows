@@ -1078,11 +1078,21 @@ jobs:
         run: |
           & tests\selfapps_pyinstaller_fail.ps1
 
-      - name: "Self-test: REQ-021 py_compile pre-flight syntax error (real/conda-full only)"
+      - name: "Self-test: REQ-021 pre-flight syntax error (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
         run: |
           & tests\selfapps_preflight.ps1
+
+      # REQ-021.4 and REQ-021.5 (docs/plan-test-suite-gaps.md gap T11, CLAUDE.md Item 83): the pre-flight
+      # syntax check must not abort a valid program next to an unwritable __pycache__, and must leave no
+      # entry .pyc behind. Real lane only (the pre-flight is provider independent). Added red first: both
+      # rows fail until the check stops writing a .pyc.
+      - name: "Self-test: REQ-021 pre-flight leaves a valid program alone -- unwritable __pycache__ + no litter (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_preflight_pycache.ps1
 
       - name: "Self-test: early preflight branches -- line-ending + writable-CWD (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}

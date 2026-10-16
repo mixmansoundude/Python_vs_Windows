@@ -557,15 +557,17 @@ $warnSubCount = ([regex]::Matches($AllText, ':warn_user_code_launch')).Count
 $warnMsg = $AllText -match [regex]::Escape('force-stopped after about 30')
 $hasKillWarn = ($warnSubCount -ge 3) -and $warnMsg
 Write-Result 'batch.smoke.kill_warn' 'REQ-016: scoped force-stop-at-30s warning before EXE smoke + recovery (subroutine defined + called at both kill sites)' $hasKillWarn @{ subCount = $warnSubCount; msg = $warnMsg }
-# derived requirement: REQ-021 static py_compile pre-flight must stay wired (guard against silent
-# deletion). Runtime proof is self.preflight.syntax (selfapps_preflight.ps1).
-$pfSub     = $AllText -match [regex]::Escape('REQ-021: static pre-flight -- byte-compile the entry')
+# derived requirement: REQ-021 static syntax pre-flight must stay wired (guard against silent
+# deletion). Runtime proof is self.preflight.syntax (selfapps_preflight.ps1) and the two
+# self.preflight.pycache.* rows (selfapps_preflight_pycache.ps1). The check runs the emitted
+# ~preflight_check.py helper, not py_compile: py_compile writes a .pyc and failed valid programs (Item 83).
+$pfSub     = $AllText -match [regex]::Escape('REQ-021: static pre-flight -- check the entry syntax')
 $pfCall    = $AllText -match 'call :preflight_compile'
-$pfCompile = $AllText -match [regex]::Escape('-m py_compile "%HP_ENTRY%"')
+$pfCompile = $AllText -match [regex]::Escape('"%HP_PY%" "~preflight_check.py" "%HP_ENTRY%"')
 $pfMsg     = $AllText -match [regex]::Escape('[ERROR] REQ-021:')
 $pfGuard   = $AllText -match [regex]::Escape('if defined HP_PREFLIGHT_FAILED')
 $hasPreflight = $pfSub -and $pfCall -and $pfCompile -and $pfMsg -and $pfGuard
-Write-Result 'batch.preflight.compile' 'REQ-021: static py_compile pre-flight wired (subroutine + call site + py_compile + REQ-021 message + graceful error-state guard)' $hasPreflight @{ sub=$pfSub; call=$pfCall; compile=$pfCompile; msg=$pfMsg; guard=$pfGuard }
+Write-Result 'batch.preflight.compile' 'REQ-021: static syntax pre-flight wired (subroutine + call site + in-memory syntax helper + REQ-021 message + graceful error-state guard)' $hasPreflight @{ sub=$pfSub; call=$pfCall; compile=$pfCompile; msg=$pfMsg; guard=$pfGuard }
 # derived requirement: REQ-007 provider-independent build must stay wired -- the EXE build is no
 # longer gated out for system mode; system Python builds only behind :system_build_consent_gate.
 # Guard against silent reversion to the old "system -> skip build" behavior.

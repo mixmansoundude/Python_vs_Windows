@@ -3449,7 +3449,7 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Fix runs.** All six `self.entryarg.*` rows were green on `real` in run `38178385508` and again in run
   `38879165683` (head `1398257`, after the rejected-run rows were tightened to exit code exactly 1: the
   rows record exit 1 and a usage line, not just a nonzero code). The latter run had zero failing rows on
-  all eight lanes. A fresh run after merging `main` (the Item 65 slice 1 merge) is read before this merges.
+  all eight lanes. A fresh run after each later merge of `main` (Item 65 slice 1, then Item 83) is read before this merges.
 
 ## Known Findings (diagnosed, no action warranted)
 

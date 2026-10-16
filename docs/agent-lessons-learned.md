@@ -521,7 +521,10 @@ repair dispatch's venv, embed and system branches for the file's whole life afte
 second `if` on the same line as an `else if` inside a chain. Compute the combined condition into a flag
 first (`set "FLAG="`, then `if A if B set "FLAG=1"`) and test `if defined FLAG`.** The symptom is a log
 that says an action is starting and never says it ran; a row that counts "started" markers against
-"attempted" lines (`repairWithoutAttempt` in `self.cascade.exec`) catches it.
+"attempted" lines (`repairWithoutAttempt` in `self.cascade.exec`) catches it. **Mechanically enforced**:
+`tools/check_delimiters.py`'s `_check_bat_else_if_second_if` flags the shape (the system branch of that
+dispatch has no gating row, so the shape is pinned rather than each branch); tests in
+`tests/test_check_delimiters_import.py`.
 
 ---
 
@@ -649,6 +652,23 @@ ASCII for a batch echo needs `c.isascii() and c.isalnum()` (a file named with an
 through the first version of `~pipreqs_precheck.py`'s `safe()`); and **`findstr /c:"[WARN]"` without `/l`
 may be read as a regex character class**, so use `/l` for any literal that contains `[`, `.`, `*`, `^`, `$`
 or `\`.
+
+---
+
+## `py_compile` is not a read-only check: it writes a `.pyc` and fails when it cannot
+
+`python -m py_compile entry.py` writes `__pycache__\entry.cpython-*.pyc` next to the file. When that write is
+impossible (a read-only folder, a locked-down machine, a plain FILE named `__pycache__`) it prints an `OSError`
+and exits 1 for a perfectly valid program, and `:preflight_compile` reported "Your Python program has a syntax
+error" for it (Item 83, REQ-021.4). When the write works it leaves the `.pyc` in the user's folder (REQ-021.5).
+**Rule: to ask "does this parse", call `compile(source_bytes, path, 'exec', dont_inherit=True)` in memory**
+(`tools/preflight_check.py`); catch `SyntaxError` (covers `IndentationError`, `TabError`, bad encodings) and,
+before 3.12, `ValueError` for a null byte, and treat everything else as "could not decide, continue". Passing
+bytes to `compile` honours a coding cookie and a BOM exactly as the interpreter does. Reproduce locally with
+`touch __pycache__` in a scratch folder and `python3 -m py_compile good.py`. **Grep for every call site, not just the
+one in the report:** the first CI run of the regression test failed at a second `py_compile` (the bootstrapper's own
+`~find_entry.py` check), earlier than the entry check, and the row had no field that said so; rows for a bug class
+should record which stage stopped the run, not only that it stopped.
 
 ---
 
