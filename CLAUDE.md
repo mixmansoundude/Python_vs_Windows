@@ -736,7 +736,7 @@ the original symptom (see that doc's "CI-first testing policy").
 
 - **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
   when the run exits 0 (GUI callbacks do this). Slice 1 (name the missing package) is built on PR #487
-  (red run `38146234107`, green rows on `real` in run `38157389535`; `HP_RUNTIME_MODULE_SCAN` has little
+  (red run `38146234107`, green rows on `real` in runs `38157389535` and `38178273898`; `HP_RUNTIME_MODULE_SCAN` has little
   payload room left, see the interconnect doc). Slice 2 (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any
   install, requirements edit, or rebuild; a yes also covers one verification run; a no changes nothing.
 - **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
