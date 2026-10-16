@@ -31,6 +31,7 @@ self.empty_repo.no_spurious_warn,
 self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run, self.exe.build.xfail,
+self.builder.override,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.hint.hidden_import.wording,
 self.exe.smokerun.cwd_consistency,
@@ -557,6 +558,23 @@ build attempted).
 
 ```
 self.optbuild.offer
+```
+
+## selfapps-pvw-builder NDJSON rows (selfapps_pvw_builder.ps1; five scenarios on real/conda-full, two on the uv lane)
+
+Item 71: the `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user override (see
+`docs/agent-interconnect.md`'s "PVW_BUILDER" entry). Absence of the variable is today's behavior, so
+every scenario sets it and asserts a decision the default run would not make. Gating, deterministic
+(`PVW_BUILDER_SCENARIO`): `invalid` (unknown value warns once, is not echoed, behaves as auto),
+`pyinstaller_nofallback` (Nuitka fallback switched off, never reached), `pyinstaller` (a real build is
+kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller never runs, failure
+reported with `reason=builder_nuitka`), `both_forcefail` (the optimized build starts without a prompt
+and its failure leaves the verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
+build needs a compiler download that can fail for network reasons (same precedent as
+`self.exe.build.tiera`): `nuitka`, `both`.
+
+```
+self.builder.override
 ```
 
 ## selfapps-interactive-stdin NDJSON rows (selfapps_interactive_stdin.ps1, uv lane only, non-gating)
