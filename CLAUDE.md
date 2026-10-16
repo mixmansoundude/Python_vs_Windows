@@ -66,6 +66,7 @@ tests/
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
+  selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
