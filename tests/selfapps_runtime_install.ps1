@@ -53,6 +53,13 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         desc    = 'a no changes nothing (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.install.pyproject'
+        req     = 'REQ-018'
+        pass    = $true
+        desc    = 'a pyproject.toml dependency source is left untouched (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
     exit 0
 }
 
