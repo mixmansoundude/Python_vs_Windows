@@ -3384,6 +3384,33 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   copy: a failed staging scan leaves `<log tail unavailable>` in `~pipreqs.summary.txt` (visible in the green
   run's `locked_crash` summary) and no traceback in the setup log.
 
+### Item 64 (closed 2026-10-11; PRs #482 and #485)
+
+- **Noise no longer reaches warnfix.** Symptom (Aug-Sep field report): a program that imports pandas, or only
+  `multiprocessing`, sent dozens of names to warnfix (`multiprocessing`, `tkinter`, `pyimod02_importers`,
+  `AppKit`, and pandas' own optional backends). It tried to install all of them: a run of more than 30
+  minutes, the cascade prompt, and a build failure from PyQt5 and PyQt6 installed together. This violated
+  README REQ-005.9 as written. The mechanisms (stdlib list, PyInstaller's own modules, installed `X.attr`,
+  `SKIP` growth, pywin32 translations, then the importer rule) are recorded in this file's "Dependency
+  Strategy Rationale" section under the `parse_warn.py` entries for slice 1 and slice 2; they are not
+  repeated here.
+- **Slice 1 (PR #482).** Scenario `tests/selfapps_warnfix_noise.ps1` (`self.warnfix.noise.stdlib`, `real` and
+  `conda-full`) was red alone in run `38089448746`, green after the fix in run `38098172664`.
+- **Slice 2 (PR #485).** Scenario `tests/selfapps_warnfix_library.ps1` (`self.warnfix.noise.library`, `real`
+  lane): red alone in run `38110474824` (60 install attempts, a cascade candidate, six new unit tests
+  failing), green in run `38118825368`. CodeRabbit then found two real ways the importer rule could swallow
+  the user's own import (a folder named like `my-packages`; a user module named like a stdlib module);
+  the five unit tests that pin the user's own code were red alone in run `38122977139`, green after the
+  fix in run `38136798354`. The merge-head run `38141042628` (head `0dd945e`, merged 2026-10-11 14:08Z)
+  was read from its own artifacts: `real` and `conda-full` had zero failing rows, `self.warnfix.noise.library`
+  passed with `attemptedCount` 0, `repairFailed` 0, no cascade candidate, 55 pandas warn lines present and
+  the EXE exit 0, and `self.parse_warn.pytest` and `self.pytest.unit` passed (702 passed, 2 skipped).
+- **Payload budget.** `HP_PARSE_WARN` is 8096 characters, 95 under the 8191 limit (an earlier note in
+  `CLAUDE.md` said 503, before the review fixes). The next change to it must shrink or split the payload first.
+- **Left open on purpose.** A library's hard dependency that is genuinely missing is no longer repaired from
+  the warn file; it surfaces at run time, which is Item 65's job. Item 80's Nuitka version still needs
+  confirming in a `uv`-lane setup log before that item closes.
+
 ### Item 67 (closed 2026-10-11; PR #488)
 
 - **A first argument that is not an existing `.py` file in the folder now stops the run with a usage
@@ -3402,9 +3429,10 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   did not release the REQ-024 lock, so the next double-click in that folder met "setup already running" for
   up to two hours. Row `self.entryarg.stops_release_lock` covers it.
 - **Test-first, as required.** `tests/selfapps_entryarg.ps1` (`real` lane, gating; rows
-  `self.entryarg.noext`, `.csv`, `.missing`, `.wildcard`, `.stops_release_lock`) landed alone and was red
-  in blocking CI (run `38147523685`, head `d1402bc`): on `real` exactly those five rows failed and no other
-  row did. For the expected reasons: `noext` built from `main.py` (`helloEntry:false`, `resolvedMsg:false`);
+  `self.entryarg.noext`, `.csv`, `.missing`, `.wildcard`, `.directory`, `.stops_release_lock`) landed
+  alone (the first five; `.directory`, a folder named like a script, came from a CodeRabbit finding) and was
+  red in blocking CI (run `38147523685`, head `d1402bc`): on `real` exactly those five rows failed and no
+  other row did. For the expected reasons: `noext` built from `main.py` (`helloEntry:false`, `resolvedMsg:false`);
   `csv`, `missing` and `wildcard` exited 0 with no usage line and `Fast path: reusing` in the log; `missing`
   discarded and rebuilt the good EXE (`exeUntouched:false`, the original symptom, and the run's log ends in
   a full SETUP COMPLETE banner), which is also why `wildcard` read a changed EXE after it; the run after
@@ -3413,6 +3441,15 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Two things the test taught.** `~setup.log` is rotated only past 10 MB, so a per-run absence check has to
   read only the bytes the run appended; and `if exist "%~1.py"` with `%1` = `*` matches any `.py`, so a
   wildcard argument needed its own rejection and row. See `docs/agent-lessons-learned.md`.
+- **The new check turned two older rows red, which was the test script's bug.** `tests/selftests.ps1` ran
+  `cmd.exe /c "run_setup.bat *> log"`; cmd has no `*>` operator, so the bootstrapper received a literal `*` as
+  its first argument and only stdout was redirected. The wildcard check rejected it and `self.bootstrap.state`
+  and `self.empty_repo.msg` went red on every lane (run `38158635455`). Fixed in the script with
+  `> log 2>&1` (run `38178385508` was green on all lanes).
+- **Fix runs.** All six `self.entryarg.*` rows were green on `real` in run `38178385508` and again in run
+  `38879165683` (head `1398257`, after the rejected-run rows were tightened to exit code exactly 1: the
+  rows record exit 1 and a usage line, not just a nonzero code). The latter run had zero failing rows on
+  all eight lanes. A fresh run after merging `main` (the Item 65 slice 1 merge) is read before this merges.
 
 ## Known Findings (diagnosed, no action warranted)
 

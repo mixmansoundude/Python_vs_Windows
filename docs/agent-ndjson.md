@@ -871,6 +871,48 @@ counts only when the user's own code imports it.
 self.warnfix.noise.library
 ```
 
+## selfapps-runtime-modnotfound NDJSON rows (selfapps_runtime_modnotfound.ps1, real lane only, GATING)
+
+CLAUDE.md Item 65 slice 1 regression test, README REQ-018. One real bootstrap of a fixture that
+stands in for a GUI callback: it catches the `ImportError` for `xlsxwriter` itself (module name joined
+at run time, no `requirements.txt`, so nothing installs it), prints the traceback to stderr and exits 0.
+`self.runtime.modnotfound` first proves its precondition (`symptomReproduced`: `Entry smoke exit=0`
+in `~setup.log` AND `ModuleNotFoundError: No module named 'xlsxwriter'` in `~run.err.txt`), then
+requires a console `[WARN]` line that names `xlsxwriter` as not installed (`consoleLine`,
+`namedModules` must list only that module), the bootstrapper's own `self.runtime.module_missing` row in
+the private `HP_NDJSON` file the test points the run at (`rowIds`, `rowModules`), and
+`~bootstrap.status.json` state `ok`. Skips with `skip=true, reason=non-windows-host` off Windows.
+Real lane only on purpose: the scan is provider-independent and the fixture needs no third-party
+package. Expected red on the commit that adds it (nothing reads the stderr of a run that exits 0) and
+green once the scan exists.
+
+A second scenario in the same script (`self.runtime.modnotfound.pyproject`, CodeRabbit finding on PR #487)
+bootstraps the same fixture with a `pyproject.toml` that lists one dependency, so `DEP_SOURCE=pyproject`.
+Setup copies those dependencies over `requirements.txt` on every run, so advice to edit `requirements.txt`
+would be lost on the next run. The row proves its precondition (`DEP_SOURCE=pyproject` in `~setup.log`, run
+exits 0, traceback in `~run.err.txt`) and requires both advice lines (the second `[WARN]` line and the closing
+reminder, `adviceLines`) to name `pyproject.toml` and neither to name `requirements.txt`. The first row now
+requires exactly one report per module (console and row), not at least one. Expected red on the commit that
+adds the pyproject scenario and green once the advice names the active source.
+
+```
+self.runtime.modnotfound
+self.runtime.modnotfound.pyproject
+```
+
+## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
+
+CLAUDE.md Item 65 slice 1. `:report_runtime_missing_module` writes `self.runtime.module_missing`
+(`pass` always true, it is a finding not a verdict) once per module per bootstrap run, with
+`details.module` (a plain identifier), `details.site` (`exe`, `interpreter`, `fastpath` or `checkpoint`)
+and `details.provider`. No lane puts it in a shared artifact: `selfapps_runtime_modnotfound.ps1` points
+`HP_NDJSON` at a private file and reports what it found in its own row `self.runtime.modnotfound`
+(`rowIds`, `rowModules`).
+
+```
+self.runtime.module_missing
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
