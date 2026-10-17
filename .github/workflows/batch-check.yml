@@ -1155,6 +1155,15 @@ jobs:
         run: |
           & tests\selfapps_preflight_pycache.ps1
 
+      # docs/plan-test-suite-gaps.md gap T1 (slice E): each REQ-012 skip hook ALONE. selfapps_skiphooks.ps1 sets both
+      # together; neither was ever run on its own, so nothing said how often the program runs with only one set.
+      # A stub appends one line per launch (the ledger idea above). Real lane only, gating from its first run.
+      - name: "Self-test: REQ-012 each skip hook alone -- launch counts (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_skiphooks_single.ps1
+
       # docs/plan-test-suite-gaps.md gap T1 (slices A to D): a stub program appends one line per launch
       # to ~ledger.jsonl, so the suite can count how often and with which arguments the user's program
       # really runs (REQ-026 argv forwarding at the EXE smoke, cached-EXE fast path and interpreter launch
@@ -2262,6 +2271,22 @@ jobs:
             tests\~selftest_cascade_exec\~cascade_exec_bootstrap.log
             tests/~selftest_cascade_exec/~setup.log
             tests\~selftest_cascade_exec\~setup.log
+            tests/~selftest_skiphooks_entry_only/~hook_f1.log
+            tests\~selftest_skiphooks_entry_only\~hook_f1.log
+            tests/~selftest_skiphooks_entry_only/~hook_f2.log
+            tests\~selftest_skiphooks_entry_only\~hook_f2.log
+            tests/~selftest_skiphooks_entry_only/~ledger.jsonl
+            tests\~selftest_skiphooks_entry_only\~ledger.jsonl
+            tests/~selftest_skiphooks_entry_only/~setup.log
+            tests\~selftest_skiphooks_entry_only\~setup.log
+            tests/~selftest_skiphooks_exe_only/~hook_g1.log
+            tests\~selftest_skiphooks_exe_only\~hook_g1.log
+            tests/~selftest_skiphooks_exe_only/~hook_g2.log
+            tests\~selftest_skiphooks_exe_only\~hook_g2.log
+            tests/~selftest_skiphooks_exe_only/~ledger.jsonl
+            tests\~selftest_skiphooks_exe_only\~ledger.jsonl
+            tests/~selftest_skiphooks_exe_only/~setup.log
+            tests\~selftest_skiphooks_exe_only\~setup.log
             tests/~selftest_launch_ledger_a/~ledger.jsonl
             tests\~selftest_launch_ledger_a\~ledger.jsonl
             tests/~selftest_launch_ledger_a/~ledger_a.log

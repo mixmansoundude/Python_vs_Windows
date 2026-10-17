@@ -640,6 +640,23 @@ self.launch.argv.checkpoint
 self.launch.argv.none
 ```
 
+## selfapps-skiphooks-single NDJSON rows (selfapps_skiphooks_single.ps1, real lane only, gating)
+
+Gap T1 slice E of `docs/plan-test-suite-gaps.md` (README REQ-012). `selfapps_skiphooks.ps1` sets
+`HP_SKIP_ENTRY_SMOKE` and `HP_SKIP_EXE_SMOKERUN` together; this script runs each ALONE, with the launch ledger
+idea of `selfapps_launch_ledger.ps1` (a stub appends one JSON line per launch to `~ledger.jsonl`). Each scenario is
+one fresh folder bootstrapped twice. `entry_only`: the interpreter smoke test is skipped but the EXE verification run
+is not, so the build launches the program once (frozen) and the repeat, which reuses the cached EXE, once more (two
+lines). `exe_only`: the EXE is built and not run, the interpreter verifies the build once (not frozen) because
+skipping the EXE run must not leave the build unverified, and the repeat logs `reusing cached EXE without running it`
+and launches nothing (the ledger stays at one line). Details also record whether the `entry_only` repeat reused the
+cached EXE or rebuilt (informational, not asserted). Skips on non-Windows.
+
+```
+self.skiphooks.entry_only
+self.skiphooks.exe_only
+```
+
 ## selfapps-runtests-contract NDJSON rows (selfapps_runtests_contract.ps1, every lane, gating)
 
 CLAUDE.md Item 84. Runs a copy of the real `run_tests.bat` against stub `harness.ps1` /
