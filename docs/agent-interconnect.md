@@ -1016,6 +1016,46 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
   in the environment and in the rebuilt EXE, but a later source change that triggers a rebuild goes back to
   building without the `--hidden-import` flags until the user adds the package to that file.
 
+## Last-chance offer (`:last_chance_offer`, Item 82 slice 1)
+
+**Touch how a verification run's exit code is kept, the checkpoint's result, or the cascade flag, must
+understand this offer.** After a fresh uv build whose verification run ended with a real non-zero exit, ONE
+untimed prompt offers W (it actually worked), C (try again with Miniconda) or N (neither, the default).
+`:run_entry_smoke` calls it right after `:verify_no_exe_interpreter`, BEFORE `HP_FASTPATH_USED` is cleared a few
+lines later. C only sets `HP_CASCADE_APPROVED`; the main line already reads that after `:run_entry_smoke`
+returns, so `:provider_cascade` needed no change, and the conda tier's own run is judged by its own inputs.
+- **Inputs, all captured where they would otherwise be lost**: `HP_LC_EXIT` and `HP_LC_SITE` (`exe` from the
+  end of `:smokerun_ndjson`, just before it clears `HP_EXE_EXIT`; `interpreter` from the end of both branches of
+  `:verify_no_exe_interpreter`), and `HP_LC_CKPT_RC` (the accepted checkpoint's interpreter exit, taken in
+  `:run_postexec_checkpoint` before it restores the first run's `HP_SMOKE_RC`). `:run_entry_smoke` clears all three
+  at the start of every attempt, and `:lc_cleanup` clears them after every call, so a cascade tier never judges its
+  run by an earlier tier's numbers. A run that is skipped (`HP_SKIP_ENTRY_SMOKE`) never sets `HP_LC_EXIT`.
+- **Not offered** (log line `Last chance: not offered (<reason>).` and a row, only after a failing run): exit 0 and
+  exit `-1` leave nothing at all (`-1` is the smoke runner's force-stop of a silent program, normal for a window
+  app, and also what a program that exits by itself with `-1` reads as; slice 2 adds the runner's kill marker to
+  tell them apart on the conda tier). Reasons: `provider` (not uv, or `HP_CASCADE_TRIED_UV`), `cascade_approved`
+  (the early prompt already approved), `runtime_install` (`HP_RTI_OFFERED`, Item 65 slice 2 already asked about this
+  run), `checkpoint_ok` (the accepted checkpoint ran the interpreter and it exited 0: a packaging problem, not the
+  environment).
+- **Gate order** (same CI-safe pattern as the other consent gates): the prompt text is echoed first, then
+  `HP_TEST_LASTCHANCE_ANSWER` (W, C or N, checked first so a test can answer even under `HP_CI_LANE`), then
+  `HP_TEST_FORCE_INTERACTIVE_LASTCHANCE` (forces the real read), then `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`
+  (state `automated`, no wait), else `set /p`, untimed on purpose (the decision). Anything but W or C is N.
+- **The error line** comes from `~last_error_line.py` (`HP_LAST_ERROR_LINE`, `tools/last_error_line.py`), run via
+  `%HP_PY%` on `~run.err.txt`, and is shown with `type` and appended to `%LOG%` with `type`, never through `:log`
+  or an unquoted echo: it can hold `< > & | % ^`. If the helper cannot be emitted (`HP_TEST_FORCE_EMIT_FAIL=
+  HP_LAST_ERROR_LINE`) or finds nothing, the prompt just omits the line (`hasLine` false in the row).
+- **`~run.err.txt` after a runtime install** holds the CHECK run's stderr, which is the one to show.
+- **Tests read console text AFTER the offer's heading only**: `~exe_smokerun.ps1` live-tees the EXE's stderr to the
+  console before the offer, so the same words appear earlier and prove nothing (`Test-AfterOffer` in
+  `tests/selfapps_lastchance.ps1`).
+- **NDJSON**: `self.lastchance.offer` (`state` `worked`/`cascade`/`neither`/`automated`/`not_offered`, `reason`,
+  `site`, `provider`, `exitCode`, `passType`, `hasLine`), written only when `HP_NDJSON` is defined; verdicts live in
+  `tests/selfapps_lastchance.ps1` (`self.lastchance.*`, real lane gating, `timeout`/`cascade`/`cascade_again` on the
+  uv lane, non-gating). Item 66 reads `passType` (`user_confirmed` today) to decide what to remember.
+- The `[HINT][RUNTIME_MISMATCH]` line in `:exe_smokerun_hints` no longer says "not your environment or
+  dependencies", because the offer that can follow suggests exactly that.
+
 ### Cascade signal reliability
 
 `HP_CASCADE_CANDIDATE` requires BOTH: (A) PyInstaller's warn file still lists an unresolved import

@@ -987,6 +987,55 @@ from a private file and judges it in its own three rows.
 self.runtime.install
 ```
 
+## selfapps-lastchance NDJSON rows (selfapps_lastchance.ps1, real lane GATING, uv lane non-gating)
+
+CLAUDE.md Item 82 slice 1 regression test, README REQ-018 and REQ-009. Each scenario is one real bootstrap of a
+standard-library fixture, with the answer to the offer supplied by `HP_TEST_LASTCHANCE_ANSWER`, the automated-run
+guards, or a real `set /p` read (`HP_TEST_FORCE_INTERACTIVE_LASTCHANCE`). Each row first proves its precondition
+(`Entry smoke exit=3` and the fixture's own stderr), and every check on the prompt's text looks only at console text
+after the heading, because the EXE verification run live-tees its own stderr to the console before the offer.
+`LASTCHANCE_GROUP` picks the group (`real`, `uv`, unset runs both). Real lane (gating, nothing downloaded beyond a
+normal uv bootstrap): `self.lastchance.worked` (answer W: the prompt, `Last chance: you said it worked`, no cascade,
+EXE kept, row state `worked`, `passType` `user_confirmed`, site `exe`); `self.lastchance.errline` (no answer in an
+automated run resolves to `automated` with no wait, and the error line `Error: a<b>c&d|e%PATH%^f "q" end` is shown
+intact on the console and in the setup log, with the same non-tilde top-level names as the `worked` run and no
+file named after the operators); `self.lastchance.enter` (interpreter site via `HP_SKIP_EXE_SMOKERUN`, a bare Enter
+at the real `set /p` means `neither`, and `HP_TEST_FORCE_EMIT_FAIL=HP_LAST_ERROR_LINE` only drops the last-line part:
+row `hasLine` false); `self.lastchance.checkpoint_ok` (the accepted checkpoint ran the interpreter and it exited 0:
+no prompt, row state `not_offered`, reason `checkpoint_ok`); `self.lastchance.exit0` (no prompt, no row).
+Uv lane (non-gating because a force-stopped silent EXE and a mid-run Miniconda download can fail for transient
+reasons): `self.lastchance.timeout` (exit `-1` is a window app, no prompt even with an answer supplied);
+`self.lastchance.cascade` (answer C: `cascading provider uv to conda`, the program passes on conda, one prompt, one
+row `cascade`); `self.lastchance.cascade_again` (the program fails on conda too: still one prompt, and the conda
+tier writes row `not_offered` with reason `provider`). All skip with `skip=true, reason=non-windows-host` off
+Windows. Expected red on the commit that adds them (no offer exists) and green once `:last_chance_offer` exists.
+
+```
+self.lastchance.worked
+self.lastchance.errline
+self.lastchance.enter
+self.lastchance.checkpoint_ok
+self.lastchance.exit0
+self.lastchance.timeout
+self.lastchance.cascade
+self.lastchance.cascade_again
+```
+
+## Last-chance offer row (run_setup.bat, written only when HP_NDJSON is defined)
+
+CLAUDE.md Item 82 slice 1. `:lc_row` writes `self.lastchance.offer` once per call of `:last_chance_offer` that
+reached a state, which is only after a non-zero, non-`-1` verification exit on a fresh build: `details.state` is
+`worked`, `cascade`, `neither`, `automated` (a guard answered) or `not_offered`; `details.reason` is set for
+`not_offered` (`provider`, `cascade_approved`, `checkpoint_ok`, `runtime_install`); `details.site` is `exe` or
+`interpreter`; `details.provider` is `HP_ENV_MODE`; `details.exitCode` is the failing exit; `details.passType` is
+`user_confirmed` for `worked` (the Item 66 record will carry it); `details.hasLine` says whether an error line was
+shown. `pass` is always true. No lane puts it in a shared artifact: `selfapps_lastchance.ps1` reads it from a private
+file and judges it in its own rows.
+
+```
+self.lastchance.offer
+```
+
 ## Key facts for debugging missing rows
 
 - `self.exe.smokerun.cwd_consistency` (`tests/selfapps_exe_cwd_consistency.ps1`, real/conda-full
