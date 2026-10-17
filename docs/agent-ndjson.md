@@ -178,7 +178,7 @@ only on the rare `run_setup.bat missing` guard; `bootstrap.status` once per run;
 ```
 file.hash, bootstrap.state, bootstrap.exit, emit.extract (x many),
 batch.delayed.off, batch.delayed.enable_absent, batch.bang.scan,
-conda.channels, pipreqs.flags, pyi.onefile, log.rotate, tilde.naming,
+conda.channels, pipreqs.flags, pyi.onefile, tilde.naming,
 visa.detect, emit.helpers, env.state.write, dep.check.parse_lock,
 dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
 conda.path, conda.url, env.mode,

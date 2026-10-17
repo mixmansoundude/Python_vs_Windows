@@ -103,12 +103,14 @@ function Get-InstalledNames {
     param([string]$Dir)
     $names = New-Object System.Collections.ArrayList
     $path = Join-Path $Dir '~dependency_installed.txt'
-    if (-not (Test-Path -LiteralPath $path)) { return ,@() }
+    # No comma operator on either return: with @(Get-InstalledNames ...) at the call site a leading comma wraps the
+    # array in another array, and every membership test then sees one element holding the whole list.
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
     foreach ($line in (Get-Content -LiteralPath $path -Encoding ASCII)) {
         $m = [regex]::Match($line.Trim(), '^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(==|@|\s|$)')
         if ($m.Success) { [void]$names.Add((($m.Groups[1].Value.ToLowerInvariant()) -replace '[-_.]+', '-')) }
     }
-    return ,$names.ToArray()
+    return $names.ToArray()
 }
 
 function Get-RecordedSource {
@@ -210,11 +212,8 @@ if (-not $pass) { $anyRed = $true }
 Write-DepRow -Id 'self.depsource.requirements_only' -Pass ([bool]$pass) -Desc 'REQ-005.1: requirements.txt alone is the dependency source and its package is installed' -Details $d
 
 # ---- 3: all three present; PEP 723 wins
-# FIRST COMMIT ONLY: the expected winner below is deliberately wrong (the documented order makes PEP 723 win). It
-# proves the row fails on real data; the details show the source the run really recorded. The next commit restores
-# 'pep723' and 'toolz'.
-$expectedSource3 = 'pyproject'
-$expectedWatched3 = @('iniconfig')
+$expectedSource3 = 'pep723'
+$expectedWatched3 = @('toolz')
 $c = Invoke-Cell -Name 'all_three' -Files @{ 'cell_app.py' = ($pep723Good + $stubPlain); 'pyproject.toml' = $pyprojectDeps; 'requirements.txt' = "termcolor`n" }
 $v = Get-CellVerdict -Cell $c -ExpectedSource $expectedSource3 -ExpectedWatched $expectedWatched3
 $d = Get-CellDetails -Cell $c -Verdict $v -ExpectedSource $expectedSource3 -ExpectedWatched $expectedWatched3

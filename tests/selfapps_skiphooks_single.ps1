@@ -166,7 +166,7 @@ $entrySkipLogged = $logF1 -match [regex]::Escape('REQ-012: HP_SKIP_ENTRY_SMOKE s
 $exeSmokeRanF1 = $logF1 -match [regex]::Escape('EXE smokerun: testing')
 $f1 = if ($linesF1.Count -ge 1) { $linesF1[0] } else { $null }
 $f2 = if ($linesF2.Count -ge 2) { $linesF2[1] } else { $null }
-$expectedF1Lines = 0   # FIRST COMMIT ONLY: wrong on purpose, the EXE verification run is not skipped by this hook, so the real count is 1
+$expectedF1Lines = 1   # the EXE verification run is not skipped by this hook, so the first run launches the program once
 $expectedF2Lines = 2
 $entryPass = ($exitF1 -eq 0) -and ($exitF2 -eq 0) -and $exeF1 -and $entrySkipLogged -and $exeSmokeRanF1 -and
     ($linesF1.Count -eq $expectedF1Lines) -and ($null -ne $f1) -and ($f1.frozen -eq $true) -and
@@ -209,7 +209,7 @@ $exeSmokeRanG1 = $logG1 -match [regex]::Escape('EXE smokerun: testing')
 $repeatSkipLogged = $logG2 -match [regex]::Escape('reusing cached EXE without running it')
 $g1 = if ($linesG1.Count -ge 1) { $linesG1[0] } else { $null }
 $expectedG1Lines = 1
-$expectedG2Lines = 2   # FIRST COMMIT ONLY: wrong on purpose, the repeat reuses the cached EXE without running it, so the real total stays 1
+$expectedG2Lines = 1   # the repeat reuses the cached EXE without running it, so the total stays 1
 $exePass = ($exitG1 -eq 0) -and ($exitG2 -eq 0) -and $exeG1 -and $exeSkipLogged -and (-not $exeSmokeRanG1) -and
     ($linesG1.Count -eq $expectedG1Lines) -and ($null -ne $g1) -and ($g1.frozen -eq $false) -and
     $repeatSkipLogged -and ($linesG2.Count -eq $expectedG2Lines)

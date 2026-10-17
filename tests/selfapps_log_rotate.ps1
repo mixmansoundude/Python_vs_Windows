@@ -58,7 +58,7 @@ if (-not (Test-Path $batchPath)) {
 $limitBytes = 10485760
 $overBytes = 11534336          # 11 MiB, comfortably over the limit
 $underBytes = 1048576          # 1 MiB, comfortably under it
-$newLogMaxBytes = 100          # the fresh log of one short run; planted too small on purpose in the red commit
+$newLogMaxBytes = 1048576      # the fresh log of one short run stays far below 1 MiB (the 11 MiB seed is gone)
 
 function New-SeedLog {
     param([string]$Path, [string]$Marker, [long]$Bytes)
