@@ -15,6 +15,9 @@
 #   selftest_unreported    selftest.ps1 stub exits 0 but writes no tests\~selftest-summary.txt (an older copy of
 #                          that file is lying there): the section did not complete, so the batch exits 1 and says so.
 #   selftests_unreported   the same for selftests.ps1 and tests\~selftests-summary.txt.
+#   summary_locked         an older tests\~selftest-summary.txt is held open by another process (so the batch cannot delete it)
+#                          and selftest.ps1 exits 0 without writing a new one: the old file must not vouch for this run, so the
+#                          batch exits 1 and says it could not remove the file, and both self-test scripts still ran.
 #
 # The stubs make the scenarios deterministic and fast (a few seconds in total), so the test runs in every lane
 # and gates from its first run (AGENTS.md, "New tests gate immediately").
@@ -22,7 +25,7 @@
 # derived requirement: ids stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py scans text).
 #
 # Emits: self.runtests.all_green, self.runtests.harness_red, self.runtests.selftest_red,
-#        self.runtests.selftest_unreported, self.runtests.selftests_unreported
+#        self.runtests.selftest_unreported, self.runtests.selftests_unreported, self.runtests.summary_locked
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -63,7 +66,8 @@ function Invoke-RunTestsScenario {
         [int]$HarnessExit,
         [int]$SelftestExit, [bool]$SelftestSummary,
         [int]$SelftestsExit, [bool]$SelftestsSummary,
-        [bool]$StaleSummaries
+        [bool]$StaleSummaries,
+        [bool]$LockSelftestSummary
     )
     $dir = Join-Path $root $Name
     $tdir = Join-Path $dir 'tests'
@@ -78,6 +82,18 @@ function Invoke-RunTestsScenario {
         Set-Content -LiteralPath (Join-Path $tdir '~selftests-summary.txt') -Value 'stale summary from an earlier run' -Encoding Ascii
     }
     $outFile = Join-Path $dir '~rt_out.txt'
+    $staleFile = Join-Path $tdir '~selftest-summary.txt'
+    # A stream opened with FileShare.Read lets readers in but makes delete and overwrite fail, which is exactly
+    # the "another program has it open" case (same technique as selfapps_pipreqs_output.ps1).
+    $lock = $null
+    $lockError = ''
+    if ($LockSelftestSummary) {
+        try {
+            $lock = [System.IO.File]::Open($staleFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        } catch {
+            $lockError = $_.Exception.Message
+        }
+    }
     # derived requirement: redirect inside the cmd string, never with PowerShell *> (cmd would get a literal *).
     Push-Location -LiteralPath $dir
     try {
@@ -85,6 +101,11 @@ function Invoke-RunTestsScenario {
         $exit = $LASTEXITCODE
     } finally {
         Pop-Location
+        if ($lock) { $lock.Dispose() }
+    }
+    $staleSurvived = $false
+    if (Test-Path -LiteralPath $staleFile) {
+        $staleSurvived = ((Get-Content -LiteralPath $staleFile -Raw) -match 'stale summary from an earlier run')
     }
     $outText = if (Test-Path -LiteralPath $outFile) { Get-Content -LiteralPath $outFile -Raw } else { '' }
     if ($null -eq $outText) { $outText = '' }
@@ -96,12 +117,16 @@ function Invoke-RunTestsScenario {
         selftestsRan  = (Test-Path -LiteralPath (Join-Path $tdir '~stub_selftests_ran.txt'))
         reportsMissingSelftest  = ($outText -match 'did not complete') -and ($outText -match [regex]::Escape('~selftest-summary.txt'))
         reportsMissingSelftests = ($outText -match 'did not complete') -and ($outText -match [regex]::Escape('~selftests-summary.txt'))
+        reportsCouldNotRemove   = ($outText -match 'could not remove') -and ($outText -match [regex]::Escape('~selftest-summary.txt'))
+        lockHeld      = ($null -ne $lock)
+        lockError     = $lockError
+        staleSurvived = $staleSurvived
         outputTail    = $tail
     }
 }
 
 if (-not (Test-Path -LiteralPath $runTestsSrc)) {
-    foreach ($id in @('self.runtests.all_green', 'self.runtests.harness_red', 'self.runtests.selftest_red', 'self.runtests.selftest_unreported', 'self.runtests.selftests_unreported')) {
+    foreach ($id in @('self.runtests.all_green', 'self.runtests.harness_red', 'self.runtests.selftest_red', 'self.runtests.selftest_unreported', 'self.runtests.selftests_unreported', 'self.runtests.summary_locked')) {
         Write-NdjsonRow ([ordered]@{ id = $id; pass = $false; desc = 'run_tests.bat contract: run_tests.bat not found'; details = [ordered]@{ path = $runTestsSrc } })
     }
     return
@@ -150,6 +175,15 @@ Write-NdjsonRow ([ordered]@{
     id = 'self.runtests.selftests_unreported'; pass = [bool]$vPass
     desc = 'run_tests.bat contract: a selftests.ps1 that exits 0 without writing its summary did not complete -> exit 1 and the console says so, even with an older summary lying there'
     details = [ordered]@{ exitCode = $v.exitCode; expectedExit = 1; selftestRan = $v.selftestRan; selftestsRan = $v.selftestsRan; reportsMissing = $v.reportsMissingSelftests; outputTail = $v.outputTail }
+})
+
+# --- summary_locked --------------------------------------------------------------------------------------
+$k = Invoke-RunTestsScenario -Name 'summary_locked' -HarnessExit 0 -SelftestExit 0 -SelftestSummary $false -SelftestsExit 0 -SelftestsSummary $true -StaleSummaries $true -LockSelftestSummary $true
+$kPass = ($k.exitCode -eq 1) -and $k.selftestRan -and $k.selftestsRan -and $k.lockHeld -and $k.staleSurvived -and $k.reportsCouldNotRemove
+Write-NdjsonRow ([ordered]@{
+    id = 'self.runtests.summary_locked'; pass = [bool]$kPass
+    desc = 'run_tests.bat contract: an older selftest summary that cannot be deleted must not vouch for this run -> exit 1, the console says it could not remove the file, and both self-test scripts still ran'
+    details = [ordered]@{ exitCode = $k.exitCode; expectedExit = 1; selftestRan = $k.selftestRan; selftestsRan = $k.selftestsRan; lockHeld = $k.lockHeld; lockError = $k.lockError; staleSurvived = $k.staleSurvived; reportsCouldNotRemove = $k.reportsCouldNotRemove; outputTail = $k.outputTail }
 })
 
 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue

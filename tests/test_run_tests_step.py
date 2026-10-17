@@ -40,8 +40,8 @@ def problems(block):
     last = [ln.strip() for ln in block.splitlines() if ln.strip()][-1]
     if last != "exit $rc":
         found.append("the step does not end with exit $rc (last line: %r)" % last)
-    if "$LASTEXITCODE" not in block:
-        found.append("the step never reads $LASTEXITCODE")
+    if not re.search(r"^\s*\$rc\s*=\s*\$LASTEXITCODE\s*$", block, re.MULTILINE):
+        found.append("the step never assigns $rc = $LASTEXITCODE")
     return found
 
 
@@ -84,6 +84,14 @@ class RunTestsStepPassesExitCodeThrough(unittest.TestCase):
     def test_missing_final_exit_is_caught(self):
         no_exit = GOOD.replace("          exit $rc\n", "          Write-Host done\n")
         self.assertTrue(any("does not end with exit $rc" in f for f in problems(step_block(no_exit))))
+
+    def test_rc_not_taken_from_lastexitcode_is_caught(self):
+        zero = GOOD.replace("$rc = $LASTEXITCODE", "$rc = 0")
+        self.assertTrue(any("never assigns $rc" in f for f in problems(step_block(zero))))
+
+    def test_lastexitcode_only_mentioned_is_caught(self):
+        mention = GOOD.replace("$rc = $LASTEXITCODE", "$rc = 0  # ignores $LASTEXITCODE")
+        self.assertTrue(any("never assigns $rc" in f for f in problems(step_block(mention))))
 
     def test_missing_step_is_caught(self):
         self.assertEqual(problems(step_block("      - name: other\n        run: x\n")), ["no step sets SCRIPT: run_tests.bat"])

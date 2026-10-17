@@ -636,7 +636,9 @@ stub passes, exit 0. `harness_red`: a red harness still runs both self-test scri
 be red). `selftest_red`: a red selftest.ps1 keeps the exit at 1 and selftests.ps1 still runs.
 `selftest_unreported` / `selftests_unreported`: a script that exits 0 but never wrote its summary file
 did not complete, so the batch exits 1 and says "did not complete", even with an older summary file lying
-there (run_tests.bat clears them first). Pairs with `tests/test_run_tests_step.py`, which pins the CI
+there (run_tests.bat clears them first). `summary_locked`: the same stale summary held open by another
+process, so it cannot be deleted; it must not vouch for the run, the batch exits 1 and says it could not remove
+the file (details `lockHeld` and `staleSurvived` prove the precondition). Pairs with `tests/test_run_tests_step.py`, which pins the CI
 step to `exit $rc`. Runs before "Upload CI NDJSON" like every selfapps step, so its rows are part of the
 pre-harness verdict.
 
@@ -646,6 +648,7 @@ self.runtests.harness_red
 self.runtests.selftest_red
 self.runtests.selftest_unreported
 self.runtests.selftests_unreported
+self.runtests.summary_locked
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
