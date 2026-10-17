@@ -809,6 +809,28 @@ self.log.rotate.over
 self.log.rotate.under
 ```
 
+## selfapps-longpath-near NDJSON rows (selfapps_longpath_near.ps1, real lane only, gating)
+
+Gap T9 of `docs/plan-test-suite-gaps.md` (README REQ-003.5; replaces `self.warn.longpath`, which built a path over 260
+characters that a default runner cannot enter and so reported skip in all 8 lanes). `run_setup.bat` measures its own
+folder path with the closing backslash (`HP_SCRIPT_ROOT`) and warns at 200 characters or more (`*** WARNING: Script path
+is N chars...` on the console, `[WARN] Script path is N chars; ...` in the setup log), then goes on. The script builds
+scratch folders whose path including the closing backslash is exactly 199, 200 and 215 characters (a runner can enter
+anything under 260), starts a copy of the bootstrapper in each through the short system-Python path (`HP_CI_SKIP_ENV=1`,
+child only; the guard is before provider selection) with a one-line program that writes `~longpath_ran.txt`, and reads
+the console and the setup log. `.below` (199): no warning anywhere, the program ran, exit 0. `.at` (200) and `.over` (215):
+the warning is on the console and in the log, it names the same length the script built (so an off-by-one in either the
+measurement or the threshold fails), the program ran, exit 0. Every row also requires `built` (the real length of the
+scratch path equals the intended one). The scratch folders are long paths, so each run's two logs are copied to
+`tests\~longpath_near_<tag>.boot.log` and `.setup.log` for the artifact upload and the folder is removed. Skips on
+non-Windows.
+
+```
+self.longpath.near.below
+self.longpath.near.at
+self.longpath.near.over
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to

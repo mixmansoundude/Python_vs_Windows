@@ -160,6 +160,9 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 - **REQ-003.4** [minor] When the bootstrapper is started from a UNC path (`\\server\share\...`), it **shall**
   print a warning that names the UNC path, report `Workspace path invalid`, exit with code 1 and leave the
   folder without a `dist` folder or a setup log.
+- **REQ-003.5** [minor] The bootstrapper **shall**, when the path of the folder where it was started is 200
+  characters or longer (counting the closing backslash), print a warning that names the length, write the same
+  warning to the setup log, and go on with the run.
 
 > **Notes (non-normative).**
 > - Limitation: UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. The
@@ -167,6 +170,11 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 >   which is what the user should do. CMD cannot make a UNC path its current directory, which is why the
 >   run stops. The test starts a copy through the runner's own administrative share
 >   (`\\localhost\<drive>$\...`).
+> - REQ-003.5 exists because `cmd.exe` fails in ways a beginner cannot read once a path nears its 260-character
+>   limit, so the warning is the only help the user gets; the run goes on because a path of 200 to 259
+>   characters often still works. The test (`self.longpath.near.*`) uses folders of 199, 200 and 215
+>   characters, because a default runner cannot enter a path over 260 characters, which left the earlier
+>   check (`self.warn.longpath`) skipped on every run.
 > - Limitation: Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap
 >   steps. REQ-001.2 covers accented letters in the folder path; other characters are not covered.
 
