@@ -1493,6 +1493,16 @@ jobs:
         run: |
           & tests\selfapps_sysbuild.ps1
 
+      # CLAUDE.md Item 84: what run_tests.bat promises about the self-test section. Runs a copy of the real
+      # run_tests.bat against stub harness/self-test scripts (seconds, no provider), so it runs in every lane
+      # and gates from its first run (AGENTS.md, "New tests gate immediately"). It must stay ahead of "Upload
+      # CI NDJSON" like every other selfapps step: its rows are part of the pre-harness verdict.
+      - name: "Self-test: run_tests.bat contract -- self-tests still run after a red harness"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_runtests_contract.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v6
@@ -1512,7 +1522,7 @@ jobs:
           retention-days: 7
 
       # ORDERING CONSTRAINT - do not move these five steps (Verdict through Upload iterate
-      # gate verdict) below "Run tests (map empty repo to success)".
+      # gate verdict) below "Run tests (run_tests.bat)".
       #
       # Reason: run_tests.bat calls harness.ps1, which DELETES and REWRITES
       # tests/~test-results.ndjson with static analysis rows. If Verdict runs
@@ -1751,7 +1761,13 @@ jobs:
             if (Test-Path $resultsNdjson) { Remove-Item -Force $resultsNdjson }
           }
 
-      - name: Run tests (map empty repo to success)
+      # Item 84: run_tests.bat's exit code is this step's exit code. The step used to read ~bootstrap.status.json
+      # here and exit 0 when the state was no_python_files, which is true in EVERY lane (the repository has no
+      # .py files at its root), so a harness or self-test failure that wrote no red row (a script that crashed
+      # after some green rows) never reached the job. There is no real empty-repo case to map: run_tests.bat only
+      # fails because the harness or a self-test script failed. tests/test_run_tests_step.py pins this shape, and
+      # run_tests.bat itself fails a self-test section that never wrote its summary.
+      - name: Run tests (run_tests.bat)
         if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
         shell: pwsh
         env:
@@ -1785,19 +1801,7 @@ jobs:
           if (-not (Test-Path $stdoutPath)) {
             Set-Content -Path $stdoutPath -Value 'bootstrapper stdout missing' -Encoding Ascii
           }
-          if (Test-Path '~bootstrap.status.json') {
-            try {
-              $status = Get-Content '~bootstrap.status.json' -Raw | ConvertFrom-Json
-              if ($status.state -eq 'no_python_files') {
-                Write-Host "Runner rc=$rc on empty repo; mapping to SUCCESS by CI contract."
-                exit 0
-              }
-            } catch {
-              Write-Warning "Could not parse ~bootstrap.status.json; keeping rc=$rc"
-            }
-          } else {
-            Write-Warning "~bootstrap.status.json missing; keeping rc=$rc"
-          }
+          Write-Host "run_tests.bat exit code: $rc"
           exit $rc
 
       - name: Upload bootstrapper tests artifact
