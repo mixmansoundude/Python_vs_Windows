@@ -660,7 +660,11 @@ non-ASCII text is typed into a command line by the script. The row passes only i
 `~bootstrap.status.json` says `ok`, an EXE exists under `dist`, the log shows `Entry smoke exit=0` with no
 path error, and the frozen program's own record (`~unicode_token.json`) names the same two folder
 components (compared by code points, so a lossy `?` would not match) and carries the expected token. ASCII
-copies of the logs go to `tests\~selftest_unicode_path_evidence`. Skips on non-Windows.
+copies of the logs go to `tests\~selftest_unicode_path_evidence`. First real run (CI run 39023711765): the
+bootstrap succeeded and the program saw the exact folder names; the environment name (and so the EXE) loses the
+accented letter, `Jos_.exe`, which the row records without asserting. The two `The system cannot find the drive
+specified.` lines in `suspectLines` are the known stray message the batch announces before the PyInstaller build.
+Skips on non-Windows.
 
 ```
 self.prime.unicode-path
@@ -693,7 +697,12 @@ first so rows keep it) and starts the bootstrapper with standard input closed (`
 `pause` get end-of-file, which is the closest stand-in for nobody answering) and a hard time limit. A
 stub program appends one line per launch to `~noflag_ledger.jsonl`. Scenario F is a fresh folder, G the
 same folder again. `.run`: finished within the limit, exit code, state `ok`, both `[Y/N]` prompts and the
-end-of-run `Press any key` line shown, and no flag left in the environment. `.once`: the unanswered
+end-of-run `Press any key` line shown, and no flag in the environment the bootstrapper is started with. That last
+check reads the launched shell's own listing (`set HP_`, `set PVW_`, `set NOINPUT` written by the wrapper before the
+batch starts, prefixes only so no token is dumped): the first real run listed the four job variables in this
+script's own `Get-ChildItem Env:` after removal although the launched batch plainly saw none of them (it took the
+interactive branches), so the script's view is kept in the details as `parentStillSet` and the verdict reads the
+child's (`flagsSeenByRun`). `.once`: the unanswered
 prompts decline and the ledger holds exactly one launch (EXE). `.rerun`: the repeat run takes the
 interactive probe branch ("Launching your program now via the cached standalone EXE", not "Fast path:
 reusing") and starts the program once more. Limits: only the happy path through the provider chain is

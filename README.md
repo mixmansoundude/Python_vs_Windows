@@ -101,7 +101,23 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
 
 ## [REQ-001] Prime Directive Expanded
 
-- From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
+**Goal.** A person who has only one or more `.py` files on a clean Windows 10+ machine with internet access
+should be able to double-click a **single batch file** and have the Python program run **with all of its
+imports installed**.
+
+- **REQ-001.1** [critical] The bootstrapper **shall**, when the user starts `run_setup.bat` in a folder that
+  holds `.py` files on a Windows 10 or newer machine with internet access, set up everything the program needs
+  and run the program with all of its imports installed, without anything having been installed or configured
+  beforehand.
+- **REQ-001.2** [major] The bootstrapper **shall**, when the path of the folder contains an accented Latin
+  letter (for example e with an acute accent, U+00E9), set up and run the program the same way it does for a
+  path of ASCII letters only.
+
+> **Notes (non-normative).**
+> - REQ-001.2 is exercised with the folder `Caf<U+00E9> Test\Jos<U+00E9>` (an accented letter in two
+>   components, one with a space). The environment name, and so the EXE name, loses the accented letter
+>   (`Jos_.exe`). Characters outside the system code page, and the Miniconda location (REQ-003.2), are not
+>   covered by it.
 
 ### [REQ-002] Entry selection (current behavior)
 - **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
@@ -132,16 +148,27 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
 
 ## [REQ-003] Platform & Locations
 
-- Platform: Windows 10 (1809+) or newer to leverage built-in `curl` and PowerShell.
-- Conda environments (when conda is the selected provider): use **Miniconda** (non-admin).
-- Writable, non-admin locations under Public Documents (conda provider):
-  - Miniconda root: `%PUBLIC%\Documents\Miniconda3`
-  - App workspace: current folder (where the batch runs)
+**Goal.** The bootstrapper should run on Windows 10 (1809) or newer using the `curl` and PowerShell that
+Windows ships, and should keep everything it installs in writable, non-admin locations.
 
-### Limitations
+- **REQ-003.1** [major] The bootstrapper **shall** run on Windows 10 (version 1809) or newer, using the
+  `curl` and PowerShell that Windows ships.
+- **REQ-003.2** [major] When conda is the selected provider, the bootstrapper **shall** use Miniconda, installed
+  under `%PUBLIC%\Documents\Miniconda3`.
+- **REQ-003.3** [major] The bootstrapper **shall** create its working files and its build output in the
+  folder where it was started.
+- **REQ-003.4** [minor] When the bootstrapper is started from a UNC path (`\\server\share\...`), it **shall**
+  print a warning that names the UNC path, report `Workspace path invalid`, exit with code 1 and leave the
+  folder without a `dist` folder or a setup log.
 
-- UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. Map the share to a drive letter before running `run_setup.bat`.
-- Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap steps.
+> **Notes (non-normative).**
+> - Limitation: UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. The
+>   warning of REQ-003.4 recommends mapping the share to a drive letter and running `run_setup.bat` again,
+>   which is what the user should do. CMD cannot make a UNC path its current directory, which is why the
+>   run stops. The test starts a copy through the runner's own administrative share
+>   (`\\localhost\<drive>$\...`).
+> - Limitation: Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap
+>   steps. REQ-001.2 covers accented letters in the folder path; other characters are not covered.
 
 ---
 
@@ -699,20 +726,37 @@ blip or a temporary outage.
 
 ## [REQ-019] Environment-Variable Flags Are Scaffolding, Never a Gate
 
-**Intended run paths are double-click and drag-and-drop, with no environment variables set.** All
-`HP_*` and `PVW_*` environment variables are **test/CI/super-user scaffolding only**. No intended
-user path may *require* the user to set such a flag, and the **absence** of any such flag must
-never block a Prime-Directive outcome: a flag may add diagnostic/CI behavior or a super-user
-override, or suppress an optional step (so absence == full behavior), but it is never the gate for
-a behavior the Prime Directive needs. The default no-flag run must still reach every fallback tier
-that gets the code running. Requirements and tests therefore exercise the no-flag path.
+**Goal.** A user should be able to get every Prime Directive outcome by double-clicking or dragging a file onto
+`run_setup.bat`, with no environment variable set. The `HP_*` and `PVW_*` variables should stay
+test, CI and super-user scaffolding: a flag may add diagnostic or CI behavior, give a super-user an
+override, or suppress an optional step (so that absence is full behavior), but it should never be the gate for
+a behavior the Prime Directive needs.
 
-This is a standing design constraint, not just reference documentation -- it was previously only
-stated in this section's own prose with no requirement number, even though `docs/agent-lessons-
-learned.md` and other internal docs already cited it informally as a load-bearing rule (the "Env-
-var flags are scaffolding" principle). Promoted to `[REQ-019]` so it can be cited unambiguously
-going forward, distinct from `[REQ-001]` (the Prime Directive itself, which this rule protects but
-does not replace).
+- **REQ-019.1** [critical] The bootstrapper **shall**, when the user starts `run_setup.bat` with none of the
+  `HP_*`, `PVW_*` and `NOINPUT` environment variables set and nobody answers a prompt, finish the run by
+  itself, with the bootstrap state `ok` for a program that runs.
+- **REQ-019.2** [critical] The absence of an `HP_*` or `PVW_*` environment variable **shall not** prevent the
+  bootstrapper from using a fallback provider that gets the program running.
+- **REQ-019.3** [major] The bootstrapper **shall**, when none of the `HP_*`, `PVW_*` and `NOINPUT`
+  environment variables is set and the folder holds a current, verified EXE, start that EXE once, without
+  rebuilding it.
+
+> **Notes (non-normative).**
+> - Intended run paths are double-click and drag-and-drop with no environment variables set, so requirements
+>   and tests exercise the no-flag path. This is a standing design constraint: it was previously stated only
+>   in this section's prose without a requirement number, although `docs/agent-lessons-learned.md` and other
+>   internal docs already cited it as a load-bearing rule (the "Env-var flags are scaffolding" principle). It
+>   is distinct from `[REQ-001]`, the Prime Directive itself, which this rule protects but does not replace.
+> - REQ-019.1 and REQ-019.3 are exercised by starting the bootstrapper with every such variable removed from
+>   its environment and standard input closed, so the prompts that wait for an answer reach end of input; the
+>   launched shell's own list of such variables is what proves none was set. A repeat run takes the
+>   interactive probe of the cached EXE ("Launching your program now via the cached standalone EXE") rather
+>   than the plain fast path. Every other test scenario sets `HP_CI_LANE`, which resolves these prompts and
+>   the end-of-run pause differently.
+> - REQ-019.2 is checked by inspection: `tests/test_flag_inventory.py` lists every test hook the batch reads,
+>   and the AGENTS.md and `docs/agent-lessons-learned.md` rule is to re-read any new flag for this property.
+>   The one historical breach was system Python hidden behind `HP_ALLOW_SYSTEM_FALLBACK`; it is gated by the
+>   consent prompt of REQ-014 alone now.
 
 ## Advanced Environment Variables (reference)
 

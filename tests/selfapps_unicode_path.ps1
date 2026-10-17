@@ -39,7 +39,7 @@ function Write-NdjsonRow {
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
-        id = 'self.prime.unicode-path'; req = 'REQ-001'; pass = $true
+        id = 'self.prime.unicode-path'; req = 'REQ-001.2'; pass = $true
         desc = 'Non-ASCII folder bootstrap (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
@@ -48,7 +48,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
-        id = 'self.prime.unicode-path'; req = 'REQ-001'; pass = $false
+        id = 'self.prime.unicode-path'; req = 'REQ-001.2'; pass = $false
         desc = 'Non-ASCII folder bootstrap: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
     })
@@ -83,9 +83,7 @@ print("unicode-path-ok")
 '@
 Set-Content -LiteralPath (Join-Path $dir 'unicode_app.py') -Value $stub -Encoding ASCII
 
-# FIRST COMMIT ONLY: this expected token is deliberately wrong. It proves the row fails on real data, and the
-# details show the token the program really wrote. The next commit restores 'unicode-path-ok'.
-$expectedToken = 'unicode-path-expected-wrong'
+$expectedToken = 'unicode-path-ok'
 
 # Never prompt, skip the dependency scan (stdlib-only stub). The batch is started from a generated .cmd so
 # that nothing non-ASCII is ever typed into a command line by this script.
@@ -153,7 +151,7 @@ try { Remove-Item -LiteralPath $rootDir -Recurse -Force -ErrorAction Stop; $clea
 
 $pass = ($exitCode -eq 0) -and ($statusState -eq 'ok') -and ($exeFiles.Count -ge 1) -and $smokeOk -and $noPathErrors -and $frozenOk -and $cwdOk -and $tokenOk
 Write-NdjsonRow ([ordered]@{
-    id = 'self.prime.unicode-path'; req = 'REQ-001'; pass = [bool]$pass
+    id = 'self.prime.unicode-path'; req = 'REQ-001.2'; pass = [bool]$pass
     desc = 'REQ-001: the bootstrap succeeds from a folder path with a non-ASCII character in two components'
     details = [ordered]@{
         exitCode = $exitCode

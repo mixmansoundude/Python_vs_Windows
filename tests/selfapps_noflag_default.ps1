@@ -49,7 +49,7 @@ function Write-NdjsonRow {
 }
 
 $allIds = @('self.noflag.default.run', 'self.noflag.default.once', 'self.noflag.default.rerun')
-$reqOf = @{ 'self.noflag.default.run' = 'REQ-019'; 'self.noflag.default.once' = 'REQ-018'; 'self.noflag.default.rerun' = 'REQ-019' }
+$reqOf = @{ 'self.noflag.default.run' = 'REQ-019.1'; 'self.noflag.default.once' = 'REQ-018'; 'self.noflag.default.rerun' = 'REQ-019.3' }
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     foreach ($rowId in $allIds) {
         Write-NdjsonRow ([ordered]@{ id = $rowId; req = $reqOf[$rowId]; pass = $true; desc = 'No-flag default run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
@@ -82,18 +82,21 @@ print("noflag-ok")
 '@
 Set-Content -LiteralPath (Join-Path $dir 'noflag_app.py') -Value $stub -Encoding ASCII
 
-# FIRST COMMIT ONLY: these expectations are deliberately wrong, one per row, so each row is proven able to fail on
-# real data (the details show the real values). The next commit restores 0, 1 and 2.
-$expectedExit = 5
-$expectedLaunchesFresh = 2
-$expectedLaunchesAfterRerun = 3
+$expectedExit = 0
+$expectedLaunchesFresh = 1
+$expectedLaunchesAfterRerun = 2
 
 $timeLimitSec = 1800
 
 function Invoke-NoFlagBootstrap {
     param([string]$LogName)
     $wrapper = Join-Path $dir '~noflag_launch.cmd'
-    Set-Content -LiteralPath $wrapper -Value @('@echo off', "call run_setup.bat noflag_app.py > $LogName 2>&1 < nul", 'exit /b %ERRORLEVEL%') -Encoding ASCII
+    # The wrapper first lists the flag-shaped variables of the environment it was started with, which is exactly what
+    # the bootstrapper inherits; that list (not this script's own view of its environment) decides whether a flag
+    # reached the run. Only the three flag prefixes are listed, never the whole environment (it can hold tokens).
+    # No space before the redirection: a space would become part of the prefix that `set` looks for.
+    $envName = $LogName -replace '\.log$', '.env.txt'
+    Set-Content -LiteralPath $wrapper -Value @('@echo off', "set HP_> $envName 2>nul", "set PVW_>> $envName 2>nul", "set NOINPUT>> $envName 2>nul", "call run_setup.bat noflag_app.py > $LogName 2>&1 < nul", 'exit /b %ERRORLEVEL%') -Encoding ASCII
     $started = Get-Date
     $proc = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', 'call ~noflag_launch.cmd') -WorkingDirectory $dir -NoNewWindow -PassThru
     $finished = $proc.WaitForExit($timeLimitSec * 1000)
@@ -105,7 +108,13 @@ function Invoke-NoFlagBootstrap {
         & taskkill.exe /F /T /PID $proc.Id 2>&1 | Out-Null
         $null = $proc.WaitForExit(30000)
     }
-    return [pscustomobject]@{ Finished = [bool]$finished; ExitCode = $code; Seconds = [int]((Get-Date) - $started).TotalSeconds }
+    $seen = @()
+    $envPath = Join-Path $dir $envName
+    if (Test-Path -LiteralPath $envPath) {
+        $seen = @(Get-Content -LiteralPath $envPath -Encoding ASCII | ForEach-Object { ($_ -split '=', 2)[0] } |
+            Where-Object { $_ -match '^(HP_|PVW_)' -or $_ -ieq 'NOINPUT' })
+    }
+    return [pscustomobject]@{ Finished = [bool]$finished; ExitCode = $code; Seconds = [int]((Get-Date) - $started).TotalSeconds; EnvDumped = (Test-Path -LiteralPath $envPath); FlagsSeen = $seen }
 }
 
 function Read-Text {
@@ -140,7 +149,10 @@ foreach ($item in @(Get-ChildItem Env:)) {
     if ($item.Name -match '^(HP_|PVW_)' -or $item.Name -ieq 'NOINPUT') { $scrubbed[$item.Name] = $item.Value }
 }
 foreach ($name in @($scrubbed.Keys)) { [Environment]::SetEnvironmentVariable($name, $null) }
-$remaining = @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(HP_|PVW_)' -or $_.Name -ieq 'NOINPUT' } | ForEach-Object { $_.Name })
+# This script's own view after the scrub is kept for the details only: the first run of this test showed the four job
+# variables still listed here although the launched batch saw none of them, so the verdict reads the launched shell's
+# environment dump instead (FlagsSeen).
+$parentStillSet = @($scrubbed.Keys | Where-Object { $null -ne [Environment]::GetEnvironmentVariable($_) } | Sort-Object)
 
 try {
     # ------------------------------------------------------------ Scenario F: fresh, no flags
@@ -164,12 +176,12 @@ try {
     $checkpointDeclined = ($logF + $setupF) -match 'post-execution checkpoint \((exe|interpreter)\): declined'
     $optbuildDeclined = ($logF + $setupF) -match 'Optimized build: declined'
 
-    $runPass = ($remaining.Count -eq 0) -and $runF.Finished -and ($runF.ExitCode -eq $expectedExit) -and ($statusF -eq 'ok') -and $checkpointPromptShown -and $optbuildPromptShown -and $pauseShown
+    $runPass = $runF.EnvDumped -and ($runF.FlagsSeen.Count -eq 0) -and $runF.Finished -and ($runF.ExitCode -eq $expectedExit) -and ($statusF -eq 'ok') -and $checkpointPromptShown -and $optbuildPromptShown -and $pauseShown
     Write-NdjsonRow ([ordered]@{
-        id = 'self.noflag.default.run'; req = 'REQ-019'; pass = [bool]$runPass
+        id = 'self.noflag.default.run'; req = 'REQ-019.1'; pass = [bool]$runPass
         desc = 'REQ-019: a run with no HP_*, PVW_* or NOINPUT variable and no console input finishes by itself with state ok, through the flag-free prompt branches'
         details = [ordered]@{
-            flagsRemaining = @($remaining); flagsScrubbed = $scrubbed.Count
+            flagsSeenByRun = @($runF.FlagsSeen); envDumped = [bool]$runF.EnvDumped; flagsScrubbed = $scrubbed.Count; scrubbedNames = @($scrubbed.Keys | Sort-Object); parentStillSet = @($parentStillSet)
             finished = $runF.Finished; seconds = $runF.Seconds; timeLimitSec = $timeLimitSec
             exitCode = $runF.ExitCode; expectedExit = $expectedExit; statusState = $statusF
             checkpointPromptShown = [bool]$checkpointPromptShown; optbuildPromptShown = [bool]$optbuildPromptShown; pauseShown = [bool]$pauseShown
@@ -197,12 +209,13 @@ try {
     $probeBranch = $logG -match 'Launching your program now via the cached standalone EXE'
     $plainFastLine = $logG -match 'Fast path: reusing'
     $g1 = if ($linesG.Count -ge 2) { $linesG[1] } else { $null }
-    $rerunPass = $runG.Finished -and ($runG.ExitCode -eq 0) -and ($linesG.Count -eq $expectedLaunchesAfterRerun) -and $probeBranch -and (-not $plainFastLine) -and ($null -ne $g1) -and ($g1.frozen -eq $true)
+    $rerunPass = $runG.EnvDumped -and ($runG.FlagsSeen.Count -eq 0) -and $runG.Finished -and ($runG.ExitCode -eq 0) -and ($linesG.Count -eq $expectedLaunchesAfterRerun) -and $probeBranch -and (-not $plainFastLine) -and ($null -ne $g1) -and ($g1.frozen -eq $true)
     Write-NdjsonRow ([ordered]@{
-        id = 'self.noflag.default.rerun'; req = 'REQ-019'; pass = [bool]$rerunPass
+        id = 'self.noflag.default.rerun'; req = 'REQ-019.3'; pass = [bool]$rerunPass
         desc = 'REQ-019: a repeat run with no flags reuses the EXE through the interactive probe and starts the program once more'
         details = [ordered]@{
             finished = $runG.Finished; seconds = $runG.Seconds; exitCode = $runG.ExitCode
+            flagsSeenByRun = @($runG.FlagsSeen); envDumped = [bool]$runG.EnvDumped
             ledgerLines = $linesG.Count; expectedLedgerLines = $expectedLaunchesAfterRerun
             interactiveProbeBranch = [bool]$probeBranch; plainFastPathLine = [bool]$plainFastLine
             secondFrozen = if ($g1) { $g1.frozen } else { $null }

@@ -47,7 +47,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
     Write-NdjsonRow ([ordered]@{
-        id = 'self.warn.unc'; req = 'REQ-003'; pass = $true
+        id = 'self.warn.unc'; req = 'REQ-003.4'; pass = $true
         desc = 'UNC launch path (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
@@ -61,7 +61,7 @@ if (-not (Test-Path $batchPath)) {
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
     })
     Write-NdjsonRow ([ordered]@{
-        id = 'self.warn.unc'; req = 'REQ-003'; pass = $false
+        id = 'self.warn.unc'; req = 'REQ-003.4'; pass = $false
         desc = 'UNC launch path: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
     })
@@ -121,7 +121,7 @@ Write-NdjsonRow ([ordered]@{
 
 if (-not $reachable) {
     Write-NdjsonRow ([ordered]@{
-        id = 'self.warn.unc'; req = 'REQ-003'; pass = $true
+        id = 'self.warn.unc'; req = 'REQ-003.4'; pass = $true
         desc = 'UNC launch path: not exercised, the runner admin share is unavailable (a skip, not a pass of the behavior)'
         details = [ordered]@{ skip = $true; reason = 'unc-share-unavailable'; uncPath = $uncDir; probeError = $probeError }
     })
@@ -130,9 +130,8 @@ if (-not $reachable) {
 }
 
 # --- launch the copy through the share --------------------------------------------------------------------------
-# FIRST COMMIT ONLY: this expected exit code is deliberately wrong (the batch should stop with 1). It proves the
-# row fails on real data, and the details show the exit code the batch really returned. The next commit restores 1.
-$expectedExit = 0
+# The batch stops with exit code 1 (REQ-003 limitation: Workspace path invalid).
+$expectedExit = 1
 $limitMs = 180000
 
 $uncBat = Join-Path $uncDir 'run_setup.bat'
@@ -185,7 +184,7 @@ Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 
 $pass = (-not $timedOut) -and ($exitCode -eq $expectedExit) -and $warnFound -and $invalidFound -and $noDist
 Write-NdjsonRow ([ordered]@{
-    id = 'self.warn.unc'; req = 'REQ-003'; pass = [bool]$pass
+    id = 'self.warn.unc'; req = 'REQ-003.4'; pass = [bool]$pass
     desc = 'REQ-003 limitation: started through \\localhost\<drive>$ the bootstrapper warns about the UNC path, reports Workspace path invalid and exits 1 without hanging'
     details = [ordered]@{
         uncPath = $uncBat
