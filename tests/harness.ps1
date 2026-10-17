@@ -691,6 +691,8 @@ try {
 Remove-Item -LiteralPath $pctFixture -Force -ErrorAction SilentlyContinue
 $hasPctSanitizer = ($pctExit -eq 0) -and ($pctOutput -eq 'prefix_SECRET_suffix_caretend')
 Write-Result 'batch.dll_bundle.pct_sanitizer' 'CLAUDE.md Item 24: tools/dll_pct_sanitize.ps1 (the emitted-.ps1 replacement for the DLL-bundle loops _SAFE display sanitization) genuinely strips % and ^ under a real cmd.exe + PowerShell child process, and the sanitized value survives a real call-based second expansion pass without leaking the shadowed SECRET variable (live-executed fixture against the real canonical source, not static reasoning -- this repo previously got cmd.exes own %-handling wrong via reasoning alone, twice)' $hasPctSanitizer @{ output=$pctOutput; exitCode=$pctExit }
+# TEMPORARY canary (Item 84, PR #496): one deliberately red harness row, to show a red harness fails the lane at the Run tests step while the self-test rows, the uploads and the Pages publish still happen. Reverted by the next commit.
+Write-Result 'batch.canary.deliberate_red' 'Item 84 canary: deliberately red harness row, reverted in the next commit' $false @{ item=84 }
 $results = Get-Content -LiteralPath $ResultsPath -Encoding ASCII | ForEach-Object { $_ | ConvertFrom-Json }
 $fail = @($results | Where-Object { -not $_.pass })
 $pass = @($results | Where-Object { $_.pass })
