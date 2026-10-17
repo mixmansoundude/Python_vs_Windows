@@ -11,7 +11,7 @@
 # merged dependency was both written AND actually installed -- not just present in a log line.
 #
 # Asserts:
-#   - requirements.autopep.txt (autopep723 check's raw output) was created and mentions requests.
+#   - ~requirements.autopep.txt (autopep723 check's raw output) was created and mentions requests.
 #   - The REQ-005.12 success log line appears in the bootstrap log.
 #   - The merged requirements.txt contains requests.
 #   - The app actually built and ran successfully (proves requests was installed, not just
@@ -87,7 +87,7 @@ try {
     $logPath = Join-Path $workDir $bootstrapLog
     $logText = if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Raw } else { '' }
 
-    $autopepOutPath = Join-Path $workDir 'requirements.autopep.txt'
+    $autopepOutPath = Join-Path $workDir '~requirements.autopep.txt'
     $autopepOutText = if (Test-Path -LiteralPath $autopepOutPath) { Get-Content -LiteralPath $autopepOutPath -Raw } else { $null }
     $autopepFound = $null -ne $autopepOutText -and $autopepOutText -match 'requests'
 

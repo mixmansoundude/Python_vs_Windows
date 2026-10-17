@@ -8,6 +8,9 @@ source -- mirrors PayloadSync in test_collect_submodules.py /
 test_hidden_import_scan.py).
 """
 import base64
+import contextlib
+import io
+import os
 import re
 import subprocess
 import tempfile
@@ -305,6 +308,103 @@ class MainUvDispatch(unittest.TestCase):
             )
             self.assertTrue(kwargs.get("capture_output"))
             self.assertTrue(kwargs.get("text"))
+
+
+class UvStderrLogged(unittest.TestCase):
+    """Item 73: when `uv add --script` fails, uv's own reason reaches stderr, which the batch
+    appends to the setup log (`2>> "%LOG%"`). Before this, the log only said ERROR:uv_rc_1."""
+
+    def _run(self, tmp, results, env=None):
+        """results: list of (returncode, stderr) handed out per uv call. Returns (rc, stdout_calls, stderr)."""
+        entry = Path(tmp) / "app.py"
+        entry.write_text("# /// script\nbroken (((\n# ///\nprint('hi')\n", encoding="utf-8")
+        pkgs = Path(tmp) / "pkgs.txt"
+        pkgs.write_text("requests\n", encoding="utf-8")
+        queue = list(results)
+
+        def fake_run(cmd, capture_output, text, timeout=None):
+            code, err = queue.pop(0)
+            result = unittest.mock.Mock()
+            result.returncode = code
+            result.stderr = err
+            return result
+
+        captured = io.StringIO()
+        keep = {k: v for k, v in os.environ.items() if k != "HP_TEST_PEP723_UV_ERR"}
+        keep.update(env or {})
+        with patch.dict(os.environ, keep, clear=True):
+            with patch("tools.pep723_writeback.subprocess.run", side_effect=fake_run) as mock_run:
+                with patch("builtins.print") as mock_print:
+                    with contextlib.redirect_stderr(captured):
+                        rc = main([str(entry), "uv", "python3", str(pkgs)])
+        return rc, mock_print.call_args_list, captured.getvalue(), mock_run
+
+    def test_generic_failure_logs_uv_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, prints, err, _ = self._run(
+                tmp, [(1, "error: No solution found when resolving script dependencies:\n  not-a-real-pkg was not found\n")]
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual([c.args for c in prints], [("ERROR:uv_rc_1",)])
+        self.assertIn("No solution found when resolving script dependencies", err)
+        self.assertIn("not-a-real-pkg was not found", err)
+
+    def test_only_the_last_five_nonblank_lines(self):
+        text = "".join("line%d\n\n" % n for n in range(1, 9))
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, err, _ = self._run(tmp, [(1, text)])
+        for n in (4, 5, 6, 7, 8):
+            self.assertIn("line%d" % n, err)
+        for n in (1, 2, 3):
+            self.assertNotIn("line%d" % n, err)
+
+    def test_long_line_is_cut_and_stays_ascii(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, err, _ = self._run(tmp, [(1, "caf\u00e9 " + "x" * 500 + "\n")])
+        self.assertTrue(err.isascii())
+        self.assertLess(max(len(line) for line in err.splitlines()), 260)
+
+    def test_success_with_a_warning_logs_nothing(self):
+        # astral-sh/uv#15956: a VIRTUAL_ENV mismatch warning with exit 0 is not a failure.
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, prints, err, _ = self._run(tmp, [(0, "warning: VIRTUAL_ENV does not match\n")])
+        self.assertEqual(rc, 0)
+        self.assertEqual([c.args for c in prints], [("OK:1",)])
+        self.assertEqual(err, "")
+
+    def test_strip_retry_failure_logs_both_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, prints, err, _ = self._run(tmp, [(2, "first attempt: header unparseable\n"), (2, "second attempt: still bad\n")])
+        self.assertEqual(rc, 1)
+        self.assertEqual([c.args for c in prints], [("ERROR:strip_retry_failed:2",)])
+        self.assertIn("first attempt: header unparseable", err)
+        self.assertIn("second attempt: still bad", err)
+
+    def test_timeout_reason_is_logged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entry = Path(tmp) / "app.py"
+            entry.write_text("print('hi')\n", encoding="utf-8")
+            pkgs = Path(tmp) / "pkgs.txt"
+            pkgs.write_text("requests\n", encoding="utf-8")
+            captured = io.StringIO()
+            with patch("tools.pep723_writeback.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="uv", timeout=120)):
+                with patch("builtins.print"):
+                    with contextlib.redirect_stderr(captured):
+                        main([str(entry), "uv", "python3", str(pkgs)])
+        self.assertIn("timeout", captured.getvalue())
+
+    def test_test_hook_fakes_a_uv_failure_without_calling_uv(self):
+        # HP_TEST_PEP723_UV_ERR is the CI scenario's way to force a failure: real uv would need a
+        # package that installs but cannot be added, which no public package offers.
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, prints, err, mock_run = self._run(
+                tmp, [], env={"HP_TEST_PEP723_UV_ERR": "injected one\ninjected two"}
+            )
+        self.assertEqual(rc, 1)
+        self.assertEqual([c.args for c in prints], [("ERROR:uv_rc_1",)])
+        self.assertIn("injected one", err)
+        self.assertIn("injected two", err)
+        mock_run.assert_not_called()
 
 
 class PayloadSync(unittest.TestCase):

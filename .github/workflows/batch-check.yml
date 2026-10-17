@@ -121,7 +121,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "::warning:: Cache corrupted, skipping fast-path tests (HP_CACHE_CORRUPTED=1)"
-          '' | Set-Content '.ci_bootstrap_marker' -Encoding Ascii
+          '' | Set-Content '~ci_bootstrap_marker' -Encoding Ascii
           '{"state":"cache_corrupted","exitCode":0,"pyFiles":0}' | Set-Content '~bootstrap.status.json' -Encoding Ascii
           if (-not (Test-Path 'tests')) { New-Item -ItemType Directory 'tests' | Out-Null }
           $row = '{"id":"self.cache.corrupted","pass":true,"desc":"Cache corrupted; bootstrap skipped (infrastructure, not product failure)","lane":"cache"}'
@@ -318,13 +318,13 @@ jobs:
             type bootstrap.log
             exit /b %RC%
           )
-          echo bootstrapped> .ci_bootstrap_marker
+          echo bootstrapped> ~ci_bootstrap_marker
 
       - name: Catch cache lane bootstrap failure
         if: ${{ matrix.mode == 'cache' && steps.bootstrap_env.outcome == 'failure' }}
         shell: pwsh
         run: |
-          '' | Set-Content '.ci_bootstrap_marker' -Encoding Ascii
+          '' | Set-Content '~ci_bootstrap_marker' -Encoding Ascii
           '{"state":"cache_bootstrap_failed","exitCode":1,"pyFiles":0}' | Set-Content '~bootstrap.status.json' -Encoding Ascii
           if (-not (Test-Path 'tests')) { New-Item -ItemType Directory 'tests' | Out-Null }
           $row = '{"id":"self.cache.bootstrap.failed","pass":true,"desc":"Cache lane bootstrap failed; treated as infrastructure issue (non-blocking)","lane":"cache"}'
@@ -1247,6 +1247,34 @@ jobs:
         run: |
           & tests\selfapps_pipreqs_output.ps1
 
+      # derived requirement: CLAUDE.md Item 67 -- the first argument must be an existing .py file in
+      # the bootstrapper folder (as typed, or with .py appended); anything else stops the run before
+      # the cached-EXE fast path. Gating on purpose (real lane); these rows are the regression test
+      # the fix must turn green. One lane is enough: the check runs before provider selection.
+      - name: "Self-test: first argument must be a .py file in this folder (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_entryarg.ps1
+      # derived requirement: CLAUDE.md Item 73 -- a failed PEP 723 write-back must log the reason uv
+      # gave, not only ERROR:uv_rc_1. Gating on purpose (real lane, uv-first); the row is the
+      # regression test the fix must turn green. Uses the helper's HP_TEST_PEP723_UV_ERR hook.
+      - name: "Self-test: PEP 723 write-back failure logs uv's reason (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pep723_uverr.ps1
+
+      # derived requirement: CLAUDE.md Item 68 -- the bootstrapper must say what happened: the
+      # pipreqs auto-detect warning (its gate was dead code), a notice when a stale cached EXE is
+      # rebuilt, and a pipreqs diff placeholder that names the missing file. Gating on purpose (real
+      # lane); one lane is enough because none of it depends on the provider.
+      - name: "Self-test: honest wording (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_honest_wording.ps1
+
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
         shell: pwsh
@@ -1969,7 +1997,7 @@ jobs:
             bootstrap.log
             ~setup.log
             runtime.txt
-            dependency_source.txt
+            ~dependency_source.txt
             ~dependency_resolved.txt
             ~dependency_installed.txt
             ~pipreqs.diff.txt
@@ -2037,6 +2065,64 @@ jobs:
             tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_direct.log
             tests/~selftest_pipreqs_output_lockedcrash/~pipreqs_precheck.txt
             tests\~selftest_pipreqs_output_lockedcrash\~pipreqs_precheck.txt
+            tests/~selftest_entryarg/~entryarg_run1.log
+            tests\~selftest_entryarg\~entryarg_run1.log
+            tests/~selftest_entryarg/~entryarg_run1_setup.log
+            tests\~selftest_entryarg\~entryarg_run1_setup.log
+            tests/~selftest_entryarg/~entryarg_run2.log
+            tests\~selftest_entryarg\~entryarg_run2.log
+            tests/~selftest_entryarg/~entryarg_run2_setup.log
+            tests\~selftest_entryarg\~entryarg_run2_setup.log
+            tests/~selftest_entryarg/~entryarg_run3.log
+            tests\~selftest_entryarg\~entryarg_run3.log
+            tests/~selftest_entryarg/~entryarg_run3_setup.log
+            tests\~selftest_entryarg\~entryarg_run3_setup.log
+            tests/~selftest_entryarg/~entryarg_run4.log
+            tests\~selftest_entryarg\~entryarg_run4.log
+            tests/~selftest_entryarg/~entryarg_run4_setup.log
+            tests\~selftest_entryarg\~entryarg_run4_setup.log
+            tests/~selftest_entryarg/~entryarg_run5.log
+            tests\~selftest_entryarg\~entryarg_run5.log
+            tests/~selftest_entryarg/~entryarg_run5_setup.log
+            tests\~selftest_entryarg\~entryarg_run5_setup.log
+            tests/~selftest_entryarg/~entryarg_run6.log
+            tests\~selftest_entryarg\~entryarg_run6.log
+            tests/~selftest_entryarg/~entryarg_run6_setup.log
+            tests\~selftest_entryarg\~entryarg_run6_setup.log
+            tests/~selftest_entryarg/~entryarg_dir1.log
+            tests\~selftest_entryarg\~entryarg_dir1.log
+            tests/~selftest_entryarg/~entryarg_dir1_setup.log
+            tests\~selftest_entryarg\~entryarg_dir1_setup.log
+            tests/~selftest_entryarg/~entryarg_dir2.log
+            tests\~selftest_entryarg\~entryarg_dir2.log
+            tests/~selftest_entryarg/~entryarg_dir2_setup.log
+            tests\~selftest_entryarg\~entryarg_dir2_setup.log
+            tests/~selftest_entryarg/~run.out.txt
+            tests\~selftest_entryarg\~run.out.txt
+            tests/~selftest_entryarg/~bootstrap.status.json
+            tests\~selftest_entryarg\~bootstrap.status.json
+            tests/~selftest_pep723_uverr/~uverr_bootstrap.log
+            tests\~selftest_pep723_uverr\~uverr_bootstrap.log
+            tests/~selftest_pep723_uverr/~setup.log
+            tests\~selftest_pep723_uverr\~setup.log
+            tests/~selftest_pep723_uverr/~bootstrap.status.json
+            tests\~selftest_pep723_uverr\~bootstrap.status.json
+            tests/~selftest_honest_wording/~wording_run1.log
+            tests\~selftest_honest_wording\~wording_run1.log
+            tests/~selftest_honest_wording/~wording_run1_setup.log
+            tests\~selftest_honest_wording\~wording_run1_setup.log
+            tests/~selftest_honest_wording/~wording_run2.log
+            tests\~selftest_honest_wording\~wording_run2.log
+            tests/~selftest_honest_wording/~wording_run2_setup.log
+            tests\~selftest_honest_wording\~wording_run2_setup.log
+            tests/~selftest_honest_wording/~wording_run3.log
+            tests\~selftest_honest_wording\~wording_run3.log
+            tests/~selftest_honest_wording/~wording_run3_setup.log
+            tests\~selftest_honest_wording\~wording_run3_setup.log
+            tests/~selftest_honest_wording/~pipreqs.diff.txt
+            tests\~selftest_honest_wording\~pipreqs.diff.txt
+            tests/~selftest_honest_wording/~dependency_source.txt
+            tests\~selftest_honest_wording\~dependency_source.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
@@ -3296,7 +3382,7 @@ jobs:
             'tests\~selftest_empty\~empty_bootstrap.log',
             'tests\~selftest_stub\~setup.log',
             'dynamic_tests.log',
-            'dependency_source.txt',
+            '~dependency_source.txt',
             'tests\~test-summary.txt',
             'iterate_gate.json',
             'iterate_auth.json',
@@ -3746,7 +3832,7 @@ jobs:
             @{ Source = (Join-Path 'tests' '~test-results.ndjson'); Destination = (Join-Path $testsDir '~test-results.ndjson') }
             @{ Source = (Join-Path 'tests' '~test-summary.txt');    Destination = (Join-Path $testsDir '~test-summary.txt') }
             @{ Source = 'dynamic_tests.log';                        Destination = (Join-Path $stage 'dynamic_tests.log') }
-            @{ Source = 'dependency_source.txt';                    Destination = (Join-Path $stage 'dependency_source.txt') }
+            @{ Source = '~dependency_source.txt';                   Destination = (Join-Path $stage '~dependency_source.txt') }
           )
 
           foreach ($pair in $pairs) {

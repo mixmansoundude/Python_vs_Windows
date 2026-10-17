@@ -21,9 +21,8 @@ def read_packages(path):
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                # pip directives (-e, -r, --hash, ...) exit 2 from uv's clap
-                # parser same as malformed TOML -- filter or main() wrongly
-                # strips a valid header. Real specs never start with '-'.
+                # pip directives (-e, -r, --hash) make uv exit 2, like bad TOML;
+                # filter them or main() wrongly strips a valid header.
                 if line.startswith("-"):
                     continue
                 packages.append(line)
@@ -58,17 +57,24 @@ def strip_pep723_block(text):
 
 def run_uv_add(entry_path, uv_exe, python_exe, packages):
     """Invoke `uv add --script` once; return (returncode, stderr_text)."""
+    fake = os.environ.get("HP_TEST_PEP723_UV_ERR")  # test hook: pretend uv failed, no uv call
+    if fake:
+        return 1, fake
     cmd = [uv_exe, "add", "--script", entry_path, "-p", python_exe] + packages
     try:
-        # Bounded like other network-touching helpers here (embed_pyver_check.py
-        # socket timeout) -- a stalled uv call must not hang the bootstrap.
+        # Bounded: a stalled uv call must not hang the bootstrap.
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
         return 1, "timeout"
-    # astral-sh/uv#15956: a benign VIRTUAL_ENV mismatch warning can appear on stderr
-    # with exit code 0 -- stderr text is never itself a failure signal, only the
-    # process return code is.
+    # astral-sh/uv#15956: a benign warning can sit on stderr at exit 0; only the
+    # return code signals failure.
     return proc.returncode, proc.stderr
+
+
+def _log_tail(text):
+    # Item 73: uv's own reason; the batch appends our stderr to the setup log (2>> "%LOG%").
+    for line in [x.strip() for x in (text or "").splitlines() if x.strip()][-5:]:
+        sys.stderr.write("uv: %s\n" % line[:200].encode("ascii", "replace").decode())
 
 
 def main(argv=None):
@@ -83,7 +89,7 @@ def main(argv=None):
         print("SKIP:no_packages")
         return 0
 
-    # Encoding pre-check: never hand uv a file whose UTF-8-ness is unconfirmed.
+    # Never hand uv a file that is not confirmed UTF-8.
     try:
         with open(entry_path, encoding="utf-8") as fh:
             fh.read()
@@ -91,9 +97,7 @@ def main(argv=None):
         print("SKIP:non_utf8")
         return 0
 
-    # File-lock canary: diagnostic-quality only, gives a clearer reason than the
-    # generic ERROR:uv_rc_<n> path below. Accepted TOCTOU race (lock could be
-    # acquired after this check) falls back to that same safe generic path.
+    # File-lock canary: a clearer reason than the generic ERROR:uv_rc_<n> below.
     try:
         with open(entry_path, "r+b"):
             pass
@@ -107,18 +111,16 @@ def main(argv=None):
         print("SKIP:lockfile")
         return 0
 
-    rc, _stderr = run_uv_add(entry_path, uv_exe, python_exe, packages)
+    rc, err = run_uv_add(entry_path, uv_exe, python_exe, packages)
+    if rc:
+        _log_tail(err)
     if rc == 0:
         print("OK:%d" % len(packages))
         return 0
     if rc == 2:
-        # astral-sh/uv#10918 / #19544: exit 2 is uv's signal the existing header
-        # is unparseable TOML -- the one case where starting over is correct.
-        # Any other exit code must not strip anything.
+        # uv#10918/#19544: exit 2 = unparseable header, the one case to start over.
         try:
-            # newline="" keeps CRLF intact on read -- without it, both the
-            # stripped write and the restore-on-double-failure write below
-            # would silently normalize the whole file's line endings to LF.
+            # newline="" keeps CRLF intact through the strip and the restore below.
             with open(entry_path, "r", encoding="utf-8", errors="ignore", newline="") as fh:
                 original = fh.read()
         except OSError:
@@ -131,13 +133,13 @@ def main(argv=None):
         except OSError:
             print("ERROR:strip_retry_failed:write")
             return 1
-        rc2, _stderr2 = run_uv_add(entry_path, uv_exe, python_exe, packages)
+        rc2, err2 = run_uv_add(entry_path, uv_exe, python_exe, packages)
+        if rc2:
+            _log_tail(err2)
         if rc2 == 0:
             print("OK:%d" % len(packages))
             return 0
-        # Retry also failed -- restore original (still-malformed) content rather
-        # than leave the file permanently stripped (mirrors PVW QuickStart's own
-        # restore-on-double-failure guarantee).
+        # Retry failed too: restore the original rather than leave it stripped.
         try:
             with open(entry_path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(original)
