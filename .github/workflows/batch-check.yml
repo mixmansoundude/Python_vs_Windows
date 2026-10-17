@@ -872,6 +872,17 @@ jobs:
         run: |
           & tests\selfapps_lastchance.ps1
 
+      # derived requirement: CLAUDE.md Item 66 (README REQ-009) -- the provider memory file and the
+      # PVW_PROVIDER switch. Gating on purpose, real lane only: these scenarios run a stdlib-only fixture
+      # under uv and download nothing beyond what every uv bootstrap does. The Miniconda ones follow below.
+      - name: "Self-test: provider memory and PVW_PROVIDER (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        env:
+          PROVIDER_GROUP: real
+        run: |
+          & tests\selfapps_provider_memory.ps1
+
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -950,6 +961,18 @@ jobs:
           LASTCHANCE_GROUP: uv
         run: |
           & tests\selfapps_lastchance.ps1
+
+      # CLAUDE.md Item 66: the scenarios that cannot gate. They download Miniconda (one into a fresh
+      # location) and solve a conda environment, so each can fail for transient network or provider
+      # reasons. Must follow the Miniconda steps above so the shared install is cached.
+      - name: "Self-test: provider memory and PVW_PROVIDER, the conda scenarios (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PROVIDER_GROUP: uv
+        run: |
+          & tests\selfapps_provider_memory.ps1
 
       # CLAUDE.md Active Backlog Item 42 (lever 1): proves the :log console-tiering mechanism
       # actually behaves at runtime -- [DEBUG]/[TRACE]/[INSTALL] suppressed from the live console
@@ -2305,6 +2328,112 @@ jobs:
             tests\~selftest_lastchance_window_selfexit\~setup.log
             tests/~selftest_lastchance_window_selfexit/~sub.ndjson
             tests\~selftest_lastchance_window_selfexit\~sub.ndjson
+            tests/~selftest_provider_unset/~pv_unset_bootstrap.log
+            tests\~selftest_provider_unset\~pv_unset_bootstrap.log
+            tests/~selftest_provider_unset/~setup.log
+            tests\~selftest_provider_unset\~setup.log
+            tests/~selftest_provider_unset/~provider.state.json
+            tests\~selftest_provider_unset\~provider.state.json
+            tests/~selftest_provider_unset/runtime.txt
+            tests\~selftest_provider_unset\runtime.txt
+            tests/~selftest_provider_unset/~runtime_writeback.txt
+            tests\~selftest_provider_unset\~runtime_writeback.txt
+            tests/~selftest_provider_invalid1/~pv_invalid_bootstrap.log
+            tests\~selftest_provider_invalid1\~pv_invalid_bootstrap.log
+            tests/~selftest_provider_invalid1/~setup.log
+            tests\~selftest_provider_invalid1\~setup.log
+            tests/~selftest_provider_invalid1/~provider.state.json
+            tests\~selftest_provider_invalid1\~provider.state.json
+            tests/~selftest_provider_invalid1/runtime.txt
+            tests\~selftest_provider_invalid1\runtime.txt
+            tests/~selftest_provider_invalid1/~runtime_writeback.txt
+            tests\~selftest_provider_invalid1\~runtime_writeback.txt
+            tests/~selftest_provider_invalid2/~pv_invalid_bootstrap.log
+            tests\~selftest_provider_invalid2\~pv_invalid_bootstrap.log
+            tests/~selftest_provider_invalid2/~setup.log
+            tests\~selftest_provider_invalid2\~setup.log
+            tests/~selftest_provider_invalid2/~provider.state.json
+            tests\~selftest_provider_invalid2\~provider.state.json
+            tests/~selftest_provider_invalid2/runtime.txt
+            tests\~selftest_provider_invalid2\runtime.txt
+            tests/~selftest_provider_invalid2/~runtime_writeback.txt
+            tests\~selftest_provider_invalid2\~runtime_writeback.txt
+            tests/~selftest_provider_invalid3/~pv_invalid_bootstrap.log
+            tests\~selftest_provider_invalid3\~pv_invalid_bootstrap.log
+            tests/~selftest_provider_invalid3/~setup.log
+            tests\~selftest_provider_invalid3\~setup.log
+            tests/~selftest_provider_invalid3/~provider.state.json
+            tests\~selftest_provider_invalid3\~provider.state.json
+            tests/~selftest_provider_invalid3/runtime.txt
+            tests\~selftest_provider_invalid3\runtime.txt
+            tests/~selftest_provider_invalid3/~runtime_writeback.txt
+            tests\~selftest_provider_invalid3\~runtime_writeback.txt
+            tests/~selftest_provider_gone/~pv_gone_bootstrap.log
+            tests\~selftest_provider_gone\~pv_gone_bootstrap.log
+            tests/~selftest_provider_gone/~setup.log
+            tests\~selftest_provider_gone\~setup.log
+            tests/~selftest_provider_gone/~provider.state.json
+            tests\~selftest_provider_gone\~provider.state.json
+            tests/~selftest_provider_gone/runtime.txt
+            tests\~selftest_provider_gone\runtime.txt
+            tests/~selftest_provider_gone/~runtime_writeback.txt
+            tests\~selftest_provider_gone\~runtime_writeback.txt
+            tests/~selftest_provider_unreadable/~pv_unreadable_bootstrap.log
+            tests\~selftest_provider_unreadable\~pv_unreadable_bootstrap.log
+            tests/~selftest_provider_unreadable/~setup.log
+            tests\~selftest_provider_unreadable\~setup.log
+            tests/~selftest_provider_unreadable/~provider.state.json
+            tests\~selftest_provider_unreadable\~provider.state.json
+            tests/~selftest_provider_unreadable/runtime.txt
+            tests\~selftest_provider_unreadable\runtime.txt
+            tests/~selftest_provider_unreadable/~runtime_writeback.txt
+            tests\~selftest_provider_unreadable\~runtime_writeback.txt
+            tests/~selftest_provider_fastpath/~pv_fast1_bootstrap.log
+            tests\~selftest_provider_fastpath\~pv_fast1_bootstrap.log
+            tests/~selftest_provider_fastpath/~pv_fast2_bootstrap.log
+            tests\~selftest_provider_fastpath\~pv_fast2_bootstrap.log
+            tests/~selftest_provider_fastpath/~setup.log
+            tests\~selftest_provider_fastpath\~setup.log
+            tests/~selftest_provider_fastpath/~provider.state.json
+            tests\~selftest_provider_fastpath\~provider.state.json
+            tests/~selftest_provider_fastpath/runtime.txt
+            tests\~selftest_provider_fastpath\runtime.txt
+            tests/~selftest_provider_fastpath/~runtime_writeback.txt
+            tests\~selftest_provider_fastpath\~runtime_writeback.txt
+            tests/~selftest_provider_forced/~pv_forced1_bootstrap.log
+            tests\~selftest_provider_forced\~pv_forced1_bootstrap.log
+            tests/~selftest_provider_forced/~pv_forced2_bootstrap.log
+            tests\~selftest_provider_forced\~pv_forced2_bootstrap.log
+            tests/~selftest_provider_forced/~setup.log
+            tests\~selftest_provider_forced\~setup.log
+            tests/~selftest_provider_forced/~provider.state.json
+            tests\~selftest_provider_forced\~provider.state.json
+            tests/~selftest_provider_forced/runtime.txt
+            tests\~selftest_provider_forced\runtime.txt
+            tests/~selftest_provider_forced/~runtime_writeback.txt
+            tests\~selftest_provider_forced\~runtime_writeback.txt
+            tests/~selftest_provider_remember/~pv_rem1_bootstrap.log
+            tests\~selftest_provider_remember\~pv_rem1_bootstrap.log
+            tests/~selftest_provider_remember/~pv_rem2_bootstrap.log
+            tests\~selftest_provider_remember\~pv_rem2_bootstrap.log
+            tests/~selftest_provider_remember/~setup.log
+            tests\~selftest_provider_remember\~setup.log
+            tests/~selftest_provider_remember/~provider.state.json
+            tests\~selftest_provider_remember\~provider.state.json
+            tests/~selftest_provider_remember/runtime.txt
+            tests\~selftest_provider_remember\runtime.txt
+            tests/~selftest_provider_remember/~runtime_writeback.txt
+            tests\~selftest_provider_remember\~runtime_writeback.txt
+            tests/~selftest_provider_forcedstop/~pv_stop_bootstrap.log
+            tests\~selftest_provider_forcedstop\~pv_stop_bootstrap.log
+            tests/~selftest_provider_forcedstop/~setup.log
+            tests\~selftest_provider_forcedstop\~setup.log
+            tests/~selftest_provider_forcedstop/~provider.state.json
+            tests\~selftest_provider_forcedstop\~provider.state.json
+            tests/~selftest_provider_forcedstop/runtime.txt
+            tests\~selftest_provider_forcedstop\runtime.txt
+            tests/~selftest_provider_forcedstop/~runtime_writeback.txt
+            tests\~selftest_provider_forcedstop\~runtime_writeback.txt
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log

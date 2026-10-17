@@ -1016,6 +1016,39 @@ self.lastchance.window_auto
 self.lastchance.window_selfexit
 ```
 
+## selfapps-provider-memory NDJSON rows (selfapps_provider_memory.ps1, real lane GATING, uv lane non-gating)
+
+CLAUDE.md Item 66 regression test, README REQ-009; decided 2026-10-17 (Q11, option A). Each scenario is one real
+bootstrap (or two, in the same folder) of a standard-library fixture; each row asserts the reason it passes (log
+lines, files, status), not only the exit code. `PROVIDER_GROUP` picks the group (`real`, `uv`, unset runs both).
+Real lane (gating, nothing downloaded beyond a normal uv bootstrap): `self.provider.unset` (no switch and no file:
+the normal uv run, nothing about memory or the switch in any output, and a plain uv pass writes no file);
+`self.provider.invalid` (`Conda`, `miniconda` and a hostile string stop the run with one `[ERROR]` before any uv work,
+and the value is never echoed or turned into a file); `self.provider.miniconda_gone` (the file names conda but
+`PUBLIC` points where no Miniconda is: cleared with a visible line, normal order); `self.provider.unreadable` (a
+file the bootstrapper cannot read is ignored with a visible warning and kept); `self.provider.fastpath` (a valid
+cached EXE is reused before provider selection, so `PVW_PROVIDER=conda` changes nothing for that run). Uv lane
+(non-gating because they download Miniconda and solve a conda environment, which can fail for transient reasons):
+`self.provider.forced` (switch with Miniconda not yet installed in a fresh `PUBLIC`, an existing `.uv_env` and an
+exact pin the bootstrapper itself wrote earlier: Miniconda acquired, uv venv not reused, the stale pin ignored,
+nothing written); `self.provider.remember` (run 1 reaches conda through the cascade and writes the file, run 2 after
+editing `requirements.txt` and the program starts at conda, says so and how to reset, skips uv, keeps the file);
+`self.provider.forced_stop` (a Python version conda cannot give: stops at conda with a hint, no other provider).
+All skip with `skip=true, reason=non-windows-host` off Windows. `self.lastchance.window_yes`, `.window_enter` and
+`.window_auto` also read the file: only an explicit yes on the conda tier records `user_confirmed`. Expected red on the
+commit that adds them (no memory and no switch exist) and green once they do.
+
+```
+self.provider.unset
+self.provider.invalid
+self.provider.miniconda_gone
+self.provider.unreadable
+self.provider.fastpath
+self.provider.forced
+self.provider.remember
+self.provider.forced_stop
+```
+
 ## Last-chance offer row (run_setup.bat, written only when HP_NDJSON is defined)
 
 CLAUDE.md Item 82 slice 1. `:lc_row` writes `self.lastchance.offer` once per call of `:last_chance_offer` that

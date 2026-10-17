@@ -246,6 +246,7 @@ function Invoke-LastChance {
         LastProvider = if ($lastRow) { [string]$lastRow.details.provider } else { $null }
         LastExit     = if ($lastRow) { [string]$lastRow.details.exitCode } else { $null }
         StaleLeft    = (Test-Path -LiteralPath (Join-Path $workDir '~smokerun_killed.txt'))
+        StateFile    = $(if (Test-Path -LiteralPath (Join-Path $workDir '~provider.state.json')) { (Get-Content -LiteralPath (Join-Path $workDir '~provider.state.json') -Raw -Encoding ASCII).Trim() } else { $null })
         WindowPrompt = ($console -match 'Did it open and work')
         ExeKept    = ($exeFiles.Count -gt 0)
         TopNames   = $topNames
@@ -503,7 +504,9 @@ if ($runUv) {
     $wyLogged = $wy.SetupText -match 'Last chance: you said the window opened and worked'
     $wyRecorded = ($wy.OfferRows -eq 2) -and ($wy.LastState -eq 'window_confirmed') -and ($wy.LastPassType -eq 'user_confirmed') -and
                   ($wy.LastProvider -eq 'conda') -and ($wy.LastExit -eq '-1') -and ($wy.State -eq 'cascade')
-    $wyPass = $wyPrecond -and $wyAsked -and $wyLogged -and $wyRecorded -and (-not $wy.StaleLeft)
+    # Item 66: only an explicit yes on the cascade-reached conda tier is remembered, tagged user_confirmed.
+    $wyRemembered = ($wy.StateFile -match '"provider":"conda"') -and ($wy.StateFile -match '"passType":"user_confirmed"')
+    $wyPass = $wyPrecond -and $wyAsked -and $wyLogged -and $wyRecorded -and $wyRemembered -and (-not $wy.StaleLeft)
     if (-not $wyPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.window_yes'
@@ -516,6 +519,8 @@ if ($runUv) {
             asked        = $wyAsked
             logged       = $wyLogged
             recorded     = $wyRecorded
+            remembered   = $wyRemembered
+            stateFile    = $wy.StateFile
             offerRows    = $wy.OfferRows
             lastState    = $wy.LastState
             lastPassType = $wy.LastPassType
@@ -532,6 +537,7 @@ if ($runUv) {
     $weAsked = $we.WindowPrompt -and ($we.Console -match '\[y/N\]')
     $weNothing = ($we.SetupText -match 'Last chance: window not confirmed') -and ($we.SetupText -notmatch 'user_confirmed') -and
                  ($we.OfferRows -eq 2) -and ($we.LastState -eq 'window_declined') -and ([string]::IsNullOrEmpty($we.LastPassType))
+    $weNothing = $weNothing -and ($null -eq $we.StateFile)
     $wePass = $wePrecond -and $weAsked -and $weNothing
     if (-not $wePass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
@@ -555,6 +561,7 @@ if ($runUv) {
                  ($wa.SetupText -match 'Entry smoke exit=-1')
     $waNothing = ($wa.SetupText -match 'Last chance: automated run, no window question asked') -and ($wa.OfferRows -eq 2) -and
                  ($wa.LastState -eq 'window_automated') -and ([string]::IsNullOrEmpty($wa.LastPassType))
+    $waNothing = $waNothing -and ($null -eq $wa.StateFile)
     $waPass = $waPrecond -and $wa.WindowPrompt -and $waNothing
     if (-not $waPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
