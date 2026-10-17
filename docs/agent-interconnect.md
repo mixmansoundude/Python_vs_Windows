@@ -76,6 +76,32 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
 
 ---
 
+## `run_tests.bat`, the "Run tests (run_tests.bat)" CI step and the two NDJSON snapshots (Item 84)
+
+**Touch the order of the `batch-check.yml` steps around "Upload CI NDJSON" / "Run tests", `run_tests.bat`, or what
+`harness.ps1`/`selftest.ps1` write, must understand all of it.** Two different NDJSON files are read by CI:
+- **Pre-harness snapshot** (`ci_test_results-selftest-<lane>-...` artifact, "Verdict from NDJSON", "Enforce
+  NDJSON failures for gated lanes", `lane_verdict.json`, the aggregate gate): everything the `selfapps_*.ps1` workflow
+  steps and `selftests.ps1` wrote before `run_tests.bat`. `harness.ps1` deletes `tests\~test-results.ndjson` and rewrites
+  it, which is why the verdict steps must stay above "Run tests".
+- **Post-harness file** (`tests\~test-results.ndjson`, collected in the `test-logs-selftest-<lane>-...` artifact under
+  `tests/`): the harness's `batch.*` rows plus whatever `selftest.ps1` and `selftests.ps1` append. It is read by "Gate on
+  NDJSON results" (`core.setFailed` on any `pass:false`) and the iterate gate. The `batch.*` and `selftest.ps1` rows
+  are NOT in the pre-harness artifact; to read one, open the `test-logs` artifact.
+- **A row exists only if its script ran, and an absent row cannot be red.** `run_tests.bat` therefore runs `selftest.ps1`
+  and `selftests.ps1` even when the harness failed (it used to skip both, hiding every self-test row behind one red
+  `batch.*` row), deletes their old summary files first, and counts a script that exits 0 without writing its summary
+  (`tests\~selftest-summary.txt`, `tests\~selftests-summary.txt`) as a failure. A new section added to `run_tests.bat`
+  needs the same three parts: always run, clear the old summary, fail when it is not rewritten.
+- **The step's exit code is `run_tests.bat`'s.** The step used to exit 0 whenever the repo root status said
+  `no_python_files` (true in every lane), which made the `exit` statements added to `selftest.ps1` and `harness.ps1`
+  invisible to the job; only red rows were caught, by the Gate step. `tests/test_run_tests_step.py` pins `exit $rc`.
+- Regression: `tests/selfapps_runtests_contract.ps1` runs a copy of the real `run_tests.bat` against stub scripts
+  (`self.runtests.*`, every lane). The red-lane behavior (fails at this step, still uploads, still publishes) was shown
+  once with a deliberately red harness row on PR #496.
+
+---
+
 ## Concurrent-instance lock (REQ-024) touches every exit path
 
 The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`) is released only at `:die` and
