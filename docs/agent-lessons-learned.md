@@ -128,6 +128,25 @@ still matches fine against the quoted output. Applied to all system-directory ch
 
 ---
 
+## Compare an environment variable whose value could be anything with `set NAME | findstr /x /l`, never with `==`
+
+`if "%PVW_PROVIDER%"=="conda"` is parsed by cmd AFTER the value is substituted, so a value holding a quote, `&`, `|` or
+`%` can end the string and run what follows (and any `:log` that echoes the value has the unquoted-echo hazard above).
+`set PVW_PROVIDER| findstr /x /l /c:"PVW_PROVIDER=conda"` never gives cmd the value as syntax: `set` prints the
+line raw to a pipe and `findstr /x` (whole line) `/l` (literal) compares it, case sensitively; `if errorlevel 1` is the
+mismatch. **Nothing may sit between the name and the `|`**: cmd keeps the whitespace before a pipe or a redirect in
+`set`'s argument, so `set NAME | findstr` or `set NAME 2>nul | findstr` looks up a variable called `NAME ` (with the
+space), finds none and prints nothing, and the good value is refused like a bad one. The first version of Item 66 had
+exactly that and only the real-lane `self.provider.fastpath` row noticed (the `invalid` row cannot tell, since it is
+satisfied by refusing everything), so a switch like this needs at least one row that feeds a VALID value and asserts it
+was accepted, not only rows for bad ones. Use it for any super-user switch that accepts a fixed list, and print a message that does NOT contain the
+value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`). Companion
+trick for finding JSON in a file with no interpreter available yet: `findstr /r /c:"provider.:.conda"` (a dot matches
+each quote character, so the pattern holds no quote and needs no escaping). Both are for text that batch itself wrote or
+for a value used only as a fixed-list key; anything richer needs an emitted helper.
+
+---
+
 ## A multi-scenario PowerShell test's NDJSON `id` must stay a literal string at each `Write-NdjsonRow` call site, never a shared variable
 
 `tools/check_ndjson_registry.py`'s static scan matches `id\s*=\s*['"]([...])['"]` -- a plain regex
@@ -792,6 +811,14 @@ exists, and so proves nothing (Item 82). Find the prompt's heading first and sea
 user already saw scroll past. A second Item 82 detail: `set /p` on an empty line leaves the variable
 unchanged, and `%VAR:~0,1%` of an undefined variable is not a reliable empty string in a batch file, so compare
 against the letters you accept (W, C) and let everything else mean the default.
+
+**A signal several causes can produce must be taken where only one of them acts** (Item 82 slice 2). The smoke
+runner's result file reads `-1` for a force-stopped silent program, a failed launch, a result file that was never
+written, and a program that exits with `-1` itself, so a question gated on `-1` alone would be asked in cases where
+nothing was stopped. The runner now writes `~smokerun_killed.txt` inside the one branch that calls `Kill()`, and the
+batch clears it before the launch and reads it after. Test the negative controls (self-exit, a stale marker from an
+earlier tier) as well as the positive case; a negative control passes before the fix for the wrong reason, so the
+red proof is the positive rows.
 
 ---
 

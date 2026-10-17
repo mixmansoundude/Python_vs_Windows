@@ -39,7 +39,6 @@ FREE_TAG_PREFIXES = ("CLAUDE.md-Item-",)
 
 # Requirement number -> why no NDJSON row carries its tag yet. Delete an entry when its row is tagged.
 NO_ROW_TAG_YET: Dict[str, str] = {
-    "019": "policy requirement with no runtime behavior; gap T6 (tests/test_flag_inventory.py) is its mechanical half",
     "027": "behavior covered by rows tagged REQ-003 (self.exe.build.xfail) and untagged failfast rows",
 }
 
