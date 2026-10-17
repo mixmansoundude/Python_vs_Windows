@@ -373,6 +373,17 @@ before trusting "this exit code gates the lane", find the step that reads it and
 by reading the job log of a red run (`Static test exit code: 1` followed by `Runner rc=1 ... mapping to SUCCESS`),
 not by any test; the step conclusion in the Actions API is the quick check (`gh api .../jobs`, step `conclusion`).
 
+Two follow-ups from the same fix. (3) **A selfapps script that runs a native command and does not end with its own
+`exit` hands that command's last exit code to the job**, because the pwsh step appends `exit $LASTEXITCODE`: the
+contract script's last scenario runs a `run_tests.bat` copy that exits 1 on purpose, and the step failed on all eight
+lanes with every row green (and the "Enforce NDJSON failures" step behind it was skipped). End such a script with
+`if (a row is red) { exit 1 }` and `exit 0`; `tests/test_run_tests_step.py` pins that for the contract script
+(`tests/selfapps_pvw_overrides.ps1` also ends without one and is fine only because its last command leaves 0). (4) **A
+file used as proof that a section completed must be checked as deleted, not only requested deleted**: `del` failing
+on a file another program holds open left the old summary in place, and it passed for this run's (`FileShare.Read`
+reproduces it on a Windows runner). Prove a gate's failure path with a deliberately red row on a throwaway commit and
+read the job steps and both NDJSON files of that run, then revert the row with a new commit.
+
 ---
 
 ## `"$var:text"` inside a double-quoted PowerShell string is a scope-qualified-variable parse error, not string interpolation followed by a literal colon

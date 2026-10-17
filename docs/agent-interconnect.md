@@ -91,14 +91,20 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
 - **A row exists only if its script ran, and an absent row cannot be red.** `run_tests.bat` therefore runs `selftest.ps1`
   and `selftests.ps1` even when the harness failed (it used to skip both, hiding every self-test row behind one red
   `batch.*` row), deletes their old summary files first, and counts a script that exits 0 without writing its summary
-  (`tests\~selftest-summary.txt`, `tests\~selftests-summary.txt`) as a failure. A new section added to `run_tests.bat`
-  needs the same three parts: always run, clear the old summary, fail when it is not rewritten.
+  (`tests\~selftest-summary.txt`, `tests\~selftests-summary.txt`) as a failure. A summary that cannot be deleted
+  (another program holds it open) is a failure too, printed as `Could not remove the old ...`: an older file left in
+  place would otherwise vouch for a run that wrote nothing. A new section added to `run_tests.bat` needs the same
+  parts: always run, clear the old summary and check it is gone, fail when it is not rewritten.
 - **The step's exit code is `run_tests.bat`'s.** The step used to exit 0 whenever the repo root status said
   `no_python_files` (true in every lane), which made the `exit` statements added to `selftest.ps1` and `harness.ps1`
   invisible to the job; only red rows were caught, by the Gate step. `tests/test_run_tests_step.py` pins `exit $rc`.
 - Regression: `tests/selfapps_runtests_contract.ps1` runs a copy of the real `run_tests.bat` against stub scripts
-  (`self.runtests.*`, every lane). The red-lane behavior (fails at this step, still uploads, still publishes) was shown
-  once with a deliberately red harness row on PR #496.
+  (`self.runtests.*`, every lane; the locked-summary row holds the old file open with `FileShare.Read`). The script
+  must end with its own `exit 1` (a row is red) or `exit 0`: its last scenario runs a copy that exits 1 by design, and
+  the pwsh step appends `exit $LASTEXITCODE`, so a script that just stops fails the step with every row green
+  (`tests/test_run_tests_step.py::ContractScriptSetsItsOwnExitCode`). The red-lane behavior (the step "Run tests"
+  fails, the uploads, the Gate step, the aggregate and the Pages publish still run, and the post-harness file still
+  holds the self-test rows) was shown once with a deliberately red harness row on PR #496, run `38990735137`.
 
 ---
 

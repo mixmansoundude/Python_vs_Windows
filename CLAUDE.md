@@ -67,6 +67,7 @@ tests/
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
   selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
+  selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -287,6 +288,7 @@ Test files and what they cover:
 | `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
+| `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -885,24 +887,6 @@ the original symptom (see that doc's "CI-first testing policy").
   environment. Rows `self.lastchance.*` (real lane gating, silent-timeout and cascade scenarios on the
   uv lane non-gating because of the Miniconda download and the force-stopped EXE). Slice 2 (the
   conda-tier "Did it open and work?" question with the smoke runner's kill marker) is not built.
-
-### Item 84: a red harness hid every self-test row, and the CI step swallowed run_tests.bat's exit code (filed 2026-10-16 from lane 2's reading of PR #488's CI run)
-
-- **Item 84 (Confirmed in CI logs, small to medium; test infrastructure)**: `run_tests.bat` ran
-  `tests\selftest.ps1` and `tests\selftests.ps1` only when `tests\harness.ps1` exited 0, so one red `batch.*`
-  row removed every `selftest.ps1` row from all eight lanes (run `38962853577`: "Static test exit code: 1",
-  no "Running bootstrap self-tests"). An absent row cannot be red, so a red-first self-test row could not be shown
-  red while the harness was red, and a real regression there stayed hidden until the harness was green. A second,
-  narrower hole sat beside it: the CI step "Run tests (map empty repo to success)" exited 0 whenever the repo
-  root status said `no_python_files`, which is true in every lane (this repository has no `.py` files at its root),
-  so `run_tests.bat`'s exit code never reached the job. Red rows were still caught by the later "Gate on NDJSON
-  results" step; a script that crashed after writing some green rows (later rows missing, exit code 1) kept the
-  lane green. No gating reason for either was found in the repo (no comment, doc or history); the harness gate
-  saved about 10 to 19 minutes per lane when it was red. Slices, test first: (1) `tests/selfapps_runtests_contract.ps1`
-  (stub scripts, five `self.runtests.*` rows, every lane) and `tests/test_run_tests_step.py` (the CI step must end
-  in `exit $rc`); (2) `run_tests.bat` always runs both self-test scripts, clears their old summary files first,
-  and fails when a script exits 0 without writing its summary; the CI step passes the exit code through.
-  Interconnect: `docs/agent-interconnect.md`, "run_tests.bat and the Run tests CI step".
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
