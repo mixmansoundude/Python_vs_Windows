@@ -666,6 +666,23 @@ copies of the logs go to `tests\~selftest_unicode_path_evidence`. Skips on non-W
 self.prime.unicode-path
 ```
 
+## selfapps-unc NDJSON rows (selfapps_unc.ps1, real lane only, gating)
+
+Gap T9 of `docs/plan-test-suite-gaps.md` (README REQ-003 limitation: UNC paths are not supported for reliable
+bootstrap). A copy of the bootstrapper is started through the runner's own admin share, `\\localhost\<drive>$\...`,
+from a local working directory (a wrapper `~unc_launch.cmd` logs locally). `self.warn.unc.probe` writes a marker
+file locally and reads it back through the share; it only records whether the share reaches the folder
+(`reachable`) and is `pass:true` whenever the probe ran. `self.warn.unc` runs only when `reachable` is true and
+passes only if the batch printed the UNC warning and `Workspace path invalid`, exited 1, left no `dist` folder and
+finished inside 180 seconds. When the share is unavailable it reports `skip` with reason `unc-share-unavailable`,
+which is a skip and not a pass of the behavior (a lane where that happens everywhere is a finding, plan criterion
+C5). A copy of the launch log goes to `tests\~selftest_unc_evidence`. Skips on non-Windows.
+
+```
+self.warn.unc.probe
+self.warn.unc
+```
+
 ## selfapps-noflag-default NDJSON rows (selfapps_noflag_default.ps1, real lane only, gating)
 
 Gap T12 of `docs/plan-test-suite-gaps.md` (README REQ-019, REQ-018). Every other scenario runs under

@@ -1153,6 +1153,16 @@ jobs:
         run: |
           & tests\selfapps_unicode_path.ps1
 
+      # docs/plan-test-suite-gaps.md gap T9 (README REQ-003 limitation): start the bootstrapper through the
+      # runner's own admin share (\\localhost\C$\...) so the UNC branch (warning, then Workspace path invalid and
+      # exit 1) runs in CI for the first time. A probe row says whether the share reaches the scratch folder;
+      # when it does not, self.warn.unc reports skip. Real lane only, gating from its first run.
+      - name: "Self-test: UNC launch path (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_unc.ps1
+
       # docs/plan-test-suite-gaps.md gap T12 (REQ-019, REQ-018): the default run a double-click user gets.
       # Every other scenario runs with HP_CI_LANE (the runner sets it), so the flag-free branches (prompts
       # that reach set /p, the end-of-run pause, the interactive fast-path probe) never execute in CI. This
@@ -2167,6 +2177,8 @@ jobs:
             tests\~selftest_unicode_path_evidence\~unicode_token.json
             tests/~selftest_unicode_path_evidence/~bootstrap.status.json
             tests\~selftest_unicode_path_evidence\~bootstrap.status.json
+            tests/~selftest_unc_evidence/~unc_launch.log
+            tests\~selftest_unc_evidence\~unc_launch.log
             tests/~selftest_noflag_evidence/~noflag_f.log
             tests\~selftest_noflag_evidence\~noflag_f.log
             tests/~selftest_noflag_evidence/~noflag_g.log
