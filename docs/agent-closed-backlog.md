@@ -3451,6 +3451,36 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   rows record exit 1 and a usage line, not just a nonzero code). The latter run had zero failing rows on
   all eight lanes. A fresh run after each later merge of `main` (Item 65 slice 1, then Item 83) is read before this merges.
 
+### Item 83 (closed 2026-10-16; PR #492)
+
+- **The pre-flight syntax check no longer aborts a valid program or leaves a `.pyc`.** Symptom (found by the
+  test-suite gap map, README REQ-021): `:preflight_compile` ran `python -m py_compile` on the entry file.
+  py_compile writes `__pycache__\<entry>.cpython-*.pyc`, so when it could not (a read-only folder, a locked-down
+  machine, a plain file named `__pycache__`) it exited 1 for a valid program and the bootstrapper said "Your
+  Python program has a syntax error" and stopped with status `error`; when it could write, it left the `.pyc` in
+  the user's folder. Fix: an emitted helper (`~preflight_check.py`, `HP_PREFLIGHT_CHECK`, source
+  `tools/preflight_check.py`) compiles in memory with the interpreter's own `compile()` (not `ast.parse`, which
+  misses a `return` outside a function), so nothing is written and nothing depends on the folder's state.
+- **Test first.** `tests/selfapps_preflight_pycache.ps1` (real lane, gating) went in alone: red run `38878806184`,
+  read from the `real` artifacts, 148 rows with exactly the two expected failures,
+  `self.preflight.pycache.unwritable` (REQ-021.4) and `self.preflight.pycache.litter` (REQ-021.5); the guard row
+  `self.preflight.syntax.compiler` (REQ-021.6) passed before and after by design.
+- **A second call site.** The `unwritable` row's real cause was one step earlier than the entry check:
+  `:verify_find_entry_helper` also ran `py_compile`, on the bootstrapper's own `~find_entry.py`, and the run
+  stopped with `Could not determine entry point`. It now uses the same helper and fails open the same way (only
+  exit 1 is a syntax error; any other result logs a `[WARN]` and continues), and the
+  `helper.find_entry.syntax` row reports `details.checked` (`false` = not verified). The row also reports
+  `entryNotFound` and `helperCheckFailed`, so a stop at either stage names itself.
+- **Green evidence.** Fix run `38887405702` (head `ac3228f`) and the merged-head run `38913598089` (head
+  `bed8f72`, main with PR #487 merged in) were each read from their own artifacts on all eight lanes: zero
+  failing rows everywhere; on `real` the `unwritable` row passed with `statusState` `ok`, `programRan` true,
+  `entryNotFound` false and `helperCheckFailed` false, the `litter` row with no `.pyc` left, and the compiler
+  guard with `reachedBuild` false.
+- **Also shipped in the same PR.** `tools/check_delimiters.py` flags a second `if` on an `else if` line (the cmd
+  dangling-else shape from PR #491), `tests/test_req_trace.py` requires a shall under every goal and a
+  criticality tag on every numbered shall, README REQ-021 became a goal plus shalls with a Terms section, and
+  AGENTS.md gained "Writing README requirements".
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

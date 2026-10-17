@@ -1105,6 +1105,18 @@ jobs:
         run: |
           & tests\selfapps_preflight_pycache.ps1
 
+      # docs/plan-test-suite-gaps.md gap T1 (slices A to D): a stub program appends one line per launch
+      # to ~ledger.jsonl, so the suite can count how often and with which arguments the user's program
+      # really runs (REQ-026 argv forwarding at the EXE smoke, cached-EXE fast path and interpreter launch
+      # sites, REQ-018 run counts including the accepted checkpoint's second run, REQ-010 poisoned
+      # PYTHONHOME and decoy python.cmd). Real lane only: it gates from its first run (AGENTS.md, "New
+      # tests gate immediately"); the test skips itself when HP_FORCE_CONDA_ONLY=1.
+      - name: "Self-test: launch ledger -- argv forwarding and run counts (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_launch_ledger.ps1
+
       - name: "Self-test: early preflight branches -- line-ending + writable-CWD (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2152,6 +2164,36 @@ jobs:
             tests\~selftest_warnfix_venv_repair\dist\~warnfix_venv_repair_exe.log
             tests/~selftest_warnfix_venv_repair/dist/~warnfix_venv_token.txt
             tests\~selftest_warnfix_venv_repair\dist\~warnfix_venv_token.txt
+            tests/~selftest_cascade_exec/~cascade_exec_bootstrap.log
+            tests\~selftest_cascade_exec\~cascade_exec_bootstrap.log
+            tests/~selftest_cascade_exec/~setup.log
+            tests\~selftest_cascade_exec\~setup.log
+            tests/~selftest_launch_ledger_a/~ledger.jsonl
+            tests\~selftest_launch_ledger_a\~ledger.jsonl
+            tests/~selftest_launch_ledger_a/~ledger_a.log
+            tests\~selftest_launch_ledger_a\~ledger_a.log
+            tests/~selftest_launch_ledger_a/~ledger_b.log
+            tests\~selftest_launch_ledger_a\~ledger_b.log
+            tests/~selftest_launch_ledger_a/~setup.log
+            tests\~selftest_launch_ledger_a\~setup.log
+            tests/~selftest_launch_ledger_c/~ledger.jsonl
+            tests\~selftest_launch_ledger_c\~ledger.jsonl
+            tests/~selftest_launch_ledger_c/~ledger_c.log
+            tests\~selftest_launch_ledger_c\~ledger_c.log
+            tests/~selftest_launch_ledger_c/~setup.log
+            tests\~selftest_launch_ledger_c\~setup.log
+            tests/~selftest_launch_ledger_d/~ledger.jsonl
+            tests\~selftest_launch_ledger_d\~ledger.jsonl
+            tests/~selftest_launch_ledger_d/~ledger_d.log
+            tests\~selftest_launch_ledger_d\~ledger_d.log
+            tests/~selftest_launch_ledger_d/~setup.log
+            tests\~selftest_launch_ledger_d\~setup.log
+            tests/~selftest_launch_ledger_e/~ledger.jsonl
+            tests\~selftest_launch_ledger_e\~ledger.jsonl
+            tests/~selftest_launch_ledger_e/~ledger_e.log
+            tests\~selftest_launch_ledger_e\~ledger_e.log
+            tests/~selftest_launch_ledger_e/~setup.log
+            tests\~selftest_launch_ledger_e\~setup.log
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

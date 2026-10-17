@@ -612,6 +612,34 @@ branch" (`warnInstallFired` true, both false) from "pip ran and failed" (`repair
 self.exe.warnfix.venv_repair
 ```
 
+## selfapps-launch-ledger NDJSON rows (selfapps_launch_ledger.ps1, real lane only, gating)
+
+Gap T1 of `docs/plan-test-suite-gaps.md`. A stub program appends one JSON line per launch to
+`~ledger.jsonl` in its working directory (argv, `sys.frozen`, `sys.prefix`, `sys.executable`,
+`PYTHONHOME`, cwd), so the suite counts launches and compares argv instead of reading log lines. The
+batch is invoked through a generated `~ledger_launch.cmd` so quoting (including the empty argument) is
+exactly what a user types: `run_setup.bat ledger_app.py "a b" "" c d e f g h i`. Five bootstraps:
+A fresh (EXE smoke run), B rerun in the same folder (cached-EXE fast path), C PyInstaller and Nuitka
+forced to fail (interpreter verification) with a poisoned `PYTHONHOME` and a decoy `python.cmd` first
+on `PATH`, D `HP_TEST_CHECKPOINT_ANSWER=Y` (the accepted checkpoint's second run), E a fresh build with no
+program arguments (the EXE smoke run must record an empty argv). The expected argv is
+`["a b","c","d","e","f","g","h"]`: positions 2 to 9 are forwarded, the empty one is dropped, the 10th is
+ignored. An in-script comparator self-check (`comparatorOk`) fails the first row if the comparison could
+not fail. Skips on non-Windows and in conda-full (`HP_FORCE_CONDA_ONLY=1`).
+
+```
+self.launch.argv.fresh
+self.launch.argv.cap
+self.launch.count.default
+self.launch.argv.fastpath
+self.launch.argv.interpreter
+self.isolation.req010.pythonhome
+self.isolation.req010.path_shadow
+self.launch.count.checkpoint
+self.launch.argv.checkpoint
+self.launch.argv.none
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to
