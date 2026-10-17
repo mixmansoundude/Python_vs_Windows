@@ -751,6 +751,19 @@ requirements append) took most of it; check `tools/sync_payload.py`'s margin lin
 
 ---
 
+## Clearing an environment variable for a child process: do not trust `SetEnvironmentVariable($name, $null)`; ask the child what it sees
+
+A test that must start the bootstrapper with no `HP_*`/`PVW_*`/`NOINPUT` variable (`tests/selfapps_noflag_default.ps1`,
+T12) removed them with `[Environment]::SetEnvironmentVariable($name, $null)` and then read its own `Get-ChildItem Env:`:
+on the Windows runner the job's four variables were still listed there AND in a launched `cmd` (`set HP_`), so both
+`self.noflag.default.run` and `.rerun` went red twice while the bootstrapper plainly took the flag-free branches. Use
+`Remove-Item -LiteralPath ('Env:' + $name)` in PowerShell, clear again in the launched shell with `set "NAME="`
+(names validated as `[A-Za-z0-9_]+` first), and take the verdict from a listing the CHILD prints after its own clear,
+keeping the before-clear listing in the details so a removal that stops working is visible by name. Never dump the
+whole environment into a CI artifact (tokens): list by prefix only.
+
+---
+
 ## A test that checks prompt text in the console must look only AFTER the prompt's heading
 
 The EXE verification run is live-teed to the console (`~exe_smokerun.ps1`), so a program's own stderr, for

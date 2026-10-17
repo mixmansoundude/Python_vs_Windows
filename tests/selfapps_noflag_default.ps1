@@ -91,12 +91,17 @@ $timeLimitSec = 1800
 function Invoke-NoFlagBootstrap {
     param([string]$LogName)
     $wrapper = Join-Path $dir '~noflag_launch.cmd'
-    # The wrapper first lists the flag-shaped variables of the environment it was started with, which is exactly what
-    # the bootstrapper inherits; that list (not this script's own view of its environment) decides whether a flag
-    # reached the run. Only the three flag prefixes are listed, never the whole environment (it can hold tokens).
-    # No space before the redirection: a space would become part of the prefix that `set` looks for.
+    # The wrapper lists the flag-shaped variables of the environment it was started with (`.env0.txt`, diagnostic),
+    # clears every flag the job had set with `set "NAME="` (the batch environment is exactly what the bootstrapper
+    # inherits, and this is the one removal that is certain to work), then lists again (`.env.txt`); the second list is
+    # the verdict: a flag in it reached the run. Only the three flag prefixes are listed, never the whole environment
+    # (it can hold tokens). No space before a redirection: a space would become part of the prefix that `set` looks for.
     $envName = $LogName -replace '\.log$', '.env.txt'
-    Set-Content -LiteralPath $wrapper -Value @('@echo off', "set HP_> $envName 2>nul", "set PVW_>> $envName 2>nul", "set NOINPUT>> $envName 2>nul", "call run_setup.bat noflag_app.py > $LogName 2>&1 < nul", 'exit /b %ERRORLEVEL%') -Encoding ASCII
+    $env0Name = $LogName -replace '\.log$', '.env0.txt'
+    $listLines = @("set HP_> $env0Name 2>nul", "set PVW_>> $env0Name 2>nul", "set NOINPUT>> $env0Name 2>nul")
+    $clearLines = @($scrubbed.Keys | Where-Object { $_ -match '^[A-Za-z0-9_]+$' } | Sort-Object | ForEach-Object { 'set "' + $_ + '="' })
+    $listAfter = @("set HP_> $envName 2>nul", "set PVW_>> $envName 2>nul", "set NOINPUT>> $envName 2>nul")
+    Set-Content -LiteralPath $wrapper -Value (@('@echo off') + $listLines + $clearLines + $listAfter + @("call run_setup.bat noflag_app.py > $LogName 2>&1 < nul", 'exit /b %ERRORLEVEL%')) -Encoding ASCII
     $started = Get-Date
     $proc = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', 'call ~noflag_launch.cmd') -WorkingDirectory $dir -NoNewWindow -PassThru
     $finished = $proc.WaitForExit($timeLimitSec * 1000)
@@ -109,12 +114,18 @@ function Invoke-NoFlagBootstrap {
         $null = $proc.WaitForExit(30000)
     }
     $seen = @()
+    $seen0 = @()
     $envPath = Join-Path $dir $envName
+    $env0Path = Join-Path $dir $env0Name
     if (Test-Path -LiteralPath $envPath) {
         $seen = @(Get-Content -LiteralPath $envPath -Encoding ASCII | ForEach-Object { ($_ -split '=', 2)[0] } |
             Where-Object { $_ -match '^(HP_|PVW_)' -or $_ -ieq 'NOINPUT' })
     }
-    return [pscustomobject]@{ Finished = [bool]$finished; ExitCode = $code; Seconds = [int]((Get-Date) - $started).TotalSeconds; EnvDumped = (Test-Path -LiteralPath $envPath); FlagsSeen = $seen }
+    if (Test-Path -LiteralPath $env0Path) {
+        $seen0 = @(Get-Content -LiteralPath $env0Path -Encoding ASCII | ForEach-Object { ($_ -split '=', 2)[0] } |
+            Where-Object { $_ -match '^(HP_|PVW_)' -or $_ -ieq 'NOINPUT' })
+    }
+    return [pscustomobject]@{ Finished = [bool]$finished; ExitCode = $code; Seconds = [int]((Get-Date) - $started).TotalSeconds; EnvDumped = ((Test-Path -LiteralPath $envPath) -and (Test-Path -LiteralPath $env0Path)); FlagsSeen = $seen; FlagsAtLaunch = $seen0 }
 }
 
 function Read-Text {
@@ -148,10 +159,12 @@ $scrubbed = @{}
 foreach ($item in @(Get-ChildItem Env:)) {
     if ($item.Name -match '^(HP_|PVW_)' -or $item.Name -ieq 'NOINPUT') { $scrubbed[$item.Name] = $item.Value }
 }
-foreach ($name in @($scrubbed.Keys)) { [Environment]::SetEnvironmentVariable($name, $null) }
-# This script's own view after the scrub is kept for the details only: the first run of this test showed the four job
-# variables still listed here although the launched batch saw none of them, so the verdict reads the launched shell's
-# environment dump instead (FlagsSeen).
+# Two runs of this test (23711765, 28146271) showed that [Environment]::SetEnvironmentVariable($name, $null) leaves the
+# job's own variables (HP_ALLOW_SYSTEM_FALLBACK, HP_ALLOW_VENV_FALLBACK, HP_CI_LANE, HP_CI_TEST_CONDA_DL) listed, both
+# here and in the launched shell. So the parent is cleared with the Env: drive, and the wrapper clears them again in the
+# launched shell; what decides the verdict is the list the launched shell prints after its own clear (FlagsSeen), while
+# the list before it (FlagsAtLaunch) and the parent's leftovers stay in the details to show which removal failed.
+foreach ($name in @($scrubbed.Keys)) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
 $parentStillSet = @($scrubbed.Keys | Where-Object { $null -ne [Environment]::GetEnvironmentVariable($_) } | Sort-Object)
 
 try {
@@ -181,7 +194,7 @@ try {
         id = 'self.noflag.default.run'; req = 'REQ-019.1'; pass = [bool]$runPass
         desc = 'REQ-019: a run with no HP_*, PVW_* or NOINPUT variable and no console input finishes by itself with state ok, through the flag-free prompt branches'
         details = [ordered]@{
-            flagsSeenByRun = @($runF.FlagsSeen); envDumped = [bool]$runF.EnvDumped; flagsScrubbed = $scrubbed.Count; scrubbedNames = @($scrubbed.Keys | Sort-Object); parentStillSet = @($parentStillSet)
+            flagsSeenByRun = @($runF.FlagsSeen); flagsAtLaunch = @($runF.FlagsAtLaunch); envDumped = [bool]$runF.EnvDumped; flagsScrubbed = $scrubbed.Count; scrubbedNames = @($scrubbed.Keys | Sort-Object); parentStillSet = @($parentStillSet)
             finished = $runF.Finished; seconds = $runF.Seconds; timeLimitSec = $timeLimitSec
             exitCode = $runF.ExitCode; expectedExit = $expectedExit; statusState = $statusF
             checkpointPromptShown = [bool]$checkpointPromptShown; optbuildPromptShown = [bool]$optbuildPromptShown; pauseShown = [bool]$pauseShown
@@ -215,7 +228,7 @@ try {
         desc = 'REQ-019: a repeat run with no flags reuses the EXE through the interactive probe and starts the program once more'
         details = [ordered]@{
             finished = $runG.Finished; seconds = $runG.Seconds; exitCode = $runG.ExitCode
-            flagsSeenByRun = @($runG.FlagsSeen); envDumped = [bool]$runG.EnvDumped
+            flagsSeenByRun = @($runG.FlagsSeen); flagsAtLaunch = @($runG.FlagsAtLaunch); envDumped = [bool]$runG.EnvDumped
             ledgerLines = $linesG.Count; expectedLedgerLines = $expectedLaunchesAfterRerun
             interactiveProbeBranch = [bool]$probeBranch; plainFastPathLine = [bool]$plainFastLine
             secondFrozen = if ($g1) { $g1.frozen } else { $null }

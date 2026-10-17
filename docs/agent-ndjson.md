@@ -698,11 +698,14 @@ first so rows keep it) and starts the bootstrapper with standard input closed (`
 stub program appends one line per launch to `~noflag_ledger.jsonl`. Scenario F is a fresh folder, G the
 same folder again. `.run`: finished within the limit, exit code, state `ok`, both `[Y/N]` prompts and the
 end-of-run `Press any key` line shown, and no flag in the environment the bootstrapper is started with. That last
-check reads the launched shell's own listing (`set HP_`, `set PVW_`, `set NOINPUT` written by the wrapper before the
-batch starts, prefixes only so no token is dumped): the first real run listed the four job variables in this
-script's own `Get-ChildItem Env:` after removal although the launched batch plainly saw none of them (it took the
-interactive branches), so the script's view is kept in the details as `parentStillSet` and the verdict reads the
-child's (`flagsSeenByRun`). `.once`: the unanswered
+check reads the launched shell's own listing (`set HP_`, `set PVW_`, `set NOINPUT`, prefixes only so no token is
+dumped). Two real runs showed that `[Environment]::SetEnvironmentVariable($name, $null)` does NOT remove the job's own
+variables on the runner (`HP_ALLOW_SYSTEM_FALLBACK`, `HP_ALLOW_VENV_FALLBACK`, `HP_CI_LANE`, `HP_CI_TEST_CONDA_DL`
+stayed listed both in the script and in the launched shell), so the script removes them with the `Env:` drive, and
+the wrapper clears every one again with `set "NAME="` before the verdict listing. The details keep all three views:
+`flagsAtLaunch` (the shell's list before its own clear), `flagsSeenByRun` (after it, the verdict) and `parentStillSet`
+(what the script's own removal left behind), so a removal that stops working shows up by name instead of as a bare red.
+`.once`: the unanswered
 prompts decline and the ledger holds exactly one launch (EXE). `.rerun`: the repeat run takes the
 interactive probe branch ("Launching your program now via the cached standalone EXE", not "Fast path:
 reusing") and starts the program once more. Limits: only the happy path through the provider chain is
