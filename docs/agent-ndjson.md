@@ -1052,7 +1052,9 @@ self.provider.forced_stop
 ## Last-chance offer row (run_setup.bat, written only when HP_NDJSON is defined)
 
 CLAUDE.md Item 82 slice 1. `:lc_row` writes `self.lastchance.offer` once per call of `:last_chance_offer` that
-reached a state, which is only after a non-zero, non-`-1` verification exit on a fresh build: `details.state` is
+reached a state, which is only after a non-zero verification exit on a fresh build, and an exit of `-1` counts only
+when the runner really stopped a silent process on the conda tier (a program that exits by itself with `-1`
+writes nothing): `details.state` is
 `worked`, `cascade`, `neither`, `automated` (a guard answered) or `not_offered`; slice 2 adds `window_confirmed`,
 `window_declined` and `window_automated` for the conda-tier window question (written only when the runner really
 stopped a silent process, with `exitCode` `-1`); `details.reason` is set for
