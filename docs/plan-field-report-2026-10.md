@@ -448,6 +448,11 @@ and change nothing on disk. Never fall back silently.
 **CI proof**: rows for `%1` = `main` (resolves to `main.py`), `%1` = an existing `.csv` (stops,
 EXE untouched), `%1` = a missing name (stops, EXE untouched).
 
+**Shipped (2026-10-11, PR #488)**: `tests/selfapps_entryarg.ps1` rows `self.entryarg.noext`, `.csv`,
+`.missing`, `.wildcard` (a `*` or `?` is rejected, because `if exist` treats them as patterns) and
+`.stops_release_lock` (the REQ-011 stop now releases the lock too). Detail in
+`docs/agent-closed-backlog.md`.
+
 ### Item 68 -- Small honest-wording fixes (Confirmed, tiny, one PR)
 
 Each was checked against current text:
@@ -485,6 +490,13 @@ Each was checked against current text:
   that prints the run command should add one line: "Running the interpreter with no script
   opens an interactive prompt; to run pip use `"<python>" -m pip ...`." (This is the "one line in
   the post-flight panel later" from the do-not-add list; it is cheap enough to do here.)
+
+**Shipped (2026-10-11, slice 1)**: probe line in seconds (`self.failfast.probe.seconds`), Nuitka fallback and
+optimized-build messages (`batch.wording.nuitka_duration`), pipreqs diff placeholder
+(`self.wording.diff_placeholder`), rebuild notice (`self.wording.rebuild_notice`), and the DEP_SOURCE gate
+(`self.wording.dep_source_warn_shown`; the static row `batch.req005.warn_gate` is retired). Not done yet:
+the cascade prompt wording (goes with Item 82) and the post-flight panel line about the interpreter
+prompt (after Item 65 slice 1 merges).
 
 ### Item 69 -- Post-flight "run it yourself" command fails when pasted into PowerShell (Inferred, tiny)
 
@@ -526,7 +538,7 @@ line as printed in both lanes, reproduced the curly-quote failure, and showed Wi
 needs a leading `& `. No code change and no PowerShell hint. The result is in
 `docs/agent-closed-backlog.md` under Item 69.
 
-### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small)
+### Item 70 -- PyInstaller hints the user cannot act on (Confirmed, small; reworded, shipped)
 
 The `[HINT][DATA_FILE] Consider adding: --add-data X;.` and `[HINT][HIDDEN_IMPORT] Consider
 adding: --hidden-import=X` lines name PyInstaller flags, but every PyInstaller build command (the
@@ -535,6 +547,15 @@ fresh build, the warnfix rebuild, and the two repair-loop rebuilds) builds from 
 user can take (the CWD-relative branch added in PR #470 already does this for data files), or
 add one supported way to pass extra PyInstaller flags (a `PVW_` super-user override, per
 REQ-019). The CWD half of the Aug 27 report is already fixed (see "Already fixed" below).
+
+**Shipped as a reword only** (decided 2026-10-11): the genuine-`_MEI` data-file hint now says
+`run_setup.bat` does not bundle data files and what to do instead; the hidden-import hint now points at
+`requirements.txt` (the bootstrapper installs the module and rebuilds when the file changes). No flag is
+named in either. A `PVW_` passthrough for extra PyInstaller flags is NOT built: it would have to be threaded
+into every PyInstaller rebuild line (`:hidden_import_recover`, `:dll_bundle_recover`, the warnfix rebuild and
+Item 65's `:rti_rebuild`), the same rule the five `HP_PYI_*` accumulators follow. File it as its own item if
+a user ever needs it. Tests: `self.hint.hidden_import.wording` in `selfapps_exedyn_fail.ps1`, and the
+`mei_genuine` scenario of `selfapps_exedata_fail.ps1`.
 
 ### Item 71 -- Builder choice for power users (Confirmed gap, medium)
 
@@ -559,7 +580,7 @@ not adopt the 3rd party's "signing is the only fix" claim. (c) Long C compiles o
 `scipy.stats` and similar are expected Nuitka behavior; record the observed hour as a data point
 in `docs/prd-av-safe-build-path.md` rather than "fixing" it.
 
-### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny)
+### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 
 `[WARN] REQ-005.11: PEP 723 header write-back failed (ERROR:uv_rc_1)` gives no reason because
 `tools/pep723_writeback.py` captures uv's stderr and discards it (`rc, _stderr = run_uv_add(...)`).

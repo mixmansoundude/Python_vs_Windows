@@ -121,5 +121,25 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not $xfailPass) { exit 1 }
+# CLAUDE.md Item 70: the hidden-import hint must tell the user something they can do. The old hint
+# said "Consider adding: --hidden-import=X", a PyInstaller flag the user has no way to pass (every
+# build command here uses a fixed flag set). The actionable step is the requirements file.
+$hintNamesModule = $combined -match 'Hidden import likely missing: absent_dynmod_xyz'
+$hintMentionsFlag = $combined -match '\[HINT\]\[HIDDEN_IMPORT\][^\r\n]*--hidden-import'
+$hintMentionsRequirements = $combined -match '\[HINT\]\[HIDDEN_IMPORT\][^\r\n]*requirements\.txt'
+$hintActionable = $hintNamesModule -and (-not $hintMentionsFlag) -and $hintMentionsRequirements
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.hint.hidden_import.wording'
+    req     = 'REQ-003'
+    pass    = $hintActionable
+    desc    = 'The hidden-import hint names the module and points at requirements.txt, not at a PyInstaller flag'
+    details = [ordered]@{
+        hintNamesModule          = $hintNamesModule
+        hintMentionsFlag         = $hintMentionsFlag
+        hintMentionsRequirements = $hintMentionsRequirements
+        log                      = $bootstrapLog
+    }
+})
+
+if (-not ($xfailPass -and $hintActionable)) { exit 1 }
 exit 0
