@@ -1036,7 +1036,7 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
   `window_declined`/`window_automated`, `reason`,
   `site`, `provider`, `exitCode`, `passType`, `hasLine`), written only when `HP_NDJSON` is defined; verdicts live in
   `tests/selfapps_lastchance.ps1` (`self.lastchance.*`, real lane gating, `timeout`/`cascade`/`cascade_again` on the
-  uv lane, non-gating). Item 66 reads `passType` (`user_confirmed` today) to decide what to remember.
+  uv lane, non-gating). Item 66 reads the pass type to decide what to remember (see "Provider memory" below).
 - The `[HINT][RUNTIME_MISMATCH]` line in `:exe_smokerun_hints` no longer says "not your environment or
   dependencies", because the offer that can follow suggests exactly that.
 
@@ -1052,3 +1052,49 @@ later hops -- embed/venv/system -- all still resolve via plain PyPI pip, so they
 for environment-specific root causes, not genuine package unavailability). **Outcome: kept
 `:cascade_consent_gate` exactly as shipped** -- no code change (see
 `docs/agent-closed-backlog.md`'s Known Findings for the full reasoning trace).
+
+## Provider memory (`~provider.state.json`) and the `PVW_PROVIDER` switch (Item 66)
+
+**Touch the uv acquisition block, `:success`, the last-chance offer's exit handling, the three `runtime.txt`
+write-back sites, or `:handle_conda_failure`, must understand this.** Decided 2026-10-17 (Q11, option A). Two
+features share one effect, "conda goes first and uv is not even acquired", and are placed in run order:
+- **Switch validation** (`:pvw_provider_bad`/`:pvw_provider_done`) sits right after the `Python file count` log line:
+  after the lock (so `:die` can release it), after `PYCOUNT` exists (so the status file is valid JSON), and BEFORE the
+  cached-EXE fast path (so a bad value stops the run even when a cached EXE would have been reused; a good value is
+  then ignored by the fast path, README must say so like REQ-026 does for `%1`). The value is compared with
+  `set PVW_PROVIDER | findstr /x /l /c:"PVW_PROVIDER=conda"`, so cmd never parses it (quotes, `&`, `%` are harmless),
+  only the exact lowercase `conda` passes, and **no line may ever expand `%PVW_PROVIDER%`** (a unit test forbids it).
+  A good value sets `HP_PVW_PROVIDER_CONDA=1` and `HP_FORCE_CONDA_ONLY=1`, i.e. it reuses conda-only mode (no
+  fallbacks, `:cascade_from_conda` stops, `:handle_conda_failure` returns without `HP_ENV_READY`, so the caller stops).
+  It is set AFTER the CI flag's own log line so a user is not told about a "flag"; if CI already set
+  `HP_FORCE_CONDA_ONLY` the switch only logs its `[DEBUG]` override line and leaves `HP_PVW_PROVIDER_CONDA` unset.
+- **Memory read** (`:provider_memory_read`, one call, after the fast path and before the uv block) sets
+  `HP_PM_START_CONDA=1` when `~provider.state.json` names conda and Miniconda is installed (the two `conda.bat`
+  spots under `%PUBLIC%\Documents\Miniconda3`, or `PVW_CONDA_EXE`; the path is rebuilt here because the main flow
+  derives it after the uv block). No interpreter exists yet, so the file is text: written with `echo`, found with
+  `findstr /r /c:"provider.:.conda"` (a dot for each quote). Not read under the switch or CI conda-only mode. An
+  unreadable file is ignored with a warning and KEPT; a file naming conda with no Miniconda is deleted in
+  `:pm_conda_gone`, **the only place memory is cleared** (Q11: input edits and failed runs never clear it).
+- **uv skips** (`:uv_skip_pvw_provider`, `:uv_skip_provider_memory`) are tested BEFORE the `PVW_UV_EXE` branch, or a
+  `PVW_UV_EXE` override would bring uv back. With `HP_UV_EXE` empty the rest of the flow is the existing conda path;
+  `.uv_env` is never reused (that reuse lives inside the `HP_UV_EXE` block).
+- **Stale exact pin** (`:runtime_txt_writeback_release`, called when conda goes first, before `HP_RUNTIME_TXT_PREEXIST`
+  is computed): each of the three write-back sites also writes `~runtime_writeback.txt` with the same `echo %PYVER%`.
+  If `runtime.txt` is still byte-identical to it, nobody edited it, so it holds a provider's exact patch that conda may
+  not have; both files are deleted and conda's own write-back writes a version it has. A user's `runtime.txt` never
+  matches and is kept. A new `runtime.txt` write site must write the record too (a unit test counts the three).
+- **Write** (`:provider_memory_write`, from `:success` before `:release_lock`) needs `HP_PM_PASS`, `HP_ENV_MODE=conda`,
+  `HP_CASCADE_TRIED_UV` (conda was reached after uv was tried; a conda-first run never rewrites the file), state ok, and
+  neither the switch nor CI conda-only mode. `HP_PM_PASS` is `exe_ok`/`interpreter_ok` from
+  `:provider_memory_note_pass` (called by `:last_chance_offer` for a fresh exit 0, never the fast path) or
+  `user_confirmed` from `:lc_window_yes`; it is reset next to `HP_LC_EXIT` at the start of every attempt and is NOT
+  cleared by `:lc_cleanup` (it must live until `:success`). A plain uv pass, a failed run and a declined run write nothing.
+- **Visible by design**: every run that starts from the file logs `Provider memory: starting with conda ... delete
+  ~provider.state.json`, the write logs the same reset hint, and the failed forced solve logs `PVW_PROVIDER=conda is set,
+  so no other provider was tried` (README REQ-009 should say a forced failure never cascades).
+- **Known limits**: a memory-start run whose conda step fails follows the existing conda-failure chain (embed, venv,
+  system), uv is not retried; the file is per program folder; nothing remembers `embed`/`venv`/`system`.
+- Rows: `tests/selfapps_provider_memory.ps1` (`self.provider.*`; `unset`, `invalid`, `miniconda_gone`, `unreadable`,
+  `fastpath` gate on `real`; `forced`, `remember`, `forced_stop` are uv-lane, non-gating because they download Miniconda,
+  one into a fresh `PUBLIC`), `self.lastchance.window_*` (what is remembered after the window question), and
+  `tests/test_provider_memory.py` (order and shape of the pieces).

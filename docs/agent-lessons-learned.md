@@ -128,6 +128,20 @@ still matches fine against the quoted output. Applied to all system-directory ch
 
 ---
 
+## Compare an environment variable whose value could be anything with `set NAME | findstr /x /l`, never with `==`
+
+`if "%PVW_PROVIDER%"=="conda"` is parsed by cmd AFTER the value is substituted, so a value holding a quote, `&`, `|` or
+`%` can end the string and run what follows (and any `:log` that echoes the value has the unquoted-echo hazard above).
+`set PVW_PROVIDER 2>nul | findstr /x /l /c:"PVW_PROVIDER=conda"` never gives cmd the value as syntax: `set` prints the
+line raw to a pipe and `findstr /x` (whole line) `/l` (literal) compares it, case sensitively; `if errorlevel 1` is the
+mismatch. Use it for any super-user switch that accepts a fixed list, and print a message that does NOT contain the
+value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`). Companion
+trick for finding JSON in a file with no interpreter available yet: `findstr /r /c:"provider.:.conda"` (a dot matches
+each quote character, so the pattern holds no quote and needs no escaping). Both are for text that batch itself wrote or
+for a value used only as a fixed-list key; anything richer needs an emitted helper.
+
+---
+
 ## A multi-scenario PowerShell test's NDJSON `id` must stay a literal string at each `Write-NdjsonRow` call site, never a shared variable
 
 `tools/check_ndjson_registry.py`'s static scan matches `id\s*=\s*['"]([...])['"]` -- a plain regex
