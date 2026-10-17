@@ -815,6 +815,12 @@ the original symptom (see that doc's "CI-first testing policy").
   extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
   `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
   dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
+  **In progress (PR #500, all three slices in one PR by the bundle rule: slice 2 and 3 touch disjoint
+  files and slice 1's tests are slice 2's red tests)**: red tests first (`tests/test_toml_oracle.py`,
+  `tests/toml_oracle_check.py`, the `RequiresPythonTomlScope` class, the flipped pyproj test), then
+  `pyproj_deps.py` (escapes decoded, unclosed array exits 2, `HP_PYPROJ_DEPS` margin 198 to 2826) and
+  `detect_python.py` (tomllib, pattern kept for unparseable TOML, `HP_DETECT_PY` margin 520). Row
+  `self.toml.uvcorpus` is non-gating (needs the network). Detail: `docs/agent-interconnect.md`.
   Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
   as a Python-version input) are in `docs/agent-cold-storage.md`.
 
