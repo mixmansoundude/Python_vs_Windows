@@ -1443,6 +1443,16 @@ jobs:
         run: |
           & tests\selfapps_sysbuild.ps1
 
+      # CLAUDE.md Item 84: what run_tests.bat promises about the self-test section. Runs a copy of the real
+      # run_tests.bat against stub harness/self-test scripts (seconds, no provider), so it runs in every lane
+      # and gates from its first run (AGENTS.md, "New tests gate immediately"). It must stay ahead of "Upload
+      # CI NDJSON" like every other selfapps step: its rows are part of the pre-harness verdict.
+      - name: "Self-test: run_tests.bat contract -- self-tests still run after a red harness"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_runtests_contract.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v6

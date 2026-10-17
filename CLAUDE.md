@@ -874,6 +874,24 @@ the original symptom (see that doc's "CI-first testing policy").
   Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
 
+### Item 84: a red harness hid every self-test row, and the CI step swallowed run_tests.bat's exit code (filed 2026-10-16 from lane 2's reading of PR #488's CI run)
+
+- **Item 84 (Confirmed in CI logs, small to medium; test infrastructure)**: `run_tests.bat` ran
+  `tests\selftest.ps1` and `tests\selftests.ps1` only when `tests\harness.ps1` exited 0, so one red `batch.*`
+  row removed every `selftest.ps1` row from all eight lanes (run `38962853577`: "Static test exit code: 1",
+  no "Running bootstrap self-tests"). An absent row cannot be red, so a red-first self-test row could not be shown
+  red while the harness was red, and a real regression there stayed hidden until the harness was green. A second,
+  narrower hole sat beside it: the CI step "Run tests (map empty repo to success)" exited 0 whenever the repo
+  root status said `no_python_files`, which is true in every lane (this repository has no `.py` files at its root),
+  so `run_tests.bat`'s exit code never reached the job. Red rows were still caught by the later "Gate on NDJSON
+  results" step; a script that crashed after writing some green rows (later rows missing, exit code 1) kept the
+  lane green. No gating reason for either was found in the repo (no comment, doc or history); the harness gate
+  saved about 10 to 19 minutes per lane when it was red. Slices, test first: (1) `tests/selfapps_runtests_contract.ps1`
+  (stub scripts, five `self.runtests.*` rows, every lane) and `tests/test_run_tests_step.py` (the CI step must end
+  in `exit $rc`); (2) `run_tests.bat` always runs both self-test scripts, clears their old summary files first,
+  and fails when a script exits 0 without writing its summary; the CI step passes the exit code through.
+  Interconnect: `docs/agent-interconnect.md`, "run_tests.bat and the Run tests CI step".
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
