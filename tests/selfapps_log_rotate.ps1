@@ -117,7 +117,7 @@ try {
     $prevHasOld = ($prevSizeO -gt 0 -and $prevSizeO -lt 4096) -and ((Read-Text $prevO) -match 'OLD-PREV-MARKER')
     $passO = ($seedSize -gt $limitBytes) -and ($prevSizeO -ge $seedSize) -and ($prevHead -eq 'SEED-LOG-OVER-LIMIT') -and (-not $prevHasOld) -and ($newSizeO -gt 0) -and ($newSizeO -lt $newLogMaxBytes) -and (-not $newHasSeed)
     Write-NdjsonRow ([ordered]@{
-        id = 'self.log.rotate.over'; pass = [bool]$passO
+        id = 'self.log.rotate.over'; req = 'REQ-028.1'; pass = [bool]$passO
         desc = 'README logging: a ~setup.log over 10 MB at start is moved to ~setup.prev.log (replacing an older one) and a small fresh ~setup.log starts'
         details = [ordered]@{
             seedBytes = $seedSize; limitBytes = $limitBytes; exitCode = $exitO
@@ -144,7 +144,7 @@ try {
     $prevExistsU = Test-Path -LiteralPath $prevU
     $passU = ($seedSizeU -lt $limitBytes) -and ($firstU -eq 'SEED-LOG-UNDER-LIMIT') -and ($sizeU -gt $seedSizeU) -and (-not $prevExistsU)
     Write-NdjsonRow ([ordered]@{
-        id = 'self.log.rotate.under'; pass = [bool]$passU
+        id = 'self.log.rotate.under'; req = 'REQ-028.2'; pass = [bool]$passU
         desc = 'README logging: a ~setup.log under 10 MB is kept and appended to, and no ~setup.prev.log is created'
         details = [ordered]@{
             seedBytes = $seedSizeU; limitBytes = $limitBytes; exitCode = $exitU
