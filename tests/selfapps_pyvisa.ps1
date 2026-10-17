@@ -124,6 +124,23 @@ Write-NdjsonRow ([ordered]@{
     details = $nisaReasonDetails
 })
 
+# CLAUDE.md Item 78: a failed NI-VISA install must reach the console as a [WARN], not only ~setup.log.
+# The captured $log is the console output of the run. The real and conda-full lanes reach
+# install_failed (post_check_timeout) with installer exit code -125202, the code the field report
+# saw, so the assertion is live there; a run where the install did not fail records skip=true.
+$visaFailed = ($log -match [regex]::Escape('[VISA] install_failed'))
+$visaWarnShown = ($log -match '\[WARN\][^\r\n]*NI-VISA driver (failed to install|could not be downloaded)') -and ($log -match 'real instruments')
+$visaWarnPass = (-not $visaFailed) -or $visaWarnShown
+$visaWarnDetails = [ordered]@{ exitCode = $exitCode; installFailed = $visaFailed; warnShown = $visaWarnShown }
+if (-not $visaFailed) { $visaWarnDetails.skip = $true; $visaWarnDetails.reason = 'install-did-not-fail' }
+Write-NdjsonRow ([ordered]@{
+    id      = 'pyvisa.nivisa.warn'
+    req     = 'REQ-008'
+    pass    = $visaWarnPass
+    desc    = 'A failed NI-VISA install prints a console WARN that the driver is missing and what that means'
+    details = $visaWarnDetails
+})
+
 # ===== REQ-008 opt-out: HP_SKIP_NIVISA=1 skips NI-VISA install even when pyvisa is detected =====
 $disWork    = Join-Path -Path $here -ChildPath '~pyvisa_disabled'
 $disLogName = '~pyvisa_disabled_bootstrap.log'
@@ -177,6 +194,10 @@ if (-not $nisaOutcomePass) {
 }
 if (-not $disabledPass) {
     Write-Host "HP_SKIP_NIVISA opt-out did not skip the NI-VISA install"
+    exit 1
+}
+if (-not $visaWarnPass) {
+    Write-Host "NI-VISA install failed but no console WARN was printed"
     exit 1
 }
 exit 0

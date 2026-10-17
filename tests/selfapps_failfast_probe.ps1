@@ -34,7 +34,7 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$ndjsonIds = @('self.failfast.probe.fastfail', 'self.failfast.probe.alive')
+$ndjsonIds = @('self.failfast.probe.fastfail', 'self.failfast.probe.alive', 'self.failfast.probe.seconds')
 
 # Non-Windows skip
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -252,5 +252,24 @@ Write-NdjsonRow ([ordered]@{
     details = $aliveDetails
 })
 
-if (-not ($fastfailPass -and $alivePass)) { exit 1 }
+# CLAUDE.md Item 68: the line that tells the user the program is still running past the probe window
+# used to print the window in milliseconds (still running after 10000ms). People read seconds, so it
+# must say how many seconds. The alive scenario sets HP_FAILFAST_PROBE_MS=1000, so the expected text
+# is "1 second". Read from the same run-2 log as the alive row above.
+$secLine = ''
+if ($alRun2Text) {
+    $secLine = [string](@($alRun2Text -split "`n" | Where-Object { $_ -match 'Fail-fast probe: still running after' }) | Select-Object -First 1)
+}
+$secInSeconds = $secLine -match 'still running after 1 second[ ;]'
+$secNoMs = -not ($secLine -match 'still running after \d+\s*ms')
+$secondsPass = [bool]$secLine -and $secInSeconds -and $secNoMs
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.failfast.probe.seconds'
+    req     = 'REQ-018'
+    pass    = $secondsPass
+    desc    = 'Fail-fast probe: the still-running line states the probe window in seconds, not milliseconds'
+    details = [ordered]@{ lineFound = [bool]$secLine; inSeconds = $secInSeconds; noMilliseconds = $secNoMs; line = $secLine.Trim() }
+})
+
+if (-not ($fastfailPass -and $alivePass -and $secondsPass)) { exit 1 }
 exit 0

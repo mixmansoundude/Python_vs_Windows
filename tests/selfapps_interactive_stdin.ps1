@@ -67,10 +67,12 @@ if (-not (Test-Path $batchPath)) {
     exit 1
 }
 
-$roundtripPass = $false
-$details = [ordered]@{}
-try {
-    $wd = Join-Path $here '~selftest_interactive_stdin'
+# One full scenario in its own scratch folder: build the EXE from the input()-driven stub and pipe the
+# scripted answers into cmd.exe's stdin. Returns the facts the row reports. $ExtraEnv is applied for the
+# bootstrap run only and restored afterwards.
+function Invoke-StdinRoundtrip {
+    param([string]$DirName, [hashtable]$ExtraEnv = @{})
+    $wd = Join-Path $here $DirName
     if (Test-Path $wd) { Remove-Item -Recurse -Force $wd }
     New-Item -ItemType Directory -Force -Path $wd | Out-Null
     Copy-Item -Path $batchPath -Destination $wd -Force
@@ -97,10 +99,13 @@ while True:
     # line-per-call contract.
     [System.IO.File]::WriteAllText($answersPath, "Alice`nping`nexit`n", [System.Text.Encoding]::ASCII)
 
-    $savedSkipPipreqs = $env:HP_SKIP_PIPREQS
-    $savedLane = $env:HP_CI_LANE
-    $env:HP_SKIP_PIPREQS = '1'
-    $env:HP_CI_LANE = 'test'
+    $savedEnv = @{}
+    $envToSet = @{ HP_SKIP_PIPREQS = '1'; HP_CI_LANE = 'test' }
+    foreach ($k in $ExtraEnv.Keys) { $envToSet[$k] = $ExtraEnv[$k] }
+    foreach ($k in $envToSet.Keys) {
+        $savedEnv[$k] = [Environment]::GetEnvironmentVariable($k)
+        [Environment]::SetEnvironmentVariable($k, $envToSet[$k])
+    }
 
     $logName = '~interactive_bootstrap.log'
     Push-Location -LiteralPath $wd
@@ -112,10 +117,8 @@ while True:
         $bootstrapExit = $LASTEXITCODE
     } finally {
         Pop-Location
+        foreach ($k in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($k, $savedEnv[$k]) }
     }
-
-    if ($null -eq $savedSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $savedSkipPipreqs }
-    if ($null -eq $savedLane) { Remove-Item Env:HP_CI_LANE -ErrorAction SilentlyContinue } else { $env:HP_CI_LANE = $savedLane }
 
     $logPath = Join-Path $wd $logName
     $logLines = if (Test-Path $logPath) { Get-Content -LiteralPath $logPath -Encoding ASCII } else { @() }
@@ -143,14 +146,37 @@ while True:
     $capturedFileMatches = ($capturedOut -match [regex]::Escape('Hello, Alice!')) -and ($capturedOut -match [regex]::Escape('pong')) -and ($capturedOut -match [regex]::Escape('Goodbye!'))
     $bootstrapOk = ($bootstrapExit -eq 0) -and ($statusState -eq 'ok')
 
-    $roundtripPass = $orderedCorrectly -and $exeBuilt -and $capturedFileMatches -and $bootstrapOk
-    $details = [ordered]@{
+    return [ordered]@{
+        pass                = ($orderedCorrectly -and $exeBuilt -and $capturedFileMatches -and $bootstrapOk)
         bootstrapExit       = $bootstrapExit
         statusState         = $statusState
         exeBuilt            = $exeBuilt
         orderedCorrectly    = $orderedCorrectly
         capturedFileMatches = $capturedFileMatches
         log                 = $logName
+    }
+}
+
+$roundtripPass = $false
+$details = [ordered]@{}
+try {
+    $first = Invoke-StdinRoundtrip -DirName '~selftest_interactive_stdin'
+    $roundtripPass = [bool]$first.pass
+    $details = [ordered]@{
+        bootstrapExit       = $first.bootstrapExit
+        statusState         = $first.statusState
+        exeBuilt            = $first.exeBuilt
+        orderedCorrectly    = $first.orderedCorrectly
+        capturedFileMatches = $first.capturedFileMatches
+        log                 = $first.log
+    }
+    if (-not $roundtripPass) {
+        # Failure-only diagnosis: the same scenario with the bootstrapper's elevation test skipped
+        # (HP_TEST_NOT_ELEVATED=1 never starts fsutil). Passing here with the first run failing
+        # points at a helper process started at the top of the run that took the shared stdin.
+        $second = Invoke-StdinRoundtrip -DirName '~selftest_interactive_stdin_ne' -ExtraEnv @{ HP_TEST_NOT_ELEVATED = '1' }
+        $details['rerunWithoutElevationTestPass'] = [bool]$second.pass
+        $details['rerunOrderedCorrectly'] = $second.orderedCorrectly
     }
 } catch {
     $details = [ordered]@{ error = $_.Exception.Message }

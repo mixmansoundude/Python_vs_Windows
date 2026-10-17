@@ -109,7 +109,7 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
   - `No Python files detected; skipping environment bootstrap.`
 - **Exactly 1 Python file**: run that file directly.
 - **2 or more Python files**: prefer a clear entry by:
-  0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection.
+  0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection. The argument must name an existing `.py` file, as typed or with `.py` appended (`run_setup.bat main` uses `main.py`). Anything else (a `.csv`, a name that is not a file, a wildcard) stops the run before anything is built or run, with `Usage: run_setup.bat your_script.py [arguments for your program]`; it is never ignored and never taken as the entry. See REQ-026 for the arguments that follow it.
   1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
   2) Otherwise, the sole file containing a **substantive** `if __name__ == "__main__":` guard (a guard whose body is only `pass`, comments, a docstring, or `...` does not count, so a real sibling entry wins).
   - If no single clear entry remains after those checks (multiple files, no clear winner), the bootstrapper falls through to a deterministic resolution:
@@ -206,7 +206,8 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
   - Portable provider directories (UV `.uv_env\Scripts`, Conda env `\Scripts`) are **prepended** to `PATH` to shadow any global Python installation.
 - [REQ-011] Directory integrity for explicit file arguments:
   - When a `.py` file is passed as `%1` (drag-and-drop or CLI argument), its parent directory (`%~dp1`) must equal the batch file directory (`%~dp0`). Both expand to a fully-qualified drive+path with trailing backslash; comparison is case-insensitive.
-  - On mismatch: `[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.` -- script aborts (exit 1).
+  - On mismatch: `[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.` -- script aborts (exit 1) and releases the concurrent-instance lock, so the next run in that folder starts normally.
+  - The same pre-flight step then requires the argument to be an existing `.py` file in that folder, as typed or with `.py` appended (REQ-002, CLAUDE.md Item 67). Otherwise it prints `[ERROR] The first argument must be one of your Python files in this folder.` and the usage line, writes status `error` (exit 1), releases the lock, and stops before the cached-EXE fast path. The existing EXE, the environment and the dependency files are not touched.
   - This prevents accidental cross-project contamination when users drag a file from a different project folder onto `run_setup.bat`.
 
 ---
@@ -809,14 +810,12 @@ further arguments, work as before.
 >   binary that has never run and a program that needs arguments would otherwise fail the check. The
 >   `--hidden-import` auto-recovery re-run does not: it is a diagnostic re-run of a build already confirmed
 >   working (see `docs/agent-interconnect.md`).
-> - When the cached-EXE fast path is eligible, the entry-file argument is not used to pick the entry. The
->   fast path runs after the REQ-011 pre-flight check and before entry selection, and reuses
->   `dist\<env>.exe` only when that EXE exists and its source and dependency hash is still fresh. Today, on
->   that path, `run_setup.bat <anything> arg1 arg2` launches the existing EXE with `arg1 arg2`, whatever
->   the first argument says. Decided, not yet built (CLAUDE.md Item 67): a first argument that is not an
->   existing `.py` will stop the run with a usage message before the fast path runs, and the EXE is left
->   alone. Until that lands, type the real entry file first (`run_setup.bat myapp.py arg1 arg2`), which
->   behaves the same whether or not an EXE exists yet.
+> - The first argument is checked before the cached-EXE fast path runs. It must be an existing `.py` file in
+>   the bootstrapper folder, as typed or with `.py` appended; otherwise the run stops with a usage message and
+>   the existing EXE is left alone (REQ-002, REQ-011, CLAUDE.md Item 67). Before this check,
+>   `run_setup.bat arg1 arg2` with the entry file forgotten launched the existing EXE with `arg2`, and when
+>   the program rejected it, the fast path deleted a working EXE. A typed entry file now behaves the same
+>   whether or not an EXE exists yet: `run_setup.bat myapp.py arg1 arg2`.
 
 ---
 

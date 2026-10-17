@@ -7,7 +7,7 @@
 # Two scenarios (EXEDATA_SCENARIO env var; unset defaults to 'mei_substring'), covering both
 # branches of :exe_smokerun_hints' CLAUDE.md Item 38 fix (honest advice for a genuinely
 # missing file with no real _MEIxxxxxx path component, real --add-data advice only for a
-# genuine _MEIxxxxxx extraction path):
+# genuine _MEIxxxxxx extraction path; CLAUDE.md Item 70 later reworded that advice, see below):
 # - mei_substring (CodeRabbit review, PR #458): entry.py opens "config_MEI99.json", a file
 #   that is NEVER created here -- genuinely missing regardless of which current working
 #   directory (CWD) the EXE launches from. The filename's NAME happens to contain "_MEI"
@@ -19,8 +19,8 @@
 #   sys._MEIPASS -- PyInstaller's own real, randomly-named onefile extraction directory at
 #   runtime -- never bundled via --add-data, so the open() genuinely fails with a path
 #   rooted under a real _MEIxxxxxx folder, independent of launch CWD. The only scenario that
-#   exercises the OTHER branch of the fix: --add-data remains the correct, unchanged advice
-#   here.
+#   exercises the OTHER branch of the fix. Item 70: the advice there used to be "Consider adding:
+#   --add-data X", a flag the user cannot pass; it now says run_setup.bat does not bundle data files.
 #
 # CLAUDE.md Active Backlog Item 38 (resolved): a THIRD scenario used to live here ("plain",
 # entry.py opening a genuinely-present "config.json" at the app root) asserting an EXPECTED
@@ -144,14 +144,18 @@ $smokerunFired  = $combined -match [regex]::Escape($smokerunFiredPhrase)
 $smokerunPassed = $combined -match [regex]::Escape($smokerunPassPhrase)
 
 # derived requirement (CLAUDE.md Active Backlog Item 38): honest "missing file" advice for
-# mei_substring (no genuine _MEIxxxxxx path component); the original, unchanged --add-data
-# advice for mei_genuine (a real _MEIxxxxxx-rooted path).
+# mei_substring (no genuine _MEIxxxxxx path component); the reworded (Item 70)
+# data-file advice for mei_genuine (a real _MEIxxxxxx-rooted path).
 $honestHintFired = $combined -match [regex]::Escape('will not fix this')
 if ($scenario -eq 'mei_genuine') {
     # A random runtime-generated _MEIxxxxxx name means the exact --add-data line can't be
     # matched verbatim -- assert the stable parts instead: the advice text, the filename it
     # names, and a genuine _MEI<digits> path segment actually present in the captured log.
-    $addDataHintFired = ($combined -match [regex]::Escape('Consider adding: --add-data')) -and
+    # CLAUDE.md Item 70: the old advice named --add-data, a flag the user cannot pass (the build
+    # command is fixed). The hint must now say run_setup.bat does not bundle data files, name the
+    # file, and must not suggest the flag.
+    $addDataHintFired = ($combined -match [regex]::Escape('does not bundle data files')) -and
+                         (-not ($combined -match '\[HINT\]\[DATA_FILE\][^\r\n]*--add-data')) -and
                          ($combined -match [regex]::Escape('bundled_data.json'))
     $genuineMeiPathSeen = $combined -match '_MEI\d+'
     $hintCorrect = $addDataHintFired -and $genuineMeiPathSeen -and (-not $honestHintFired)
@@ -164,7 +168,7 @@ if ($scenario -eq 'mei_genuine') {
 $xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $hintCorrect
 
 if ($scenario -eq 'mei_genuine') {
-    $desc = 'EXE smokerun XFAIL: missing data file under a genuine _MEIxxxxxx extraction path causes non-zero exit (expected failure); --add-data advice correctly still fires for this case'
+    $desc = 'EXE smokerun XFAIL: missing data file under a genuine _MEIxxxxxx extraction path causes non-zero exit (expected failure); the bundling advice (no --add-data flag) fires for this case'
     $details = [ordered]@{
         scenario            = $scenario
         bootstrapExit       = $runExit

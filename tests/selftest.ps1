@@ -293,6 +293,31 @@ if ($stubStatus.pyFiles -lt 1) {
 if ($stubStatus.exitCode -ne 0) {
   throw "Expected exitCode 0 for stub bootstrap"
 }
+# --- README REQ-015 / Item 76: the bootstrapper's own working files take a tilde ---
+# Everything at the top level of the app folder after one default bootstrap must be either tilde-
+# prefixed (git-ignored by the standard ignores) or a name the user is meant to see and keep. A new
+# non-tilde file the bootstrapper writes is litter in the user's folder: dependency_source.txt was
+# found by eye (Item 76). The allow-list is names, not patterns, except *.spec (the PyInstaller spec
+# is named after the environment). Enforced on every lane from the first run. The row also proves it
+# looked at the right folder (the stub entry and the bootstrapper are in the listing) and that the
+# record exists under its tilde name, so an empty or wrong listing cannot pass for the right reason.
+$litterAllow = @('run_setup.bat','hello_stub.py','requirements.txt','requirements.auto.txt','runtime.txt','.gitignore','.gitattributes','.uv_env','dist','build')
+$litterNames = @(Get-ChildItem -LiteralPath $stubDir -Force | ForEach-Object { $_.Name })
+$litterFound = @($litterNames | Where-Object { -not $_.StartsWith('~') -and ($litterAllow -notcontains $_) -and ($_ -notlike '*.spec') })
+$litterListed = ($litterNames -contains 'hello_stub.py') -and ($litterNames -contains 'run_setup.bat')
+$litterRecord = ($litterNames -contains '~dependency_source.txt')
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.litter.appfolder'
+  req  = 'REQ-015'
+  pass = ($litterListed -and $litterRecord -and ($litterFound.Count -eq 0))
+  desc = 'Default bootstrap leaves no non-tilde file of its own in the app folder'
+  details = [ordered]@{
+    listed   = $litterListed
+    record   = $litterRecord
+    litter   = $litterFound
+    entries  = $litterNames
+  }
+})
 # --- REQ-005.5 runtime validation (initial bootstrap only) ---
 # ~setup.log at this point contains only the initial bootstrap's entries.
 # ~pipreqs.diff.txt at this point was written only by the initial bootstrap.
@@ -328,6 +353,22 @@ Write-NdjsonRow ([ordered]@{
   }
 })
 if ($diffLogFound -and $diffCorrect) { $summary.Add('self.dep.diff.trace: PASS') } else { $summary.Add('self.dep.diff.trace: FAIL') }
+# CLAUDE.md Item 78: every run logs whether it is elevated, exactly once (the field run was elevated and
+# the NI-VISA installer still failed; without this line nobody could tell from the log). The setup log at
+# this point holds only the initial bootstrap's entries.
+$elevText = if (Test-Path $stubSetupLog) { Get-Content -LiteralPath $stubSetupLog -Encoding ASCII -Raw } else { '' }
+$elevMatches = [regex]::Matches($elevText, '\[INFO\] Elevated: (yes|no)\b')
+$elevOnce = ($elevMatches.Count -eq 1)
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.elevation.logged'
+  req  = 'REQ-008'
+  pass = $elevOnce
+  desc = 'The setup log states once per run whether the process is elevated'
+  details = [ordered]@{
+    count = $elevMatches.Count
+    value = if ($elevMatches.Count -ge 1) { $elevMatches[0].Groups[1].Value } else { $null }
+  }
+})
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
 if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {

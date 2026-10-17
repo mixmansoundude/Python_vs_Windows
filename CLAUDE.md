@@ -64,8 +64,11 @@ tests/
   selfapps_pipgap.ps1          pip gap-fill safety net (runs run_setup.bat: conda misses opencv-python, pip fills it)
   selfapps_pipreqs_encoding.ps1 Item 63: pipreqs scan survives unreadable files (real lane, gating; PYTHONUTF8=0)
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
+  selfapps_entryarg.ps1        Item 67: first argument must be an existing .py in this folder (real lane, gating)
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
+  selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
+  selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
   selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
   selfapps_provider_memory.ps1 Item 66: the provider memory file `~provider.state.json` and the `PVW_PROVIDER=conda` switch (no-switch, invalid value, Miniconda gone, unreadable file and cached-EXE rows on the real lane, gating; forced, remember and forced-stop rows on the uv lane, non-gating because of the Miniconda download)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
@@ -291,6 +294,7 @@ Test files and what they cover:
 | `test_provider_memory.py` | Item 66: `PVW_PROVIDER` validation (compared with `findstr /x /l` on the `set` output, no line expands the variable, runs after the file count and before the cached-EXE fast path), uv skips tested before the `PVW_UV_EXE` branch, the memory read contract (conda only, Miniconda present, never cleared by input edits), write guards (verified pass, conda after uv, state ok, no switch), the `runtime.txt` record at all three write-back sites, the failed-forced-solve hint |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
+| `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
@@ -743,7 +747,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63 and 64 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64 and 67 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -766,9 +770,6 @@ the original symptom (see that doc's "CI-first testing policy").
   `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
   deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
   **Built 2026-10-17 (PR #497, one PR with Item 82 slice 2, README wording in the PR body)**: switch check after the `Python file count` log line, `:provider_memory_read` before the uv block, `:provider_memory_write` from `:success`, `~runtime_writeback.txt` record so a stale exact pin is dropped when conda goes first; rows `self.provider.*` (real lane gating, three uv rows non-gating), unit tests `tests/test_provider_memory.py`. Not covered, by design: the cached-EXE fast path runs first, a failed memory-start conda run follows the existing conda-failure chain and uv is not retried, only conda is remembered. Detail: `docs/agent-interconnect.md`.
-- **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
-  (any existing file) or silently ignored, dropping the user's first real argument; this deleted
-  a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09: validate and stop; program arguments stay optional).
 - **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
@@ -777,24 +778,14 @@ the original symptom (see that doc's "CI-first testing policy").
   (`:offer_optimized_build`) gets one sentence naming the risk of the second run: "Building it starts
   your program once more for up to 30 seconds to check it works, so say no if running it twice could
   cause harm." README REQ-018 stays as written; add a prompt-text row to the `self.optbuild.*` scenarios.
-- **Item 70 (Confirmed, small)**: `--add-data`/`--hidden-import` hints name flags the user has
-  no way to pass; reword or add a `PVW_` passthrough.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
   override only, no prompt (decided 2026-10-09, Q6 = A).
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
   first-launch experiment (`--onefile-tempdir-spec`).
-- **Item 73 (Confirmed, tiny)**: PEP 723 write-back discards uv's stderr, so `ERROR:uv_rc_1` has
-  no reason; log it.
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
   second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
-- **Item 76 (decided 2026-10-09, small)**: rename `dependency_source.txt` to `~dependency_source.txt`.
-  It is bootstrapper-internal tracking, never a file the user is told to read, so it takes the
-  tilde and gets git-ignored. Writer at `run_setup.bat` ~2188 (plus the log line at ~2189), and
-  three CI references in `batch-check.yml` (~1817, ~2926, ~3376) that collect it by exact name.
-  Implement in a coding agent, test first: add a CI check that the file is still collected under
-  its new name before the rename lands. Not implemented on the docs-only plan PR.
 - **Item 77 (likely cause, runtime DLLs reported missing, small)**: `import pymupdf` fails with
   `DLL load failed while importing _extra` in the env's own interpreter on a clean Windows image;
   the wheel's `mupdfcpp64.dll` needs `msvcp140.dll` and `vcruntime140_1.dll` (Visual C++ runtime),

@@ -32,10 +32,11 @@ self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run, self.exe.build.xfail,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
+self.hint.hidden_import.wording,
 self.exe.smokerun.cwd_consistency,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
-self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe,
+self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
 self.checkpoint.accept, self.checkpoint.decline,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
@@ -83,7 +84,7 @@ self.pandas.openpyxl.install, self.pandas.openpyxl.import,
 pandas_excel.translate, pandas_excel.conda.install, pandas_excel.conda.install.req006,
 pandas_excel.runtime,
 pipgap.conda.miss, pipgap.pip.fill, pipgap.import,
-pyvisa.detect, pyvisa.nivisa.branch, pyvisa.nivisa.outcome, pyvisa.nivisa.reason, pyvisa.nivisa.disabled,
+pyvisa.detect, pyvisa.nivisa.branch, pyvisa.nivisa.outcome, pyvisa.nivisa.reason, pyvisa.nivisa.warn, pyvisa.nivisa.disabled,
 pyproject.precedence.detect, pyproject.precedence.writeback,
 pyproject.dep.detect, pyproject.dep.noproj,
 self.prime.bootstrap, self.prime.run, self.prime.spaced-path,
@@ -196,7 +197,7 @@ batch.dep.diff.trace,
 batch.conda.warmup,
 batch.req013.connectivity,
 batch.req014.consent,
-batch.req005.warn_gate,
+batch.wording.nuitka_duration, batch.wording.optbuild_rerun, batch.optbuild.noninteractive_default, batch.wording.interpreter_prompt_note,
 batch.conda.probe.deferred,
 uv.python.preference.configured,
 batch.script_root.trailing_backslash,
@@ -229,7 +230,7 @@ self.stub.lock_no_leak, self.stub.lock_held_decline, self.stub.lock_stale_evict,
 self.stub.lock_indeterminate,
 self.stub.low_disk_warn,
 self.pipreqs.warn.gated,
-self.dep.diff.trace,
+self.dep.diff.trace, self.litter.appfolder, self.elevation.logged,
 self.warn.onedrive, self.warn.longpath, self.warn.path_negative, self.warn.sysdir,
 self.guardrail.g1, self.guardrail.g2, self.guardrail.g3,
 self.pep723.valid, self.pep723.uvformat, self.pep723.malformed, self.pep723.pyproject.override,
@@ -308,6 +309,19 @@ self.pep723.writeback.warnfix, self.pep723.writeback.roundtrip
 `idempotent` also emits `roundtrip` (Item 62): run 2 must accept, as the
 dependency source, the header the REAL uv wrote on run 1 (not a hand-typed fixture), so a uv layout
 change that the bootstrapper's extractor cannot read turns CI red. Same skip rules as the others.
+
+## selfapps-pep723-uverr NDJSON rows (selfapps_pep723_uverr.ps1, real lane, gating)
+
+Item 73: a failed PEP 723 header write-back must log uv's reason. One real bootstrap with the
+test hook `HP_TEST_PEP723_UV_ERR` (the helper acts as if uv exited 1 with that text on stderr);
+the row needs the `[WARN] REQ-005.11 ... (ERROR:uv_rc_1)` line, both injected reason lines in
+`~setup.log`, the entry file byte-identical, and bootstrap state `ok`. If `HP_ENV_MODE` did not
+resolve to uv the row fails with `reason=provider_not_uv` on the real lane (a run that never reached the
+write-back proved nothing) and records `skip=true` only off the real lane.
+
+```
+self.pep723.writeback.uverr
+```
 
 ## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
 
@@ -859,6 +873,59 @@ folder name and treats a surviving old file as untrusted.
 
 ```
 self.pipreqs.output.readonly_replaced, self.pipreqs.output.temp_isolated, self.pipreqs.output.locked_named, self.pipreqs.output.locked_crash
+```
+
+## selfapps-entryarg NDJSON rows (selfapps_entryarg.ps1, real lane only, GATING)
+
+CLAUDE.md Item 67 regression test (`docs/plan-field-report-2026-10.md`; README REQ-002, REQ-026). One
+real bootstrap builds a two-file app (`main.py` and `entry.py`, both exit 2 when they receive any
+argument), then five quick runs drive the cached-EXE path with bad first arguments. Every run's
+checks read only that run's output: the console capture, and the bytes the run appended to
+`~setup.log` (which is not rotated per run). `noext` (run 1, `run_setup.bat entry`: `entry.py` is
+chosen over `main.py`, the `.py` is appended and logged), `csv` (run 2, an existing `data.csv`:
+non-zero exit, `Usage: run_setup.bat your_script.py` on the console, status `error`, EXE byte-for-byte
+and timestamp unchanged, no `Fast path` or `discarding cached EXE` line), `missing` (run 3, `arg1
+arg2`, the 2026-08-31 command: same checks, and the good EXE is never run with the wrong arguments or
+discarded), `wildcard` (run 4, `*`: a wildcard matches every file so it must be rejected, same checks),
+`directory` (a folder named `folder.py` exists for two runs: `folder.py` and `folder` must each be rejected with the usage line, status `error`, EXE untouched, because `if exist` is true for a folder), `stops_release_lock` (run 5 is a file from another folder, the REQ-011 stop; run 6 is `entry` again
+and must see no REQ-024 lock message and reuse the EXE). Skips with `skip=true,
+reason=non-windows-host` off Windows. Expected red on the commit that adds it (the old code takes a
+missing first argument as no argument and an existing non-Python file as the entry, launches the
+cached EXE with the wrong arguments, and leaves the lock behind after the REQ-011 stop) and green once
+the first argument is validated before the fast path and every early stop releases the lock.
+
+```
+self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.directory, self.entryarg.stops_release_lock
+```
+
+## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)
+
+CLAUDE.md Item 68 regression test (`docs/plan-field-report-2026-10.md`; README REQ-005, REQ-005.5, REQ-007).
+One tiny standard-library app, three real runs in one folder; each run's checks read only the bytes
+that run appended to `~setup.log` plus its console capture. `dep_source_warn_shown` (run 1, no
+`requirements.txt`, pipreqs on: the console carries `Dependencies were auto-detected via pipreqs` and
+`~dependency_source.txt` reads `dependency_source=pipreqs`; before the fix the warning's gate tested a
+variable that is initialized to `unknown`, so neither happened), `rebuild_notice` (runs 2 and 3 edit
+`main.py`, so the cached EXE is stale and is rebuilt: the log must say `Fast path: not reusing`, the
+EXE must really change and print the new output, and run 1, with no EXE yet, must not print the line),
+`diff_placeholder` (run 2 has neither requirements file, run 3 has `requirements.txt` only, pipreqs
+skipped in both: `~pipreqs.diff.txt` names the missing file instead of "requirements files not both
+present"). Skips with `skip=true, reason=non-windows-host` off Windows. Expected red on the commit
+that adds it. The other Item 68 fixes are covered elsewhere: `self.failfast.probe.seconds` (the probe
+line states its window in seconds, in `selfapps_failfast_probe.ps1`), `batch.wording.nuitka_duration`
+(static, `tests/harness.ps1`: the Nuitka fallback and optimized-build messages say the build can take a
+long time and point at `~setup.log`), `batch.wording.optbuild_rerun` (static: the optimized-build prompt
+says, in an echo line before the question, that accepting starts the program once more for up to 30
+seconds; README REQ-018.2), `batch.optbuild.noninteractive_default` (static: under `HP_CI_LANE`,
+`NOINPUT` and `HP_NONINTERACTIVE` the answer resolves to no without reaching `set /p`; the prompt text is
+still echoed by design, see the CI-safe gate pattern, but nothing is asked or run) and
+`batch.wording.interpreter_prompt_note` (static: both panels that print the interpreter run command add
+that a bare interpreter opens a Python prompt and that pip is run as `-m pip`). The decline scenario of
+`selfapps_optimized_build.ps1` also counts launches: a fixture that appends to `~launches.txt` on every
+start must have been started exactly once when the offer is declined.
+
+```
+self.wording.dep_source_warn_shown, self.wording.rebuild_notice, self.wording.diff_placeholder
 ```
 
 ## selfapps-warnfix-noise NDJSON rows (selfapps_warnfix_noise.ps1, real and conda-full lanes, GATING)

@@ -87,8 +87,13 @@ if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
 
+# The fixture records every launch in ~launches.txt (in the folder it runs from) so the decline scenario can
+# prove the whole bootstrap started the program exactly once: the offer must not run it again (Item 68).
 Set-Content -Path (Join-Path $workDir 'app.py') -Value @'
+import os
 print("optbuild-app-ok")
+with open(os.path.join(os.getcwd(), "~launches.txt"), "a") as launch_record:
+    launch_record.write("x\n")
 '@ -Encoding ASCII
 
 $bootstrapLog = "~optbuild_${scenario}_bootstrap.log"
@@ -237,11 +242,24 @@ try {
         $declinedLogged = $combined -match [regex]::Escape('Optimized build: declined')
         $noBuildAttempt = -not ($combined -match [regex]::Escape('Optimized build: accepted'))
 
-        $pass = $promptShown -and $declinedLogged -and $noBuildAttempt -and $exeExists -and $tmpExeGone -and ($statusState -eq 'ok')
+        # CLAUDE.md Item 68: the prompt the user reads must warn that accepting runs the program once more.
+        $promptWarnsRerun = $combined -match [regex]::Escape('Building it starts your program once more for up to 30 seconds')
+
+        # The program was started exactly once (the mandatory verification run): a declined offer, which is the
+        # default under HP_CI_LANE, never re-runs it. Records may sit in the app folder or in dist\.
+        $launchCount = 0
+        foreach ($rec in @((Join-Path $workDir '~launches.txt'), (Join-Path $workDir 'dist\~launches.txt'))) {
+            if (Test-Path -LiteralPath $rec) { $launchCount += @(Get-Content -LiteralPath $rec -Encoding ASCII | Where-Object { $_ -eq 'x' }).Count }
+        }
+        $startedOnce = ($launchCount -eq 1)
+
+        $pass = $promptShown -and $promptWarnsRerun -and $startedOnce -and $declinedLogged -and $noBuildAttempt -and $exeExists -and $tmpExeGone -and ($statusState -eq 'ok')
         Write-OptBuildRow -Pass $pass -Desc 'AV-Safe Build Path requirement 9 (decline): default/CI path shows the prompt but never attempts a build' -Details ([ordered]@{
             scenario        = $scenario
             bootstrapExit   = $runExit
             promptShown     = [bool]$promptShown
+            promptWarnsRerun = [bool]$promptWarnsRerun
+            launchCount     = $launchCount
             declinedLogged  = [bool]$declinedLogged
             noBuildAttempt  = [bool]$noBuildAttempt
             exeExists       = [bool]$exeExists

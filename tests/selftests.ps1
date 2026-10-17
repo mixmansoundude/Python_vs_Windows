@@ -55,7 +55,9 @@ try {
             Remove-Item -LiteralPath $logPath -Force
         }
 
-        cmd.exe /d /c "run_setup.bat *> ~empty_bootstrap.log" | Out-Null
+        # derived requirement: cmd.exe has no *> operator. The old text passed a literal * as the first
+        # argument and only redirected stdout, which the Item 67 wildcard check now rejects by design.
+        cmd.exe /d /c "run_setup.bat > ~empty_bootstrap.log 2>&1" | Out-Null
 
         $statusPath = Join-Path -Path $selfTestDir -ChildPath '~bootstrap.status.json'
         $stateRow = [ordered]@{

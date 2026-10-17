@@ -3411,6 +3411,46 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   the warn file; it surfaces at run time, which is Item 65's job. Item 80's Nuitka version still needs
   confirming in a `uv`-lane setup log before that item closes.
 
+### Item 67 (closed 2026-10-11; PR #488)
+
+- **A first argument that is not an existing `.py` file in the folder now stops the run with a usage
+  message.** Symptom (2026-08-31 field note): `run_setup.bat arg1 arg2`, typed with no entry file, took
+  `arg1` as the entry if any file of that name existed, or ignored it otherwise; with the cached EXE
+  present the fast path launched it with `arg2` as its only argument, the EXE exited non-zero, the
+  bootstrapper discarded a working EXE and rebuilt it. Cause: nothing validated `%1` before `:try_fast_exe`
+  or either `:determine_entry` call. Fix: a block after the REQ-011 check (empty is fine; `*` or `?` is
+  rejected because `if exist` treats them as patterns; otherwise `%1` must be an existing `.py` as typed, or
+  `%1.py` must exist, which is logged as the resolved name) that stops with a usage message, status
+  `error`, exit 1 and a released REQ-024 lock. `HP_ENTRY_FILE_ARG` carries the normalized name to both
+  `:determine_entry` call sites. Program arguments (`%2` onward) stay optional and are forwarded as before.
+  README REQ-002 item 0, REQ-011 and REQ-026 describe it; the interconnect map has a "First-argument check"
+  entry.
+- **Found while testing, fixed in the same change.** The REQ-011 stop (a dragged file from another folder)
+  did not release the REQ-024 lock, so the next double-click in that folder met "setup already running" for
+  up to two hours. Row `self.entryarg.stops_release_lock` covers it.
+- **Test-first, as required.** `tests/selfapps_entryarg.ps1` (`real` lane, gating; rows
+  `self.entryarg.noext`, `.csv`, `.missing`, `.wildcard`, `.directory`, `.stops_release_lock`) landed
+  alone (the first five; `.directory`, a folder named like a script, came from a CodeRabbit finding) and was
+  red in blocking CI (run `38147523685`, head `d1402bc`): on `real` exactly those five rows failed and no
+  other row did. For the expected reasons: `noext` built from `main.py` (`helloEntry:false`, `resolvedMsg:false`);
+  `csv`, `missing` and `wildcard` exited 0 with no usage line and `Fast path: reusing` in the log; `missing`
+  discarded and rebuilt the good EXE (`exeUntouched:false`, the original symptom, and the run's log ends in
+  a full SETUP COMPLETE banner), which is also why `wildcard` read a changed EXE after it; the run after
+  `stops_release_lock`'s early stop met `REQ-024: setup already running (lock held, not stale)`. Fix run:
+  recorded in the PR #488 description.
+- **Two things the test taught.** `~setup.log` is rotated only past 10 MB, so a per-run absence check has to
+  read only the bytes the run appended; and `if exist "%~1.py"` with `%1` = `*` matches any `.py`, so a
+  wildcard argument needed its own rejection and row. See `docs/agent-lessons-learned.md`.
+- **The new check turned two older rows red, which was the test script's bug.** `tests/selftests.ps1` ran
+  `cmd.exe /c "run_setup.bat *> log"`; cmd has no `*>` operator, so the bootstrapper received a literal `*` as
+  its first argument and only stdout was redirected. The wildcard check rejected it and `self.bootstrap.state`
+  and `self.empty_repo.msg` went red on every lane (run `38158635455`). Fixed in the script with
+  `> log 2>&1` (run `38178385508` was green on all lanes).
+- **Fix runs.** All six `self.entryarg.*` rows were green on `real` in run `38178385508` and again in run
+  `38879165683` (head `1398257`, after the rejected-run rows were tightened to exit code exactly 1: the
+  rows record exit 1 and a usage line, not just a nonzero code). The latter run had zero failing rows on
+  all eight lanes. A fresh run after each later merge of `main` (Item 65 slice 1, then Item 83) is read before this merges.
+
 ### Item 83 (closed 2026-10-16; PR #492)
 
 - **The pre-flight syntax check no longer aborts a valid program or leaves a `.pyc`.** Symptom (found by the

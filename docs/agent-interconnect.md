@@ -572,6 +572,39 @@ the same run still genuinely reflects the current source. Both the read (`:try_f
 change to file enumeration/hashing logic stays in sync automatically; only a change to the CALL
 SITES themselves risks drift.
 
+### `~dependency_source.txt`: the dependency-source record (Item 76)
+
+`:success` writes `dependency_source=<DEP_SOURCE>` to `~dependency_source.txt` (tilde: it is
+bootstrapper-internal, and the standard ignores' `~*` keeps it out of the user's git history) unless
+`DEP_SOURCE` is still the `unknown` sentinel. Three CI points collect it by exact name (the test-logs
+upload, `publish_diag`'s file list, and its copy pair in `batch-check.yml`);
+`tests/test_dependency_source_file.py` fails if the writer and any of those drift apart, and
+`self.litter.appfolder` (`selftest.ps1`, every lane) fails on any other non-tilde file the
+bootstrapper leaves in the app folder, and also requires the stub entry and the tilde record in the
+listing so an empty or wrong listing cannot pass. A copy named `dependency_source.txt` left by an older version
+stays where it is; nothing deletes it.
+
+**The litter row found two more non-tilde writers on its first run, both fixed with it** (run `38984687670`,
+`litter` lists them): the bootstrapper's own CI marker `.ci_bootstrap_marker` (written at the top of every run,
+read by `tests/harness.ps1` and written by three `batch-check.yml` steps) is now `~ci_bootstrap_marker`, and the
+uv lane's autopep723 raw output `requirements.autopep.txt` is now `~requirements.autopep.txt`
+(`tests/selfapps_autopep_discovery.ps1` reads it; `tools/autopep_merge.py` takes the path as an argument, its
+default name is only for direct testing). Any new top-level file the bootstrapper writes needs a tilde, or a name
+the user is meant to keep in the row's allow-list.
+
+**`:try_fast_exe` runs twice per stale-EXE run, so its "not reusing" notice lives at the first call
+site only** (Item 68). The top-of-file call and the one in `:run_entry_smoke`'s build gate both get an
+empty `HP_FASTPATH_TOKEN` for a stale EXE. The `[INFO] Fast path: not reusing ...` line is printed right
+after the first call, keyed on `HP_FAST_EXE_PATH` defined (set only when `dist\<env>.exe` exists, so a
+first build prints nothing) and `HP_FASTPATH_USED` unset; putting it inside `:try_fast_exe` would print
+it twice. `self.wording.rebuild_notice` reads it.
+
+**`DEP_SOURCE` is a sentinel, not an unset flag.** It is initialized to `unknown` at the top of the file
+and later set to `requirements.txt`, `pyproject`, `pep723`, `pvw_idempotent` or `pipreqs`. Any gate must
+test `"%DEP_SOURCE%"=="unknown"`; `if not defined DEP_SOURCE` is never true (it hid the pipreqs
+auto-detect warning until Item 68). `:success` writes `~dependency_source.txt` only when the value is not
+`unknown`, so a fast-path or no-source run leaves the previous run's file alone (Item 76).
+
 ### `~dependency_installed.txt`: pip freeze output and its consumers
 
 Written after install via `pip freeze` (uv: `uv pip freeze --python "%HP_PY%"`; conda/venv:
@@ -633,6 +666,16 @@ to `~pep723_pkgs.txt` -- "all-or-nothing per round," since neither trigger point
 subset of a failed bulk install actually succeeded. Does not touch venv/conda/embed/system modes at
 all -- a future extension needs an `HP_UV_INSTALL_OK`-equivalent per provider plus a matching scope
 relaxation in this subroutine's own first line.
+
+**The helper's reason for a failure reaches the setup log through stderr** (Item 73). The batch call is
+`"%HP_PY%" "~pep723_writeback.py" ... > "~pep723_result.txt" 2>> "%LOG%"`: stdout is the one result line
+(`OK:`/`SKIP:`/`ERROR:`), stderr is appended to `~setup.log`. `tools/pep723_writeback.py` writes the last
+five non-blank lines of a failed uv call's stderr there (each cut to 200 ASCII characters, prefixed `uv: `),
+for the first call and the strip-and-retry call alike; a successful call logs nothing, because uv can warn
+at exit 0 (astral-sh/uv#15956). Never route that text through `:log` (it can hold `<>|&%^`). The helper has
+one test hook, `HP_TEST_PEP723_UV_ERR` (treated as uv exiting 1 with that stderr, no uv call), because no
+public package installs but cannot be added to a header; `tests/selfapps_pep723_uverr.ps1` (real lane,
+gating) is its only user. The payload line is far under the 8191 limit (about 800 characters of margin).
 
 ### Dep-check + uv mode lock file interconnection
 
@@ -771,6 +814,19 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
 
 ---
 
+## One elevation test (`:detect_elevation`, Item 78) feeds the per-run log line and the Miniconda AllUsers branch
+
+`:detect_elevation` (next to `:log`) sets `HP_ELEVATED=1` when `fsutil dirty query %systemdrive%` succeeds
+and leaves it empty otherwise; `HP_TEST_NOT_ELEVATED=1` forces "not elevated" for CI. Two callers must stay in
+step: the main flow logs `[INFO] Elevated: yes|no` exactly once per run (right after the Host PowerShell
+line; `self.elevation.logged` counts it in the stub run's `~setup.log`), and `:try_conda_install`'s AllUsers
+branch skips straight to JustMe when it is empty. Test with `if defined`/`if not defined`, never `%HP_ELEVATED%`
+inside a parenthesized block. The NI-VISA failure `[WARN]` lines (`pyvisa.nivisa.warn`) are console
+`call :log "[WARN] ..."` lines at the two `[VISA] install_failed` sites; the elevation line is what lets a
+reader of a field log tell an elevated failure (the reported `-125202`) from a non-elevated one.
+
+---
+
 ## Single-verification smoke model (REQ-018 2b-A.2)
 
 The bootstrapper runs the user's code for MANDATORY verification exactly ONCE per invocation (the
@@ -901,6 +957,27 @@ interactive terminal to benefit). `:offer_optimized_build`'s internal build-veri
 it (it launches a brand-new, never-before-executed Nuitka binary) -- but reads `$env:HP_APP_ARGS`
 directly in PowerShell rather than cmd.exe-substituting `%HP_APP_ARGS%` into `-Command` text, since
 the value contains literal embedded double-quotes per token that would corrupt naive substitution.
+
+### First-argument check (Item 67): runs before the fast path, hands `:determine_entry` a normalized name
+
+**Touch the pre-flight order, the fast path, or either `:determine_entry` call site, must understand
+the others.** The block after the REQ-011 check validates `%1` (empty is fine; a `*` or `?` is
+rejected because `if exist` treats them as patterns; otherwise it must be an existing `.py` as typed,
+or `%1.py` must exist, and neither may be a folder: `if exist` is true for a folder, so each test is paired
+with `if not exist "<name>\"`, which is true only for a file) and stops with a usage message, status `error`, exit 1 and a released lock.
+Order matters: REQ-011 (cross-folder) first, then this check, then `:compute_interactive_run`, then
+`:try_fast_exe`. The forwarded program arguments still start at `%2` (`HP_APP_ARGS`), so a first
+argument that was silently dropped used to shift every argument by one, which is what made the
+cached EXE fail fast and get discarded.
+- `HP_ENTRY_FILE_ARG` (not `HP_ENTRY_ARGS`, the py-launcher arguments) is the normalized name; both
+  `call :determine_entry` sites (inside `:ci_skip_entry`'s caller and `:after_env_bootstrap`) pass
+  it instead of `%~1`. Any new reader of the entry argument must use it, or a name typed without
+  `.py` would be seen raw. The `HP_CI_SKIP_ENV` path never reads `%1` for entry selection, but the
+  validation still runs there.
+- Every early top-level stop that can happen after `:acquire_lock` must `call :release_lock` (the
+  REQ-011 stop did not, so a rejected drag-and-drop blocked the next run in that folder for up to
+  two hours; `self.entryarg.stops_release_lock`).
+- Regression: `tests/selfapps_entryarg.ps1` (`real` lane, gating).
 
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 
