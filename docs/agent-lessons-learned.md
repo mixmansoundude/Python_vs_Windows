@@ -156,7 +156,9 @@ space), finds none and prints nothing, and the good value is refused like a bad 
 exactly that and only the real-lane `self.provider.fastpath` row noticed (the `invalid` row cannot tell, since it is
 satisfied by refusing everything), so a switch like this needs at least one row that feeds a VALID value and asserts it
 was accepted, not only rows for bad ones. Use it for any super-user switch that accepts a fixed list, and print a message that does NOT contain the
-value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`). Companion
+value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`; Item 71's
+`PVW_BUILDER` is the second user, with `/i` added to accept any case, and its `invalid` scenario feeds the same hostile
+value after an `if /I "%PVW_BUILDER%"==...` version was caught by review). Companion
 trick for finding JSON in a file with no interpreter available yet: `findstr /r /c:"provider.:.conda"` (a dot matches
 each quote character, so the pattern holds no quote and needs no escaping). Both are for text that batch itself wrote or
 for a value used only as a fixed-list key; anything richer needs an emitted helper.

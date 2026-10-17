@@ -166,6 +166,24 @@ class SubfolderOnly(unittest.TestCase):
             self.assertEqual(proc.stdout, "0")
 
 
+class GateStateIsPerRun(unittest.TestCase):
+    """Item 78 slice 2: the remembered answer lives only as long as one bootstrapper run."""
+
+    def setUp(self):
+        self.bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
+
+    def test_decision_is_cleared_once_before_the_first_scan(self):
+        # An HP_VISA_DECISION inherited from the calling terminal (or an earlier run in the same window) would be
+        # read by :visa_subfolder_gate as a remembered answer and the question would never be asked. The clear must
+        # be a top-of-run statement, not part of the VISA block, which a cascade re-entry runs again on purpose.
+        clear = 'set "HP_VISA_DECISION="'
+        self.assertEqual(self.bat.count(clear), 1, "exactly one clear of HP_VISA_DECISION")
+        scan = self.bat.index('set "NEED_VISA=0"')
+        gate = self.bat.index(":visa_subfolder_gate\n")
+        self.assertLess(self.bat.index(clear), scan, "the clear must come before the scanner runs")
+        self.assertLess(self.bat.index(clear), gate)
+
+
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
         bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")

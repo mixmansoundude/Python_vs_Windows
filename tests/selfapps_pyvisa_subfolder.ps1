@@ -14,8 +14,12 @@
 # without NI-VISA reaches it. The accepted scenario really enters the install branch, the same as
 # selfapps_pyvisa.ps1 does for a top-level import; whichever way that install ends (download blocked, installer
 # refused, installed) it counts, because the point is only that the answer let the run through.
-#   declined : CI lane auto-decline -> the prompt is echoed, `[VISA] skipped (subfolder_only)`, no install step
-#   accepted : HP_TEST_VISA_ANSWER=Y -> an install-branch line appears, no subfolder_only
+#   declined : CI lane auto-decline -> the prompt is echoed, `[VISA] skipped (subfolder_only)`, no install step.
+#              Runs with HP_VISA_DECISION=Y inherited from the caller: the run must clear it at startup, or the
+#              stale answer would stand in for the user's and the question would never be asked.
+#   accepted : HP_TEST_VISA_ANSWER=Y -> an install-branch line appears, no subfolder_only. Runs LAST: it may
+#              really install NI-VISA on the runner, and every scenario after a real install would see
+#              `[VISA] present` and skip the prompt it is meant to exercise.
 #   topfolder: the import is next to run_setup.bat -> no prompt, today's behavior (HP_SKIP_NIVISA=1 keeps it
 #              from installing; `skipped (disabled)` shows it went straight to the install branch checks)
 #   timeout  : HP_TEST_FORCE_INTERACTIVE_VISA=1 reaches the timed `choice` prompt (2s) and nobody answers
@@ -71,7 +75,7 @@ function Invoke-VisaScenario {
         if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
         Set-Content -LiteralPath $target -Value $Files[$rel] -Encoding Ascii
     }
-    $names = @('HP_TEST_VISA_ANSWER', 'HP_TEST_FORCE_INTERACTIVE_VISA', 'HP_SKIP_NIVISA', 'HP_SKIP_PIPREQS')
+    $names = @('HP_TEST_VISA_ANSWER', 'HP_TEST_FORCE_INTERACTIVE_VISA', 'HP_SKIP_NIVISA', 'HP_SKIP_PIPREQS', 'HP_VISA_DECISION')
     $saved = @{}
     foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
     foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $null) }
@@ -108,7 +112,7 @@ $foundTop = [regex]::Escape('[VISA] pyvisa/visa import found in: main.py (top fo
 $noInstallStep = { param($text) -not (($text -match [regex]::Escape('[VISA] download method')) -or ($text -match [regex]::Escape('[VISA] present')) -or ($text -match [regex]::Escape('[VISA] install_'))) }
 
 # ---- declined: the CI lane auto-decline -------------------------------------------------------------
-$d = Invoke-VisaScenario -Name 'declined' -Files $subFiles -EnvSet @{}
+$d = Invoke-VisaScenario -Name 'declined' -Files $subFiles -EnvSet @{ HP_VISA_DECISION = 'Y' }
 $dFound = $d.Setup -match $foundSub
 $dPrompt = $d.Console -match [regex]::Escape($promptText)
 $dSkipped = $d.Console -match [regex]::Escape('[VISA] skipped (subfolder_only)')
@@ -118,24 +122,8 @@ Write-NdjsonRow ([ordered]@{
     id      = 'self.nivisa.subfolder.declined'
     req     = 'REQ-008'
     pass    = $dPass
-    desc    = 'An import visa that sits only in a subfolder is logged by path, the prompt is shown, and a non-interactive run declines without an install step'
+    desc    = 'An import visa that sits only in a subfolder is logged by path, the prompt is shown, and a non-interactive run declines without an install step even when a consent answer is inherited from the caller'
     details = [ordered]@{ exit = $d.Exit; foundLine = $dFound; promptEchoed = $dPrompt; skippedSubfolderOnly = $dSkipped; noInstallStep = $dNoInstall }
-})
-
-# ---- accepted: the answer override says yes ---------------------------------------------------------
-$a = Invoke-VisaScenario -Name 'accepted' -Files $subFiles -EnvSet @{ HP_TEST_VISA_ANSWER = 'Y' }
-$aFound = $a.Setup -match $foundSub
-$aPrompt = $a.Console -match [regex]::Escape($promptText)
-$aAcceptedLine = $a.Console -match [regex]::Escape('[INFO] NI-VISA install for a subfolder-only import: accepted.')
-$aReachedBranch = ($a.Console -match [regex]::Escape('[VISA] download method')) -or ($a.Console -match [regex]::Escape('[VISA] present')) -or ($a.Console -match '\[VISA\] install_')
-$aNotDeclined = -not ($a.Console -match [regex]::Escape('[VISA] skipped (subfolder_only)'))
-$aPass = $aFound -and $aPrompt -and $aAcceptedLine -and $aReachedBranch -and $aNotDeclined
-Write-NdjsonRow ([ordered]@{
-    id      = 'self.nivisa.subfolder.accepted'
-    req     = 'REQ-008'
-    pass    = $aPass
-    desc    = 'Answering yes to the subfolder prompt lets the run into the NI-VISA install branch'
-    details = [ordered]@{ exit = $a.Exit; foundLine = $aFound; promptEchoed = $aPrompt; acceptedLogged = $aAcceptedLine; reachedInstallBranch = $aReachedBranch; notDeclined = $aNotDeclined }
 })
 
 # ---- topfolder: a match next to run_setup.bat keeps today's behavior --------------------------------
@@ -166,6 +154,22 @@ Write-NdjsonRow ([ordered]@{
     pass    = $oPass
     desc    = 'With the timed prompt forced and nobody answering, the subfolder-only NI-VISA install is declined after the timeout'
     details = [ordered]@{ exit = $o.Exit; foundLine = $oFound; timedPromptShown = $oTimedPrompt; skippedSubfolderOnly = $oSkipped; noInstallStep = $oNoInstall }
+})
+
+# ---- accepted: the answer override says yes ---------------------------------------------------------
+$a = Invoke-VisaScenario -Name 'accepted' -Files $subFiles -EnvSet @{ HP_TEST_VISA_ANSWER = 'Y' }
+$aFound = $a.Setup -match $foundSub
+$aPrompt = $a.Console -match [regex]::Escape($promptText)
+$aAcceptedLine = $a.Console -match [regex]::Escape('[INFO] NI-VISA install for a subfolder-only import: accepted.')
+$aReachedBranch = ($a.Console -match [regex]::Escape('[VISA] download method')) -or ($a.Console -match [regex]::Escape('[VISA] present')) -or ($a.Console -match '\[VISA\] install_')
+$aNotDeclined = -not ($a.Console -match [regex]::Escape('[VISA] skipped (subfolder_only)'))
+$aPass = $aFound -and $aPrompt -and $aAcceptedLine -and $aReachedBranch -and $aNotDeclined
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.nivisa.subfolder.accepted'
+    req     = 'REQ-008'
+    pass    = $aPass
+    desc    = 'Answering yes to the subfolder prompt lets the run into the NI-VISA install branch'
+    details = [ordered]@{ exit = $a.Exit; foundLine = $aFound; promptEchoed = $aPrompt; acceptedLogged = $aAcceptedLine; reachedInstallBranch = $aReachedBranch; notDeclined = $aNotDeclined }
 })
 
 if (-not ($dPass -and $aPass -and $tPass -and $oPass)) { exit 1 }

@@ -5,17 +5,18 @@
 # below sets it explicitly and asserts a build-tool decision the default run would not make.
 #
 # Scenarios (PVW_BUILDER_SCENARIO env var):
-#   invalid              - PVW_BUILDER=turbo (not a choice). The run must say so once, must not echo the
-#                          value, and must behave as auto: the fallback build is still attempted after the
-#                          forced PyInstaller failure. Both build tools are forced to fail, so no real build.
+#   invalid              - PVW_BUILDER=zz9&echo_pwn|v%PATH%^w (not a choice, and full of cmd syntax). The run must
+#                          say so once, must not echo the value or act on any part of it, and must behave as
+#                          auto: the fallback build is still attempted after the forced PyInstaller failure.
+#                          Both build tools are forced to fail, so no real build.
 #   pyinstaller_nofallback - PVW_BUILDER=PyInstaller (mixed case, proves case-insensitive) with the PyInstaller
 #                          build forced to fail: the Nuitka fallback is switched off, so it is never attempted
 #                          (the forced-Nuitka-failure hook is never reached) and the failure is reported.
 #   pyinstaller          - PVW_BUILDER=pyinstaller, a real PyInstaller build succeeds: the optimized-build
 #                          offer is not shown at all (the user asked for PyInstaller only).
-#   nuitka_forcefail     - PVW_BUILDER=nuitka with the Nuitka build forced to fail: PyInstaller is never run
-#                          (no EXE, no "PyInstaller produced" line) and the failure is reported with
-#                          reason=builder_nuitka.
+#   nuitka_forcefail     - PVW_BUILDER=nuitka with the Nuitka build forced to fail: PyInstaller is neither
+#                          installed nor run (no EXE, no "PyInstaller produced" line, the "not installed for
+#                          this run" line is logged) and the failure is reported with reason=builder_nuitka.
 #   both_forcefail       - PVW_BUILDER=both with the optimized build forced to fail: the standard build is
 #                          verified first, the optimized build starts without a prompt, and its failure leaves
 #                          the verified EXE untouched.
@@ -84,7 +85,7 @@ foreach ($n in $names) { $prev[$n] = if (Test-Path "Env:$n") { (Get-Item "Env:$n
 foreach ($n in $names) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
 $env:HP_SKIP_PIPREQS = '1'
 switch ($scenario) {
-    'invalid'                { $env:PVW_BUILDER = 'turbo'; $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
+    'invalid'                { $env:PVW_BUILDER = 'zz9&echo_pwn|v%PATH%^w'; $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'pyinstaller_nofallback' { $env:PVW_BUILDER = 'PyInstaller'; $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'pyinstaller'            { $env:PVW_BUILDER = 'pyinstaller' }
     'nuitka_forcefail'       { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
@@ -141,6 +142,7 @@ try {
     $pyiProduced      = Has 'PyInstaller produced dist'
     $fallbackTried    = Has 'attempting a fallback build'
     $nuitkaHookFired  = Has '[TEST] HP_TEST_FORCE_NUITKA_FAIL'
+    $pyiInstallSkipped = Has 'PVW_BUILDER=nuitka: PyInstaller is not installed for this run.'
     $optHookFired     = Has '[TEST] HP_TEST_FORCE_OPTBUILD_FAIL'
     $optSucceeded     = Has 'Optimized build succeeded and verified'
 
@@ -159,11 +161,11 @@ try {
     switch ($scenario) {
         'invalid' {
             $warnLogged   = Has 'PVW_BUILDER is not one of auto, pyinstaller, nuitka or both; using auto.'
-            $valueEchoed  = Has 'turbo'
+            $valueEchoed  = (Has 'zz9') -or (Has 'echo_pwn')
             $reasonOk     = Has 'reason=test_forced_fail'
             $pass = $warnLogged -and (-not $overrideLogged) -and (-not $valueEchoed) -and $fallbackTried -and $nuitkaHookFired -and $reasonOk -and ($statusState -eq 'error')
             $details.warnLogged = $warnLogged; $details.valueEchoed = $valueEchoed; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk
-            $desc = 'PVW_BUILDER (invalid value): warned once, value not echoed, behaves as auto (the fallback build is still attempted)'
+            $desc = 'PVW_BUILDER (invalid value full of cmd syntax): warned once, value not echoed or acted on, behaves as auto (the fallback build is still attempted)'
         }
         'pyinstaller_nofallback' {
             $switchedOff = Has 'PVW_BUILDER=pyinstaller: the fallback build system is switched off'
@@ -181,9 +183,9 @@ try {
         'nuitka_forcefail' {
             $skipLogged = Has 'PVW_BUILDER=nuitka: skipping the standard PyInstaller build'
             $reasonOk   = Has 'reason=builder_nuitka'
-            $pass = $overrideLogged -and $skipLogged -and $nuitkaHookFired -and (-not $pyiProduced) -and (-not $exeExists) -and $reasonOk -and ($statusState -eq 'error')
-            $details.skipLogged = $skipLogged; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk
-            $desc = 'PVW_BUILDER=nuitka: PyInstaller is never run and a failed Nuitka build is reported with reason=builder_nuitka'
+            $pass = $overrideLogged -and $skipLogged -and $pyiInstallSkipped -and $nuitkaHookFired -and (-not $pyiProduced) -and (-not $exeExists) -and $reasonOk -and ($statusState -eq 'error')
+            $details.skipLogged = $skipLogged; $details.pyiInstallSkipped = $pyiInstallSkipped; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk
+            $desc = 'PVW_BUILDER=nuitka: PyInstaller is neither installed nor run and a failed Nuitka build is reported with reason=builder_nuitka'
         }
         'both_forcefail' {
             $bothLogged = Has 'PVW_BUILDER=both: building the optimized version now without asking.'
@@ -194,8 +196,8 @@ try {
         }
         'nuitka' {
             $fallbackOk = Has 'Fallback build succeeded'
-            $pass = $overrideLogged -and (-not $pyiProduced) -and $fallbackOk -and $exeExists -and $exeRuns -and ($statusState -eq 'ok')
-            $details.fallbackOk = $fallbackOk; $details.exeRuns = [bool]$exeRuns
+            $pass = $overrideLogged -and $pyiInstallSkipped -and (-not $pyiProduced) -and $fallbackOk -and $exeExists -and $exeRuns -and ($statusState -eq 'ok')
+            $details.fallbackOk = $fallbackOk; $details.pyiInstallSkipped = $pyiInstallSkipped; $details.exeRuns = [bool]$exeRuns
             $desc = 'PVW_BUILDER=nuitka: a real Nuitka build is produced without running PyInstaller'
         }
         'both' {

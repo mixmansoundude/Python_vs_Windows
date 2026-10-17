@@ -334,14 +334,17 @@ temp cleaned up), `decline` (prompt shown, no build attempted).
 **Touch the build block, `:try_nuitka_tier_a`, `:offer_optimized_build` or `:try_fast_exe`, must understand
 the others.** `PVW_BUILDER=auto|pyinstaller|nuitka|both` is a super-user override (README REQ-019: absent
 or `auto` is today's behavior; nothing a Prime Directive run needs depends on it). It is parsed once near
-the other `PVW_` overrides into `HP_BUILDER` (lowercase, default `auto`). An unrecognized value is logged
-once as `PVW_BUILDER is not one of ...; using auto.` and is NOT echoed (`:log` echoes unquoted and the text
-is whatever the user typed). Where each choice acts:
+the other `PVW_` overrides into `HP_BUILDER` (lowercase, default `auto`). The raw value is compared with
+`set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=<choice>"` (the `PVW_PROVIDER` pattern, plus `/i` so any case is
+accepted), so cmd never parses it and **no line may expand `%PVW_BUILDER%`** (a unit test forbids it); only the
+normalized `HP_BUILDER` is ever expanded. An unrecognized value is logged once as `PVW_BUILDER is not one of ...;
+using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever the user typed). Where each choice acts:
 - `pyinstaller`: `:try_nuitka_tier_a` returns 1 at its top (before it installs Nuitka), so all three call
   sites report the PyInstaller failure exactly as they report a failed fallback, and
   `:offer_optimized_build` returns before its prompt, so the offer is never shown.
-- `nuitka`: the build block in `:run_entry_smoke` takes a branch ahead of the forced-PyInstaller-failure
-  hook, never runs PyInstaller, deletes a stale PyInstaller warn file (otherwise warnfix could rebuild over
+- `nuitka`: the build block in `:run_entry_smoke` skips the `pip install pyinstaller` step (one `if` chain with
+  the uv and pip variants; it logs `PyInstaller is not installed for this run`), takes a branch ahead of the
+  forced-PyInstaller-failure hook, never runs PyInstaller, deletes a stale PyInstaller warn file (otherwise warnfix could rebuild over
   the Nuitka EXE with PyInstaller), calls `:try_nuitka_tier_a`, and on failure reports
   `reason=builder_nuitka` through `:warn_build_incomplete`. On success it sets
   `HP_NUITKA_FALLBACK_USED` and `HP_FRESH_BUILD_OK` like Tier A, so the Nuitka-only repair-loop guards apply.
@@ -836,6 +839,10 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
   log inside the copy and a failed staging scan ended with `<log tail unavailable>` in the summary and no
   traceback in the setup log. `self.pipreqs.output.locked_crash` requires the crash reason to be visible in the
   summary or setup log. Any new log written after a `pushd` must be absolute for the same reason.
+  **An absolute path is a user-chosen folder name, so `:write_pipreqs_summary` hands the summary and log paths to
+  PowerShell through `$env:HP_SUMMARY_PATH`/`$env:HP_PIPREQS_FAILURE_LOG` and uses `-LiteralPath`**, never pasted into a
+  single-quoted literal (a folder named `O'Brien` ends the literal early and the log tail is silently lost; a
+  folder with `[` or `]` is a wildcard to `-Path`). `tests/test_pipreqs_precheck.py::SummaryWriterIsApostropheSafe`.
 - Regression: `tests/selfapps_pipreqs_encoding.ps1` (`real` lane, gating, forces `PYTHONUTF8=0` because
   Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read) and
   `tests/selfapps_pipreqs_output.ps1` (`real` lane, gating: read-only old output replaced, scan temp folder
@@ -871,8 +878,13 @@ already-installed checks, sets `NEED_VISA=1` only on an explicit yes, and leaves
 `[VISA] skipped (subfolder_only)`) otherwise. The gate follows the CI-safe pattern (prompt echoed first,
 `HP_TEST_VISA_ANSWER`, then `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` decline, then a 30 second `choice` that
 defaults to no; `HP_TEST_FORCE_INTERACTIVE_VISA` forces the real prompt at 2 seconds). It remembers its answer
-in `HP_VISA_DECISION` so a cascade re-entry does not ask twice. A top-folder match (`1`) never prompts and
-installs exactly as before. Regression: `tests/test_detect_visa.py` and `tests/selfapps_pyvisa_subfolder.ps1`.
+in `HP_VISA_DECISION` so a cascade re-entry does not ask twice. That variable is cleared ONCE at the top of the
+file (next to the `PVW_BUILDER` parse), never inside the VISA block, which a cascade re-entry runs again: an
+`HP_VISA_DECISION` inherited from the calling terminal would otherwise be taken as the user's answer and the
+question never asked (`self.nivisa.subfolder.declined` runs with a stale `Y` inherited; `tests/test_detect_visa.py`
+pins the single clear before the scanner). The `accepted` scenario runs last in `tests/selfapps_pyvisa_subfolder.ps1`
+because it may really install NI-VISA on the runner, after which every later scenario would see `[VISA] present`.
+A top-folder match (`1`) never prompts and installs exactly as before. Regression: `tests/test_detect_visa.py` and `tests/selfapps_pyvisa_subfolder.ps1`.
 
 ---
 

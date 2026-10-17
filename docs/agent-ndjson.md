@@ -583,10 +583,11 @@ self.optbuild.offer
 Item 71: the `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user override (see
 `docs/agent-interconnect.md`'s "PVW_BUILDER" entry). Absence of the variable is today's behavior, so
 every scenario sets it and asserts a decision the default run would not make. Gating, deterministic
-(`PVW_BUILDER_SCENARIO`): `invalid` (unknown value warns once, is not echoed, behaves as auto),
+(`PVW_BUILDER_SCENARIO`): `invalid` (an unknown value full of cmd syntax warns once, is not echoed or acted on,
+behaves as auto),
 `pyinstaller_nofallback` (Nuitka fallback switched off, never reached), `pyinstaller` (a real build is
-kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller never runs, failure
-reported with `reason=builder_nuitka`), `both_forcefail` (the optimized build starts without a prompt
+kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller is neither installed nor run,
+failure reported with `reason=builder_nuitka`), `both_forcefail` (the optimized build starts without a prompt
 and its failure leaves the verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
 build needs a compiler download that can fail for network reasons (same precedent as
 `self.exe.build.tiera`): `nuitka`, `both`.
@@ -1072,8 +1073,10 @@ folder would take the cached-EXE fast path and never reach the VISA step); the g
 `HP_SKIP_NIVISA` and already-installed checks, so a runner without NI-VISA reaches it, and `accepted` really
 enters the install branch like `selfapps_pyvisa.ps1` does (any ending counts). `declined` (CI lane auto-decline: the
 `found in: archive\old_tool.py (subfolder)` line in `~setup.log`, the prompt echoed on the console,
-`[VISA] skipped (subfolder_only)`, no download, no installer file), `accepted` (`HP_TEST_VISA_ANSWER=Y`: the
-accepted line, then a `[VISA]` install-branch line, no `subfolder_only`), `topfolder` (the import next to
+`[VISA] skipped (subfolder_only)`, no download, no installer file; run with a stale `HP_VISA_DECISION=Y` inherited from the
+caller, which must not stand in for the answer), `accepted` (`HP_TEST_VISA_ANSWER=Y`: the
+accepted line, then a `[VISA]` install-branch line, no `subfolder_only`; runs LAST because it may really install
+NI-VISA, after which a later scenario would see `[VISA] present`), `topfolder` (the import next to
 `run_setup.bat` with `HP_SKIP_NIVISA=1`: logged as `(top folder)`, no prompt, `skipped (disabled)`), `timeout` (`HP_TEST_FORCE_INTERACTIVE_VISA=1`
 reaches the timed `choice` prompt, shrunk to 2 seconds, nobody answers, default no). Skips with `skip=true,
 reason=non-windows-host` off Windows. Expected red on the commit that adds it (the scanner printed only 0 or

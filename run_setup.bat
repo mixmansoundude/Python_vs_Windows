@@ -288,15 +288,28 @@ if defined PVW_TARGET_PY call :log "[DEBUG] Using super-user override for PVW_TA
 if defined PVW_WORKSPACE call :log "[DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%"
 rem --- PVW_BUILDER (CLAUDE.md Item 71): super-user choice of build tool, auto|pyinstaller|nuitka|both ---
 rem derived requirement: absent or auto is today's behavior (README REQ-019: a flag may add a super-user
-rem override, never gate a Prime Directive outcome). HP_BUILDER is the normalized choice. An unrecognized
-rem value is reported once WITHOUT echoing it, because :log echoes unquoted and the text is whatever the user
-rem typed, and then treated as auto. Single-line ifs, no block, for the same reason as the lines above.
+rem override, never gate a Prime Directive outcome). HP_BUILDER is the normalized choice and only ever holds one of
+rem the four fixed words. The raw value is compared by findstr over the output of set, so cmd never parses it: a value
+rem holding quotes, ampersands, pipes or percent signs is harmless, and no line expands it. Nothing may sit between
+rem the name and the pipe (see docs/agent-lessons-learned.md). An unrecognized value is reported once WITHOUT echoing it,
+rem because :log echoes unquoted and the text is whatever the user typed, and then treated as auto.
 set "HP_BUILDER=auto"
-if /I "%PVW_BUILDER%"=="pyinstaller" set "HP_BUILDER=pyinstaller"
-if /I "%PVW_BUILDER%"=="nuitka" set "HP_BUILDER=nuitka"
-if /I "%PVW_BUILDER%"=="both" set "HP_BUILDER=both"
-if defined PVW_BUILDER if /I not "%PVW_BUILDER%"=="auto" if "%HP_BUILDER%"=="auto" call :log "[WARN] PVW_BUILDER is not one of auto, pyinstaller, nuitka or both; using auto."
+if not defined PVW_BUILDER goto :pvw_builder_done
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=auto" >nul
+if not errorlevel 1 goto :pvw_builder_done
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=pyinstaller" >nul
+if not errorlevel 1 set "HP_BUILDER=pyinstaller"
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=nuitka" >nul
+if not errorlevel 1 set "HP_BUILDER=nuitka"
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=both" >nul
+if not errorlevel 1 set "HP_BUILDER=both"
+if "%HP_BUILDER%"=="auto" call :log "[WARN] PVW_BUILDER is not one of auto, pyinstaller, nuitka or both; using auto."
+:pvw_builder_done
 if not "%HP_BUILDER%"=="auto" call :log "[INFO] Using super-user override for PVW_BUILDER: %HP_BUILDER%"
+rem CLAUDE.md Item 78 slice 2: the remembered answer to the subfolder-only NI-VISA question lives for one run only.
+rem Cleared here, once, so a value inherited from the calling terminal can never stand in for the user's answer. The
+rem VISA block itself runs again on a provider cascade re-entry and must keep the answer, so it cannot clear it.
+set "HP_VISA_DECISION="
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
 if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
@@ -4064,7 +4077,10 @@ if not defined HP_BUILD_OK (
     :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
     :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
     :: against the new warn-file format and update the translation table as needed.
-    if "%HP_ENV_MODE%"=="uv" (
+    rem CLAUDE.md Item 71: PVW_BUILDER=nuitka means PyInstaller is not wanted, so do not download it either.
+    if /I "%HP_BUILDER%"=="nuitka" (
+      call :log "[INFO] PVW_BUILDER=nuitka: PyInstaller is not installed for this run."
+    ) else if "%HP_ENV_MODE%"=="uv" (
       "%HP_UV_EXE%" pip install --python "%HP_PY%" -q pyinstaller >> "%LOG%" 2>&1
     ) else (
       "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
@@ -6059,13 +6075,13 @@ if defined HP_PIPREQS_SUMMARY_NOTE (
 )
 if defined HP_PIPREQS_FAILURE_LOG (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$summary = '%HP_SUMMARY_PATH%'; $logPath = '%HP_PIPREQS_FAILURE_LOG%';" ^
-    "Add-Content -Path $summary -Value '---' -Encoding ASCII;" ^
-    "Add-Content -Path $summary -Value 'Pipreqs log tail:' -Encoding ASCII;" ^
-    "if (Test-Path $logPath) {" ^
-    "  Get-Content -LiteralPath $logPath -Tail 20 | Out-File -FilePath $summary -Encoding ASCII -Append;" ^
+    "$summary = $env:HP_SUMMARY_PATH; $logPath = $env:HP_PIPREQS_FAILURE_LOG;" ^
+    "Add-Content -LiteralPath $summary -Value '---' -Encoding ASCII;" ^
+    "Add-Content -LiteralPath $summary -Value 'Pipreqs log tail:' -Encoding ASCII;" ^
+    "if (Test-Path -LiteralPath $logPath) {" ^
+    "  Get-Content -LiteralPath $logPath -Tail 20 | Out-File -LiteralPath $summary -Encoding ASCII -Append;" ^
     "} else {" ^
-    "  Add-Content -Path $summary -Value '<log tail unavailable>' -Encoding ASCII;" ^
+    "  Add-Content -LiteralPath $summary -Value '<log tail unavailable>' -Encoding ASCII;" ^
     "}" >> "%LOG%" 2>&1
 )
 exit /b 0

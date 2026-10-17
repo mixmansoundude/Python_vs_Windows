@@ -26,8 +26,22 @@ def test_parse_sets_a_default_and_each_choice():
     default = BAT.find('set "HP_BUILDER=auto"')
     assert default != -1, "HP_BUILDER must default to auto"
     for choice in ("pyinstaller", "nuitka", "both"):
-        line = 'if /I "%%PVW_BUILDER%%"=="%s" set "HP_BUILDER=%s"' % (choice, choice)
-        assert BAT.find(line) > default, "missing or misplaced parse line for %s" % choice
+        # derived requirement: the value is compared by findstr over the output of set (same shape as PVW_PROVIDER),
+        # so cmd never parses it. Nothing may sit between the name and the pipe.
+        test = 'set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=%s" >nul' % choice
+        pos = BAT.find(test)
+        assert pos > default, "missing or misplaced findstr comparison for %s" % choice
+        follow = BAT[pos + len(test):].lstrip("\r\n")
+        assert follow.startswith('if not errorlevel 1 set "HP_BUILDER=%s"' % choice), (
+            "the comparison for %s must be followed by its assignment" % choice
+        )
+
+
+def test_the_raw_value_is_never_expanded():
+    # A value holding a quote, an ampersand, a pipe or a percent sign would be parsed by cmd as syntax once
+    # substituted into a line, so no line may expand the variable (a comment line is not code and is skipped).
+    live = [l for l in BAT.splitlines() if "%PVW_BUILDER%" in l and not l.lstrip().lower().startswith(("rem ", "::"))]
+    assert not live, "PVW_BUILDER must never be expanded by cmd: %r" % live
 
 
 def test_unrecognized_value_warns_without_echoing_it():
@@ -46,8 +60,23 @@ def test_fallback_guard_comes_before_the_nuitka_install():
     assert "exit /b 1" in body[guard:install], "the guard must return failure so the caller reports the PyInstaller failure"
 
 
+def test_nuitka_choice_does_not_install_pyinstaller():
+    # The choice means PyInstaller is not wanted, so its pip install (a download of a large package) is skipped too.
+    install = BAT.find('"%HP_UV_EXE%" pip install --python "%HP_PY%" -q pyinstaller')
+    assert install != -1
+    guard = BAT.rfind('if /I "%HP_BUILDER%"=="nuitka" (', 0, install)
+    assert guard != -1 and install - guard < 600, "the nuitka choice must be tested right before the PyInstaller install"
+    skipped = BAT[guard:install]
+    assert "PVW_BUILDER=nuitka: PyInstaller is not installed" in skipped
+    assert ") else if " in skipped, "the install must stay in the other branches of the same chain"
+    assert BAT.count("-q pyinstaller") == 2, "both provider variants of the install stay behind the guard"
+    assert BAT.rfind('-m pip install -q pyinstaller') > install
+
+
 def test_nuitka_choice_skips_pyinstaller_in_the_build_block():
-    start = BAT.find('if /I "%HP_BUILDER%"=="nuitka" (')
+    anchor = BAT.find("PVW_BUILDER=nuitka: skipping the standard PyInstaller build.")
+    assert anchor != -1
+    start = BAT.rfind('if /I "%HP_BUILDER%"=="nuitka" (', 0, anchor)
     forced = BAT.find("if defined HP_TEST_FORCE_PYINSTALLER_FAIL (")
     assert start != -1 and forced != -1 and start < forced
     block = BAT[start:forced]
