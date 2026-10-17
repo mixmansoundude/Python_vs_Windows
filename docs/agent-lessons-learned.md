@@ -391,6 +391,32 @@ recurring traps that have actually bitten us:
 
 ---
 
+## A skipped test section is invisible to every "no red row" gate, and a step that maps exit codes to success undoes an upstream `exit` fix (Item 84)
+
+Two bugs of one shape. (1) `run_tests.bat` ran the self-test scripts only after a harness exit of 0, so one red
+`batch.*` row removed all their rows, and a gate that fails on `pass:false` cannot see a row that was never written.
+Any conditional around a test section needs a does-it-run check beside it (here: the summary file is deleted before
+the script and must be rewritten by it). (2) The CI step around `run_tests.bat` exited 0 whenever the root status said
+`no_python_files`, true in every lane, so the `exit 1` statements added to `selftest.ps1` months earlier (see the
+closed backlog) never reached the job and the comment claiming they did was false. A mapping that makes sense for one
+runner (the bootstrapper on an empty folder) becomes a blanket swallow when the step is reused for another script:
+before trusting "this exit code gates the lane", find the step that reads it and read its last line. Both were found
+by reading the job log of a red run (`Static test exit code: 1` followed by `Runner rc=1 ... mapping to SUCCESS`),
+not by any test; the step conclusion in the Actions API is the quick check (`gh api .../jobs`, step `conclusion`).
+
+Two follow-ups from the same fix. (3) **A selfapps script that runs a native command and does not end with its own
+`exit` hands that command's last exit code to the job**, because the pwsh step appends `exit $LASTEXITCODE`: the
+contract script's last scenario runs a `run_tests.bat` copy that exits 1 on purpose, and the step failed on all eight
+lanes with every row green (and the "Enforce NDJSON failures" step behind it was skipped). End such a script with
+`if (a row is red) { exit 1 }` and `exit 0`; `tests/test_run_tests_step.py` pins that for the contract script
+(`tests/selfapps_pvw_overrides.ps1` also ends without one and is fine only because its last command leaves 0). (4) **A
+file used as proof that a section completed must be checked as deleted, not only requested deleted**: `del` failing
+on a file another program holds open left the old summary in place, and it passed for this run's (`FileShare.Read`
+reproduces it on a Windows runner). Prove a gate's failure path with a deliberately red row on a throwaway commit and
+read the job steps and both NDJSON files of that run, then revert the row with a new commit.
+
+---
+
 ## `"$var:text"` inside a double-quoted PowerShell string is a scope-qualified-variable parse error, not string interpolation followed by a literal colon
 
 `"...$scenario: run_setup.bat not found"` looks like interpolation-then-colon, but PowerShell's

@@ -3481,6 +3481,40 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   criticality tag on every numbered shall, README REQ-021 became a goal plus shalls with a Terms section, and
   AGENTS.md gained "Writing README requirements".
 
+### Item 84 (closed 2026-10-17, PR #496; filed 2026-10-16 from lane 2's reading of PR #488's CI run)
+
+- **A red harness hid every self-test row, and the CI step swallowed `run_tests.bat`'s exit code.**
+  `run_tests.bat` ran `tests\selftest.ps1` and `tests\selftests.ps1` only when `tests\harness.ps1` exited 0, so one
+  red `batch.*` row removed every `selftest.ps1` row from all eight lanes (run `38962853577`: "Static test exit
+  code: 1", no "Running bootstrap self-tests"). An absent row cannot be red, so a red-first self-test row could not
+  be shown red while the harness was red, and a real regression there stayed hidden until the harness was green. A
+  second, narrower hole sat beside it: the CI step "Run tests (map empty repo to success)" exited 0 whenever the
+  repo root status said `no_python_files`, which is true in every lane, so `run_tests.bat`'s exit code never reached
+  the job. Red rows were still caught by "Gate on NDJSON results"; a script that crashed after writing some green rows
+  kept the lane green. No gating reason for either was found in the repo (no comment, doc or history); the harness
+  gate saved about 10 to 19 minutes per lane when it was red.
+- **What shipped.** `tests/selfapps_runtests_contract.ps1` (every lane, gating from its first run) runs a copy of the
+  real `run_tests.bat` against stub scripts: `self.runtests.all_green`, `.harness_red`, `.selftest_red`,
+  `.selftest_unreported`, `.selftests_unreported`, `.summary_locked`. `run_tests.bat` always runs both self-test
+  scripts, deletes each old summary file first (and fails when it cannot), and fails when a script exits 0 without
+  writing its summary. The CI step is renamed "Run tests (run_tests.bat)", the mapping is gone and it ends in
+  `exit $rc`. `tests/test_run_tests_step.py` pins the step and the contract script's own exit lines.
+- **CI evidence, each read from the lane's own artifacts.** Red run `38985767294` (head `b7822fe`, seven lanes read):
+  exactly four red rows on each, `harness_red`, `selftest_unreported`, `selftests_unreported` and `self.pytest.unit`
+  (only `test_workflow_step`); `all_green` and `selftest_red` green. Canary run `38990735137` (a deliberately red
+  `batch.canary.deliberate_red` harness row, reverted afterwards): on all eight lanes the "Run tests" step failed with
+  the harness at exit 1, the post-harness file held the canary and 40 `self.*` rows, the pre-harness rows stayed
+  green, the artifacts uploaded, "Gate on NDJSON results" failed the lane and the Pages publish still ran; the
+  registry check was red only for the canary id. Red run `39005111056` (head `2c1b7e2`) for the two defects the
+  canary run turned up, below.
+- **Two defects found in the first version of the fix, both by reading a run.** (1) The contract STEP failed on all
+  eight lanes with every row green (`Process completed with exit code 1.`): a `pwsh` `run:` step appends
+  `exit $LASTEXITCODE`, and the script's last native command was the stub-driven `run_tests.bat` copy, which exits
+  nonzero by design. The fix is an explicit `if (<any row red>) { exit 1 }` then `exit 0` at the end of the script;
+  `ContractScriptSetsItsOwnExitCode` pins it. `selfapps_pvw_overrides.ps1` has the same latent shape and is not
+  touched here. (2) A summary file that cannot be deleted (held open with `FileShare.Read`) let a script that exits 0
+  without writing pass on the stale file; `.summary_locked` reproduces it and the batch now reports and fails.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

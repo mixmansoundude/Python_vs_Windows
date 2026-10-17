@@ -70,6 +70,7 @@ tests/
   selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
   selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
   selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
+  selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -290,6 +291,7 @@ Test files and what they cover:
 | `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
+| `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
