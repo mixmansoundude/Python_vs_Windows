@@ -15,6 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
+CONTRACT = REPO / "tests" / "selfapps_runtests_contract.ps1"
 
 
 def step_block(text):
@@ -95,6 +96,50 @@ class RunTestsStepPassesExitCodeThrough(unittest.TestCase):
 
     def test_missing_step_is_caught(self):
         self.assertEqual(problems(step_block("      - name: other\n        run: x\n")), ["no step sets SCRIPT: run_tests.bat"])
+
+
+def exit_problems(text):
+    """The contract script must end with an explicit exit, 1 when a row is red and 0 otherwise.
+
+    It runs copies of run_tests.bat whose last scenario exits 1 on purpose. GitHub Actions appends
+    exit $LASTEXITCODE to every pwsh step, so a script that does not set its own exit code hands that 1 to the
+    step and fails the lane with every row green (the canary run on PR #496 did exactly that on all eight lanes).
+    """
+    found = []
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if not lines or lines[-1] != "exit 0":
+        found.append("the script does not end with exit 0 (last line: %r)" % (lines[-1] if lines else ""))
+    if not any(re.match(r"if \(.*\) \{ exit 1 \}$", ln) for ln in lines):
+        found.append("the script never exits 1 when a row is red")
+    return found
+
+
+LEAKY_SCRIPT = """$k = Invoke-RunTestsScenario -Name 'x'
+Write-NdjsonRow ([ordered]@{ id = 'self.runtests.x'; pass = [bool]$kPass })
+
+Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+"""
+
+ENDS_RIGHT = LEAKY_SCRIPT + """if (-not ($gPass -and $kPass)) { exit 1 }
+exit 0
+"""
+
+
+class ContractScriptSetsItsOwnExitCode(unittest.TestCase):
+    def test_contract_script(self):
+        self.assertEqual(exit_problems(CONTRACT.read_text(encoding="utf-8")), [])
+
+    def test_ending_in_cleanup_is_caught(self):
+        found = exit_problems(LEAKY_SCRIPT)
+        self.assertTrue(any("does not end with exit 0" in f for f in found), found)
+        self.assertTrue(any("never exits 1" in f for f in found), found)
+
+    def test_explicit_exits_are_clean(self):
+        self.assertEqual(exit_problems(ENDS_RIGHT), [])
+
+    def test_exit_zero_without_a_red_row_exit_is_caught(self):
+        found = exit_problems(LEAKY_SCRIPT + "exit 0\n")
+        self.assertEqual(found, ["the script never exits 1 when a row is red"])
 
 
 if __name__ == "__main__":
