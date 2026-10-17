@@ -111,6 +111,10 @@ def exit_problems(text):
         found.append("the script does not end with exit 0 (last line: %r)" % (lines[-1] if lines else ""))
     if not any(re.match(r"if \(.*\) \{ exit 1 \}$", ln) for ln in lines):
         found.append("the script never exits 1 when a row is red")
+    # A bare return ends the script without an exit code: no native command has run on that path, so the step's
+    # appended exit $LASTEXITCODE reads an unset value and the step succeeds with every row red (CodeRabbit, PR #496).
+    if "return" in lines:
+        found.append("a bare return ends the script without an exit code; use exit 1")
     return found
 
 
@@ -136,6 +140,10 @@ class ContractScriptSetsItsOwnExitCode(unittest.TestCase):
 
     def test_explicit_exits_are_clean(self):
         self.assertEqual(exit_problems(ENDS_RIGHT), [])
+
+    def test_bare_return_is_caught(self):
+        found = exit_problems(ENDS_RIGHT.replace("if (-not", "if (-not ($x)) {\n    return\n}\nif (-not", 1))
+        self.assertEqual(found, ["a bare return ends the script without an exit code; use exit 1"])
 
     def test_exit_zero_without_a_red_row_exit_is_caught(self):
         found = exit_problems(LEAKY_SCRIPT + "exit 0\n")
