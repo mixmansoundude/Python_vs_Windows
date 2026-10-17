@@ -742,7 +742,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. No maintainer decisions are open. Q1-Q9 are decided or retired (see Items 65, 66, 67, 69, 71, 76 and 78).
+starting any of these. No maintainer decisions are open. Q1-Q11 are decided or retired (see Items 65, 66, 67, 69, 71, 76 and 78).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
@@ -757,6 +757,9 @@ the original symptom (see that doc's "CI-first testing policy").
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
   Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
   and the memory-invalidation rules are in the plan doc. A failed forced solve stops; it does not cascade.
+  Decided 2026-10-17 (Q11, option A): the memory survives edits to `requirements.txt`, `pyproject.toml`,
+  `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
+  deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
 - **Item 67 (Confirmed, small)**: `%1` that is not an existing `.py` is either taken as the entry
   (any existing file) or silently ignored, dropping the user's first real argument; this deleted
   a working EXE on 2026-08-31. Validate and stop with a usage message (decided 2026-10-09: validate and stop; program arguments stay optional).

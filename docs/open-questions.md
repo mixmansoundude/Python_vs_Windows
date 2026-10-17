@@ -29,16 +29,4 @@ chat one at a time; the later ones wait their turn.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 
-Q1-Q10 are decided or retired. One question is open:
-
-11. **Does the remembered provider survive an edit to the program's inputs?** (blocks Item 66; asked in
-    chat 2026-10-16) The plan says the state file is cleared when `requirements.txt`, `pyproject.toml`,
-    `runtime.txt` or a source `.py` changes, yet the field note it exists for is exactly that case:
-    "when the source files are edited (like requirements.txt) I have to wait until the UV attempt is
-    done trying everything all over again before I can tell it to do Conda". Clearing on those edits
-    would make the memory do nothing for it. Options: (A) keep the memory across edits and clear it
-    only when the remembered provider is unavailable or the user deletes `~provider.state.json`
-    (every run that starts from memory says so and how to reset); (B) keep it across `.py` edits and
-    clear it on a dependency-file edit; (C) the plan as written, clear on any input change.
-    Default while open: A, built so it can be switched to B or C by changing one clear condition; the
-    Item 66 PR body names the open question.
+Q1-Q11 are decided or retired. No field-report question is open.
