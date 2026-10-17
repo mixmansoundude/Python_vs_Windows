@@ -129,7 +129,7 @@ if (-not (Test-Path -LiteralPath $runTestsSrc)) {
     foreach ($id in @('self.runtests.all_green', 'self.runtests.harness_red', 'self.runtests.selftest_red', 'self.runtests.selftest_unreported', 'self.runtests.selftests_unreported', 'self.runtests.summary_locked')) {
         Write-NdjsonRow ([ordered]@{ id = $id; pass = $false; desc = 'run_tests.bat contract: run_tests.bat not found'; details = [ordered]@{ path = $runTestsSrc } })
     }
-    return
+    exit 1
 }
 
 # --- all_green -------------------------------------------------------------------------------------------
