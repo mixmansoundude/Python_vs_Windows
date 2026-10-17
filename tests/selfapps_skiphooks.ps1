@@ -28,7 +28,7 @@ function Write-NdjsonRow {
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
-        id='self.skiphooks.combined'; req='REQ-012'; pass=$true
+        id='self.skiphooks.combined'; req='REQ-012.6'; pass=$true
         desc='Skip hooks run no user code while build proceeds (skipped on non-Windows)'
         details=[ordered]@{ skip=$true; reason='non-windows-host' }
     })
@@ -90,7 +90,7 @@ $pass = ($exit -eq 0) -and $builtExe -and $entrySkipped -and $exeSkipped -and $n
 
 Write-NdjsonRow ([ordered]@{
     id='self.skiphooks.combined'
-    req='REQ-012'
+    req='REQ-012.6'
     pass=$pass
     desc='HP_SKIP_ENTRY_SMOKE + HP_SKIP_EXE_SMOKERUN: no user code runs, env/build still proceed'
     details=[ordered]@{

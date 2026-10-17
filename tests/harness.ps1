@@ -227,8 +227,8 @@ $details = [ordered]@{
 Write-Result 'pipreqs.flags' 'pipreqs argv matches canonical flags' $pipreqsOk $details
 $hasPyInst = ($AllText -match "pyinstaller\s+-y\s+--onefile.*--name\s+""%ENVNAME%""")
 Write-Result "pyi.onefile" "PyInstaller one-file named %ENVNAME%" $hasPyInst @{} 
-$hasRotate = ($AllText -match "Length -gt 10485760")
-Write-Result "log.rotate" "Log rotation ~10MB present" $hasRotate @{} 
+# log.rotate (a text search for the rotation threshold) was replaced by the behavior rows self.log.rotate.over/.under
+# in tests/selfapps_log_rotate.ps1 (REQ-028).
 $tildeCount = ([regex]::Matches($AllText, "~setup\.log|~reqs_conda\.txt|~pipreqs\.diff\.txt|~entry\.txt|~run\.err\.txt")).Count
 Write-Result "tilde.naming" "Tilde prefix used for crashable artifacts" ($tildeCount -ge 3) @{ count=$tildeCount }
 $visa = ($AllText -match "pyvisa" -or $AllText -match "import[ ]*visa")
