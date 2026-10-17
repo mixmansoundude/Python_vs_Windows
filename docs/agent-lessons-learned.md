@@ -132,9 +132,14 @@ still matches fine against the quoted output. Applied to all system-directory ch
 
 `if "%PVW_PROVIDER%"=="conda"` is parsed by cmd AFTER the value is substituted, so a value holding a quote, `&`, `|` or
 `%` can end the string and run what follows (and any `:log` that echoes the value has the unquoted-echo hazard above).
-`set PVW_PROVIDER 2>nul | findstr /x /l /c:"PVW_PROVIDER=conda"` never gives cmd the value as syntax: `set` prints the
+`set PVW_PROVIDER| findstr /x /l /c:"PVW_PROVIDER=conda"` never gives cmd the value as syntax: `set` prints the
 line raw to a pipe and `findstr /x` (whole line) `/l` (literal) compares it, case sensitively; `if errorlevel 1` is the
-mismatch. Use it for any super-user switch that accepts a fixed list, and print a message that does NOT contain the
+mismatch. **Nothing may sit between the name and the `|`**: cmd keeps the whitespace before a pipe or a redirect in
+`set`'s argument, so `set NAME | findstr` or `set NAME 2>nul | findstr` looks up a variable called `NAME ` (with the
+space), finds none and prints nothing, and the good value is refused like a bad one. The first version of Item 66 had
+exactly that and only the real-lane `self.provider.fastpath` row noticed (the `invalid` row cannot tell, since it is
+satisfied by refusing everything), so a switch like this needs at least one row that feeds a VALID value and asserts it
+was accepted, not only rows for bad ones. Use it for any super-user switch that accepts a fixed list, and print a message that does NOT contain the
 value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`). Companion
 trick for finding JSON in a file with no interpreter available yet: `findstr /r /c:"provider.:.conda"` (a dot matches
 each quote character, so the pattern holds no quote and needs no escaping). Both are for text that batch itself wrote or

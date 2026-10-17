@@ -1062,7 +1062,7 @@ features share one effect, "conda goes first and uv is not even acquired", and a
   after the lock (so `:die` can release it), after `PYCOUNT` exists (so the status file is valid JSON), and BEFORE the
   cached-EXE fast path (so a bad value stops the run even when a cached EXE would have been reused; a good value is
   then ignored by the fast path, README must say so like REQ-026 does for `%1`). The value is compared with
-  `set PVW_PROVIDER | findstr /x /l /c:"PVW_PROVIDER=conda"`, so cmd never parses it (quotes, `&`, `%` are harmless),
+  `set PVW_PROVIDER| findstr /x /l /c:"PVW_PROVIDER=conda"` (no space before the pipe, see lessons-learned), so cmd never parses it (quotes, `&`, `%` are harmless),
   only the exact lowercase `conda` passes, and **no line may ever expand `%PVW_PROVIDER%`** (a unit test forbids it).
   A good value sets `HP_PVW_PROVIDER_CONDA=1` and `HP_FORCE_CONDA_ONLY=1`, i.e. it reuses conda-only mode (no
   fallbacks, `:cascade_from_conda` stops, `:handle_conda_failure` returns without `HP_ENV_READY`, so the caller stops).

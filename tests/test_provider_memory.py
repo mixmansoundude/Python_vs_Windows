@@ -56,9 +56,18 @@ class SwitchValidation(unittest.TestCase):
     def test_the_value_is_compared_without_cmd_ever_parsing_it(self):
         # set <name> prints NAME=value to a pipe; findstr /x /l compares the whole line literally, so a value with
         # quotes, ampersands or percent signs is never parsed as batch syntax. The comparison is case sensitive.
-        self.assertIn('set PVW_PROVIDER 2>nul | findstr /x /l /c:"PVW_PROVIDER=conda" >nul', BAT)
+        self.assertIn('set PVW_PROVIDER| findstr /x /l /c:"PVW_PROVIDER=conda" >nul', BAT)
         self.assertNotIn('"%PVW_PROVIDER%"==', BAT)
         self.assertNotIn("/i \"%PVW_PROVIDER%\"", BAT)
+
+    def test_nothing_sits_between_the_name_and_the_pipe(self):
+        # cmd keeps the whitespace before a pipe or a redirect as part of set's argument, so "set NAME | findstr" looks up
+        # a variable called "NAME " (with the space), finds none, and a good value is refused as if it were bad. CI run
+        # 39012920404 showed it: the valid value was rejected on every lane that sets it.
+        line = [l for l in BAT.splitlines() if l.startswith("set PVW_PROVIDER")][0]
+        self.assertEqual(line, 'set PVW_PROVIDER| findstr /x /l /c:"PVW_PROVIDER=conda" >nul')
+        self.assertNotIn("PVW_PROVIDER 2>", BAT)
+        self.assertNotIn("PVW_PROVIDER |", BAT)
 
     def test_no_line_ever_prints_the_value(self):
         for n, line in enumerate(BAT.splitlines(), 1):

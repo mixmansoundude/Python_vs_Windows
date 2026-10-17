@@ -643,7 +643,9 @@ rem ampersands or percent signs cannot do harm, and no line below ever expands i
 rem conda-only mode (no uv, no fallbacks, a failed solve stops) and never writes the memory file. Unset changes nothing.
 set "HP_PVW_PROVIDER_CONDA="
 if not defined PVW_PROVIDER goto :pvw_provider_done
-set PVW_PROVIDER 2>nul | findstr /x /l /c:"PVW_PROVIDER=conda" >nul
+rem Nothing may sit between the name and the pipe, not a space and not a redirect: it becomes part of the name that set looks up,
+rem which then matches no variable, so a good value would be refused. No error output is possible here, the name is known to be defined.
+set PVW_PROVIDER| findstr /x /l /c:"PVW_PROVIDER=conda" >nul
 if errorlevel 1 goto :pvw_provider_bad
 call :log "[DEBUG] Using super-user override for PVW_PROVIDER: conda"
 if "%HP_FORCE_CONDA_ONLY%"=="1" goto :pvw_provider_done
