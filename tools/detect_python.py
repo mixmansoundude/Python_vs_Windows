@@ -11,7 +11,9 @@ Detection order:
      forwarded -- providers pin by minor only).
   2. pyproject.toml's [project] requires-python -- a PEP 440 specifier
      (e.g. ">=3.10,<4", "~=3.11") is parsed and expanded into one or more
-     conda-syntax clauses via pep440_to_conda().
+     conda-syntax clauses via pep440_to_conda(). The key is read with tomllib
+     (the [project] table only, comments ignored); only when tomllib is missing
+     or the file is not valid TOML does a pattern search find it (Item 79).
 
 pep440_to_conda() also doubles as a standalone CLI utility (see main()) for
 translating arbitrary PEP 440 specifiers, including the "~=" compatible-release
@@ -23,13 +25,18 @@ run_setup.bat. After editing, re-encode and paste it into the
 `set "HP_DETECT_PY=..."` line; tests/test_detect_python.py asserts the
 embedded payload matches this file.
 """
-__version__ = "detect_python v2 (2025-09-24)"
+__version__ = "detect_python v3 (2026-10-17)"
 __all__ = ["pep440_to_conda", "detect_requires_python", "main"]
 ORDER = {"==": 0, "!=": 1, ">=": 2, ">": 3, "<=": 4, "<": 5}
 
 import os
 import re
 import sys
+
+try:
+    import tomllib
+except ImportError:  # Python below 3.11: the pattern search below is the only reader
+    tomllib = None
 
 # Helper implements the README bootstrap contract. PEP 440 details:
 # https://peps.python.org/pep-0440/
@@ -108,8 +115,17 @@ def read_runtime_spec() -> str:
 def read_pyproject_spec() -> str:
     if not os.path.exists(PYPROJECT_PATH):
         return ""
-    with open(PYPROJECT_PATH, 'r', encoding='utf-8', errors='ignore') as handle:
+    with open(PYPROJECT_PATH, 'r', encoding='utf-8-sig', errors='ignore') as handle:
         text = handle.read()
+    if tomllib is not None:
+        try:
+            value = tomllib.loads(text).get("project", {}).get("requires-python")
+        except Exception:
+            # derived requirement: a file tomllib rejects keeps the old pattern search, so one stray
+            # character elsewhere does not cost the Python version. Valid TOML never reaches it.
+            pass
+        else:
+            return pep440_to_conda(value) if isinstance(value, str) else ""
     match = PYPROJECT_RE.search(text)
     if not match:
         return ""
