@@ -1549,6 +1549,11 @@ jobs:
           # glob-expand a "tests/test_*.py" string argument to an external command the way a bash
           # shell would, so the file list is enumerated explicitly via Get-ChildItem instead of
           # relying on a wildcard string reaching python/pytest unexpanded.
+          # Why these three are left out (docs/plan-test-suite-gaps.md T10): test_entry_selection.py and
+          # test_entry_single.py drive selfapps_entry.ps1 and the single-file scenario, which the lanes already run
+          # directly as steps, so running them here would only repeat those bootstraps. test_poll_public_diag_logging.py
+          # starts pwsh on tools/poll_public_diag.ps1 against a dead local URL; no reason for leaving it out was ever
+          # recorded, so it runs only in the local sanity sweep (tools/run_sanity_sweep.sh), not in any CI job.
           $excludeUnitFiles = @('test_entry_selection.py', 'test_entry_single.py', 'test_poll_public_diag_logging.py')
           $unitTestFiles = Get-ChildItem -Path 'tests' -Filter 'test_*.py' -File |
             Where-Object { $excludeUnitFiles -notcontains $_.Name } |

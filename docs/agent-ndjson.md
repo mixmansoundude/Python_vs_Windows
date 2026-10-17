@@ -131,7 +131,9 @@ self.dl.conda.fallback, self.dl.uv.fallback
 
 NOT currently wired to CI; conda base update is implemented in run_setup.bat but
 HP_TEST_CONDA_UPDATE injection was removed because it causes conda solver corruption
-in shared CI runners.
+in shared CI runners. Decision (docs/plan-test-suite-gaps.md T10, 2026-10-17): leave the script and this entry
+as they are; wiring it into `conda-full` would run `conda update -n base` on the Miniconda every other row in that
+lane uses. Revisit if a throwaway Miniconda root becomes cheap to create in the lane.
 
 ```
 self.conda.base.update  (test file: tests/selfapps_conda_update.ps1 -- not run in CI)
@@ -172,6 +174,14 @@ The `helpers.*`/`bootstrap.status` rows fire from `tests/dynamic_tests.py`'s own
 `ensure_extracted()` payload-decode loop and `main()`'s status-file read: `helpers.run_setup`
 only on the rare `run_setup.bat missing` guard; `bootstrap.status` once per run; the 5
 `helpers.decode.*` rows once per embedded helper payload decoded out of `run_setup.bat`.
+
+**These rows never appear in this repo's own lanes, by design.** The "Run dynamic tests (if present)" step runs
+`tests/dynamic_tests.py` only when `~bootstrap.status.json` at the repo root reports `state=ok`; this repo has no
+`.py` entry at its root, so the state is `no_python_files`, the step writes `SKIPPED: no_python_files`, removes
+`~dynamic-results.ndjson` and returns. `tests/dynamic_tests.py` is a template that a consumer repo gets together
+with `run_setup.bat` (`tests/README_TESTS.txt` says so); the same logic is covered here by the pytest files
+`test_detect_python.py`, `test_find_entry.py`, `test_heuristics.py` and `test_pyproj_deps.py`. The registry check lists
+the ids above under "never observed in this run's artifacts"; that is expected, not a gap.
 
 ## Test-logs NDJSON (harness/selftest, additional rows)
 
