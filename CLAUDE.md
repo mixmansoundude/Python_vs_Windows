@@ -744,7 +744,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64 and 67 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 67, 68, 70, 73 and 76 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -766,14 +766,6 @@ the original symptom (see that doc's "CI-first testing policy").
   Decided 2026-10-17 (Q11, option A): the memory survives edits to `requirements.txt`, `pyproject.toml`,
   `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
   deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
-- **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
-  "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
-  silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
-  `unknown` near the top of the file, right after the preflight self-check).
-  Also in this PR (REQ-018.2, decided 2026-10-11, option A): the optimized-build prompt
-  (`:offer_optimized_build`) gets one sentence naming the risk of the second run: "Building it starts
-  your program once more for up to 30 seconds to check it works, so say no if running it twice could
-  cause harm." README REQ-018 stays as written; add a prompt-text row to the `self.optbuild.*` scenarios.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
   override only, no prompt (decided 2026-10-09, Q6 = A).
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
@@ -790,8 +782,8 @@ the original symptom (see that doc's "CI-first testing policy").
   test the warning wiring with a test-only flag.
 - **Item 78 (Confirmed trigger, small, two slices)**: an `import visa` in an archived SUBFOLDER
   started a real NI-VISA driver install for a program that does not use it; the elevated install
-  then failed (`-125202`). Slice 1: log `Elevated: yes|no` once per run, and print a console
-  `[WARN]` when the NI-VISA install fails. Slice 2 (decided 2026-10-09, scan scope): subfolder
+  then failed (`-125202`). Slice 1 shipped (PR #488, see the closed
+  backlog): the `Elevated: yes|no` line and the console `[WARN]` when the NI-VISA install fails. Slice 2 (decided 2026-10-09, scan scope): subfolder
   scanning stays and is documented in README REQ-008; no call-chain tracing; log which file
   triggered the install and prompt (default no, cascade timeout) only when every match is below a
   subfolder. Separate PRs, each test first.
