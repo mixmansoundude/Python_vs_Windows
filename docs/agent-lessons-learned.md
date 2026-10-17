@@ -128,6 +128,22 @@ still matches fine against the quoted output. Applied to all system-directory ch
 
 ---
 
+## A child process started by the bootstrapper shares its redirected stdin, so a helper that never reads input can still eat the program's answers
+
+When the bootstrapper's stdin is a file or a pipe (a test piping answers to a program, or any redirected launch),
+every process it starts inherits that handle, and the user's program reads the same stream later. Item 78 added one
+`fsutil dirty query %systemdrive%` to the top of every run to log whether the run is elevated, and the uv lane's
+interactive round-trip (`self.interactive.stdin.roundtrip`: a built EXE whose `input()` calls must receive piped
+answers in order) went red with `EOFError: EOF when reading a line` on every run, in both attempts. The setup log
+differed from a green run only by the new `[INFO] Elevated: yes` line, which is how the single new process was
+found. **Rule: give every incidental child process `<nul` (`fsutil ... <nul >nul 2>&1`) unless it is meant to read
+the run's input.** `tests/test_elevation_stdin.py` fails if a live `fsutil` line loses the redirect, and the
+interactive test reruns itself with `HP_TEST_NOT_ELEVATED=1` (no `fsutil` at all) when the first run fails, so a
+second failure says at once whether the helper was involved. The connectivity tests that pipe answers to the
+bootstrapper could not show this, because they consume their input before that line runs.
+
+---
+
 ## Compare an environment variable whose value could be anything with `set NAME | findstr /x /l`, never with `==`
 
 `if "%PVW_PROVIDER%"=="conda"` is parsed by cmd AFTER the value is substituted, so a value holding a quote, `&`, `|` or
@@ -140,7 +156,9 @@ space), finds none and prints nothing, and the good value is refused like a bad 
 exactly that and only the real-lane `self.provider.fastpath` row noticed (the `invalid` row cannot tell, since it is
 satisfied by refusing everything), so a switch like this needs at least one row that feeds a VALID value and asserts it
 was accepted, not only rows for bad ones. Use it for any super-user switch that accepts a fixed list, and print a message that does NOT contain the
-value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`). Companion
+value (Item 66, `tests/selfapps_provider_memory.ps1` `self.provider.invalid` feeds `zz9&echo_pwn|v%PATH%^w`; Item 71's
+`PVW_BUILDER` is the second user, with `/i` added to accept any case, and its `invalid` scenario feeds the same hostile
+value after an `if /I "%PVW_BUILDER%"==...` version was caught by review). Companion
 trick for finding JSON in a file with no interpreter available yet: `findstr /r /c:"provider.:.conda"` (a dot matches
 each quote character, so the pattern holds no quote and needs no escaping). Both are for text that batch itself wrote or
 for a value used only as a fixed-list key; anything richer needs an emitted helper.
@@ -673,6 +691,13 @@ command via `&` and captures `$LASTEXITCODE` to branch on programmatically (rath
 that failure genuinely fail the step), explicitly control the step's own final exit status at the
 end of the block** (an explicit `exit 0`, or reset `$LASTEXITCODE`) -- do not assume "the script's
 result is just a variable I read" is enough.
+
+**Never use "Re-run failed jobs" on a run of `batch-check.yml`.** It re-runs `publish_diag` too, which uploads a
+second artifact named `github-pages` to the same run, and `actions/deploy-pages` then fails with "Multiple artifacts
+named github-pages" (PR #488, run `39004972181`). The red `Publish diagnostics to Pages` job is a CI-mechanism
+failure, not a code defect, and the next push publishes normally. To get a fresh answer for a flaky lane, push a
+new commit instead. The step conclusion alone also misleads on the `uv` lane: its interactive step is
+`continue-on-error`, so a re-run showed a green step while the artifact still held the same red row. Read the row.
 
 ---
 

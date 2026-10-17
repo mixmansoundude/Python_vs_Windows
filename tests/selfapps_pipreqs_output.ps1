@@ -323,7 +323,13 @@ try {
     $consoleWarns3 = @($console3 -split "`r?`n" | Where-Object { $_ -match '\[WARN\]' })
     $consoleNamesFile3 = @($consoleWarns3 | Where-Object { $_ -match 'requirements\.auto\.txt' }).Count -gt 0
 
-    $crashPass = $lockHeld3 -and $crashSeen3 -and $inPlace3 -and $stillOld3 -and (-not $resolvedHasSix3) -and (-not $reqHasSix3) -and $phaseFailed3 -and $consoleNamesFile3
+    # CLAUDE.md Item 81: the reason the scan crashed must reach the user's own files. The staging scan used to
+    # write its log by a relative path after pushd into the copy, which is deleted, so the summary ended with
+    # '<log tail unavailable>' and the setup log held no traceback. crashSeen3 above reads the direct scan's
+    # log, which always existed; this reads only the summary and the setup log.
+    $reasonVisible3 = ($summary3 -match 'Could not find a suitable TLS CA certificate bundle') -or ($setup3 -match 'Could not find a suitable TLS CA certificate bundle')
+    $tailUnavailable3 = $summary3 -match [regex]::Escape('<log tail unavailable>')
+    $crashPass = $lockHeld3 -and $crashSeen3 -and $inPlace3 -and $stillOld3 -and (-not $resolvedHasSix3) -and (-not $reqHasSix3) -and $phaseFailed3 -and $consoleNamesFile3 -and $reasonVisible3 -and (-not $tailUnavailable3)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.pipreqs.output.locked_crash'
         req     = 'REQ-005'
@@ -340,6 +346,8 @@ try {
             requirementsHasOldDep = $reqHasSix3
             summaryPhaseFailed = $phaseFailed3
             consoleNamesFile   = $consoleNamesFile3
+            reasonVisible      = $reasonVisible3
+            summaryTailUnavailable = $tailUnavailable3
             summaryPhase       = Get-Snippet (([regex]::Match($summary3, '(?m)^Phase:.*$')).Value) 160
             consoleWarnCount   = $consoleWarns3.Count
             log                = $log3
