@@ -871,6 +871,8 @@ the first argument is validated before the fast path and every early stop releas
 
 ```
 self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.directory, self.entryarg.stops_release_lock
+```
+
 ## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)
 
 CLAUDE.md Item 68 regression test (`docs/plan-field-report-2026-10.md`; README REQ-005, REQ-005.5, REQ-007).
