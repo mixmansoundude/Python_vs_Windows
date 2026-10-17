@@ -11,9 +11,9 @@ slice per PR (see AGENTS.md and the CI-first policy in `docs/plan-field-report-2
 
 | Piece | Reads | Parser | Runs under | Payload margin |
 |---|---|---|---|---|
-| `pyproj_deps.py` (`HP_PYPROJ_DEPS`) | `[project].dependencies` | tomllib, else char-walker | target env python (`%HP_PY%`) | 198 chars |
+| `pyproj_deps.py` (`HP_PYPROJ_DEPS`) | `[project].dependencies` | tomllib, else char-walker | target env python (`%HP_PY%`) | 2826 chars (was 198; prose moved here and into the oracle tests, 2026-10-17) |
 | `pep723_extract.py` (`HP_PEP723_EXTRACT`) | top-level `dependencies` of the header | char-walker only | target env python (`%HP_PY%`) | about 2060 chars |
-| `detect_python.py` (`HP_DETECT_PY`) | `requires-python` (pyproject only) | one regex over the whole file | orchestration python (`uv run --no-project python`, or Miniconda base) | 1552 chars |
+| `detect_python.py` (`HP_DETECT_PY`) | `requires-python` (pyproject only) | tomllib on valid TOML; the old pattern search only when tomllib is missing or the file does not parse (before slice 3: one regex over the whole file) | orchestration python (`uv run --no-project python`, or Miniconda base) | 520 chars (after slice 3) |
 | `pep723_writeback.py` (`HP_PEP723_WRITEBACK`) | writes the header via `uv add --script`; `strip_pep723_block` for the malformed retry | line state machine | `%HP_PY%` | 333 chars |
 
 The target interpreter can lack tomllib (a `runtime.txt` or `requires-python` pin below 3.11
@@ -22,7 +22,7 @@ selects an older target Python under REQ-004), so the pyproject walker fallback 
 `pep723_extract.py` is script-style (it exits at import), so tests must run it as a subprocess
 the way `tests/test_pep723_extract.py` does; they cannot import it.
 
-## Two live bugs (both reproduced 2026-10-09)
+## Two live bugs (both reproduced 2026-10-09; both fixed by PR #500)
 
 - **Pyproject fallback keeps backslashes in markers, and accepts an unclosed array.** With
   tomllib shadowed out (Python below 3.11), `dependencies = ["pywin32; sys_platform ==
@@ -62,20 +62,23 @@ the way `tests/test_pep723_extract.py` does; they cannot import it.
    `#` comments, CRLF, an unclosed array. It goes red on the pyproject fallback bugs above, which
    doubles as slice 2's regression test. Add one uv-lane row that extends the existing real-uv
    round trip (`self.pep723.writeback.roundtrip`) to a corpus written by real `uv add --script`,
-   so a uv layout change turns CI red before a user hits it. Unit tests are not run by CI today
-   (only parse_warn and heuristics have steps), so wire the new file into a step or state the
-   AGENTS.md exception in the PR.
+   so a uv layout change turns CI red before a user hits it. (Built as `tests/test_toml_oracle.py`,
+   `tests/toml_oracle_check.py` and `tests/selfapps_toml_uvcorpus.ps1`, row `self.toml.uvcorpus`; the unit tests
+   run on every lane inside `self.pytest.unit`, so no extra step was needed.)
 2. **Fix the pyproject fallback.** Port the extractor's TOML escape decoding and closed-array
    check into `pyproj_deps.py`'s fallback walker (about 25 lines), flip
    `test_escaped_quote_backslash_not_stripped`, and trim prose to stay inside the 198-char
    payload margin. If it cannot fit, that is the trigger for the parked headroom idea; stop and
-   say so rather than dropping the escape handling.
+   say so rather than dropping the escape handling. (Built: it fit once the docstring and comments
+   were cut to what a maintainer needs, `unescape` is the extractor's text verbatim, and an unclosed
+   array exits 2, the existing "not valid TOML" warning followed by the usual fall-through.)
 3. **`detect_python.py` reads `requires-python` through tomllib.** Table-scoped
    (`[project].requires-python`) and comment-safe. Keep the regex only for when tomllib is
    missing or the TOML is malformed (today's behaviour); when the TOML is valid and the key is
    absent, return nothing rather than falling through to the regex, or the commented-out-line bug
    survives. Red tests first: the commented-out line, the other-table key, and a triple-quoted
-   value. Same input, same precedence, so REQ-004 is unchanged.
+   value. Same input, same precedence, so REQ-004 is unchanged. (Built; the file is opened as
+   `utf-8-sig` because tomllib rejects a byte order mark, and a non-string value is ignored.)
 
 ## Parked (CLAUDE.md "Cold Storage" pointer; entries in `docs/agent-cold-storage.md`)
 

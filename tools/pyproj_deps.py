@@ -1,76 +1,59 @@
-"""pyproj_deps (HP_PYPROJ_DEPS) -- extracts [project].dependencies from
-pyproject.toml, writing one dependency per line to an output file.
+"""pyproj_deps (HP_PYPROJ_DEPS) -- writes [project].dependencies of ./pyproject.toml, one per line.
 
-Run from the application directory (reads "pyproject.toml" from CWD).
-Usage: python pyproj_deps.py [output_path]  (default "~requirements.pyproject.txt")
+Usage: python pyproj_deps.py [output_path]   (default ~requirements.pyproject.txt)
+Exit codes: 0 written; 1 nothing usable (no file, no key, empty list); 2 malformed TOML (tomllib
+raised, or without tomllib an unclosed [project header or dependencies array); 3 unexpected error,
+kept apart from 1 so a real failure never looks like "nothing to do".
 
-Exit codes:
-  0 - success, dependencies written to the output file
-  1 - not-found/error (no pyproject.toml, no [project].dependencies key,
-      or an empty dependencies list)
-  2 - malformed TOML (tomllib raised, or -- when tomllib is unavailable --
-      the regex fallback found an unclosed "[project" header)
-  3 - unexpected internal error (e.g. pyproject.toml exists but cannot be
-      read as a file -- a directory, a permission failure, etc.). Distinct
-      from 1 so a genuine bug or unusual I/O failure never masquerades as
-      the benign "nothing to do here" case -- see the outer except below.
+Uses tomllib when the interpreter has it (3.11+). Otherwise, or when tomllib finds no key, a
+char-by-char walk reads the array: extras and multi-constraint specifiers stay intact, "#" comments
+are skipped, TOML escapes in double-quoted items are decoded (same code as pep723_extract.py).
+Why and what it must match: docs/plan-toml-reading-hygiene.md (tests/test_toml_oracle.py).
 
-Prefers stdlib tomllib (3.11+) when available. Falls back to a regex-based
-extractor when tomllib is missing OR the [project] table has no
-"dependencies" key via tomllib (the two cases are indistinguishable from
-tomllib's own return value, so the fallback always re-scans in that case --
-harmless, since a genuinely-absent key also finds nothing via regex). The
-fallback's dependency-array walk is char-by-char over quoted strings (not a
-naive comma/newline split) so it preserves extras ("pkg[all]") and
-multi-constraint specifiers ("pkg>=4,<5") intact, and skips "#"-to-end-of-
-line comments (outside of quotes) so a comment mentioning bracket syntax
-cannot be mistaken for the array's own closing "]".
-
-This is the canonical source for the HP_PYPROJ_DEPS base64 payload embedded
-in run_setup.bat. After editing, re-encode and paste it into the
-`set "HP_PYPROJ_DEPS=..."` line; tests/test_pyproj_deps.py asserts the
-embedded payload matches this file.
+Canonical source of the HP_PYPROJ_DEPS payload in run_setup.bat; tests/test_pyproj_deps.py checks
+that the payload matches this file. Keep it small: the payload line must stay under 8191 characters.
 """
-import sys, pathlib
+import re, sys, pathlib
 
 try:
     import tomllib
 except ImportError:
     tomllib = None
 
+_ESC = {'b': '\b', 't': '\t', 'n': '\n', 'f': '\f', 'r': '\r', '"': '"', '\\': '\\'}
+
+
+def unescape(s):
+    """Decode TOML basic-string escapes; an unknown escape is left as written."""
+    def one(m):
+        g = m.group(1)
+        if g[0] in 'uU' and len(g) > 1:
+            try:
+                return chr(int(g[1:], 16))
+            except (ValueError, OverflowError):
+                return m.group(0)
+        return _ESC.get(g, m.group(0))
+    return re.sub(r'\\(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|.)', one, s)
+
+
 out = sys.argv[1] if len(sys.argv) > 1 else '~requirements.pyproject.txt'
 try:
-    src = pathlib.Path('pyproject.toml')
     try:
-        # derived requirement: a missing pyproject.toml is the deliberate,
-        # documented exit-1 "not found" case (in practice run_setup.bat only
-        # ever invokes this script when the file exists, but this script's
-        # own contract predates and does not assume that caller). Caught
-        # specifically here, around the read itself, rather than via a
-        # preceding Path.exists() check -- Python 3.14+ made exists() swallow
-        # ANY OSError (including PermissionError) and return False instead of
-        # raising, which would silently misclassify a genuine permission
-        # failure as "not found" (1) instead of the real-error case (3)
-        # below. Any OTHER exception here (a directory, permission denied,
-        # etc.) is a genuine bug/failure and falls through to the outer
-        # except, uncaught by this narrower one.
-        txt = src.read_text(encoding='utf-8', errors='replace')
+        # derived requirement: no Path.exists() check -- Python 3.14 made it swallow a PermissionError,
+        # which would turn a real failure (exit 3) into "not found" (exit 1).
+        txt = pathlib.Path('pyproject.toml').read_text(encoding='utf-8', errors='replace')
     except FileNotFoundError:
         sys.exit(1)
     deps = None
     if tomllib:
         try:
-            data = tomllib.loads(txt)
-            deps = data.get('project', {}).get('dependencies')
+            deps = tomllib.loads(txt).get('project', {}).get('dependencies')
         except Exception:
-            # Exit 2 signals caller to emit [WARN]: pyproject.toml is not valid TOML.
             sys.exit(2)
     if deps is None:
-        import re
         m = re.search(r'^\[project\]', txt, re.MULTILINE)
         if not m:
-            # derived requirement: without tomllib, detect obviously malformed [project header
-            # (missing closing bracket -- e.g. "[project\n"). Exit 2 so caller emits TOML parse warning.
+            # derived requirement: without tomllib, "[project" with no closing bracket is still malformed.
             if re.search(r'^\[project\s*$', txt, re.MULTILINE):
                 sys.exit(2)
             sys.exit(1)
@@ -82,10 +65,8 @@ try:
         if not dm:
             sys.exit(1)
         rest = sec[dm.end():]
-        # Walk char-by-char: collect only quoted strings; stop at unquoted ]
-        # This preserves full dep strings including extras ([all]) and
-        # multi-constraint specifiers (>=4,<5) without naive comma/newline splits.
         deps = []
+        closed = False
         i = 0
         while i < len(rest):
             c = rest[i]
@@ -94,35 +75,29 @@ try:
                 i += 1
                 start = i
                 while i < len(rest) and rest[i] != q:
-                    if rest[i] == '\\':
+                    if q == '"' and rest[i] == '\\':
                         i += 1
                     i += 1
-                deps.append(rest[start:i])
+                item = rest[start:i]
+                deps.append(unescape(item) if q == '"' else item)
                 i += 1
             elif c == '#':
-                # TOML comments run from # to end of line and cannot appear
-                # inside a string (the branch above already consumed any #
-                # that was quoted). Without this, a comment referencing array
-                # syntax -- e.g. '"requests",  # supports [1,2] syntax' --
-                # would have its unquoted "]" wrongly treated as the end of
-                # the dependencies array, silently dropping every dependency
-                # listed after that line.
+                # A comment may hold a "]" (the array's end is the first unquoted one outside comments).
                 nl = rest.find('\n', i)
                 if nl == -1:
                     break
                 i = nl + 1
             elif c == ']':
+                closed = True
                 break
             else:
                 i += 1
+        if not closed:
+            sys.exit(2)
     if not deps:
         sys.exit(1)
     pathlib.Path(out).write_text('\n'.join(deps) + '\n', encoding='ascii', errors='replace')
     sys.exit(0)
 except Exception:
-    # derived requirement: a genuinely unexpected exception (not one of the
-    # deliberate sys.exit(1)/sys.exit(2) calls above -- those raise
-    # SystemExit, which this Exception-only handler does not catch) must not
-    # exit 1, or run_setup.bat's caller cannot tell a real bug apart from the
-    # intentional "no dependencies found" case. See exit code 3 above.
+    # SystemExit is not an Exception, so the deliberate exits above pass through.
     sys.exit(3)

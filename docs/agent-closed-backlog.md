@@ -3557,7 +3557,7 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `.ci_bootstrap_marker` everywhere and `requirements.autopep.txt` on the uv-first lanes. Green on all eight lanes in
   `39004972181` (`litter:[]`, `record:true`).
 
-### Item 78 slice 1 (closed 2026-10-17; PR #488; slice 2 stays in the active list)
+### Item 78 slice 1 (closed 2026-10-17; PR #488; slice 2 is the next entry)
 
 - **The log says whether the run was elevated, and a failed NI-VISA install is no longer silent.** One
   `:detect_elevation` subroutine (`fsutil dirty query`, `HP_TEST_NOT_ELEVATED=1` to simulate a non-admin run)
@@ -3594,6 +3594,59 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `warnShown:false`, `run2Rebuilt:true` with `run2Notice:false`, the old placeholder text, `1000ms`,
   `promptWarnsRerun:false` with `launchCount:1`) and green in `38984687670` and `39004972181`.
 - **The cascade-prompt wording stays with Item 82.**
+
+### Item 71 (closed 2026-10-17; PR #499)
+
+- **`PVW_BUILDER=auto|pyinstaller|nuitka|both` is a super-user override, never a prompt** (decided 2026-10-09, Q6 = A).
+  Absent or `auto` is today's behavior; `pyinstaller` never installs or tries Nuitka and never shows the optimized-build
+  offer; `nuitka` skips the PyInstaller install and build and reports a failed build as `reason=builder_nuitka`; `both`
+  builds with PyInstaller, then answers the optimized-build question itself and keeps the verify-then-swap path, so a
+  verified EXE is never replaced by an unverified one. An unrecognized value is ignored with one warning that does not
+  echo it. A cached EXE is still reused whatever the choice, and the fast path says so. Detail: `docs/agent-interconnect.md`.
+- **Test first.** `self.builder.override` (five deterministic scenarios gate on `real` and `conda-full`; the `nuitka`
+  and `both` scenarios build with real Nuitka on the `uv` lane and are non-gating because the compiler download can fail
+  for network reasons). Read red for the right reason in run `39032527889` (`overrideLogged:false` in every
+  scenario), green in `39044948167`. A review round added two proofs the first version lacked: the `invalid` scenario
+  feeds a hostile value (`valueEchoed:false`), and the `nuitka` scenarios
+  require `pyiInstallSkipped:true`, so a run that quietly installed PyInstaller no longer passes.
+
+### Item 78 slice 2 (closed 2026-10-17; PR #499)
+
+- **A driver import found only below a sub-folder asks before NI-VISA is installed.** Sub-folder scanning stays (an
+  archived program keeps its real imports in packages), but the scanner now tells the two cases apart (`0` none, `1` a
+  match next to `run_setup.bat`, `2` every match below a sub-folder), logs the file that triggered the question, and
+  `:visa_subfolder_gate` asks with a 30 second timed prompt that defaults to no. A top-folder match installs exactly as
+  before without a question. The answer is remembered for the run so a cascade re-entry does not ask twice, and the
+  remembered answer is cleared once at the top of the file, because an `HP_VISA_DECISION=Y` inherited from the calling
+  terminal would otherwise be taken as the user's answer (`self.nivisa.subfolder.declined` runs with exactly that stale
+  value). Detail: `docs/agent-interconnect.md`'s NI-VISA scanner contract.
+- **Test first.** `self.nivisa.subfolder.accepted`, `.declined`, `.timeout` and `self.nivisa.topfolder.noprompt` (`real`
+  and `conda-full`, gating; `accepted` runs last because it may really install NI-VISA on the runner), plus
+  `tests/test_detect_visa.py`. Red for the right reason in `39032527889` (`foundLine:false`), green in `39044948167`.
+
+### Item 81 (closed 2026-10-17; PR #499)
+
+- **The older pipreqs staging scan keeps its log, so a failed scan shows its reason.** `HP_PIPREQS_STAGE_LOG` was the
+  relative name `~pipreqs_stage.log`, written after `pushd` into the copy that `:after_pipreqs_run` deletes, so the
+  summary ended with `<log tail unavailable>` and the setup log had no traceback. It is now an absolute path in the
+  app folder. A review round found that the PowerShell block of `:write_pipreqs_summary` pasted the (now absolute,
+  user-chosen) paths into single-quoted literals, which an apostrophe or `[`/`]` in a folder name would break; it reads
+  `$env:HP_SUMMARY_PATH`/`$env:HP_PIPREQS_FAILURE_LOG` with `-LiteralPath` instead. The apostrophe case is pinned by a
+  static test only (`SummaryWriterIsApostropheSafe`), not by a Windows scenario.
+- **Test first.** `self.pipreqs.output.locked_crash` now requires the crash reason (`reasonVisible`) in the summary or
+  setup log and no `<log tail unavailable>`; read red in `39032527889` (`reasonVisible:false`, `summaryTailUnavailable:true`,
+  `crashSeen:true`), green in `39044948167`.
+
+### Item 77 (closed 2026-10-17; PR #499)
+
+- **A run that fails with `DLL load failed` and a runner without the Visual C++ runtime gets a warning with the download
+  link; nothing is installed.** `:warn_runtime_dll` reads `~run.err.txt`/`~run.out.txt` and warns only when System32 also
+  lacks `msvcp140.dll` or `vcruntime140_1.dll`. It is called where a failed verification run is reported (the EXE path,
+  the legacy interpreter branch, and after the fail-fast probe). CI runners have the runtime, so `HP_TEST_VCRT_MISSING=1`
+  reports both missing; the real failure cannot be reproduced in CI.
+- **Test first.** `self.vcruntime.warn.interp`, `.interp_probe`, `.exe` (`real`, gating) were red in `39032527889`
+  (`warn.count:0`) and green in `39044948167`; `.runtime_present` and `.unrelated_error` are guard rows that are green
+  before and after by design (the warning is neither printed when the runtime is present nor for an unrelated error).
 
 ## Known Findings (diagnosed, no action warranted)
 

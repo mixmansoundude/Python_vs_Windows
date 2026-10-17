@@ -735,6 +735,23 @@ parser, and exits 0/empty on malformed TOML) ever gets a chance to detect and wa
 `re.search(r'^\[project\s*$', txt, re.MULTILINE)` (must not assume `tomllib` -- see the embedded-
 helper baseline in `docs/agent-lessons-learned.md`).
 
+### Three TOML readers, one oracle (Item 79)
+
+**Touch any of them, must understand the others and `tests/test_toml_oracle.py`.** `tools/pyproj_deps.py`
+(`HP_PYPROJ_DEPS`, `[project].dependencies`: tomllib when the target interpreter has it, else a char walker),
+`tools/pep723_extract.py` (`HP_PEP723_EXTRACT`, the header's `dependencies`, walker only) and
+`tools/detect_python.py` (`HP_DETECT_PY`, `[project].requires-python`: tomllib, and the old pattern search only
+when tomllib is missing or the file does not parse). The two walkers carry the same `unescape` text and the same
+closed-array rule, so a change to one is a change to both; the unit tests compare each with tomllib (the PEP's
+own regex in `tests/toml_oracle_check.py` for the header), and `self.toml.uvcorpus` (uv lane) feeds the extractor
+what real `uv add --script` writes. An unclosed array is refused, never read as a shorter list: `pyproj_deps.py`
+exit 2 (the batch's "could not be parsed as valid TOML" warning, then the usual fall-through), extractor exit 1.
+`detect_python.py` runs under the orchestration interpreter (uv's managed CPython or Miniconda base, so tomllib
+exists); the other two run under the TARGET interpreter, which a `runtime.txt` pin can make older than 3.11, so
+keep their grammar 3.9-safe. Payload margins after Item 79: `HP_PYPROJ_DEPS` 2826 characters (the source was cut
+to what a maintainer needs; the reasoning is in `docs/plan-toml-reading-hygiene.md`), `HP_DETECT_PY` 520.
+Dependency source priority (REQ-005.1) and the requires-python precedence (REQ-004) are not part of this work.
+
 ### `HP_FORCE_CONDA_ONLY` as a test-override pattern
 
 Tests that specifically test CONDA BEHAVIOR set `HP_FORCE_CONDA_ONLY=1` themselves (self-contained,

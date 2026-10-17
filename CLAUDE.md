@@ -73,6 +73,7 @@ tests/
   selfapps_provider_memory.ps1 Item 66: the provider memory file `~provider.state.json` and the `PVW_PROVIDER=conda` switch (no-switch, invalid value, Miniconda gone, unreadable file and cached-EXE rows on the real lane, gating; forced, remember and forced-stop rows on the uv lane, non-gating because of the Miniconda download)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
   selfapps_pyvisa_subfolder.ps1 Item 78 slice 2: NI-VISA install asks before running when the import is only in a subfolder (real and conda-full lanes, gating)
+  selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
   dynamic_tests.py             Python-side entry detection and version precedence tests
@@ -299,6 +300,7 @@ Test files and what they cover:
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
+| `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -750,7 +752,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 67, 68, 70, 73 and 76 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 67, 68, 70, 71, 73, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -773,27 +775,12 @@ the original symptom (see that doc's "CI-first testing policy").
   `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
   deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
   **Built 2026-10-17 (PR #497, one PR with Item 82 slice 2, README wording in the PR body)**: switch check after the `Python file count` log line, `:provider_memory_read` before the uv block, `:provider_memory_write` from `:success`, `~runtime_writeback.txt` record so a stale exact pin is dropped when conda goes first; rows `self.provider.*` (real lane gating, three uv rows non-gating), unit tests `tests/test_provider_memory.py`. Not covered, by design: the cached-EXE fast path runs first, a failed memory-start conda run follows the existing conda-failure chain and uv is not retried, only conda is remembered. Detail: `docs/agent-interconnect.md`.
-- **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
-  override only, no prompt (decided 2026-10-09, Q6 = A).
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
   first-launch experiment (`--onefile-tempdir-spec`).
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
   second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
-- **Item 77 (likely cause, runtime DLLs reported missing, small)**: `import pymupdf` fails with
-  `DLL load failed while importing _extra` in the env's own interpreter on a clean Windows image;
-  the wheel's `mupdfcpp64.dll` needs `msvcp140.dll` and `vcruntime140_1.dll` (Visual C++ runtime),
-  reported missing in System32. Not a PyInstaller bundling gap. Fix: detect and tell the user
-  with the download link, never install it automatically. CI cannot reproduce the real failure;
-  test the warning wiring with a test-only flag.
-- **Item 78 (Confirmed trigger, small, two slices)**: an `import visa` in an archived SUBFOLDER
-  started a real NI-VISA driver install for a program that does not use it; the elevated install
-  then failed (`-125202`). Slice 1 shipped (PR #488, see the closed
-  backlog): the `Elevated: yes|no` line and the console `[WARN]` when the NI-VISA install fails. Slice 2 (decided 2026-10-09, scan scope): subfolder
-  scanning stays and is documented in README REQ-008; no call-chain tracing; log which file
-  triggered the install and prompt (default no, cascade timeout) only when every match is below a
-  subfolder. Separate PRs, each test first.
 
 ### Item 79: TOML reading hygiene (filed 2026-10-09 from a planning brainstorm, not from the field report)
 
@@ -808,6 +795,12 @@ the original symptom (see that doc's "CI-first testing policy").
   extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
   `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
   dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
+  **In progress (PR #500, all three slices in one PR by the bundle rule: slice 2 and 3 touch disjoint
+  files and slice 1's tests are slice 2's red tests)**: red tests first (`tests/test_toml_oracle.py`,
+  `tests/toml_oracle_check.py`, the `RequiresPythonTomlScope` class, the flipped pyproj test), then
+  `pyproj_deps.py` (escapes decoded, unclosed array exits 2, `HP_PYPROJ_DEPS` margin 198 to 2826) and
+  `detect_python.py` (tomllib, pattern kept for unparseable TOML, `HP_DETECT_PY` margin 520). Row
+  `self.toml.uvcorpus` is non-gating (needs the network). Detail: `docs/agent-interconnect.md`.
   Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
   as a Python-version input) are in `docs/agent-cold-storage.md`.
 
@@ -838,19 +831,6 @@ the original symptom (see that doc's "CI-first testing policy").
   accepts 3.15. Confirm the Nuitka version in a `uv`-lane setup log before closing; the slice 1
   row (Nuitka skipped cleanly on an unsupported Python) is still worth adding, since the next
   Python minor will repeat this.
-
-### Item 81: the older pipreqs staging fallback loses its own log (filed 2026-10-10, found while closing PR #480)
-
-- **Item 81 (Confirmed in CI output, tiny, low priority)**: `HP_PIPREQS_STAGE_LOG` is the relative name
-  `~pipreqs_stage.log` (`run_setup.bat` ~1498) and the older staging scan (~1655) redirects into it after
-  `pushd` into the copy, so the log is written inside the copy, which `:after_pipreqs_run` deletes. When
-  the staging scan fails, `~pipreqs.summary.txt` therefore ends with `<log tail unavailable>` (seen in the
-  `locked_crash` scenario's summary, run `38073463840`) and the setup log has no traceback, so the user
-  cannot see why it failed. The same missing log means `:pipreqs_zero_requirements` cannot detect a crash on
-  this path; that guard is only reached when the staged result is missing or empty, which is unlikely
-  because the copy carries the direct scan's populated result along. Slices, test first: (1) extend
-  `locked_crash` to require a traceback line in the summary or setup log; (2) make the log path absolute.
-  Detail: `docs/agent-interconnect.md`'s pipreqs pre-check entry.
 
 ### Item 82: last-chance offer to try conda after a failed run (filed 2026-10-11 from a maintainer brainstorm)
 
