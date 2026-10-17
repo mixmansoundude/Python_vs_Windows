@@ -729,6 +729,33 @@ exercised (REQ-019 asks the default run to reach every fallback tier that gets t
 self.noflag.default.run
 self.noflag.default.once
 self.noflag.default.rerun
+
+## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
+
+Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"). One
+fresh folder and one bootstrap per row. Each folder holds a stdlib-only stub (or one importing `six` in the two
+pipreqs cells) and one distinct tiny package per declared source: requirements.txt `termcolor`, pyproject.toml
+`iniconfig`, PEP 723 header `toolz`. Both skip hooks are set (no user code runs; the build still does), and the
+PEP 723 write-back and autopep723 merge are off so the declared lists stay as written. A row passes only if the
+one-line source record the bootstrapper writes (`~dependency_source.txt`, `dependency_source.txt` in older
+versions; the script reads whichever exists) names the expected source, exactly the expected watched packages are
+in `~dependency_installed.txt` (so a losing source's package is absent) and the run exited 0. `.pep723_malformed`
+also needs the documented `PEP 723 block found but dependency list is empty or malformed` warning. Details carry the
+recorded source, the watched packages installed, and `sourceOk`/`watchedOk`/`ran`. Cells: `.pep723_only`,
+`.requirements_only`, `.all_three` (PEP 723 wins), `.pep723_malformed` (falls to requirements.txt),
+`.pyproject_nodeps` (falls to requirements.txt), `.requirements_empty` (an empty file is deleted, the scan decides)
+and `.nothing_declared` (the scan decides); the last two read `pipreqs` and so depend on Item 68's `DEP_SOURCE`
+fix. Limits: only the winner and the packages are asserted, not the console wording of every branch. Skips on
+non-Windows.
+
+```
+self.depsource.pep723_only
+self.depsource.requirements_only
+self.depsource.all_three
+self.depsource.pep723_malformed
+self.depsource.pyproject_nodeps
+self.depsource.requirements_empty
+self.depsource.nothing_declared
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
