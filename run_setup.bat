@@ -3404,7 +3404,7 @@ if not defined HP_SMOKE_RC set "HP_SMOKE_RC=-1"
 call :log "[INFO] Entry smoke exit=%HP_SMOKE_RC%"
 rem Item 68: say the probe window in seconds, rounded up and never below one. A person reads seconds,
 rem and 10000ms looks like a typo. Computed on top-level lines, before the block that prints it.
-set /a HP_PROBE_SEC=(%HP_FAILFAST_PROBE_MS%+999)/1000
+set /a "HP_PROBE_SEC=(%HP_FAILFAST_PROBE_MS%+999)/1000"
 if %HP_PROBE_SEC% LSS 1 set "HP_PROBE_SEC=1"
 set "HP_PROBE_UNIT=seconds"
 if "%HP_PROBE_SEC%"=="1" set "HP_PROBE_UNIT=second"
