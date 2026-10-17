@@ -17,24 +17,46 @@ set ERR=%ERRORLEVEL%
 echo.
 if exist "tests\~test-summary.txt" type "tests\~test-summary.txt"
 echo.
-if %ERR%==0 (
-  echo [%date% %time%] Running bootstrap self-tests...
-  powershell -NoProfile -ExecutionPolicy Bypass -File "tests\selftest.ps1"
-  if errorlevel 1 set ERR=1
-  if exist "tests\~selftest-summary.txt" (
-    echo.
-    type "tests\~selftest-summary.txt"
-  )
-  echo.
-  echo [%date% %time%] Verifying empty-repo console self-test...
-  powershell -NoProfile -ExecutionPolicy Bypass -File "tests\selftests.ps1"
-  if errorlevel 1 set ERR=1
-  if exist "tests\~selftests-summary.txt" (
-    echo.
-    type "tests\~selftests-summary.txt"
-  )
-  echo.
+rem Item 84: the self-test section always runs, even when the harness failed. It used to run only after a
+rem harness exit of 0, so one red harness row removed every selftest.ps1 and selftests.ps1 row from the run,
+rem and a row that is absent cannot be red. A failure anywhere keeps ERR nonzero, so the run stays red.
+rem A script that exits 0 without writing its summary file did not complete, and counts as a failure; the old
+rem summary is deleted first so a file left by an earlier run cannot vouch for this one, and a summary that
+rem cannot be deleted, because another program holds it open, is a failure too (the run still goes on). Keep
+rem parentheses out of the echo text below: a literal bracket inside a block corrupts the parse.
+if not %ERR%==0 echo [WARN] The static harness failed with exit code %ERR%. Running the self-tests anyway so their rows are not hidden.
+if exist "tests\~selftest-summary.txt" del /f /q "tests\~selftest-summary.txt" >nul 2>&1
+if exist "tests\~selftest-summary.txt" (
+  echo [ERROR] Could not remove the old tests\~selftest-summary.txt, so it cannot show that this run completed.
+  if %ERR%==0 set ERR=1
 )
+echo [%date% %time%] Running bootstrap self-tests...
+powershell -NoProfile -ExecutionPolicy Bypass -File "tests\selftest.ps1"
+if errorlevel 1 if %ERR%==0 set ERR=1
+if exist "tests\~selftest-summary.txt" (
+  echo.
+  type "tests\~selftest-summary.txt"
+) else (
+  echo [ERROR] The self-tests did not complete: tests\~selftest-summary.txt was not written.
+  if %ERR%==0 set ERR=1
+)
+echo.
+if exist "tests\~selftests-summary.txt" del /f /q "tests\~selftests-summary.txt" >nul 2>&1
+if exist "tests\~selftests-summary.txt" (
+  echo [ERROR] Could not remove the old tests\~selftests-summary.txt, so it cannot show that this run completed.
+  if %ERR%==0 set ERR=1
+)
+echo [%date% %time%] Verifying empty-repo console self-test...
+powershell -NoProfile -ExecutionPolicy Bypass -File "tests\selftests.ps1"
+if errorlevel 1 if %ERR%==0 set ERR=1
+if exist "tests\~selftests-summary.txt" (
+  echo.
+  type "tests\~selftests-summary.txt"
+) else (
+  echo [ERROR] The console self-test did not complete: tests\~selftests-summary.txt was not written.
+  if %ERR%==0 set ERR=1
+)
+echo.
 echo Static test exit code: %ERR%
 echo.
 echo Optional dynamic tests (needs any Python): tests\dynamic_tests.bat
