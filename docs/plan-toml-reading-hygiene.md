@@ -13,7 +13,7 @@ slice per PR (see AGENTS.md and the CI-first policy in `docs/plan-field-report-2
 |---|---|---|---|---|
 | `pyproj_deps.py` (`HP_PYPROJ_DEPS`) | `[project].dependencies` | tomllib, else char-walker | target env python (`%HP_PY%`) | 2826 chars (was 198; prose moved here and into the oracle tests, 2026-10-17) |
 | `pep723_extract.py` (`HP_PEP723_EXTRACT`) | top-level `dependencies` of the header | char-walker only | target env python (`%HP_PY%`) | about 2060 chars |
-| `detect_python.py` (`HP_DETECT_PY`) | `requires-python` (pyproject only) | one regex over the whole file | orchestration python (`uv run --no-project python`, or Miniconda base) | 520 chars (after slice 3) |
+| `detect_python.py` (`HP_DETECT_PY`) | `requires-python` (pyproject only) | tomllib on valid TOML; the old pattern search only when tomllib is missing or the file does not parse (before slice 3: one regex over the whole file) | orchestration python (`uv run --no-project python`, or Miniconda base) | 520 chars (after slice 3) |
 | `pep723_writeback.py` (`HP_PEP723_WRITEBACK`) | writes the header via `uv add --script`; `strip_pep723_block` for the malformed retry | line state machine | `%HP_PY%` | 333 chars |
 
 The target interpreter can lack tomllib (a `runtime.txt` or `requires-python` pin below 3.11
@@ -22,7 +22,7 @@ selects an older target Python under REQ-004), so the pyproject walker fallback 
 `pep723_extract.py` is script-style (it exits at import), so tests must run it as a subprocess
 the way `tests/test_pep723_extract.py` does; they cannot import it.
 
-## Two live bugs (both reproduced 2026-10-09)
+## Two live bugs (both reproduced 2026-10-09; both fixed by PR #500)
 
 - **Pyproject fallback keeps backslashes in markers, and accepts an unclosed array.** With
   tomllib shadowed out (Python below 3.11), `dependencies = ["pywin32; sys_platform ==

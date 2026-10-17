@@ -155,6 +155,21 @@ class RegexFallbackPath(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"), 'weird"quote\n')
 
+    def test_unicode_escapes_decode_and_an_invalid_code_point_is_left_as_written(self):
+        # The \u and \U branch of the shared unescape text. tomllib would reject the out-of-range \U
+        # outright; the fallback leaves it as written (same as pep723_extract.py) rather than inventing a
+        # character, so the bad item still reaches pip as an obvious error instead of vanishing.
+        with tempfile.TemporaryDirectory() as d:
+            _write(
+                Path(d) / "pyproject.toml",
+                '[project]\ndependencies = ["c\\u0041d", "x\\U00000042", "bad\\UFFFFFFFF"]\n',
+            )
+            rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                (Path(d) / "out.txt").read_text(encoding="ascii"), "cAd\nxB\nbad\\UFFFFFFFF\n"
+            )
+
     def test_single_quoted_item_is_literal(self):
         # A TOML literal string has no escapes: the backslash stays.
         with tempfile.TemporaryDirectory() as d:
