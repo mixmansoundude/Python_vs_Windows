@@ -187,3 +187,9 @@ Write-NdjsonRow ([ordered]@{
 })
 
 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+
+# derived requirement: end with an explicit exit. The last scenario runs a run_tests.bat copy that exits 1 by design, and the
+# workflow step appends exit $LASTEXITCODE, so a script that just stops would fail the step with every row green (the canary
+# run on PR #496 did that on all eight lanes). The rows are the verdict: exit 1 only when one of them is red.
+if (-not ($gPass -and $hPass -and $sPass -and $uPass -and $vPass -and $kPass)) { exit 1 }
+exit 0
