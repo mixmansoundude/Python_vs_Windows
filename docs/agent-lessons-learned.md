@@ -756,6 +756,19 @@ requirements append) took most of it; check `tools/sync_payload.py`'s margin lin
 
 ---
 
+## A test that checks prompt text in the console must look only AFTER the prompt's heading
+
+The EXE verification run is live-teed to the console (`~exe_smokerun.ps1`), so a program's own stderr, for
+example the traceback's last line, is already on screen before any bootstrapper prompt that quotes it. A check
+for "the console contains the error line" passes vacuously on the commit that adds the test, before the prompt
+exists, and so proves nothing (Item 82). Find the prompt's heading first and search from there
+(`Test-AfterOffer` in `tests/selfapps_lastchance.ps1`). The same rule applies to any prompt that repeats text the
+user already saw scroll past. A second Item 82 detail: `set /p` on an empty line leaves the variable
+unchanged, and `%VAR:~0,1%` of an undefined variable is not a reliable empty string in a batch file, so compare
+against the letters you accept (W, C) and let everything else mean the default.
+
+---
+
 ## Heuristic dep-augmentation must strip pip extras before name lookup
 
 `HP_PREP_REQUIREMENTS`'s `names_lower` list must strip `[...]` (pip extras, e.g. `pandas[excel]`)

@@ -29,4 +29,4 @@ chat one at a time; the later ones wait their turn.
 
 Each question names the backlog item it blocks and the default an implementing agent should use
 
-No questions are open for this report. Q1-Q10 are decided or retired.
+Q1-Q11 are decided or retired. No field-report question is open.

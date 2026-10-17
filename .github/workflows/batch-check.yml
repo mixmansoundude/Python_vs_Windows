@@ -858,6 +858,20 @@ jobs:
         run: |
           & tests\selfapps_runtime_install.ps1
 
+      # derived requirement: CLAUDE.md Item 82 slice 1 (README REQ-018) -- after a fresh uv build whose
+      # verification run ended with a real non-zero exit, ONE untimed question offers W (it actually
+      # worked), C (try again with Miniconda) or N (neither, the default). Gating on purpose, real lane
+      # only: the scenarios build and run a stdlib-only fixture and download nothing beyond what every
+      # uv bootstrap does. The answer comes from HP_TEST_LASTCHANCE_ANSWER, the automated-run guards or
+      # a real set /p read (HP_TEST_FORCE_INTERACTIVE_LASTCHANCE).
+      - name: "Self-test: last-chance offer after a failed run (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        env:
+          LASTCHANCE_GROUP: real
+        run: |
+          & tests\selfapps_lastchance.ps1
+
       - name: "Self-test: strict --hidden-import auto-recovery (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -923,6 +937,19 @@ jobs:
           CASCADE_CCF_SCENARIO: missing_python
         run: |
           & tests\selfapps_cascade_conda_create_fail.ps1
+
+      # CLAUDE.md Item 82 slice 1: the two scenarios that cannot gate. The cascade ones download Miniconda
+      # mid-run (so they must follow the Miniconda both-install-types-fail step) and the timeout one
+      # force-stops a silent EXE, so each can fail for transient network or provider reasons. Same step
+      # shape as the cascade EXECUTION step above.
+      - name: "Self-test: last-chance offer, silent timeout and the cascade it starts (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          LASTCHANCE_GROUP: uv
+        run: |
+          & tests\selfapps_lastchance.ps1
 
       # CLAUDE.md Active Backlog Item 42 (lever 1): proves the :log console-tiering mechanism
       # actually behaves at runtime -- [DEBUG]/[TRACE]/[INSTALL] suppressed from the live console
@@ -2274,6 +2301,72 @@ jobs:
             tests\~selftest_runtime_install_pyproject\~sub.ndjson
             tests/~selftest_runtime_install_pyproject/requirements.txt
             tests\~selftest_runtime_install_pyproject\requirements.txt
+            tests/~selftest_lastchance_worked/~lc_worked_bootstrap.log
+            tests\~selftest_lastchance_worked\~lc_worked_bootstrap.log
+            tests/~selftest_lastchance_worked/~setup.log
+            tests\~selftest_lastchance_worked\~setup.log
+            tests/~selftest_lastchance_worked/~run.err.txt
+            tests\~selftest_lastchance_worked\~run.err.txt
+            tests/~selftest_lastchance_worked/~sub.ndjson
+            tests\~selftest_lastchance_worked\~sub.ndjson
+            tests/~selftest_lastchance_errline/~lc_errline_bootstrap.log
+            tests\~selftest_lastchance_errline\~lc_errline_bootstrap.log
+            tests/~selftest_lastchance_errline/~setup.log
+            tests\~selftest_lastchance_errline\~setup.log
+            tests/~selftest_lastchance_errline/~run.err.txt
+            tests\~selftest_lastchance_errline\~run.err.txt
+            tests/~selftest_lastchance_errline/~sub.ndjson
+            tests\~selftest_lastchance_errline\~sub.ndjson
+            tests/~selftest_lastchance_enter/~lc_enter_bootstrap.log
+            tests\~selftest_lastchance_enter\~lc_enter_bootstrap.log
+            tests/~selftest_lastchance_enter/~setup.log
+            tests\~selftest_lastchance_enter\~setup.log
+            tests/~selftest_lastchance_enter/~run.err.txt
+            tests\~selftest_lastchance_enter\~run.err.txt
+            tests/~selftest_lastchance_enter/~sub.ndjson
+            tests\~selftest_lastchance_enter\~sub.ndjson
+            tests/~selftest_lastchance_ckpt/~lc_ckpt_bootstrap.log
+            tests\~selftest_lastchance_ckpt\~lc_ckpt_bootstrap.log
+            tests/~selftest_lastchance_ckpt/~setup.log
+            tests\~selftest_lastchance_ckpt\~setup.log
+            tests/~selftest_lastchance_ckpt/~run.err.txt
+            tests\~selftest_lastchance_ckpt\~run.err.txt
+            tests/~selftest_lastchance_ckpt/~sub.ndjson
+            tests\~selftest_lastchance_ckpt\~sub.ndjson
+            tests/~selftest_lastchance_ckpt/~checkpoint_run.out.txt
+            tests\~selftest_lastchance_ckpt\~checkpoint_run.out.txt
+            tests/~selftest_lastchance_exit0/~lc_exit0_bootstrap.log
+            tests\~selftest_lastchance_exit0\~lc_exit0_bootstrap.log
+            tests/~selftest_lastchance_exit0/~setup.log
+            tests\~selftest_lastchance_exit0\~setup.log
+            tests/~selftest_lastchance_exit0/~run.err.txt
+            tests\~selftest_lastchance_exit0\~run.err.txt
+            tests/~selftest_lastchance_exit0/~sub.ndjson
+            tests\~selftest_lastchance_exit0\~sub.ndjson
+            tests/~selftest_lastchance_timeout/~lc_timeout_bootstrap.log
+            tests\~selftest_lastchance_timeout\~lc_timeout_bootstrap.log
+            tests/~selftest_lastchance_timeout/~setup.log
+            tests\~selftest_lastchance_timeout\~setup.log
+            tests/~selftest_lastchance_timeout/~run.err.txt
+            tests\~selftest_lastchance_timeout\~run.err.txt
+            tests/~selftest_lastchance_timeout/~sub.ndjson
+            tests\~selftest_lastchance_timeout\~sub.ndjson
+            tests/~selftest_lastchance_cascade/~lc_cascade_bootstrap.log
+            tests\~selftest_lastchance_cascade\~lc_cascade_bootstrap.log
+            tests/~selftest_lastchance_cascade/~setup.log
+            tests\~selftest_lastchance_cascade\~setup.log
+            tests/~selftest_lastchance_cascade/~run.err.txt
+            tests\~selftest_lastchance_cascade\~run.err.txt
+            tests/~selftest_lastchance_cascade/~sub.ndjson
+            tests\~selftest_lastchance_cascade\~sub.ndjson
+            tests/~selftest_lastchance_again/~lc_again_bootstrap.log
+            tests\~selftest_lastchance_again\~lc_again_bootstrap.log
+            tests/~selftest_lastchance_again/~setup.log
+            tests\~selftest_lastchance_again\~setup.log
+            tests/~selftest_lastchance_again/~run.err.txt
+            tests\~selftest_lastchance_again\~run.err.txt
+            tests/~selftest_lastchance_again/~sub.ndjson
+            tests\~selftest_lastchance_again\~sub.ndjson
             tests/~selftest_hidden_import/~hidden_bootstrap.log
             tests\~selftest_hidden_import\~hidden_bootstrap.log
             tests/~selftest_hidden_import/~setup.log

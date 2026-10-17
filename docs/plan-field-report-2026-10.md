@@ -414,12 +414,17 @@ speed and fallbacks, and a conda solve failure is rarely fixed by a later tier.
    so, names the provider, and says how to reset it (delete the state file, or set
    `PVW_PROVIDER`). Nothing is picked from memory silently.
 
-**Memory invalidation (decided 2026-10-09):** the state file is replaced after a verified run,
-and it is cleared automatically when the same inputs that rebuild the EXE change
-(`requirements.txt`, `pyproject.toml`, `runtime.txt`, source `.py`), when the remembered provider
-is no longer available, and never by a failed or declined run. `PVW_PROVIDER` overrides it for one
-run and writes nothing. Deleting the file is always a valid manual reset. Users do not need to
-delete it in normal use.
+**Memory invalidation (decided 2026-10-17, Q11 option A; replaces the 2026-10-09 rule that also cleared
+the file when the program's inputs changed):** the state file is replaced after a verified run, and it
+is cleared automatically only when the remembered provider is no longer available (Miniconda is gone)
+or the user deletes the file. An edit to `requirements.txt`, `pyproject.toml`, `runtime.txt` or a
+source `.py` does NOT clear it, because that edit is exactly the case the field note describes (the
+user edits `requirements.txt` and waits through the whole uv attempt again before conda). A failed or
+declined run never clears it. `PVW_PROVIDER` overrides it for one run and writes nothing. Deleting
+`~provider.state.json` is the documented reset, and every run that starts from memory says so (edge
+case 11). Reasoning from the maintainer: if conda was needed to solve it once, the other providers are
+unlikely to help. The cost: after the user fixes whatever made uv fail, the run stays on conda until
+the file is deleted, and each run says so. Keep the clear condition in one place so it can change.
 
 **CI proof**: a two-run test where run 1 is forced through the uv-to-conda cascade and run 2
 (after touching `requirements.txt`) must log the remembered provider and skip uv.

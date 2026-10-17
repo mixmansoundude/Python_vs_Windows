@@ -69,6 +69,7 @@ tests/
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
   selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
   selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
+  selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -180,6 +181,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_PREFLIGHT_CHECK` | `~preflight_check.py` | Item 83: the REQ-021 pre-flight syntax check; compiles the entry in memory with the interpreter's own parser, so it writes no `.pyc` and cannot fail on a read-only or file-shaped `__pycache__` (the old `py_compile` call did both); exit 0 valid, 1 syntax error with the interpreter's own message on stderr, anything else means it could not decide and the run continues with a `[WARN]`; run via `%HP_PY%` from `:preflight_compile` | `tools/preflight_check.py` |
    | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays), decodes TOML escapes in double-quoted items, and rejects an array with no closing bracket; a nonzero result leaves no output file (the batch subroutine deletes it); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
    | `HP_RUNTIME_MODULE_SCAN` | `~runtime_module_scan.py` | Item 65 slice 1: reads the stderr of a run that just finished and prints, one per line, each module it names as missing (`No module named 'X'`, top-level name) that the interpreter does not have; skips stdlib names, modules found next to the script, and anything that is not a plain identifier (the batch echoes the names unquoted); exit 0 always except 3 for an internal error; run via `%HP_PY%` from `:scan_runtime_missing_module`; slice 2 adds `--packages` (module to package, conda gets `opencv` for `cv2`) and `--append` (adds to `requirements.txt` unless already declared) for `:runtime_install_offer`, about 354 characters of room left | `tools/runtime_module_scan.py` |
+   | `HP_LAST_ERROR_LINE` | `~last_error_line.py` | Item 82 slice 1: writes the last non-blank line of a failed run's stderr to a file, two spaces in front, printable ASCII kept literally (`<`, `>`, `&`, `|`, `%`, `^` included, everything else becomes `?`, cut at 200 characters), so the last-chance offer can show it with `type`; exit 0 written, 1 nothing to show, 3 internal error; run via `%HP_PY%` from `:lc_last_line` | `tools/last_error_line.py` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
    byte-equality between the embedded base64 and the source file (see the Testing section
@@ -285,6 +287,7 @@ Test files and what they cover:
 | `test_preflight_check.py` | Item 83: in-memory syntax check (valid file exits 0 and writes nothing, a FILE named `__pycache__` changes nothing, syntax/indentation/tab/encoding/null-byte errors exit 1 with the interpreter's wording, exit 3 when it cannot decide, user code never runs), `:preflight_compile` call-site wiring (no `py_compile`, only exit 1 reports a syntax error), Python 3.9 grammar guard, HP_PREFLIGHT_CHECK payload sync |
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 | `test_runtime_module_scan.py` | Item 65 slice 1: runtime missing-module scan (top-level name from a traceback, submodule, repeats, ImportError wording, cap; installed/on-path/stdlib/non-identifier names not reported; local module next to the helper; CLI exit codes; the three batch call sites and the reminder order; Python 3.9 grammar guard; HP_RUNTIME_MODULE_SCAN payload sync); slice 2: `--packages`/`--append` modes, name table equal to warnfix's, requirements editing, batch call sites of the offer |
+| `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 
@@ -742,7 +745,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
-starting any of these. No maintainer decisions are open. Q1-Q9 are decided or retired (see Items 65, 66, 67, 69, 71, 76 and 78).
+starting any of these. No maintainer decisions are open. Q1-Q11 are decided or retired (see Items 65, 66, 67, 69, 71, 76 and 78).
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
@@ -757,6 +760,9 @@ the original symptom (see that doc's "CI-first testing policy").
   cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
   Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
   and the memory-invalidation rules are in the plan doc. A failed forced solve stops; it does not cascade.
+  Decided 2026-10-17 (Q11, option A): the memory survives edits to `requirements.txt`, `pyproject.toml`,
+  `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
+  deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
 - **Item 68 (Confirmed, tiny, one PR)**: wording fixes -- probe line prints `10000ms`; Nuitka says
   "a minute or two"; pipreqs diff placeholder; cascade prompt should name the next provider;
   silent rebuild when inputs changed; dead `if not defined DEP_SOURCE` WARN (initialized to
@@ -863,6 +869,12 @@ the original symptom (see that doc's "CI-first testing policy").
   prompt says the check stops the program after about 30 seconds, and the CI fixture is a silent script.
   Test first.
   Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
+  **Slice 1 (the W/C/N prompt, built 2026-10-16, PR #495, README wording in the PR body)**: `:last_chance_offer`
+  at the end of `:run_entry_smoke`, own helper `HP_LAST_ERROR_LINE`, the checkpoint's interpreter result
+  kept as `HP_LC_CKPT_RC`, the `RUNTIME_MISMATCH` hint reworded so it no longer rules out the
+  environment. Rows `self.lastchance.*` (real lane gating, silent-timeout and cascade scenarios on the
+  uv lane non-gating because of the Miniconda download and the force-stopped EXE). Slice 2 (the
+  conda-tier "Did it open and work?" question with the smoke runner's kill marker) is not built.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
