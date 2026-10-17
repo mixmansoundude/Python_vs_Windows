@@ -531,14 +531,23 @@ Running the user's program IS the goal -- a beginner who cannot launch it themse
   that provides it, to the file your dependencies come from and run again: `requirements.txt`, the
   `[project]` dependencies in `pyproject.toml`, or the PEP 723 header of your script, whichever the run
   reported as its dependency source (the last two are copied over `requirements.txt` on every run, so
-  editing `requirements.txt` would not last). This step only reads; nothing is installed or
-  edited and your program is not run again. Standard library names (such as `tkinter`) and modules
+  editing `requirements.txt` would not last). This reading step itself installs and edits nothing and does
+  not run your program again; the offer below is a separate step that asks first. Standard library names (such as `tkinter`) and modules
   that sit next to your script are not reported. The cached-EXE fast path skips this check, because it
   runs before any interpreter is chosen.
-- **Installing a missing package (decided, not yet built).** If your program's own run fails with
-  `No module named X` for a package that is not installed, the bootstrapper will ask once before it
-  installs X, edits `requirements.txt`, or rebuilds. A yes covers those steps and one verification run
-  of the rebuilt EXE. A no changes nothing and only names the missing package.
+- **Installing a missing package.** When the check above finds a module that is not installed, the
+  bootstrapper asks once per run, before it installs anything, edits `requirements.txt` or rebuilds: it
+  lists the packages and waits 30 seconds for Y or N (a quiet run, a CI run and a bare Enter all mean no). A
+  yes installs each package into the program's own environment (never into a system Python, and never under
+  the fallback build system's EXE), adds it to `requirements.txt` unless it is already listed (when your
+  dependency source is `pyproject.toml` or a PEP 723 header, which are copied over `requirements.txt` on
+  every run, nothing is edited: the prompt and the log tell you to add the package to that file yourself),
+  rebuilds the EXE with `--hidden-import` and `--collect-submodules` for each new module when there is one,
+  and runs your program one more time to check; that one extra run is covered by the yes. The log ends with
+  `verified` when the check run no longer names the module, or says it still does. A failed install or
+  rebuild stops there, with no provider cascade. A no changes nothing and the module is only named, as
+  above. The import name is turned into the package name from a small table (`cv2` becomes `opencv-python`,
+  `PIL` becomes `pillow`); any other name is used as it is.
 - **Last-chance offer to try conda (planned, not yet built; shape agreed 2026-10-11).** If a fresh
   build that ran under uv ends with your program stopping on a real error, the bootstrapper asks once,
   after the verification run and the optional interpreter re-run, with no timer: it shows the last
@@ -759,51 +768,55 @@ set lives in `run_setup.bat`.
 
 ## [REQ-026] Argv Passthrough Escape Hatch
 
-- A user who already knows their program needs launch arguments (e.g. `--input file.csv`) can
-  supply them on `run_setup.bat`'s own command line, after the entry file: `run_setup.bat
-  myapp.py --input file.csv`. This works whether the entry file was typed, dragged onto a
-  shortcut with args added to its Target field, or is a positional argument in any other manual
-  invocation -- a plain drag-and-drop of a single file still only ever passes that one argument
-  (Windows Explorer's own behavior, not something this bootstrapper controls).
-- The extra arguments (positions 2 through 9) are forwarded to the target program at every real launch site
-  during this bootstrap run: the EXE smoke verification, the cached-EXE fast-path reuse, the
-  interpreter verification run (used when no EXE is built), and the post-execution checkpoint's
-  elective second run. An argument that is explicitly empty (`""`) is dropped, and anything after
-  the ninth position is ignored. No detection or heuristics are involved -- this is a documented, opt-in
-  escape hatch, not automatic argument discovery (see `docs/plan-cli-interactive-verification.md`
-  Finding 4/5 for why automatic detection was deliberately not attempted).
-- **Program arguments are optional.** `run_setup.bat` with no arguments works as before, and
-  `run_setup.bat myapp.py` with no further arguments is the normal form. Extra arguments are only
-  for the rare case where your program needs them.
-- **When the cached-EXE fast path is eligible, the entry-file argument is not used to pick the
-  entry.** The fast path runs after the REQ-011 pre-flight check and before entry selection, and
-  reuses `dist\<env>.exe` only when that EXE exists and its source and dependency hash is still
-  fresh. Today, on that path, `run_setup.bat <anything> arg1 arg2` launches the existing EXE with
-  `arg1 arg2`, whatever the first argument says, and a first argument that is not a file in the
-  bootstrapper folder still passes the pre-flight check when the current folder is that folder.
-  Decided, not yet built (CLAUDE.md Item 67): a first argument that is not an existing `.py` will
-  stop the run with a usage message before the fast path runs, and the EXE is left alone. Until
-  that lands, type the real entry file first (`run_setup.bat myapp.py arg1 arg2`), which behaves
-  the same whether or not an EXE exists yet.
-- **This does not persist.** Forwarding only happens during the bootstrap run that received the
-  arguments -- it does not change how a later plain double-click of `dist\<env>.exe` launches it
-  (double-clicking never passes arguments to anything). To always launch the built EXE with the
-  same arguments afterward, make a Windows shortcut to it and add the arguments to the shortcut's
-  Target field, or launch it from a Command Prompt.
-- **Practical limit: up to 8 extra arguments** (CMD batch files address positional parameters
-  `%2`-`%9` directly; going further would require `shift`, which is deliberately not used here
-  since it would also shift `%~1`, the entry-file argument several other parts of this file read
-  directly). If your program needs more than 8 launch arguments, this escape hatch does not cover
-  that case yet.
-- **A token containing a literal `"` character is not supported** -- each extra argument is
-  individually re-quoted for the target program (so an argument containing spaces survives as one
-  argv element, matching ordinary Windows command-line quoting), but an embedded double-quote
-  inside an argument's own value is a documented limitation, not silently mishandled.
-- Not currently forwarded into the two INTERNAL, bounded repair/optimization verification loops
-  (the `--hidden-import` auto-recovery re-run, and the elective optimized-build's own internal
-  verify launch) -- both are diagnostic/repair checks against a build already confirmed working,
-  not the user's primary run, matching how those subroutines already scope themselves elsewhere
-  (see `docs/agent-interconnect.md`).
+**Goal.** A user whose program needs launch arguments should be able to give them on `run_setup.bat`'s own
+command line, so that the program runs as the user intends during the bootstrap without a separate launcher.
+Program arguments are optional: `run_setup.bat` with no arguments, and `run_setup.bat myapp.py` with no
+further arguments, work as before.
+
+- **REQ-026.1** [major] When the user gives arguments after the entry file, the bootstrapper **shall** pass
+  them to the user's program, in order and with an argument that contains spaces kept as one argument, when
+  it runs the program through the EXE it just built.
+- **REQ-026.2** [major] When the user gives arguments after the entry file, the bootstrapper **shall** pass
+  them to the user's program, in the same way, when it reuses a cached EXE.
+- **REQ-026.3** [major] When the user gives arguments after the entry file, the bootstrapper **shall** pass
+  them to the user's program, in the same way, when it runs the program through the interpreter because no
+  EXE was built.
+- **REQ-026.4** [major] When the user has given arguments after the entry file, the bootstrapper **shall**
+  pass the same arguments to the post-execution checkpoint's second run, if the user accepts that run.
+- **REQ-026.5** [minor] The bootstrapper **shall** pass at most eight arguments after the entry file, drop an
+  argument that is empty, and ignore every argument after the ninth position on its command line.
+- **REQ-026.6** [minor] When the user gives no arguments after the entry file, the bootstrapper **shall**
+  start the program without arguments.
+
+> **Notes (non-normative).**
+> - Usage: `run_setup.bat myapp.py --input file.csv`. It works whether the entry file was typed, dragged
+>   onto a shortcut with arguments added to its Target field, or given in any other manual invocation. A
+>   plain drag-and-drop of one file passes only that file (Windows Explorer's behavior, not something this
+>   bootstrapper controls).
+> - Positions 2 through 9 are forwarded. CMD batch files address `%2` to `%9` directly, and going further
+>   would need `shift`, which is deliberately not used because it would also shift `%~1`, the entry-file
+>   argument that other parts of the file read directly. A program that needs more than eight launch
+>   arguments is not covered by this escape hatch yet.
+> - No detection or heuristics are involved; this is a documented, opt-in escape hatch, not automatic
+>   argument discovery (see `docs/plan-cli-interactive-verification.md` Findings 4 and 5).
+> - The forwarding does not persist: it applies only during the bootstrap run that received the arguments
+>   and does not change how a later double-click of `dist\<env>.exe` launches the program (double-clicking
+>   never passes arguments). To launch the built EXE with the same arguments afterward, make a Windows
+>   shortcut and add them to its Target field, or launch it from a Command Prompt.
+> - A token that contains a literal `"` is not supported: each argument is individually re-quoted so that
+>   spaces survive as one argument, but an embedded double quote is a documented limitation.
+> - The elective optimized-build's own verification launch also receives the arguments, because it starts a
+>   binary that has never run and a program that needs arguments would otherwise fail the check. The
+>   `--hidden-import` auto-recovery re-run does not: it is a diagnostic re-run of a build already confirmed
+>   working (see `docs/agent-interconnect.md`).
+> - When the cached-EXE fast path is eligible, the entry-file argument is not used to pick the entry. The
+>   fast path runs after the REQ-011 pre-flight check and before entry selection, and reuses
+>   `dist\<env>.exe` only when that EXE exists and its source and dependency hash is still fresh. Today, on
+>   that path, `run_setup.bat <anything> arg1 arg2` launches the existing EXE with `arg1 arg2`, whatever
+>   the first argument says. Decided, not yet built (CLAUDE.md Item 67): a first argument that is not an
+>   existing `.py` will stop the run with a usage message before the fast path runs, and the EXE is left
+>   alone. Until that lands, type the real entry file first (`run_setup.bat myapp.py arg1 arg2`), which
+>   behaves the same whether or not an EXE exists yet.
 
 ---
 
