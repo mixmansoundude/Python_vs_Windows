@@ -635,6 +635,26 @@ set "PYCOUNT=0"
 for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul') do call :count_python "%%F"
 if "%PYCOUNT%"=="" set "PYCOUNT=0"
 call :log "[INFO] Python file count: %PYCOUNT%"
+rem CLAUDE.md Item 66 (README REQ-009, decided 2026-10-09 Q3 and 2026-10-17 Q11): PVW_PROVIDER is the super-user switch
+rem that forces one provider for this run, and the only accepted value is conda. Checked before the cached-EXE fast
+rem path, so a bad value stops the run even when a cached EXE would have been reused, and before any provider work.
+rem The value is compared by findstr over the output of set, so cmd never parses it: a value holding quotes,
+rem ampersands or percent signs cannot do harm, and no line below ever expands it. A valid value acts like
+rem conda-only mode (no uv, no fallbacks, a failed solve stops) and never writes the memory file. Unset changes nothing.
+set "HP_PVW_PROVIDER_CONDA="
+if not defined PVW_PROVIDER goto :pvw_provider_done
+set PVW_PROVIDER 2>nul | findstr /x /l /c:"PVW_PROVIDER=conda" >nul
+if errorlevel 1 goto :pvw_provider_bad
+call :log "[DEBUG] Using super-user override for PVW_PROVIDER: conda"
+if "%HP_FORCE_CONDA_ONLY%"=="1" goto :pvw_provider_done
+set "HP_PVW_PROVIDER_CONDA=1"
+set "HP_FORCE_CONDA_ONLY=1"
+call :log "[INFO] PVW_PROVIDER=conda: using conda only for this run, no other provider will be tried. Remove PVW_PROVIDER to go back to the normal order."
+goto :pvw_provider_done
+:pvw_provider_bad
+call :die "[ERROR] PVW_PROVIDER has a value this bootstrapper does not accept. The only accepted value is conda. Remove PVW_PROVIDER or set it to conda."
+exit /b 1
+:pvw_provider_done
 rem derived requirement: REQ-011 cross-dir check moved to pre-flight so users get instant
 rem feedback rather than waiting through env creation to see the rejection error.
 if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (
@@ -723,6 +743,11 @@ if "%PYCOUNT%"=="0" (
 
 if defined HP_CI_SKIP_ENV goto :ci_skip_entry
 
+rem CLAUDE.md Item 66: the provider memory file is read here, after the cached-EXE fast path (which runs first and
+rem is unaffected) and before uv is acquired, so a remembered conda skips all of uv's work.
+set "HP_PM_START_CONDA="
+call :provider_memory_read
+
 rem === uv acquisition (preferred env+dep installer; falls back to conda) =======
 rem derived requirement: uv is gated by HP_FORCE_CONDA_ONLY (same gate used for
 rem venv/system fallbacks) so the conda-full CI lane exercises the pure conda path.
@@ -738,9 +763,23 @@ rem invocation so every uv command (run,
 rem venv, pip) in this process inherits it. See docs/agent-lessons-learned.md.
 set "UV_PYTHON_PREFERENCE=only-managed"
 call :log "[INFO] uv: UV_PYTHON_PREFERENCE=only-managed (orchestration uses managed Python)."
+rem CLAUDE.md Item 66: both skips come first, so a PVW_UV_EXE override cannot bring uv back for a forced or
+rem remembered conda run.
+if defined HP_PVW_PROVIDER_CONDA goto :uv_skip_pvw_provider
+if defined HP_PM_START_CONDA goto :uv_skip_provider_memory
 if not defined PVW_UV_EXE goto :pvw_uv_exe_skip
 set "HP_UV_EXE=%PVW_UV_EXE%"
 call :log "[INFO] uv: using super-user override PVW_UV_EXE."
+goto :uv_acquire_done
+:uv_skip_pvw_provider
+set "HP_UV_EXE="
+set "HP_UV_BIN=%HP_SCRIPT_ROOT%~uv_bin"
+call :log "[INFO] uv: skipped (PVW_PROVIDER=conda)."
+goto :uv_acquire_done
+:uv_skip_provider_memory
+set "HP_UV_EXE="
+set "HP_UV_BIN=%HP_SCRIPT_ROOT%~uv_bin"
+call :log "[INFO] uv: skipped (provider memory: conda)."
 goto :uv_acquire_done
 :pvw_uv_exe_skip
 set "HP_UV_EXE="
@@ -971,6 +1010,10 @@ call :log "[INFO] Workspace: %CD%"
 call :log "[INFO] Env name: %ENVNAME%"
 call :log "[INFO] Log: %LOG%"
 
+rem CLAUDE.md Item 66: when conda goes first because of the switch or the memory file, an exact patch pin that an earlier
+rem uv run of this bootstrapper wrote into runtime.txt is not the user's, and conda may not have that patch.
+if defined HP_PVW_PROVIDER_CONDA call :runtime_txt_writeback_release
+if defined HP_PM_START_CONDA call :runtime_txt_writeback_release
 if not defined HP_UV_PROVIDING_PYTHON (
   set "HP_RUNTIME_TXT_PREEXIST="
   if exist "runtime.txt" set "HP_RUNTIME_TXT_PREEXIST=1"
@@ -1275,6 +1318,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
+    >"~runtime_writeback.txt" echo %PYVER%
     set "HP_PYSPEC_ORIGINAL=%PYSPEC%"
     set "PYSPEC=%PYVER:python-=python=%"
     set "HP_PYSPEC_WRITEBACK=1"
@@ -1314,6 +1358,7 @@ if not errorlevel 1 (
       call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
     ) else (
       call :log "[INFO] runtime.txt written: %PYVER%"
+      >"~runtime_writeback.txt" echo %PYVER%
       set "HP_PYSPEC_ORIGINAL=%PYSPEC%"
       set "PYSPEC=%PYVER:python-=python=%"
       set "HP_PYSPEC_WRITEBACK=1"
@@ -2264,11 +2309,83 @@ rem replacement for the old HP_FASTPATH_USED check, not an additional condition 
 if defined HP_FRESH_BUILD_OK call :write_fast_hash
 rem CLAUDE.md Item 65 slice 1: repeat the missing-module finding last, where the user is still looking.
 if defined HP_RTM_FOUND call :print_runtime_missing_reminder
+rem CLAUDE.md Item 66: remember conda when it was conda that finally worked.
+if defined HP_PM_PASS call :provider_memory_write
 call :release_lock
 rem REQ-016: retain terminal window on success so user can read the output.
 if not defined HP_CI_LANE (
   pause
 )
+exit /b 0
+
+rem CLAUDE.md Item 66 (README REQ-009, decided 2026-10-17, Q11 option A): the provider memory file ~provider.state.json.
+rem Read once per run before uv is acquired. Conda is remembered only after a run that only worked once the cascade had
+rem reached conda, and the file is cleared automatically only when Miniconda is gone or the user deletes it: an edit to
+rem requirements.txt, pyproject.toml, runtime.txt or a .py never clears it, and neither does a failed run. The clear
+rem condition lives in :pm_conda_gone alone so it can change. No interpreter exists yet at this point of the run, so the
+rem file is plain text written with echo and found with findstr; the quote-free pattern uses a dot for each quote.
+rem Every run that starts from the file says so and how to reset it. PVW_PROVIDER and conda-only CI mode skip it.
+:provider_memory_read
+set "HP_PM_START_CONDA="
+if defined HP_PVW_PROVIDER_CONDA exit /b 0
+if "%HP_FORCE_CONDA_ONLY%"=="1" exit /b 0
+if not exist "~provider.state.json" exit /b 0
+findstr /r /c:"provider.:.conda" "~provider.state.json" >nul 2>&1
+if errorlevel 1 goto :pm_unreadable
+set "HP_PM_CONDA_OK="
+if exist "%PUBLIC%\Documents\Miniconda3\condabin\conda.bat" set "HP_PM_CONDA_OK=1"
+if exist "%PUBLIC%\Documents\Miniconda3\Scripts\conda.bat" set "HP_PM_CONDA_OK=1"
+if defined PVW_CONDA_EXE if exist "%PVW_CONDA_EXE%" set "HP_PM_CONDA_OK=1"
+if not defined HP_PM_CONDA_OK goto :pm_conda_gone
+set "HP_PM_CONDA_OK="
+set "HP_PM_START_CONDA=1"
+call :log "[INFO] Provider memory: starting with conda, the provider that worked for this program last time. To go back to the normal order, delete ~provider.state.json in this folder."
+exit /b 0
+:pm_unreadable
+call :log "[WARN] Provider memory: ~provider.state.json is not in a form this bootstrapper reads. Ignoring it and using the normal order. Delete the file to remove this message."
+exit /b 0
+:pm_conda_gone
+set "HP_PM_CONDA_OK="
+del /f /q "~provider.state.json" >nul 2>&1
+call :log "[INFO] Provider memory: conda was remembered, but Miniconda is no longer installed. Cleared ~provider.state.json and using the normal order."
+exit /b 0
+
+rem A verification run that exited 0 on a fresh build is a pass; the site says which kind. HP_PM_PASS is reset at the start
+rem of every attempt in :run_entry_smoke and set to user_confirmed by :lc_window_yes, and :success reads it.
+:provider_memory_note_pass
+set "HP_PM_PASS=exe_ok"
+if "%HP_LC_SITE%"=="interpreter" set "HP_PM_PASS=interpreter_ok"
+exit /b 0
+
+rem Writes the memory file at the end of a run. Only a verified pass on conda that the cascade reached counts: the run
+rem ended ok, uv was tried and left (HP_CASCADE_TRIED_UV), and neither the switch nor conda-only CI mode was in force.
+:provider_memory_write
+if not defined HP_PM_PASS exit /b 0
+if /i not "%HP_ENV_MODE%"=="conda" exit /b 0
+if not defined HP_CASCADE_TRIED_UV exit /b 0
+if /i not "%HP_BOOTSTRAP_STATE%"=="ok" exit /b 0
+if defined HP_PVW_PROVIDER_CONDA exit /b 0
+if "%HP_FORCE_CONDA_ONLY%"=="1" exit /b 0
+echo {"version":1,"provider":"conda","passType":"%HP_PM_PASS%","cascadedFrom":"uv"}> "~provider.state.json"
+if errorlevel 1 (
+  call :log "[WARN] Provider memory: could not write ~provider.state.json; the next run will start with uv again."
+  exit /b 0
+)
+call :log "[INFO] Provider memory: conda worked for this program after uv did not, so the next run will start with conda. To go back to the normal order, delete ~provider.state.json in this folder."
+exit /b 0
+
+rem Item 66: runtime.txt written by an earlier run of this bootstrapper under another provider holds that provider's exact
+rem patch version, which conda may not have. The write-back leaves ~runtime_writeback.txt with the same text; while
+rem runtime.txt is still identical to it, nobody edited it, so it is treated as absent and conda's own write-back
+rem replaces it. A runtime.txt the user wrote or changed never matches and is kept.
+:runtime_txt_writeback_release
+if not exist "runtime.txt" exit /b 0
+if not exist "~runtime_writeback.txt" exit /b 0
+fc "runtime.txt" "~runtime_writeback.txt" >nul 2>&1
+if errorlevel 1 exit /b 0
+call :log "[INFO] runtime.txt holds the exact Python version an earlier run of this bootstrapper wrote. Ignoring it so conda can choose a version it has."
+del /f /q "runtime.txt" >nul 2>&1
+del /f /q "~runtime_writeback.txt" >nul 2>&1
 exit /b 0
 
 :provider_cascade
@@ -2557,6 +2674,8 @@ if not "%HP_FAIL_MSG%"=="" call :log "%HP_FAIL_MSG%"
 if "%HP_FORCE_CONDA_ONLY%"=="1" (
   rem derived requirement: the dedicated conda CI slice must surface conda failures instead of hiding behind venv/system fallbacks.
   call :log "[INFO] Conda-only mode: skipping fallback attempts."
+  rem CLAUDE.md Item 66: under the switch a failed solve stops here on purpose; say how to let the other providers try.
+  if defined HP_PVW_PROVIDER_CONDA call :log "[HINT] PVW_PROVIDER=conda is set, so no other provider was tried. Run again without PVW_PROVIDER to let the normal provider order try."
   exit /b 0
 )
 
@@ -3748,6 +3867,7 @@ rem offer, so a cascade tier never judges its run by an earlier tier's exit code
 set "HP_LC_EXIT="
 set "HP_LC_SITE="
 set "HP_LC_CKPT_RC="
+set "HP_PM_PASS="
 rem REQ-012: super-user hook -- skip the entry-script smoke test (and fast-path EXE
 rem reuse, which also executes the program) so no user code runs. Env creation,
 rem dependency install, and the PyInstaller build still proceed; the result is left
@@ -5543,6 +5663,7 @@ rem helper and is shown with type, never through :log, because it can hold any s
 rem setlocal, so HP_CASCADE_APPROVED reaches the main line. Prompt gate: see :cascade_consent_gate.
 if not defined HP_LC_EXIT exit /b 0
 if defined HP_FASTPATH_USED goto :lc_cleanup
+if "%HP_LC_EXIT%"=="0" call :provider_memory_note_pass
 if "%HP_LC_EXIT%"=="0" goto :lc_cleanup
 if "%HP_LC_EXIT%"=="-1" goto :lc_window
 set "HP_LC_REASON="
@@ -5642,6 +5763,7 @@ goto :lc_window_no
 :lc_window_yes
 set "HP_LC_STATE=window_confirmed"
 set "HP_LC_PASS=user_confirmed"
+set "HP_PM_PASS=user_confirmed"
 call :log "[INFO] Last chance: you said the window opened and worked; keeping this build. Pass type: user_confirmed."
 call :lc_row
 goto :lc_cleanup
@@ -5943,6 +6065,7 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
     call :log "[WARN] runtime.txt write failed (read-only filesystem?). Tier 3 remains active."
   ) else (
     call :log "[INFO] runtime.txt written: %PYVER%"
+    >"~runtime_writeback.txt" echo %PYVER%
     set "HP_PYSPEC_ORIGINAL=%PYSPEC%"
     set "PYSPEC=%PYVER:python-=python=%"
     rem derived requirement: this PYSPEC value is an artifact of whichever provider

@@ -160,8 +160,14 @@ class MemoryWrite(unittest.TestCase):
         self.assertIn('set "HP_PM_PASS="', BAT[i:i + 200])
 
     def test_a_confirmed_window_on_the_conda_tier_is_a_pass_too(self):
-        body = BAT[BAT.index(":lc_window"):]
-        self.assertIn('set "HP_PM_PASS=user_confirmed"', body[:body.index("\n:lc_cleanup")])
+        m = re.search(r"(?m)^:lc_window_yes\n", BAT)
+        self.assertIsNotNone(m)
+        body = BAT[m.start():BAT.index("goto :lc_cleanup", m.start())]
+        self.assertIn('set "HP_PM_PASS=user_confirmed"', body)
+        # and only an explicit yes: the no and automated branches never set it
+        for label in (":lc_window_no", ":lc_window_gate_auto"):
+            n = re.search(r"(?m)^%s\n" % re.escape(label), BAT)
+            self.assertNotIn("HP_PM_PASS", BAT[n.start():BAT.index("goto :lc_cleanup", n.start())])
 
     def test_success_writes_before_it_releases_the_lock(self):
         s = BAT[BAT.index("\n:success\n"):]
