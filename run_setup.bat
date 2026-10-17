@@ -5912,9 +5912,12 @@ exit /b 0
 :detect_elevation
 rem Item 78: the one elevation test. fsutil dirty query succeeds only for an elevated process.
 rem HP_TEST_NOT_ELEVATED=1 simulates a non-admin run for CI. Sets HP_ELEVATED=1 or leaves it empty.
+rem derived requirement: fsutil gets NUL for stdin. A child process shares the bootstrapper's redirected
+rem stdin. With this call added at the top of every run, and no other difference from a passing run, the uv
+rem lane's interactive round-trip ended with the program at end-of-file on its first input() (PR 488).
 set "HP_ELEVATED="
 if "%HP_TEST_NOT_ELEVATED%"=="1" exit /b 0
-fsutil dirty query %systemdrive% >nul 2>&1
+fsutil dirty query %systemdrive% <nul >nul 2>&1
 if not errorlevel 1 set "HP_ELEVATED=1"
 exit /b 0
 :log
