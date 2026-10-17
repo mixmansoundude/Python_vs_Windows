@@ -256,7 +256,7 @@ if exist "%HP_PS_PROBE_FILE%" rd /s /q "%HP_PS_PROBE_FILE%" >nul 2>&1
 set "HP_SCRIPT_ROOT=%~dp0"
 for %%R in ("%HP_SCRIPT_ROOT%") do set "HP_SCRIPT_ROOT=%%~fR"
 if not "%HP_SCRIPT_ROOT:~-1%"=="\" set "HP_SCRIPT_ROOT=%HP_SCRIPT_ROOT%\"
-set "HP_CI_MARKER=.ci_bootstrap_marker"
+set "HP_CI_MARKER=~ci_bootstrap_marker"
 type nul > "%HP_CI_MARKER%" 2>nul
 set "LOG=~setup.log"
 set "LOGPREV=~setup.prev.log"
@@ -1826,10 +1826,10 @@ rem A failed/missing/skipped autopep723 result is a silent no-op; pipreqs's own 
 rem and the existing dependency-install path below are entirely unaffected either way.
 set "HP_UVX_EXE=%HP_UV_EXE:uv.exe=uvx.exe%"
 if /I "%HP_ENV_MODE%"=="uv" if defined HP_ENTRY if exist "%HP_UVX_EXE%" if not defined HP_SKIP_AUTOPEP_DISCOVERY (
-  "%HP_UVX_EXE%" autopep723 check "%HP_ENTRY%" > "requirements.autopep.txt" 2>>"%LOG%"
+  "%HP_UVX_EXE%" autopep723 check "%HP_ENTRY%" > "~requirements.autopep.txt" 2>>"%LOG%"
   call :emit_from_base64 "~autopep_merge.py" HP_AUTOPEP_MERGE
   if not errorlevel 1 (
-    "%HP_PY%" "~autopep_merge.py" "requirements.autopep.txt" "requirements.txt" >> "%LOG%" 2>&1
+    "%HP_PY%" "~autopep_merge.py" "~requirements.autopep.txt" "requirements.txt" >> "%LOG%" 2>&1
     if not errorlevel 1 (
       call :log "[INFO] REQ-005.12: autopep723 discovery merge complete."
     ) else (

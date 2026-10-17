@@ -63,7 +63,7 @@ if ($env:HP_CACHE_CORRUPTED -eq '1') {
   Add-Content -Path $ResultsPath -Value ($rec | ConvertTo-Json -Compress -Depth 8) -Encoding Ascii
   exit 0
 }
-if (-not (Test-Path ".\.ci_bootstrap_marker")) {
+if (-not (Test-Path ".\~ci_bootstrap_marker")) {
   throw "CI bootstrap marker not found. Did run_setup.bat run?"
 }
 $StatusFile = Join-Path $ProjDir "~bootstrap.status.json"

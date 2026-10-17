@@ -121,7 +121,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "::warning:: Cache corrupted, skipping fast-path tests (HP_CACHE_CORRUPTED=1)"
-          '' | Set-Content '.ci_bootstrap_marker' -Encoding Ascii
+          '' | Set-Content '~ci_bootstrap_marker' -Encoding Ascii
           '{"state":"cache_corrupted","exitCode":0,"pyFiles":0}' | Set-Content '~bootstrap.status.json' -Encoding Ascii
           if (-not (Test-Path 'tests')) { New-Item -ItemType Directory 'tests' | Out-Null }
           $row = '{"id":"self.cache.corrupted","pass":true,"desc":"Cache corrupted; bootstrap skipped (infrastructure, not product failure)","lane":"cache"}'
@@ -318,13 +318,13 @@ jobs:
             type bootstrap.log
             exit /b %RC%
           )
-          echo bootstrapped> .ci_bootstrap_marker
+          echo bootstrapped> ~ci_bootstrap_marker
 
       - name: Catch cache lane bootstrap failure
         if: ${{ matrix.mode == 'cache' && steps.bootstrap_env.outcome == 'failure' }}
         shell: pwsh
         run: |
-          '' | Set-Content '.ci_bootstrap_marker' -Encoding Ascii
+          '' | Set-Content '~ci_bootstrap_marker' -Encoding Ascii
           '{"state":"cache_bootstrap_failed","exitCode":1,"pyFiles":0}' | Set-Content '~bootstrap.status.json' -Encoding Ascii
           if (-not (Test-Path 'tests')) { New-Item -ItemType Directory 'tests' | Out-Null }
           $row = '{"id":"self.cache.bootstrap.failed","pass":true,"desc":"Cache lane bootstrap failed; treated as infrastructure issue (non-blocking)","lane":"cache"}'

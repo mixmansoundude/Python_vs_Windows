@@ -552,6 +552,14 @@ bootstrapper leaves in the app folder, and also requires the stub entry and the 
 listing so an empty or wrong listing cannot pass. A copy named `dependency_source.txt` left by an older version
 stays where it is; nothing deletes it.
 
+**The litter row found two more non-tilde writers on its first run, both fixed with it** (run `38984687670`,
+`litter` lists them): the bootstrapper's own CI marker `.ci_bootstrap_marker` (written at the top of every run,
+read by `tests/harness.ps1` and written by three `batch-check.yml` steps) is now `~ci_bootstrap_marker`, and the
+uv lane's autopep723 raw output `requirements.autopep.txt` is now `~requirements.autopep.txt`
+(`tests/selfapps_autopep_discovery.ps1` reads it; `tools/autopep_merge.py` takes the path as an argument, its
+default name is only for direct testing). Any new top-level file the bootstrapper writes needs a tilde, or a name
+the user is meant to keep in the row's allow-list.
+
 **`:try_fast_exe` runs twice per stale-EXE run, so its "not reusing" notice lives at the first call
 site only** (Item 68). The top-of-file call and the one in `:run_entry_smoke`'s build gate both get an
 empty `HP_FASTPATH_TOKEN` for a stale EXE. The `[INFO] Fast path: not reusing ...` line is printed right
