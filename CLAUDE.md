@@ -72,6 +72,7 @@ tests/
   selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
   selfapps_provider_memory.ps1 Item 66: the provider memory file `~provider.state.json` and the `PVW_PROVIDER=conda` switch (no-switch, invalid value, Miniconda gone, unreadable file and cached-EXE rows on the real lane, gating; forced, remember and forced-stop rows on the uv lane, non-gating because of the Miniconda download)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
+  selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
@@ -296,6 +297,7 @@ Test files and what they cover:
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
+| `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -813,6 +815,12 @@ the original symptom (see that doc's "CI-first testing policy").
   extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
   `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
   dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
+  **In progress (PR #500, all three slices in one PR by the bundle rule: slice 2 and 3 touch disjoint
+  files and slice 1's tests are slice 2's red tests)**: red tests first (`tests/test_toml_oracle.py`,
+  `tests/toml_oracle_check.py`, the `RequiresPythonTomlScope` class, the flipped pyproj test), then
+  `pyproj_deps.py` (escapes decoded, unclosed array exits 2, `HP_PYPROJ_DEPS` margin 198 to 2826) and
+  `detect_python.py` (tomllib, pattern kept for unparseable TOML, `HP_DETECT_PY` margin 520). Row
+  `self.toml.uvcorpus` is non-gating (needs the network). Detail: `docs/agent-interconnect.md`.
   Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
   as a Python-version input) are in `docs/agent-cold-storage.md`.
 

@@ -333,6 +333,18 @@ acquisition line). Skips with `skip=true, reason=non-windows-host` on non-Window
 self.pvw_quickstart.check, self.pvw_quickstart.run
 ```
 
+## selfapps-toml-uvcorpus NDJSON rows (selfapps_toml_uvcorpus.ps1, uv lane only, non-gating)
+
+Item 79 slice 1: a standalone canary (installs uv the README way, no `run_setup.bat`). Real
+`uv add --script` writes four dependencies (lower bound, extra with `~=`, two markers) and
+`tools/pep723_extract.py` must list exactly what `tests/toml_oracle_check.py` (PEP regex plus tomllib)
+reads from the same block. The row also requires the marker and the extra to be present, so a header
+that lost them cannot pass. Non-gating: it needs the network. Skips with `skip=true` on non-Windows.
+
+```
+self.toml.uvcorpus
+```
+
 ## selfapps-autopep-discovery NDJSON rows (selfapps_autopep_discovery.ps1, uv lane only)
 
 Single deterministic scenario (REQ-005.12, Tier 1): proves the bootstrapper-integrated

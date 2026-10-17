@@ -145,19 +145,47 @@ class RegexFallbackPath(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"), "pkg[all]\n")
 
-    def test_escaped_quote_backslash_not_stripped(self):
-        # derived requirement (observed, not changed): unlike tomllib's own parser,
-        # the regex fallback's char-by-char walk skips an escaped quote to avoid
-        # stopping early, but does not strip the backslash from the collected
-        # text -- a real, minor, pre-existing behavioral difference between the
-        # two paths. Documented here rather than "fixed" since real-world
-        # pyproject.toml dependency strings essentially never contain escaped
-        # quotes, and changing it is out of scope for a payload-promotion pass.
+    def test_escaped_quote_is_decoded_like_tomllib(self):
+        # CLAUDE.md Item 79 slice 2 (flipped from the old "backslash kept" behaviour): the fallback walk
+        # decodes TOML escapes in double-quoted items, as tomllib does, so a marker written the way the
+        # PEP 508 examples write it (sys_platform == \"win32\") reaches pip without the backslashes.
         with tempfile.TemporaryDirectory() as d:
             _write(Path(d) / "pyproject.toml", '[project]\ndependencies = ["weird\\"quote"]\n')
             rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
             self.assertEqual(rc, 0)
-            self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"), 'weird\\"quote\n')
+            self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"), 'weird"quote\n')
+
+    def test_unicode_escapes_decode_and_an_invalid_code_point_is_left_as_written(self):
+        # The \u and \U branch of the shared unescape text. tomllib would reject the out-of-range \U
+        # outright; the fallback leaves it as written (same as pep723_extract.py) rather than inventing a
+        # character, so the bad item still reaches pip as an obvious error instead of vanishing.
+        with tempfile.TemporaryDirectory() as d:
+            _write(
+                Path(d) / "pyproject.toml",
+                '[project]\ndependencies = ["c\\u0041d", "x\\U00000042", "bad\\UFFFFFFFF"]\n',
+            )
+            rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                (Path(d) / "out.txt").read_text(encoding="ascii"), "cAd\nxB\nbad\\UFFFFFFFF\n"
+            )
+
+    def test_single_quoted_item_is_literal(self):
+        # A TOML literal string has no escapes: the backslash stays.
+        with tempfile.TemporaryDirectory() as d:
+            _write(Path(d) / "pyproject.toml", "[project]\ndependencies = ['a\\b']\n")
+            rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
+            self.assertEqual(rc, 0)
+            self.assertEqual((Path(d) / "out.txt").read_text(encoding="ascii"), "a\\b\n")
+
+    def test_unclosed_dependencies_array_exits_2(self):
+        # CLAUDE.md Item 79 slice 2: tomllib rejects this file (exit 2 on the primary path), so the
+        # fallback must not return the items read before the text ran out.
+        with tempfile.TemporaryDirectory() as d:
+            _write(Path(d) / "pyproject.toml", '[project]\ndependencies = ["requests",\n')
+            rc, _, _ = _run(d, ["out.txt"], no_tomllib=True)
+            self.assertEqual(rc, 2)
+            self.assertFalse((Path(d) / "out.txt").exists())
 
     def test_stops_at_first_unquoted_bracket_ignoring_trailing_comment(self):
         with tempfile.TemporaryDirectory() as d:

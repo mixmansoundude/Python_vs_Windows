@@ -20,6 +20,11 @@ from unittest.mock import patch
 from tools import detect_python
 from tools.detect_python import pep440_to_conda, detect_requires_python
 
+try:
+    import tomllib
+except ImportError:  # Python below 3.11: the TOML-scoped tests below have nothing to compare with
+    tomllib = None
+
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "tools" / "detect_python.py"
 
@@ -143,6 +148,77 @@ class DetectRequiresPython(unittest.TestCase):
             with patch.object(detect_python, "RUNTIME_PATH", str(runtime)), \
                  patch.object(detect_python, "PYPROJECT_PATH", str(pyproject)):
                 self.assertEqual(detect_requires_python(), "python>=3.10")
+
+
+def _spec(text, tomllib_missing=False, raw=None):
+    """Run detect_requires_python() on a pyproject.toml holding text (or the raw bytes)."""
+    with tempfile.TemporaryDirectory() as d:
+        runtime = Path(d) / "runtime.txt"
+        pyproject = Path(d) / "pyproject.toml"
+        pyproject.write_bytes(raw if raw is not None else text.encode("utf-8"))
+        patches = [patch.object(detect_python, "RUNTIME_PATH", str(runtime)),
+                   patch.object(detect_python, "PYPROJECT_PATH", str(pyproject))]
+        if tomllib_missing:
+            patches.append(patch.object(detect_python, "tomllib", None, create=True))
+        for p in patches:
+            p.start()
+        try:
+            return detect_requires_python()
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+
+@unittest.skipIf(tomllib is None, "no tomllib in the test interpreter")
+class RequiresPythonTomlScope(unittest.TestCase):
+    """CLAUDE.md Item 79 slice 3: requires-python is read as TOML (the [project] table only, comments
+    ignored), not found by a regular expression over the whole file."""
+
+    def test_commented_out_line_is_ignored(self):
+        self.assertEqual(_spec('[project]\nname = "app"\n# requires-python = ">=3.8,<3.9"\n'), "")
+
+    def test_real_key_wins_over_an_earlier_commented_out_line(self):
+        self.assertEqual(
+            _spec('[project]\n# requires-python = ">=3.8,<3.9"\nrequires-python = ">=3.10"\n'),
+            "python>=3.10")
+
+    def test_key_under_another_table_is_ignored(self):
+        self.assertEqual(_spec('[project]\nname = "app"\n\n[tool.other]\nrequires-python = ">=3.8"\n'), "")
+
+    def test_key_under_another_table_before_project_is_ignored(self):
+        self.assertEqual(
+            _spec('[tool.other]\nrequires-python = ">=3.8"\n\n[project]\nrequires-python = ">=3.10"\n'),
+            "python>=3.10")
+
+    def test_triple_quoted_value(self):
+        self.assertEqual(_spec('[project]\nrequires-python = """>=3.10"""\n'), "python>=3.10")
+
+    def test_literal_string_with_trailing_comment(self):
+        self.assertEqual(_spec("[project]\nrequires-python = '>=3.10'  # needs match\n"), "python>=3.10")
+
+    def test_dotted_key_form(self):
+        self.assertEqual(_spec('project.requires-python = ">=3.10"\n'), "python>=3.10")
+
+    def test_not_a_string_is_ignored(self):
+        self.assertEqual(_spec("[project]\nrequires-python = 3.10\n"), "")
+
+    def test_byte_order_mark_does_not_hide_the_real_key(self):
+        raw = b'\xef\xbb\xbf[project]\n# requires-python = ">=3.8,<3.9"\nrequires-python = ">=3.10"\n'
+        self.assertEqual(_spec("", raw=raw), "python>=3.10")
+
+
+class RequiresPythonPatternFallback(unittest.TestCase):
+    """The pattern read stays for a file tomllib cannot parse and for an interpreter without tomllib, so
+    a hand-edited pyproject.toml with one stray character, or an older Python, still gets its version."""
+
+    def test_unparseable_toml_still_uses_the_pattern(self):
+        # Today's behaviour, kept: one broken line elsewhere must not cost the Python version.
+        self.assertEqual(_spec('[project]\nrequires-python = ">=3.10"\nname = "unterminated\n'),
+                         "python>=3.10")
+
+    def test_missing_tomllib_still_uses_the_pattern(self):
+        self.assertEqual(_spec('[project]\nrequires-python = ">=3.10"\n', tomllib_missing=True),
+                         "python>=3.10")
 
 
 class PayloadSync(unittest.TestCase):
