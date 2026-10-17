@@ -153,7 +153,8 @@ class BatchWiring(unittest.TestCase):
         self.assertIn("if not defined HP_LC_EXIT exit /b 0", head)
         self.assertIn("if defined HP_FASTPATH_USED goto :lc_cleanup", head)
         self.assertIn('if "%HP_LC_EXIT%"=="0" goto :lc_cleanup', head)
-        self.assertIn('if "%HP_LC_EXIT%"=="-1" goto :lc_cleanup', head)
+        # -1 never reaches the three-answer prompt; it goes to the window question (slice 2), which has its own gates
+        self.assertIn('if "%HP_LC_EXIT%"=="-1" goto :lc_window', head)
 
     def test_uv_to_conda_only(self):
         self.assertIn('if /i not "%HP_ENV_MODE%"=="uv" set "HP_LC_REASON=provider"', self.block)

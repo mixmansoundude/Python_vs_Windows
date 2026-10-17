@@ -1,26 +1,22 @@
 # :run_exe_smokerun's dedicated helper -- the ONLY place in this file family allowed to
-# force-kill (Kill()) the verification run. Unlike ~failfast_probe.ps1 (never kills -- covers
-# the untimed fastpath/interpreter/checkpoint call sites), this IS the fresh-build verification
-# run itself: nothing else will ever confirm this particular build worked, so an unresponsive
-# process here cannot be trusted to eventually finish the way a previously-verified cached
-# artifact or interpreter run can.
+# force-kill (Kill()) the verification run. Unlike ~failfast_probe.ps1 (never kills), this IS
+# the fresh-build verification run: nothing else will confirm this build worked, so an
+# unresponsive process here cannot be trusted to finish by itself.
+#
+# Item 82 slice 2: when (and only when) Kill() really stops a silent process, this script also
+# writes ~smokerun_killed.txt. Exit -1 alone is not proof of a stop: a failed launch or a program
+# that exits -1 by itself reads the same, and the batch asks the window question only on the marker.
 #
 # Reads inputs from env vars (same cmd.exe-quoting-hazard-avoidance reasoning as
 # ~failfast_probe.ps1's own header comment): HP_SMOKERUN_EXE is a path to the built EXE (e.g.
-# dist\<env>.exe), CWD-relative. Caller CWD = app root (CLAUDE.md Item 38: matches :try_fast_exe/
-# :verify_no_exe_interpreter's own CWD now, not dist\ as before -- see docs/agent-interconnect.md
-# "Single-verification smoke model"). HP_SMOKERUN_OUT/ERR default to ~run.out.txt / ~run.err.txt
-# (CWD-relative, i.e. the app root). HP_SMOKERUN_RESULT (default ~smokerun_result.txt) is where
-# this script writes its exit-code result -- NOT stdout; see ~failfast_probe.ps1's header comment
-# (same reasoning: the caller invokes this script directly, no for /f/backtick stdout capture, so
-# live-teed output reaches the console instead of being silently swallowed and corrupting result
-# parsing). Caller must pre-truncate the output/result files before invoking, same as
-# ~failfast_probe.ps1.
-#
-# Same live-tee as ~failfast_probe.ps1 -- see that file's header comment for the full rationale
-# (self-sequenced chunk reads via StreamReader.ReadAsync(char[], int, int), NOT
-# Register-ObjectEvent or ReadLineAsync() -- PowerShell/PowerShell#11937 and Finding 9,
-# docs/plan-cli-interactive-verification.md, cover why).
+# dist\<env>.exe), CWD-relative. Caller CWD = app root (CLAUDE.md Item 38; see
+# docs/agent-interconnect.md "Single-verification smoke model").
+# HP_SMOKERUN_OUT/ERR default to ~run.out.txt / ~run.err.txt and HP_SMOKERUN_RESULT to
+# ~smokerun_result.txt (CWD-relative); the exit-code result goes to that file, NOT stdout, because
+# the caller runs this script directly so live-teed output reaches the console (see
+# ~failfast_probe.ps1's header). The caller pre-truncates those files. Same live-tee: chunk reads
+# via StreamReader.ReadAsync(char[], int, int), NOT Register-ObjectEvent or ReadLineAsync()
+# (PowerShell/PowerShell#11937, Finding 9, docs/plan-cli-interactive-verification.md).
 #
 # derived requirement (Open Question 1, owner decision 2026-07-24): HP_SMOKERUN_KILL_MS (default
 # 30000, unchanged) is a classification checkpoint, not an unconditional deadline -- Kill() fires
@@ -99,7 +95,7 @@ while ((-not $p.HasExited) -or (-not $outDone) -or (-not $errDone)) {
         }
     }
     if ((-not $killed) -and (-not $sawOutput) -and (-not $p.HasExited) -and ($sw.ElapsedMilliseconds -ge $killMs)) {
-        try { $p.Kill() } catch {}
+        try { $p.Kill(); '1' | Set-Content -Path '~smokerun_killed.txt' -Encoding ASCII } catch {}
         $killed = $true
     }
     Start-Sleep -Milliseconds 20

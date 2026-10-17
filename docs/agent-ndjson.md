@@ -1134,6 +1134,22 @@ row `cascade`); `self.lastchance.cascade_again` (the program fails on conda too:
 tier writes row `not_offered` with reason `provider`). All skip with `skip=true, reason=non-windows-host` off
 Windows. Expected red on the commit that adds them (no offer exists) and green once `:last_chance_offer` exists.
 
+Item 82 slice 2 adds four more uv-lane rows for the "Did it open and work?" question of a window app on the conda
+tier reached through the cascade. Each scenario is one fixture that fails on uv (so the slice 1 prompt is raised and
+answered `C` through `HP_TEST_LASTCHANCE_ANSWER`), then on conda stays silent until the runner force-stops it
+(`HP_SMOKERUN_KILL_MS=6000`); the answer comes from `HP_TEST_WINDOWOK_ANSWER`, the automated-run guards, or a real
+`set /p` (`HP_TEST_FORCE_INTERACTIVE_WINDOWOK`). `self.lastchance.window_yes` (answer Y: the question is shown once,
+log `Last chance: you said the window opened and worked`, second offer row `window_confirmed` with `passType`
+`user_confirmed`, provider `conda`, `exitCode` `-1`); `self.lastchance.window_enter` (a bare Enter at the real prompt:
+`window_declined`, no pass type); `self.lastchance.window_auto` (no override in an automated run: the question text is
+echoed, `window_automated`, no pass type, no wait); `self.lastchance.window_selfexit` (the conda-tier program exits by
+itself with `-1`, the same code a force-stop produces, after the uv tier left a stale `~smokerun_killed.txt`: the
+question is absent even with a Y supplied, only the slice 1 row exists, and the marker is gone). The existing
+`timeout`, `cascade` and `cascade_again` rows also assert the question never shows (`windowPrompt` false). The
+`selfexit` row is a negative control, so on the red run it passes for the wrong reason; its precondition fields
+(`Entry smoke exit=-1` on conda, `stale marker written`) are what show the old `-1` gate could not tell the two cases
+apart.
+
 ```
 self.lastchance.worked
 self.lastchance.errline
@@ -1143,13 +1159,54 @@ self.lastchance.exit0
 self.lastchance.timeout
 self.lastchance.cascade
 self.lastchance.cascade_again
+self.lastchance.window_yes
+self.lastchance.window_enter
+self.lastchance.window_auto
+self.lastchance.window_selfexit
+```
+
+## selfapps-provider-memory NDJSON rows (selfapps_provider_memory.ps1, real lane GATING, uv lane non-gating)
+
+CLAUDE.md Item 66 regression test, README REQ-009; decided 2026-10-17 (Q11, option A). Each scenario is one real
+bootstrap (or two, in the same folder) of a standard-library fixture; each row asserts the reason it passes (log
+lines, files, status), not only the exit code. `PROVIDER_GROUP` picks the group (`real`, `uv`, unset runs both).
+Real lane (gating, nothing downloaded beyond a normal uv bootstrap): `self.provider.unset` (no switch and no file:
+the normal uv run, nothing about memory or the switch in any output, and a plain uv pass writes no file);
+`self.provider.invalid` (`Conda`, `miniconda` and a hostile string stop the run with one `[ERROR]` before any uv work,
+and the value is never echoed or turned into a file); `self.provider.miniconda_gone` (the file names conda but
+`PUBLIC` points where no Miniconda is: cleared with a visible line, normal order); `self.provider.unreadable` (a
+file the bootstrapper cannot read is ignored with a visible warning and kept); `self.provider.fastpath` (a valid
+cached EXE is reused before provider selection, so `PVW_PROVIDER=conda` changes nothing for that run). Uv lane
+(non-gating because they download Miniconda and solve a conda environment, which can fail for transient reasons):
+`self.provider.forced` (switch with Miniconda not yet installed in a fresh `PUBLIC`, an existing `.uv_env` and an
+exact pin the bootstrapper itself wrote earlier: Miniconda acquired, uv venv not reused, the stale pin ignored,
+nothing written); `self.provider.remember` (run 1 reaches conda through the cascade and writes the file, run 2 after
+editing `requirements.txt` and the program starts at conda, says so and how to reset, skips uv, keeps the file);
+`self.provider.forced_stop` (a Python version conda cannot give: stops at conda with a hint, no other provider).
+All skip with `skip=true, reason=non-windows-host` off Windows. `self.lastchance.window_yes`, `.window_enter` and
+`.window_auto` also read the file: only an explicit yes on the conda tier records `user_confirmed`. Expected red on the
+commit that adds them (no memory and no switch exist) and green once they do.
+
+```
+self.provider.unset
+self.provider.invalid
+self.provider.miniconda_gone
+self.provider.unreadable
+self.provider.fastpath
+self.provider.forced
+self.provider.remember
+self.provider.forced_stop
 ```
 
 ## Last-chance offer row (run_setup.bat, written only when HP_NDJSON is defined)
 
 CLAUDE.md Item 82 slice 1. `:lc_row` writes `self.lastchance.offer` once per call of `:last_chance_offer` that
-reached a state, which is only after a non-zero, non-`-1` verification exit on a fresh build: `details.state` is
-`worked`, `cascade`, `neither`, `automated` (a guard answered) or `not_offered`; `details.reason` is set for
+reached a state, which is only after a non-zero verification exit on a fresh build, and an exit of `-1` counts only
+when the runner really stopped a silent process on the conda tier (a program that exits by itself with `-1`
+writes nothing): `details.state` is
+`worked`, `cascade`, `neither`, `automated` (a guard answered) or `not_offered`; slice 2 adds `window_confirmed`,
+`window_declined` and `window_automated` for the conda-tier window question (written only when the runner really
+stopped a silent process, with `exitCode` `-1`); `details.reason` is set for
 `not_offered` (`provider`, `cascade_approved`, `checkpoint_ok`, `runtime_install`); `details.site` is `exe` or
 `interpreter`; `details.provider` is `HP_ENV_MODE`; `details.exitCode` is the failing exit; `details.passType` is
 `user_confirmed` for `worked` (the Item 66 record will carry it); `details.hasLine` says whether an error line was

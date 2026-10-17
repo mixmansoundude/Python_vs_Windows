@@ -69,7 +69,8 @@ tests/
   selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
   selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
   selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
-  selfapps_lastchance.ps1      Item 82 slice 1: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating, silent-timeout and cascade scenarios on the uv lane, non-gating)
+  selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
+  selfapps_provider_memory.ps1 Item 66: the provider memory file `~provider.state.json` and the `PVW_PROVIDER=conda` switch (no-switch, invalid value, Miniconda gone, unreadable file and cached-EXE rows on the real lane, gating; forced, remember and forced-stop rows on the uv lane, non-gating because of the Miniconda download)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
   selfapps_pyvisa_subfolder.ps1 Item 78 slice 2: NI-VISA install asks before running when the import is only in a subfolder (real and conda-full lanes, gating)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
@@ -291,6 +292,8 @@ Test files and what they cover:
 | `test_pep723_extract.py` | Item 62: PEP 723 dependency extraction (the layout `uv add --script` writes in LF and CRLF, hand-written layouts, one-line arrays, quote styles, comments, BOM, fence whitespace, tool-table and malformed negatives), Python 3.9 grammar guard, HP_PEP723_EXTRACT payload sync |
 | `test_runtime_module_scan.py` | Item 65 slice 1: runtime missing-module scan (top-level name from a traceback, submodule, repeats, ImportError wording, cap; installed/on-path/stdlib/non-identifier names not reported; local module next to the helper; CLI exit codes; the three batch call sites and the reminder order; Python 3.9 grammar guard; HP_RUNTIME_MODULE_SCAN payload sync); slice 2: `--packages`/`--append` modes, name table equal to warnfix's, requirements editing, batch call sites of the offer |
 | `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
+| `test_window_confirm.py` | Item 82 slice 2: the kill marker is cleared before the runner launches and read only from the file (never from the exit code), the window question's conditions and gate order, only an explicit yes records `user_confirmed`, the automated branch asks nothing |
+| `test_provider_memory.py` | Item 66: `PVW_PROVIDER` validation (compared with `findstr /x /l` on the `set` output, no line expands the variable, runs after the file count and before the cached-EXE fast path), uv skips tested before the `PVW_UV_EXE` branch, the memory read contract (conda only, Miniconda present, never cleared by input edits), write guards (verified pass, conda after uv, state ok, no switch), the `runtime.txt` record at all three write-back sites, the failed-forced-solve hint |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
@@ -769,6 +772,7 @@ the original symptom (see that doc's "CI-first testing policy").
   Decided 2026-10-17 (Q11, option A): the memory survives edits to `requirements.txt`, `pyproject.toml`,
   `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
   deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
+  **Built 2026-10-17 (PR #497, one PR with Item 82 slice 2, README wording in the PR body)**: switch check after the `Python file count` log line, `:provider_memory_read` before the uv block, `:provider_memory_write` from `:success`, `~runtime_writeback.txt` record so a stale exact pin is dropped when conda goes first; rows `self.provider.*` (real lane gating, three uv rows non-gating), unit tests `tests/test_provider_memory.py`. Not covered, by design: the cached-EXE fast path runs first, a failed memory-start conda run follows the existing conda-failure chain and uv is not retried, only conda is remembered. Detail: `docs/agent-interconnect.md`.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
   override only, no prompt (decided 2026-10-09, Q6 = A).
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
@@ -871,8 +875,13 @@ the original symptom (see that doc's "CI-first testing policy").
   at the end of `:run_entry_smoke`, own helper `HP_LAST_ERROR_LINE`, the checkpoint's interpreter result
   kept as `HP_LC_CKPT_RC`, the `RUNTIME_MISMATCH` hint reworded so it no longer rules out the
   environment. Rows `self.lastchance.*` (real lane gating, silent-timeout and cascade scenarios on the
-  uv lane non-gating because of the Miniconda download and the force-stopped EXE). Slice 2 (the
-  conda-tier "Did it open and work?" question with the smoke runner's kill marker) is not built.
+  uv lane non-gating because of the Miniconda download and the force-stopped EXE).
+  **Slice 2 (built 2026-10-16, PR #497)**: `:lc_window` asks "Did it open and work? [y/N]" for exit `-1` on the
+  cascade-reached conda tier only, gated on `HP_EXE_KILLED_SILENT`, which `:run_exe_smokerun` reads from
+  `~smokerun_killed.txt`, written by `tools/exe_smokerun.ps1` only inside its `Kill()` branch
+  (`HP_EXE_SMOKERUN` re-synced). Rows `self.lastchance.window_yes/_enter/_auto/_selfexit` (uv lane,
+  non-gating: Miniconda download and a force-stopped silent EXE), unit tests `tests/test_window_confirm.py`
+  and the `KilledMarker` cases in `tests/test_exe_smokerun.py`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
