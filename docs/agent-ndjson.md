@@ -754,8 +754,8 @@ fresh folder and one bootstrap per row. Each folder holds a stdlib-only stub (or
 pipreqs cells) and one distinct tiny package per declared source: requirements.txt `termcolor`, pyproject.toml
 `iniconfig`, PEP 723 header `toolz`. Both skip hooks are set (no user code runs; the build still does), and the
 PEP 723 write-back and autopep723 merge are off so the declared lists stay as written. A row passes only if the
-one-line source record the bootstrapper writes (`~dependency_source.txt`, `dependency_source.txt` in older
-versions; the script reads whichever exists) names the expected source, exactly the expected watched packages are
+one-line source record the bootstrapper writes (`~dependency_source.txt`, Item 76; only that name is read, so a
+return to the old non-tilde name leaves the cells without a record) names the expected source, exactly the expected watched packages are
 in `~dependency_installed.txt` (so a losing source's package is absent) and the run exited 0. `.pep723_malformed`
 also needs the documented `PEP 723 block found but dependency list is empty or malformed` warning. Details carry the
 recorded source, the watched packages installed, and `sourceOk`/`watchedOk`/`ran`. Cells: `.pep723_only`,
@@ -773,6 +773,27 @@ self.depsource.pep723_malformed
 self.depsource.pyproject_nodeps
 self.depsource.requirements_empty
 self.depsource.nothing_declared
+```
+
+## selfapps-log-rotate NDJSON rows (selfapps_log_rotate.ps1, real lane only, gating)
+
+Gap T7 of `docs/plan-test-suite-gaps.md` (README "Maintenance, Logging"; replaces the static harness row
+`log.rotate`, which only looked for the text `Length -gt 10485760` in the batch). The script seeds real logs and
+lets the real bootstrapper start through the short system-Python path (`HP_CI_SKIP_ENV=1`, the same as
+`selfapps_isolation.ps1`; rotation happens before the environment is chosen, so a provider run would only add
+minutes). `.over`: `~setup.log` holds 11 MiB starting with a marker line and an older `~setup.prev.log` exists; the
+row passes only if the old log is now in `~setup.prev.log` (first line is the marker, at least the seed's size, the
+older prev content is gone) and the new `~setup.log` is smaller than `newLogMaxBytes` and does not carry the marker.
+`.under`: `~setup.log` holds 1 MiB; the row passes only if it is kept (first line is still the marker), grew with this
+run's lines and no `~setup.prev.log` appeared (a rotation on every start would throw the history away). Details carry
+the sizes and first lines. The seeded big logs are deleted at the end; only the boot logs and the new
+`~setup.log` of the over-limit folder are uploaded. Skips on non-Windows. Limit: the bootstrapper is stopped after
+the early system-Python path, so the row proves what the start does with the log, not that a later run in a long
+session trims a log that grew past the limit midway.
+
+```
+self.log.rotate.over
+self.log.rotate.under
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)

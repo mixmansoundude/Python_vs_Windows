@@ -79,9 +79,9 @@ if (-not (Test-Path $batchPath)) {
     exit 1
 }
 
-# The recorded-source file is read through this one list so a rename of the file touches one line (the bootstrapper
-# writes ~dependency_source.txt since Item 76; an older copy was named dependency_source.txt).
-$sourceFileNames = @('~dependency_source.txt', 'dependency_source.txt')
+# The bootstrapper writes the record as ~dependency_source.txt (Item 76). Only that name is read: a regression to the
+# old non-tilde name must leave the cells without a record, not pass through a fallback.
+$sourceFileNames = @('~dependency_source.txt')
 
 # The five distinct package names the cells look for.
 $watched = @('termcolor', 'iniconfig', 'toolz', 'six')
@@ -135,7 +135,9 @@ function Invoke-Cell {
     }
     $logName = "~depsrc_$Name.log"
     $wrapper = Join-Path $dir '~depsrc_launch.cmd'
-    Set-Content -LiteralPath $wrapper -Value @('@echo off', "call run_setup.bat $Entry > $logName 2>&1", 'exit /b %ERRORLEVEL%') -Encoding ASCII
+    # set "HP_SKIP_PIPREQS=" in the launched shell as well: the scan must run in every cell, and clearing a variable through
+    # SetEnvironmentVariable(name, $null) alone is not trusted (docs/agent-lessons-learned.md).
+    Set-Content -LiteralPath $wrapper -Value @('@echo off', 'set "HP_SKIP_PIPREQS="', "call run_setup.bat $Entry > $logName 2>&1", 'exit /b %ERRORLEVEL%') -Encoding ASCII
     $vars = [ordered]@{
         HP_SKIP_ENTRY_SMOKE = '1'; HP_SKIP_EXE_SMOKERUN = '1'; HP_SKIP_PEP723_WRITEBACK = '1'; HP_SKIP_AUTOPEP_DISCOVERY = '1'
         HP_SKIP_PIPREQS = $null; HP_SKIP_NIVISA = '1'
