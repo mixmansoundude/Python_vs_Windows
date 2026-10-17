@@ -164,6 +164,12 @@ by a shared id variable. This check is advisory (non-gating) but the finding is 
 sight. Verify a new multi-scenario file:
 `python3 -c "import re; print(re.findall(r'\bid\s*=\s*[\'\"]([A-Za-z0-9][A-Za-z0-9_.-]*)[\'\"]', open('tests/the_file.ps1').read()))"`
 
+**The doc side is just as literal: `docs/agent-ndjson.md` is read by pairing ``` fence lines over the whole file, so ONE
+unclosed fence turns every later prose block into "registered ids"** (PR #498: the registry job failed with 144 junk
+"registered but never emitted" ids such as `CI`, `anything` and `REQ-005.1`, and every new row listed as unregistered,
+while the doc looked fine in a viewer). Run `python3 tools/check_ndjson_registry.py` after editing the doc; the unit test
+`test_agent_ndjson_doc_has_balanced_code_fences` names the section with the odd fence count.
+
 ---
 
 ## Never open a real source file in Python `'w'` mode as part of a "dry run" -- write to a NEW path and diff before overwriting

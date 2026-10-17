@@ -746,6 +746,7 @@ exercised (REQ-019 asks the default run to reach every fallback tier that gets t
 self.noflag.default.run
 self.noflag.default.once
 self.noflag.default.rerun
+```
 
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
 
