@@ -964,77 +964,9 @@ if ($sdWindir) {
   $summary.Add('System-directory guard: SKIP (no WINDIR)')
 }
 
-# --- Long-path (>260 chars / MAX_PATH) warning test ---
-# Arrange: run from a directory whose full path exceeds 260 chars (Windows MAX_PATH).
-# Assert:  no crash; either "[WARN] Script path is N chars" appears and exit 0, or
-#          the path was created and verified >260 chars (runner lacks long-path CWD).
-$longBase = Join-Path $TestsDir '~selftest_longpath'
-$longSub  = 'pad_' + ('a' * 80)
-$longSub2 = 'b' * 80
-$longSub3 = 'c' * 80
-$longDir  = Join-Path $longBase "$longSub\$longSub2\$longSub3"
-if (Test-Path $longBase) { Remove-Item -Recurse -Force $longBase }
-New-Item -ItemType Directory -Force -Path $longDir | Out-Null
-Copy-Item -Path $BatchPath -Destination $longDir -Force
-$lpLogName = '~longpath_bootstrap.log'
-$lpExit = -1
-$lpRanBootstrap = $false
-try {
-  Push-Location $longDir
-  try {
-    cmd /c "call run_setup.bat > $lpLogName 2>&1"
-    $lpExit = $LASTEXITCODE
-    $lpRanBootstrap = $true
-  } finally {
-    Pop-Location
-  }
-} catch {
-  # Runner does not support >260-char CWD (no LongPathsEnabled); path was created OK.
-  $lpRanBootstrap = $false
-}
-$lpLogPath = Join-Path $longDir $lpLogName
-$lpLines = @()
-if (Test-Path $lpLogPath) { $lpLines = Get-Content -LiteralPath $lpLogPath -Encoding ASCII }
-$lpWarnTag = 'Script path is'
-$lpWarnFound = ($lpLines | Where-Object { $_ -like "*$lpWarnTag*chars*" }).Count -gt 0
-$lpActualLen = $longDir.Length
-# derived requirement (former CLAUDE.md Active Backlog item 13): when $lpRanBootstrap is false,
-# Push-Location itself threw before cmd /c run_setup.bat was ever invoked -- confirmed via real
-# CI (two separate runs, months apart, identical signature: ranBootstrap=false, warnFound=false,
-# pathLen>260) to be a PERSISTENT, structural limitation of default GitHub-hosted Windows
-# runners (LongPathsEnabled is off by default, so PowerShell's own CWD navigation cannot enter a
-# >260-char directory at all), not a one-off flake. run_setup.bat's own long-path guard is never
-# reached in that case, so this genuinely does NOT confirm the WARN fires -- reporting a plain
-# pass would overstate what was actually observed. Report skip=true instead (mirrors this repo's
-# established skip pattern for "infra could not reach the code path under test", e.g. the
-# conda-not-installed-uv-first pattern in docs/agent-interconnect.md), while still failing hard
-# if the scratch path itself was not even built long enough (a genuine test-setup bug, not an
-# infra limitation).
-$lpSkip = $false
-if ($lpRanBootstrap) {
-  $lpPass = $lpWarnFound -and ($lpExit -eq 0)
-} elseif ($lpActualLen -gt 260) {
-  $lpPass = $true
-  $lpSkip = $true
-} else {
-  $lpPass = $false
-}
-Write-NdjsonRow ([ordered]@{
-  id = 'self.warn.longpath'
-  pass = $lpPass
-  desc = 'Bootstrap emits long-path warning and exits 0 when script path exceeds 260 chars (MAX_PATH)'
-  details = [ordered]@{
-    warnFound = $lpWarnFound
-    exitCode = $lpExit
-    pathLen = $lpActualLen
-    ranBootstrap = $lpRanBootstrap
-    skip = $lpSkip
-    reason = if ($lpSkip) { 'runner-cannot-navigate-long-path' } else { $null }
-  }
-})
-if ($lpSkip) { $summary.Add("Long-path warning: SKIP (runner cannot navigate a $lpActualLen-char path)") }
-elseif ($lpPass) { $summary.Add('Long-path warning: PASS') }
-else { $summary.Add("Long-path warning: FAIL (len=$lpActualLen, found=$lpWarnFound, exit=$lpExit)") }
+# The long folder path warning (REQ-003.5) is tested by tests/selfapps_longpath_near.ps1 (self.longpath.near.*),
+# which uses folder paths of 199, 200 and 215 characters. The earlier row here needed a path over 260 characters,
+# which a default runner cannot enter, so it reported skip on every run (docs/plan-test-suite-gaps.md T9).
 
 # --- PATH-negative (minimal PATH env) test ---
 # Arrange: run from a clean dir with hello_stub.py and a requirements.txt containing

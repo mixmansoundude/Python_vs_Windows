@@ -54,7 +54,7 @@ if (-not (Test-Path $batchPath)) {
     exit 1
 }
 
-$expectedExit = 5   # planted wrong on purpose in the red commit; the bootstrapper exits 0 on this path
+$expectedExit = 0   # the bootstrapper exits 0 on this path: the warning does not stop the run
 
 # Runs the bootstrapper from a scratch folder whose path, including the closing backslash the bootstrapper adds, is
 # exactly $RootLength characters. Returns what the row needs; never throws.

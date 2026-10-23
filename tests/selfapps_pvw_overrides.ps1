@@ -109,7 +109,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     if ($stage1Exit -ne 0 -or -not (Test-Path -LiteralPath $stage1Py)) {
         # Stage 1 itself failed to produce a real interpreter -- cannot proceed to stage 2's
         # actual assertion. Report as a genuine failure (not a skip): this is test-infra
-        # breakage, not a runner limitation like self.warn.longpath's own skip case.
+        # breakage, not a runner limitation like the former self.warn.longpath's skip case (removed, see selfapps_longpath_near.ps1).
         Write-NdjsonRow ([ordered]@{
             id      = 'self.pvw.python_exe.valid'
             pass    = $false
