@@ -1156,6 +1156,38 @@ counts only when the user's own code imports it.
 self.warnfix.noise.library
 ```
 
+## selfapps-realapp-pandas-excel NDJSON rows (selfapps_realapp_pandas_excel.ps1, real lane only, GATING)
+
+CLAUDE.md Item 75 (a) and (b). One folder, three bootstraps, no skip hook, so the whole default path runs (pipreqs
+scan, pandas heuristics, autopep723 merge, uv install, PEP 723 write-back, PyInstaller build, EXE verification). The
+app is `main.py` plus a sibling module and a sibling package whose names no PyPI project uses (`pvw_realapp_sheetio`,
+`pvw_realapp_report`); it writes an `.xlsx` next to the EXE, reads it back with pandas and writes
+`~realapp_token.txt` (`realapp-ok total=32 rows=3`). No `requirements.txt`, `pyproject.toml` or PEP 723 header exists
+at the start. Run 1 is the first run, run 2 changes nothing (the token file is deleted first, so a pass proves the EXE
+ran again), run 3 appends `termcolor` to `requirements.txt`. Every row records its sub-checks by name in `details`, so
+a red row says which one failed. `.first_run`: exit 0, status `ok`, EXE built, the verification run exited 0 (the last
+`Entry smoke exit=`), token text exact, `.xlsx` in `dist\`. `.deps_discovered`: pandas, openpyxl and xlsxwriter in
+`~dependency_installed.txt`, `[HEURISTIC] pandas->openpyxl` logged, recorded source `pipreqs`, no `[REPAIR] missing
+modules detected` block and no `Attempting to install:` line (discovery was complete). `.local_modules`: precondition
+that autopep723 ran (`~requirements.autopep.txt` exists) and its merge was logged, then neither local name in
+`requirements.txt` nor in the installed set and no `uv pip install -r requirements.txt failed` line (one unresolvable
+name fails the whole atomic install); `autopepReportedLocal` records whether autopep723 listed them. `.fastpath_rerun`:
+`Fast path: reusing` logged, no `Fast path: not reusing`, same EXE timestamp, token rewritten, no `UV_USED=1` (no
+reinstall) and no pipreqs command. `.edit_rerun`: `Fast path: not reusing` logged, EXE newer than after run 2, token
+rewritten, the run recorded a source, and `termcolor` is installed exactly when that source is `requirements.txt` (the
+first run's PEP 723 write-back puts a header in `main.py`, and a header outranks `requirements.txt`; the row asserts
+the run is consistent with the source it names, not that the edit wins, see `docs/open-questions.md`). Skips with
+`skip=true, reason=non-windows-host` off Windows. Real lane only on purpose: it needs PyPI like every real-lane
+scenario and adds two pandas builds, so conda-full (slowest lane) is not given it.
+
+```
+self.realapp.first_run
+self.realapp.deps_discovered
+self.realapp.local_modules
+self.realapp.fastpath_rerun
+self.realapp.edit_rerun
+```
+
 ## selfapps-runtime-modnotfound NDJSON rows (selfapps_runtime_modnotfound.ps1, real lane only, GATING)
 
 CLAUDE.md Item 65 slice 1 regression test, README REQ-018. One real bootstrap of a fixture that
