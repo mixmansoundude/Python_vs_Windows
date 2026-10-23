@@ -283,7 +283,7 @@ self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
-self.sysbuild.decline,
+self.sysbuild.decline, self.sysbuild.nuitka_prompt,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
@@ -599,7 +599,8 @@ every scenario sets it and asserts a decision the default run would not make. Ga
 behaves as auto),
 `pyinstaller_nofallback` (Nuitka fallback switched off, never reached), `pyinstaller` (a real build is
 kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller is neither installed nor run,
-failure reported with `reason=builder_nuitka`), `both_forcefail` (the optimized build starts without a prompt
+failure reported with `reason=builder_nuitka`), `nuitka_stale` (a `dist\<env>.exe` left by an earlier run is removed
+by a failed Nuitka-only build, so the verification run goes through the interpreter as the log says), `both_forcefail` (the optimized build starts without a prompt
 and its failure leaves the verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
 build needs a compiler download that can fail for network reasons (same precedent as
 `self.exe.build.tiera`): `nuitka`, `both`.

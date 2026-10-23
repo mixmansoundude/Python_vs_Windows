@@ -1205,6 +1205,14 @@ jobs:
         run: |
           & tests\selfapps_pvw_builder.ps1
 
+      - name: "Self-test: PVW_BUILDER nuitka choice removes an EXE left by an earlier run when the Nuitka build fails (nuitka_stale, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka_stale
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
       - name: "Self-test: PVW_BUILDER both choice builds the optimized version without a prompt (both_forcefail, real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2280,6 +2288,12 @@ jobs:
             tests\~selftest_pvw_builder_nuitka_forcefail\~pvw_builder_nuitka_forcefail_bootstrap.log
             tests/~selftest_pvw_builder_nuitka_forcefail/~setup.log
             tests\~selftest_pvw_builder_nuitka_forcefail\~setup.log
+            tests/~selftest_pvw_builder_nuitka_stale/~pvw_builder_nuitka_stale_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka_stale\~pvw_builder_nuitka_stale_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka_stale/~setup.log
+            tests\~selftest_pvw_builder_nuitka_stale\~setup.log
+            tests/~selftest_sysbuild_nuitka/~sysbuild_test.log
+            tests\~selftest_sysbuild_nuitka\~sysbuild_test.log
             tests/~selftest_pvw_builder_both_forcefail/~pvw_builder_both_forcefail_bootstrap.log
             tests\~selftest_pvw_builder_both_forcefail\~pvw_builder_both_forcefail_bootstrap.log
             tests/~selftest_pvw_builder_both_forcefail/~setup.log

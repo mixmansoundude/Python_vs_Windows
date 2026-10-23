@@ -60,6 +60,31 @@ def test_fallback_guard_comes_before_the_nuitka_install():
     assert "exit /b 1" in body[guard:install], "the guard must return failure so the caller reports the PyInstaller failure"
 
 
+def test_stale_exe_is_removed_before_anything_in_the_fallback_can_fail():
+    # A dist\\<env>.exe left from an earlier run survives every early return of :try_nuitka_tier_a if the delete sits
+    # after them, and the verification run then starts that OLD program while the log says the code is verified
+    # through Python (CodeRabbit on PR 499). The delete must follow the pyinstaller guard (which leaves everything
+    # untouched, nothing is built) and precede the forced-failure hook and the Nuitka install.
+    body = _between("try_nuitka_tier_a", "die")
+    guard = body.find('if /I "%HP_BUILDER%"=="pyinstaller"')
+    delete = body.find('if exist "dist\\%ENVNAME%.exe" del "dist\\%ENVNAME%.exe"')
+    hook = body.find("if defined HP_TEST_FORCE_NUITKA_FAIL")
+    install = body.find("-q nuitka")
+    assert min(guard, delete, hook, install) != -1
+    assert guard < delete < hook < install, "the stale EXE must be removed right after the pyinstaller guard"
+
+
+def test_system_build_prompt_names_the_selected_tool():
+    # With PVW_BUILDER=nuitka the system-Python build installs Nuitka, not PyInstaller, so the consent prompt must say so
+    # before it asks (CodeRabbit on PR 499). The default wording stays as it is: tests/selfapps_sysbuild.ps1 matches it.
+    gate = _between("system_build_consent_gate", "verify_no_exe_interpreter")
+    ask = gate.find("set /p")
+    nuitka = gate.find('if /I "%HP_BUILDER%"=="nuitka"')
+    assert ask != -1 and -1 < nuitka < ask, "the nuitka wording must be chosen before the question is asked"
+    assert "installs PyInstaller into your system Python" in gate
+    assert "installs Nuitka into your system Python" in gate[nuitka:ask]
+
+
 def test_nuitka_choice_does_not_install_pyinstaller():
     # The choice means PyInstaller is not wanted, so its pip install (a download of a large package) is skipped too.
     install = BAT.find('"%HP_UV_EXE%" pip install --python "%HP_PY%" -q pyinstaller')

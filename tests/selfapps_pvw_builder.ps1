@@ -17,6 +17,10 @@
 #   nuitka_forcefail     - PVW_BUILDER=nuitka with the Nuitka build forced to fail: PyInstaller is neither
 #                          installed nor run (no EXE, no "PyInstaller produced" line, the "not installed for
 #                          this run" line is logged) and the failure is reported with reason=builder_nuitka.
+#   nuitka_stale         - PVW_BUILDER=nuitka with the Nuitka build forced to fail while a dist\<env>.exe from an
+#                          earlier run is lying there (seeded, a text file so it can never be mistaken for a build). The
+#                          failed fallback must not leave that old EXE to be verified in place of the current sources: the
+#                          file is removed and the verification run goes through the interpreter, as the log says.
 #   both_forcefail       - PVW_BUILDER=both with the optimized build forced to fail: the standard build is
 #                          verified first, the optimized build starts without a prompt, and its failure leaves
 #                          the verified EXE untouched.
@@ -89,9 +93,24 @@ switch ($scenario) {
     'pyinstaller_nofallback' { $env:PVW_BUILDER = 'PyInstaller'; $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'pyinstaller'            { $env:PVW_BUILDER = 'pyinstaller' }
     'nuitka_forcefail'       { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
+    'nuitka_stale'           { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'both_forcefail'         { $env:PVW_BUILDER = 'both'; $env:HP_TEST_FORCE_OPTBUILD_FAIL = '1' }
     'nuitka'                 { $env:PVW_BUILDER = 'nuitka' }
     'both'                   { $env:PVW_BUILDER = 'both' }
+}
+
+$envLeaf  = Split-Path $workDir -Leaf
+$envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
+if (-not $envName) { $envName = '_env' }
+
+# nuitka_stale: an EXE from an earlier run, in the place the bootstrapper builds into. A text file on purpose: whatever
+# the run does with it, it cannot pass for a build of this program.
+$staleSeedPath = Join-Path $workDir "dist\$envName.exe"
+$staleSeeded   = $false
+if ($scenario -eq 'nuitka_stale') {
+    New-Item -ItemType Directory -Force -Path (Join-Path $workDir 'dist') | Out-Null
+    Set-Content -LiteralPath $staleSeedPath -Value 'stale-exe-from-an-earlier-run' -Encoding Ascii
+    $staleSeeded = Test-Path -LiteralPath $staleSeedPath
 }
 
 $pass = $false
@@ -109,9 +128,6 @@ try {
     $combined = $logLines -join "`n"
     function Has([string]$text) { return [bool]($combined -match [regex]::Escape($text)) }
 
-    $envLeaf  = Split-Path $workDir -Leaf
-    $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
-    if (-not $envName) { $envName = '_env' }
     $exePath    = Join-Path $workDir "dist\$envName.exe"
     $tmpExePath = Join-Path $workDir "dist\$envName.optimized_build.exe"
     $exeExists  = Test-Path -LiteralPath $exePath
@@ -186,6 +202,15 @@ try {
             $pass = $overrideLogged -and $skipLogged -and $pyiInstallSkipped -and $nuitkaHookFired -and (-not $pyiProduced) -and (-not $exeExists) -and $reasonOk -and ($statusState -eq 'error')
             $details.skipLogged = $skipLogged; $details.pyiInstallSkipped = $pyiInstallSkipped; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk
             $desc = 'PVW_BUILDER=nuitka: PyInstaller is neither installed nor run and a failed Nuitka build is reported with reason=builder_nuitka'
+        }
+        'nuitka_stale' {
+            $skipLogged   = Has 'PVW_BUILDER=nuitka: skipping the standard PyInstaller build'
+            $reasonOk     = Has 'reason=builder_nuitka'
+            $ranViaExe    = Has 'smoke test via packaged EXE'
+            $ranViaInterp = [bool]($combined -match 'Running entry script smoke test via \w+ interpreter')
+            $pass = $staleSeeded -and $overrideLogged -and $skipLogged -and $nuitkaHookFired -and $reasonOk -and (-not $exeExists) -and (-not $ranViaExe) -and $ranViaInterp -and ($statusState -eq 'error')
+            $details.staleSeeded = [bool]$staleSeeded; $details.skipLogged = $skipLogged; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk; $details.ranViaExe = $ranViaExe; $details.ranViaInterp = $ranViaInterp
+            $desc = 'PVW_BUILDER=nuitka: a failed Nuitka build removes the EXE left by an earlier run, so the verification run goes through the interpreter as logged'
         }
         'both_forcefail' {
             $bothLogged = Has 'PVW_BUILDER=both: building the optimized version now without asking.'
