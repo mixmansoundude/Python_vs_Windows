@@ -38,6 +38,7 @@ self.exe.smokerun.cwd_consistency,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
 self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
+self.honest.fastpath.note, self.honest.fastpath.outcome,
 self.checkpoint.accept, self.checkpoint.decline,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
@@ -132,7 +133,9 @@ self.dl.conda.fallback, self.dl.uv.fallback
 
 NOT currently wired to CI; conda base update is implemented in run_setup.bat but
 HP_TEST_CONDA_UPDATE injection was removed because it causes conda solver corruption
-in shared CI runners.
+in shared CI runners. Decision (docs/plan-test-suite-gaps.md T10, 2026-10-17): leave the script and this entry
+as they are; wiring it into `conda-full` would run `conda update -n base` on the Miniconda every other row in that
+lane uses. Revisit if a throwaway Miniconda root becomes cheap to create in the lane.
 
 ```
 self.conda.base.update  (test file: tests/selfapps_conda_update.ps1 -- not run in CI)
@@ -173,6 +176,14 @@ The `helpers.*`/`bootstrap.status` rows fire from `tests/dynamic_tests.py`'s own
 `ensure_extracted()` payload-decode loop and `main()`'s status-file read: `helpers.run_setup`
 only on the rare `run_setup.bat missing` guard; `bootstrap.status` once per run; the 5
 `helpers.decode.*` rows once per embedded helper payload decoded out of `run_setup.bat`.
+
+**These rows never appear in this repo's own lanes, by design.** The "Run dynamic tests (if present)" step runs
+`tests/dynamic_tests.py` only when `~bootstrap.status.json` at the repo root reports `state=ok`; this repo has no
+`.py` entry at its root, so the state is `no_python_files`, the step writes `SKIPPED: no_python_files`, removes
+`~dynamic-results.ndjson` and returns. `tests/dynamic_tests.py` is a template that a consumer repo gets together
+with `run_setup.bat` (`tests/README_TESTS.txt` says so); the same logic is covered here by the pytest files
+`test_detect_python.py`, `test_find_entry.py`, `test_heuristics.py` and `test_pyproj_deps.py`. The registry check lists
+the ids above under "never observed in this run's artifacts"; that is expected, not a gap.
 
 ## Test-logs NDJSON (harness/selftest, additional rows)
 
@@ -232,7 +243,7 @@ self.stub.lock_indeterminate,
 self.stub.low_disk_warn,
 self.pipreqs.warn.gated,
 self.dep.diff.trace, self.litter.appfolder, self.elevation.logged,
-self.warn.onedrive, self.warn.longpath, self.warn.path_negative, self.warn.sysdir,
+self.warn.onedrive, self.warn.path_negative, self.warn.sysdir,
 self.guardrail.g1, self.guardrail.g2, self.guardrail.g3,
 self.pep723.valid, self.pep723.uvformat, self.pep723.malformed, self.pep723.pyproject.override,
 self.pyproject.malformed,
@@ -543,10 +554,17 @@ a genuine build failure used to fall through `:die` all the way to a `state=ok` 
 NOT assert process exit code. Also sets `HP_TEST_FORCE_NUITKA_FAIL=1` so Tier A's own fallback is
 deterministically forced to fail too (otherwise a real Nuitka build could silently succeed here,
 turning this "everything fails" test into a fallback-success case, covered separately by
-`self.exe.build.tiera`).
+`self.exe.build.tiera`). The `execfail_runtimefail` scenario also writes `self.honest.noexe.caveat` (README
+REQ-027.1): the closing panel names the caveat heading and says it cannot tell whether the failure is the program's
+or the bootstrapper's, the success heading and the "ran successfully" sentence are absent, the setup log carries the
+matching `[WARN] REQ-016` line, and the `[STATUS]` line shows the interpreter's exit code (3 from the stub app).
+The two cached-EXE rows of the same requirement, `self.honest.fastpath.note` (REQ-027.2: one note, names the EXE to
+delete) and `self.honest.fastpath.outcome` (REQ-027.3: state `ok` and exit code 0), are written by
+`selfapps_failfast_probe.ps1` from its alive scenario (real/conda-full lanes, gating).
 
 ```
 self.exe.build.xfail
+self.honest.noexe.caveat
 ```
 
 ## selfapps-nuitka-tiera NDJSON rows (selfapps_nuitka_tiera.ps1, uv lane only, non-gating)
@@ -845,6 +863,28 @@ session trims a log that grew past the limit midway.
 ```
 self.log.rotate.over
 self.log.rotate.under
+```
+
+## selfapps-longpath-near NDJSON rows (selfapps_longpath_near.ps1, real lane only, gating)
+
+Gap T9 of `docs/plan-test-suite-gaps.md` (README REQ-003.5; replaces `self.warn.longpath`, which built a path over 260
+characters that a default runner cannot enter and so reported skip in all 8 lanes). `run_setup.bat` measures its own
+folder path with the closing backslash (`HP_SCRIPT_ROOT`) and warns at 200 characters or more (`*** WARNING: Script path
+is N chars...` on the console, `[WARN] Script path is N chars; ...` in the setup log), then goes on. The script builds
+scratch folders whose path including the closing backslash is exactly 199, 200 and 215 characters (a runner can enter
+anything under 260), starts a copy of the bootstrapper in each through the short system-Python path (`HP_CI_SKIP_ENV=1`,
+child only; the guard is before provider selection) with a one-line program that writes `~longpath_ran.txt`, and reads
+the console and the setup log. `.below` (199): no warning anywhere, the program ran, exit 0. `.at` (200) and `.over` (215):
+the warning is on the console and in the log, it names the same length the script built (so an off-by-one in either the
+measurement or the threshold fails), the program ran, exit 0. Every row also requires `built` (the real length of the
+scratch path equals the intended one). The scratch folders are long paths, so each run's two logs are copied to
+`tests\~longpath_near_<tag>.boot.log` and `.setup.log` for the artifact upload and the folder is removed. Skips on
+non-Windows.
+
+```
+self.longpath.near.below
+self.longpath.near.at
+self.longpath.near.over
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)

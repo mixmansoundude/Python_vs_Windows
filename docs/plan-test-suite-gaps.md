@@ -93,7 +93,7 @@ aggregate row `self.pytest.unit` in every lane.
 |---|---|---|---|---|
 | 001 | Prime Directive end to end | `self.prime.bootstrap/.run/.exe.build/.exe.run/.spaced-path` (all) | Strong | |
 | 002 | Entry selection order | `self.entry.entry1/A/B/C/D/override/helper.invoke.absent/results/spaced-path` (all), `self.entry.picker/.overflow` (F), `test_find_entry.py` | Strong | |
-| 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all); `self.warn.longpath` skip 8/8 | Medium | T8, T9 |
+| 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R) | Medium | T8, T9 done |
 | 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin and range only `self.contract.uv.pyver*` (k) | Strong, with the uv exact-pin case non-gating | |
 | 005 / 005.1 | Dependency source order | `reqspec.*` x16 (all), `self.pep723.pyproject.override` (all), `self.pyproject.malformed` (all), `pyproject.dep.detect/.noproj` (R,F) | Medium: pairwise only | T2 |
 | 005.2, .3 | conda bulk retry, per-package fallback | `self.stub.conda_retry`, `self.stub.conda_perpkg` (all) | Strong | |
@@ -385,7 +385,7 @@ override the batch reads is documented). `UNTESTED_HOOKS` holds `HP_TEST_DISABLE
 | `self.pipreqs.warn.gated` (`selftest.ps1:1691`) | asserts only that the WARN is absent; the WARN never fires in any scenario, so it cannot go red | same pair as above |
 | `log.rotate` (`harness.ps1:231`) | regex for `Length -gt 10485760` anywhere in the batch | seed a log over 10 MB, run, assert the old file was rotated and the new one is small **(to verify)** what the batch rotates and where |
 | `tilde.naming` (`harness.ps1:232-233`) | passes when 3 of 5 known names occur anywhere | superseded by T3 |
-| `self.warn.longpath` (`selftest.ps1:925-985`) | `skip` in all 8 lanes because default runners cannot enter a path over 260 characters | T9 |
+| `self.warn.longpath` (`selftest.ps1:925-985`) | `skip` in all 8 lanes because default runners cannot enter a path over 260 characters | T9: replaced by `self.longpath.near.below/.at/.over` (199, 200 and 215 characters); the old row is removed |
 
 Each replacement lands with its pair or successor, not alone, so no coverage is lost in between.
 

@@ -196,7 +196,7 @@ attempting (and inevitably failing) to build an environment for nothing.
 
 **What's tested:** no single dedicated test asserts the CLEAN (non-firing) pass of these checks --
 `docs/agent-ndjson.md` only registers rows for the *firing* branches (`self.warn.onedrive`,
-`self.warn.longpath`, `self.warn.sysdir`, `self.stub.lock_held_decline`, etc.). The evidence below
+`self.longpath.near.at`, `self.warn.sysdir`, `self.stub.lock_held_decline`, etc.). The evidence below
 is the incidental byproduct of `tests/selfapps_envsmoke.ps1`'s full, real bootstrap, which captures
 every byte of console output via `cmd /c .\run_setup.bat > '~envsmoke_bootstrap.log'`.
 

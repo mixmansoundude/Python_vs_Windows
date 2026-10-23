@@ -1102,6 +1102,17 @@ points at the direct-run command and at deleting `dist\<env>.exe` for a fresh de
 Neither panel asserts a root cause (real bug vs. unresolved dependency vs. something else stays
 undistinguished, by design).
 
+Rows and the exact strings they match (README REQ-027.1 to .3): `self.honest.noexe.caveat`
+(`tests/selfapps_pyinstaller_fail.ps1`, `execfail_runtimefail`) matches the caveat heading, the "so we can't tell
+whether that's a bug ... or something this bootstrapper missed." sentence, the absence of the success heading and
+of "your code ran successfully just now", and the `[WARN] REQ-016: Post-flight briefing printed; no EXE produced,
+interpreter run also unverified.` log line; `self.honest.fastpath.note` / `.outcome`
+(`tests/selfapps_failfast_probe.ps1`, alive scenario) match the "SETUP COMPLETE -- BUT WE CAN'T CONFIRM" heading,
+"Delete dist\<exe name> and run this bootstrapper again.", the `[WARN] REQ-016: Post-flight note printed; ...` line,
+state `ok` and exit code 0. Both read the console text with whitespace flattened (the panels wrap sentences over
+several `echo` lines), so a reworded or re-wrapped sentence only needs the test string updated, but a changed
+heading or log line breaks the rows by design.
+
 ## Post-execution checkpoint (Slice 2b-C, second half)
 
 `:run_postexec_checkpoint` is a **consent gate** (echo prompt unconditionally, then
