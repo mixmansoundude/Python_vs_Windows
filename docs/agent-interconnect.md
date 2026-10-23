@@ -347,7 +347,8 @@ using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever 
   for `:run_exe_smokerun` to start as this build, while the log says the code is verified through Python (the
   `:verify_no_exe_interpreter` skip is keyed on the file existing). A new early return in that subroutine must come
   after the delete. Rows: `self.builder.override` scenarios `nuitka_stale` and `pyinstaller_nofallback` (both seed a
-  text file at the EXE path).
+  copy of `hostname.exe` at the EXE path: a real program that exits 0, so a wrongly started stale EXE looks like a
+  passing build; a first version seeded a text file and left the step running for over ten minutes, see Item 87).
 - `nuitka`: the build block in `:run_entry_smoke` skips the `pip install pyinstaller` step (one `if` chain with
   the uv and pip variants; it logs `PyInstaller is not installed for this run`), takes a branch ahead of the
   forced-PyInstaller-failure hook, never runs PyInstaller, deletes a stale PyInstaller warn file (otherwise warnfix could rebuild over

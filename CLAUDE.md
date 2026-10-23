@@ -863,6 +863,21 @@ the original symptom (see that doc's "CI-first testing policy").
   non-gating: Miniconda download and a force-stopped silent EXE), unit tests `tests/test_window_confirm.py`
   and the `KilledMarker` cases in `tests/test_exe_smokerun.py`.
 
+### Item 87: an unlaunchable stale `dist\<env>.exe` may hang the EXE smoke step (filed 2026-10-23 from PR #499's red run)
+
+- **Item 87 (suspected, small to medium; red test first, after Item 74)**: while writing the stale-EXE scenarios
+  of Item 71 (`self.builder.override` `nuitka_stale` and `pyinstaller_nofallback`), the first red-test commit
+  seeded a plain TEXT file named `dist\<env>.exe`. On `real` and `conda-full` the step then ran for over ten
+  minutes (the neighbouring scenarios take 13 to 35 seconds) until the next push cancelled the run; it was
+  reseeded with a copy of `hostname.exe`. Cause not read from a log: `:run_exe_smokerun` starts the file
+  through `tools/exe_smokerun.ps1` (`HP_EXE_SMOKERUN`), whose `$p.Start()` has no handling for a file that
+  Windows cannot launch, and the read loop after it waits on a process that never ran. A real user gets the
+  same file after an interrupted build or an antivirus quarantine that leaves a stub. To do: reproduce with a
+  text file, a zero-byte file and a truncated copy of a real EXE (each as its own row, `uv` lane first if the
+  step time makes it non-gating), read where it waits, then make the launch failure end the check with a
+  clear message and treat the EXE as unusable (rebuild or fall back to the interpreter run). Related: the
+  `Process.Kill()` and bounded-wait notes in `docs/agent-lessons-learned.md`.
+
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
