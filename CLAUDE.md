@@ -784,7 +784,12 @@ the original symptom (see that doc's "CI-first testing policy").
 - **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
   first-launch experiment (`--onefile-tempdir-spec`).
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
-  uses.
+  uses. **In progress, PR #504 (bundled with Item 87, one commit per item)**: `tests/fixtures/examples/`
+  holds `stdlib_single`, `pandas_excel`, `gui_exits` and `multifile_sibling` plus a `README.txt` a
+  beginner can follow; `selfapps_example_apps.ps1` runs three of them through the bootstrapper (real lane,
+  gating, rows `self.examples.*`), `selfapps_pandas_excel.ps1` now reads the fourth, and
+  `tests/test_example_fixtures.py` keeps the folder honest. Still to do after Item 75's PR #503 merges:
+  point its inline fixtures (the two-file and edit-and-rerun apps) at the same folder.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
   second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
 
