@@ -298,7 +298,7 @@ Test files and what they cover:
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
-| `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
+| `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -789,8 +789,9 @@ the original symptom (see that doc's "CI-first testing policy").
   60 s first launch are recorded as Finding 7 in `docs/prd-av-safe-build-path.md`; (b) the experiment is
   built (`tests/selfapps_nuitka_launchcache.ps1`, row `self.nuitka.launchcache`, uv lane, non-gating:
   default versus `--onefile-tempdir-spec` launches, and whether a same-spec rebuild runs the new code).
-  First Windows run (2026-10-23): same-spec rebuild ran the new code, later launches 200 ms against 481 ms
-  for the default build (Defender off on the runner, so the field effect is unmeasured).
+  Windows result (2026-10-23, run `39941938491`, green): same-spec rebuild ran the new code, later launches
+  about 175 ms against a 641 ms median for the default build, builds 34.7 s against 43.7 s (Defender off on
+  the runner, so the field effect is unmeasured).
   Open: decide whether to add the flag to the two Nuitka command lines (`:try_nuitka_tier_a`,
   `:offer_optimized_build`), after PR #499 merges; a shared cache path also needs a per-app folder name
   so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.

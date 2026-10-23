@@ -152,8 +152,9 @@ print("launchcache marker=%s payload=%d dir=%s" % (MARK, size, here))
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         Push-Location $workDir
         try {
-            $nArgs = @('-m', 'nuitka', '--onefile', '--assume-yes-for-downloads', '--remove-output',
-                       '--output-dir=exp', '--include-data-files=payload.bin=payload.bin') + $Extra + @('-o', $OutName, 'cacheapp.py')
+            # The flags come from $prodFlags (the text checked against run_setup.bat above); only the output folder differs.
+            $flagArgs = @($prodFlags -split ' ' | Where-Object { $_ -notlike '--output-dir=*' })
+            $nArgs = $flagArgs + @('--output-dir=exp', '--include-data-files=payload.bin=payload.bin') + $Extra + @('-o', $OutName, 'cacheapp.py')
             & $py @nArgs > $log 2>&1
             $rc = $LASTEXITCODE
         } finally {

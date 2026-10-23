@@ -69,6 +69,20 @@ def long_form_problems(script_text):
     return found
 
 
+def build_flag_problems(script_text):
+    """Build-App must take its flags from $prodFlags, or the drift check pins a line the build never reads."""
+    m = re.search(r"^\s*function Build-App \{(.*?)^\s*\}\s*$", script_text, re.MULTILINE | re.DOTALL)
+    if not m:
+        return ["the script has no Build-App function"]
+    body = m.group(1)
+    found = []
+    if "$prodFlags" not in body:
+        found.append("Build-App does not read $prodFlags")
+    if "'--onefile'" in body or "'--remove-output'" in body:
+        found.append("Build-App repeats production flags as literals")
+    return found
+
+
 GOOD_STEP ="""      - name: "Self-test: Nuitka onefile launch cache experiment (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
         continue-on-error: true
@@ -116,6 +130,34 @@ class WorkflowStep(unittest.TestCase):
 
     def test_a_missing_step_is_caught(self):
         self.assertIn("found 0", step_problems("      - name: other\n        run: echo hi\n")[0])
+
+
+class BuildUsesProductionFlags(unittest.TestCase):
+    GOOD = (
+        "    function Build-App {\n"
+        "        try {\n"
+        "            $flagArgs = @($prodFlags -split ' ' | Where-Object { $_ -notlike '--output-dir=*' })\n"
+        "        } finally {\n"
+        "        }\n"
+        "    }\n"
+    )
+
+    def test_real_script_builds_from_prod_flags(self):
+        self.assertEqual(build_flag_problems(SCRIPT.read_text(encoding="ascii")), [])
+
+    def test_good_shape_passes(self):
+        self.assertEqual(build_flag_problems(self.GOOD), [])
+
+    def test_literal_flags_are_caught(self):
+        text = self.GOOD.replace("$flagArgs = @($prodFlags", "$nArgs = @('-m', 'nuitka', '--onefile', '--remove-output'); $x = @($prodFlags")
+        self.assertEqual(build_flag_problems(text), ["Build-App repeats production flags as literals"])
+
+    def test_ignoring_prod_flags_is_caught(self):
+        text = self.GOOD.replace("$prodFlags", "$other")
+        self.assertEqual(build_flag_problems(text), ["Build-App does not read $prodFlags"])
+
+    def test_missing_function_is_caught(self):
+        self.assertEqual(build_flag_problems("no function here"), ["the script has no Build-App function"])
 
 
 class CacheFolderLongForm(unittest.TestCase):

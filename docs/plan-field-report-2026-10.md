@@ -606,6 +606,16 @@ fresh unpack every launch) stays unmeasured. The row was red only because the te
 name in the program's 8.3 form (`RUNNER~1\PVW_LA~1\PVWEXP~1`) against the long token; the script now
 converts with `GetLongPathName` first (also fixes the cleanup, which matched on the same name).
 
+**Clean run (2026-10-23, run `39941938491` on `cd02aae`, `self.nuitka.launchcache` green).** Default
+build: launches 801, 474 and 641 ms (median 641). Static spec: 333 ms for the first launch, then 174 and
+175 ms (about 3.7 times faster than the default median). Same-spec rebuild: new code again, first launch
+682 ms (re-extracts the changed payload), second 181 ms. Builds 43.7 s (default) and 34.7 s (cached).
+Reading: the mechanism is safe and the saving is real, so adopt in a follow-up after PR #499 merges, with a
+per-app folder name and a README Known Limitations line; the field effect stays unmeasured. A review of the
+script also found that `Build-App` repeated the production flags as literals instead of reading the
+`$prodFlags` text that the unit test pins to `run_setup.bat`; it now derives its arguments from `$prodFlags`
+(only the output folder differs), and a unit test pins that.
+
 ### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 
 `[WARN] REQ-005.11: PEP 723 header write-back failed (ERROR:uv_rc_1)` gives no reason because
