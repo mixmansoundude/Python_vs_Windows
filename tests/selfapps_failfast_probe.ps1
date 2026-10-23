@@ -193,7 +193,7 @@ $notePass = $false
 $outcomePass = $false
 $noteDetails = [ordered]@{}
 $outcomeDetails = [ordered]@{}
-$expectedHonestState = 'error'   # planted wrong on purpose in the red commit; the real state is ok
+$expectedHonestState = 'ok'   # REQ-027.3: a later non-zero exit of the kept cached EXE is the program's outcome, not a bootstrap failure
 try {
     $alDir = Join-Path $here '~selftest_failfastprobe_alive'
     if (Test-Path $alDir) { Remove-Item -Recurse -Force $alDir }

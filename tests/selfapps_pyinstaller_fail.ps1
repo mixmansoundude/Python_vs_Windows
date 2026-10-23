@@ -132,7 +132,7 @@ print("should-not-matter")
 $bootstrapLog = "~pyi_fail_${scenario}_bootstrap.log"
 
 $honestPass = $true   # stays true unless the execfail_runtimefail scenario writes a failing self.honest.noexe.caveat row
-$expectedInterpreterExit = 4   # planted wrong on purpose in the red commit; the stub app exits 3
+$expectedInterpreterExit = 3   # the stub app exits 3, so the failed interpreter run reports 3
 
 $prevSkipPipreqs = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $prevForceExecfail = if (Test-Path Env:HP_TEST_FORCE_PYINSTALLER_FAIL) { $env:HP_TEST_FORCE_PYINSTALLER_FAIL } else { $null }
