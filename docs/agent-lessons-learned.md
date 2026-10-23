@@ -866,6 +866,19 @@ red proof is the positive rows.
 
 ---
 
+## A test that reads the redirected console log cannot see `[DEBUG]`/`[TRACE]` lines, and a delete is not a guard
+
+`:log` keeps `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines out of the console unless `HP_VERBOSE_CONSOLE=1` (they are in
+`~setup.log` only), so a scenario that redirects the bootstrapper's stdout to a log and searches it for `warnfix: warn file
+found` finds nothing even when the line was written (`nuitka_warnfile` carried that check in its first version, `warnFound`
+false while the repair visibly ran). Assert on an `[INFO]`/`[WARN]`/`[REPAIR]` line, or read `~setup.log`. The same scenario
+showed why `PVW_BUILDER=nuitka` deleting a stale PyInstaller warn file was not enough (Item 71): a delete fails when another
+program holds the file open, and the warnfix scan reads the file by path, so the rule "PyInstaller never runs" has to be
+enforced where the repair is dispatched (`HP_WARNFIX_NEEDED`), not only where the file is removed. Hold a file open for a test
+with `[System.IO.File]::Open(path, 'Open', 'Read', 'Read')` and prove the lock with a delete that must fail (`lockHeld`).
+
+---
+
 ## Heuristic dep-augmentation must strip pip extras before name lookup
 
 `HP_PREP_REQUIREMENTS`'s `names_lower` list must strip `[...]` (pip extras, e.g. `pandas[excel]`)

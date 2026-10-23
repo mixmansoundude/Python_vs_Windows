@@ -355,6 +355,13 @@ using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever 
   the Nuitka EXE with PyInstaller), calls `:try_nuitka_tier_a`, and on failure reports
   `reason=builder_nuitka` through `:warn_build_incomplete`. On success it sets
   `HP_NUITKA_FALLBACK_USED` and `HP_FRESH_BUILD_OK` like Tier A, so the Nuitka-only repair-loop guards apply.
+  **The delete is not the guard**: it can fail (another program holds the file open) and `~parse_warn.py` reads
+  `build\<env>\warn-<env>.txt` by path, so the warnfix repair, which ends in a PyInstaller rebuild, is switched off for the
+  nuitka choice where its dispatch flag is decided: `if /I "%HP_BUILDER%"=="nuitka" set "HP_WARNFIX_NEEDED="` between the
+  `for /f` scan of `~missing_modules.txt` and `if defined HP_WARNFIX_NEEDED (`, on its own line (a second `if` on the
+  dispatch's else-if line would capture the later else branches), with an `[INFO] PVW_BUILDER=nuitka: the warnfix repair is
+  skipped` line first. Row: `self.builder.override` scenario `nuitka_warnfile` (the test holds the warn file open with
+  `FileShare.Read` and requires that log line, which is only written when the surviving file was read and named a module).
 - `both`: PyInstaller builds and verifies as usual, then `:offer_optimized_build` skips the question
   (`goto :optbuild_both`; the override is the consent, same reasoning as `HP_PVW_KNOWN_IDEMPOTENT`, and the
   log line says the program starts once more for up to 30 seconds) and continues into the unchanged

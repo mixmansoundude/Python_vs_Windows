@@ -4254,6 +4254,12 @@ if not defined HP_BUILD_OK (
     if exist "~parse_warn.py" del "~parse_warn.py" >nul 2>&1
     set "HP_WARNFIX_NEEDED="
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
+    rem CLAUDE.md Item 71: PVW_BUILDER=nuitka means PyInstaller is never run, and the repair below ends in a PyInstaller
+    rem rebuild. The build block deletes a stale warn file, but a delete can fail when another program holds the file
+    rem open, and parse_warn.py reads it by path, so the dispatch flag is cleared here for the nuitka choice. Two lines,
+    rem not one: a second if on an else-if line would capture the later else branches.
+    if defined HP_WARNFIX_NEEDED if /I "%HP_BUILDER%"=="nuitka" call :log "[INFO] PVW_BUILDER=nuitka: the warnfix repair is skipped because it ends in a PyInstaller rebuild."
+    if /I "%HP_BUILDER%"=="nuitka" set "HP_WARNFIX_NEEDED="
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if defined HP_WARNFIX_NEEDED (
       set "HP_WARNFIX_APPLIED=1"

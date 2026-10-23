@@ -28,7 +28,9 @@
 #                          earlier PyInstaller run is held open by another program (FileShare.Read: it can be read, not
 #                          deleted), so the bootstrapper's own delete of it fails. The file names a module (xlrd) that
 #                          the warnfix repair would install and then rebuild for with PyInstaller, which the user asked
-#                          not to run: no repair starts, nothing is installed, no PyInstaller rebuild.
+#                          not to run: no repair starts, nothing is installed, no PyInstaller rebuild. The log line that says
+#                          the repair was skipped is required too, because it is only written when the surviving file was read
+#                          and named a module, so a run where the file was simply deleted cannot pass.
 #   both_forcefail       - PVW_BUILDER=both with the optimized build forced to fail: the standard build is
 #                          verified first, the optimized build starts without a prompt, and its failure leaves
 #                          the verified EXE untouched.
@@ -246,13 +248,13 @@ try {
         }
         'nuitka_warnfile' {
             $skipLogged   = Has 'PVW_BUILDER=nuitka: skipping the standard PyInstaller build'
-            $warnFound    = Has 'warnfix: warn file found'
+            $skipNoted    = Has 'PVW_BUILDER=nuitka: the warnfix repair is skipped'
             $repairStarted = Has '[REPAIR] missing modules detected'
             $installTried = Has 'Attempting to install'
             $pyiRebuild   = Has 'Rebuilding standalone executable after warnfix'
-            $pass = $warnSeeded -and $lockHeld -and $overrideLogged -and $skipLogged -and $nuitkaHookFired -and $warnFound -and (-not $repairStarted) -and (-not $installTried) -and (-not $pyiRebuild) -and (-not $pyiProduced) -and (-not $exeExists) -and ($statusState -eq 'error')
+            $pass = $warnSeeded -and $lockHeld -and $overrideLogged -and $skipLogged -and $nuitkaHookFired -and $skipNoted -and (-not $repairStarted) -and (-not $installTried) -and (-not $pyiRebuild) -and (-not $pyiProduced) -and (-not $exeExists) -and ($statusState -eq 'error')
             $details.warnSeeded = [bool]$warnSeeded; $details.lockHeld = [bool]$lockHeld; $details.skipLogged = $skipLogged; $details.nuitkaHookFired = $nuitkaHookFired
-            $details.warnFound = $warnFound; $details.repairStarted = $repairStarted; $details.installTried = $installTried; $details.pyiRebuild = $pyiRebuild
+            $details.skipNoted = $skipNoted; $details.repairStarted = $repairStarted; $details.installTried = $installTried; $details.pyiRebuild = $pyiRebuild
             $desc = 'PVW_BUILDER=nuitka: a PyInstaller warn file that survives the delete never starts the warnfix repair or a PyInstaller rebuild'
         }
         'both_forcefail' {
