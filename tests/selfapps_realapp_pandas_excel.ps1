@@ -335,13 +335,15 @@ $installFailed1 = $run1.Text -match [regex]::Escape('uv pip install -r requireme
 $localInReq = @($localNames | Where-Object { $reqNames1 -contains $_ })
 $localInstalled = @($localNames | Where-Object { $installed1 -contains $_ })
 $localReported = @($localNames | Where-Object { $autopepNames -contains $_ })
-$pass = $autopepRan -and $autopepMerged -and ($localInReq.Count -eq 0) -and ($localInstalled.Count -eq 0) -and (-not $installFailed1)
+# The merge must also say which names it skipped: without this a run where autopep723 never listed the local names would pass for the wrong reason.
+$localSkipped = $run1.Text -match [regex]::Escape('skipped local:')
+$pass = $autopepRan -and $autopepMerged -and ($localReported.Count -eq $localNames.Count) -and $localSkipped -and ($localInReq.Count -eq 0) -and ($localInstalled.Count -eq 0) -and (-not $installFailed1)
 if (-not $pass) { $anyRed = $true }
 Write-NdjsonRow ([ordered]@{
     id = 'self.realapp.local_modules'; req = 'REQ-005.12'; pass = [bool]$pass
     desc = 'The names of the program''s own sibling module and package are never added to requirements.txt or installed, and the install does not fail because of them'
     details = [ordered]@{
-        autopepRan = [bool]$autopepRan; autopepMerged = [bool]$autopepMerged; autopepReportedLocal = @($localReported)
+        autopepRan = [bool]$autopepRan; autopepMerged = [bool]$autopepMerged; autopepReportedLocal = @($localReported); skippedLocalLogged = [bool]$localSkipped
         localInRequirements = @($localInReq); localInstalled = @($localInstalled); installFailedWarn = [bool]$installFailed1
         requirementsNames = @($reqNames1); autopepNames = @($autopepNames)
     }

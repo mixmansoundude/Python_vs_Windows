@@ -1169,9 +1169,10 @@ a red row says which one failed. `.first_run`: exit 0, status `ok`, EXE built, t
 `Entry smoke exit=`), token text exact, `.xlsx` in `dist\`. `.deps_discovered`: pandas, openpyxl and xlsxwriter in
 `~dependency_installed.txt`, `[HEURISTIC] pandas->openpyxl` logged, recorded source `pipreqs`, no `[REPAIR] missing
 modules detected` block and no `Attempting to install:` line (discovery was complete). `.local_modules`: precondition
-that autopep723 ran (`~requirements.autopep.txt` exists) and its merge was logged, then neither local name in
+that autopep723 ran (`~requirements.autopep.txt` exists), listed both local names (`autopepReportedLocal`) and its merge
+logged `skipped local:` (`skippedLocalLogged`), so a run where the filter never fired cannot pass; then neither local name in
 `requirements.txt` nor in the installed set and no `uv pip install -r requirements.txt failed` line (one unresolvable
-name fails the whole atomic install); `autopepReportedLocal` records whether autopep723 listed them. `.fastpath_rerun`:
+name fails the whole atomic install). `.fastpath_rerun`:
 `Fast path: reusing` logged, no `Fast path: not reusing`, same EXE timestamp, token rewritten, no `UV_USED=1` (no
 reinstall) and no pipreqs command. `.edit_rerun`: `Fast path: not reusing` logged, EXE newer than after run 2, token
 rewritten, the run recorded a source, and `termcolor` is installed exactly when that source is `requirements.txt` (the

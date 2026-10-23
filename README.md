@@ -439,8 +439,8 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
     invocation, avoiding a real environment-leak hazard where a direct invocation silently
     under-reports already-installed packages as "not third-party" (see
     `docs/agent-lessons-learned.md`'s autopep723 section for the full empirical trail).
-  - The merge **shall** not add a name that is the program's own: a `.py` file or a folder next to
-    `requirements.txt`, compared the way pip compares package names (case, `-`, `_` and `.` are the same
+  - The merge **shall** not add a name that is the program's own: a `.py` file or a folder at or below
+    the folder that holds `requirements.txt`, compared the way pip compares package names (case, `-`, `_` and `.` are the same
     letter), skipping the folders pipreqs ignores (`.git`, `.github`, `.venv`, `venv`, `env`, `.uv_env`,
     `build`, `dist`, `__pycache__`, `tests`), hidden folders and tilde-prefixed files. The scanner lists a
     sibling module as a dependency, and one name PyPI does not know fails the whole dependency install, so

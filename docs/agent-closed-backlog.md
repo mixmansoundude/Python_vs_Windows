@@ -3558,6 +3558,10 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Known and not fixed.** A program whose sibling module shares a name with a real PyPI package it also needs (a local
   `requests.py` next to code that imports the real `requests`) loses that dependency; that program is already shadowed
   at run time, so skipping the name matches what Python would import. The conda lane has no equivalent step.
+- **Decided, kept: the walk covers the whole tree below the `requirements.txt` folder, not only its top level** (CodeRabbit,
+  PR #503). A name that exists only in a nested folder (`utils/sheetio.py`) is skipped too. A missed skip can sink the
+  whole atomic install, while a wrong skip drops one dependency that the warnfix repair is expected to recover, and it
+  matches pipreqs, which also counts every nested file and folder name as local. Narrowing it is a new decision, not a fix.
 
 ## Known Findings (diagnosed, no action warranted)
 
