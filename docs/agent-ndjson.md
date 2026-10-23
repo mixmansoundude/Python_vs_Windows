@@ -75,6 +75,7 @@ self.conda.bothfail (uv lane only -- selfapps_conda_bothfail.ps1; non-gating),
 self.console.tiering (uv lane only -- selfapps_console_tiering.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
+self.nuitka.launchcache (uv lane only -- selfapps_nuitka_launchcache.ps1; non-gating),
 self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
@@ -553,6 +554,22 @@ new skip guard fires and the OLD PyInstaller-rebuild log line does not.
 
 ```
 self.exe.tiera.hidden_skip
+```
+
+## selfapps-nuitka-launchcache NDJSON rows (selfapps_nuitka_launchcache.ps1, uv lane only, non-gating)
+
+Item 72 (b) experiment. After a forced-PyInstaller-failure bootstrap leaves a uv venv with Nuitka,
+the script builds a `--onefile` EXE with a 40 MB data file twice with the bootstrapper's own flags
+(default unpacking, and `--onefile-tempdir-spec={CACHE_DIR}/pvw_launchcache_exp/<token>`), launches
+each three times, then rebuilds the cached variant from changed source and launches it. `pass` is
+the mechanism only (flags still match `run_setup.bat`, builds ran, every launch printed the expected
+marker and payload size, default unpack folders were removed, the cache folder stayed and lies under
+the spec); `details` holds the findings (`defaultLaunchMs`, `cachedLaunchMs`, `rebuildRanNewCode`,
+`rebuildRanStaleCode`, `realtimeMonitoringDisabled`, `finding`). Non-gating: three real Nuitka
+builds and a possible compiler download.
+
+```
+self.nuitka.launchcache
 ```
 
 ## selfapps-optimized-build NDJSON rows (selfapps_optimized_build.ps1, uv lane only, non-gating)

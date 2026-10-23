@@ -298,6 +298,7 @@ Test files and what they cover:
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
+| `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines), runs only on the uv lane and is non-gating, emits its registered row and ends with its own exit codes; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -782,8 +783,15 @@ the original symptom (see that doc's "CI-first testing policy").
   cause harm." README REQ-018 stays as written; add a prompt-text row to the `self.optbuild.*` scenarios.
 - **Item 71 (Confirmed gap, medium)**: `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user
   override only, no prompt (decided 2026-10-09, Q6 = A).
-- **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
-  first-launch experiment (`--onefile-tempdir-spec`).
+- **Item 72 (investigation, three parts)**: (a) the long-build heartbeat is considered and dropped
+  (it needs a second process or a new helper that owns the Nuitka process, and Item 68's wording already
+  tells the user to expect a long quiet step and where the log is); (c) the observed hour and the
+  60 s first launch are recorded as Finding 7 in `docs/prd-av-safe-build-path.md`; (b) the experiment is
+  built (`tests/selfapps_nuitka_launchcache.ps1`, row `self.nuitka.launchcache`, uv lane, non-gating:
+  default versus `--onefile-tempdir-spec` launches, and whether a same-spec rebuild runs the new code).
+  Open: read the row from a full run and decide whether to add the flag to the two Nuitka command lines
+  (`:try_nuitka_tier_a`, `:offer_optimized_build`); a shared cache path also needs a per-app folder name
+  so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a

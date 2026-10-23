@@ -580,6 +580,21 @@ not adopt the 3rd party's "signing is the only fix" claim. (c) Long C compiles o
 `scipy.stats` and similar are expected Nuitka behavior; record the observed hour as a data point
 in `docs/prd-av-safe-build-path.md` rather than "fixing" it.
 
+**Outcome so far (2026-10-17).** (a) Dropped: a heartbeat needs a background process or a new helper
+that owns the Nuitka process (orphans on Ctrl+C, a log read while Nuitka writes it), and Item 68's
+wording already tells the user to expect tens of minutes and where `~setup.log` is. (c) Done, as
+Finding 7 in `docs/prd-av-safe-build-path.md`. (b) The experiment is `tests/selfapps_nuitka_launchcache.ps1`
+(uv lane, non-gating, row `self.nuitka.launchcache`). It adds no `run_setup.bat` change. Facts already
+known from a local Nuitka 4.3.1 build on Linux: `--onefile-tempdir-spec={CACHE_DIR}/...` keeps the unpacked
+folder, the default build deletes its `onefile_*` folder on exit, a rebuild with the SAME spec and changed
+source ran the new code, and `--onefile-cache-mode=cached` alone refuses to build without `--company-name`
+(its default spec is `{CACHE_DIR}/{COMPANY}/{PRODUCT}/{VERSION}`), so an explicit spec is simpler. What the
+run must show on Windows before adopting: the same rebuild freshness, a launch that is faster after the
+first, and no leftover default folders. If it is adopted, the cache folder name must be unique per app
+(two apps built by this bootstrapper must never share one), the cache lives under the user's profile
+outside the app folder (say so in README Known Limitations), and it goes on exactly two lines: the
+`-m nuitka --onefile` command in `:try_nuitka_tier_a` and the one in `:offer_optimized_build`.
+
 ### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 
 `[WARN] REQ-005.11: PEP 723 header write-back failed (ERROR:uv_rc_1)` gives no reason because
