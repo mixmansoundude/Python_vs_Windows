@@ -1248,6 +1248,15 @@ jobs:
         run: |
           & tests\selfapps_log_rotate.ps1
 
+      # docs/plan-test-suite-gaps.md gap T9: the long folder path warning at its real boundary (199, 200 and 215
+      # characters, all under the 260 a default runner can enter). Replaces the skipping self.warn.longpath. Real lane
+      # only, gating from its first run.
+      - name: "Self-test: long folder path warning at the 200-character boundary (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_longpath_near.ps1
+
       - name: "Self-test: early preflight branches -- line-ending + writable-CWD (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -1552,6 +1561,11 @@ jobs:
           # glob-expand a "tests/test_*.py" string argument to an external command the way a bash
           # shell would, so the file list is enumerated explicitly via Get-ChildItem instead of
           # relying on a wildcard string reaching python/pytest unexpanded.
+          # Why these three are left out (docs/plan-test-suite-gaps.md T10): test_entry_selection.py and
+          # test_entry_single.py drive selfapps_entry.ps1 and the single-file scenario, which the lanes already run
+          # directly as steps, so running them here would only repeat those bootstraps. test_poll_public_diag_logging.py
+          # starts pwsh on tools/poll_public_diag.ps1 against a dead local URL; no reason for leaving it out was ever
+          # recorded, so it runs only in the local sanity sweep (tools/run_sanity_sweep.sh), not in any CI job.
           $excludeUnitFiles = @('test_entry_selection.py', 'test_entry_single.py', 'test_poll_public_diag_logging.py')
           $unitTestFiles = Get-ChildItem -Path 'tests' -Filter 'test_*.py' -File |
             Where-Object { $excludeUnitFiles -notcontains $_.Name } |
@@ -2371,6 +2385,7 @@ jobs:
             tests/~selftest_logrotate_over/~rotate_boot.log
             tests/~selftest_logrotate_over/~setup.log
             tests/~selftest_logrotate_under/~rotate_boot.log
+            tests/~longpath_near_*.log
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log
@@ -2763,8 +2778,6 @@ jobs:
             tests\~selftest_OneDrive\~pipreqs.diff.txt
             tests/~selftest_OneDrive/~bootstrap.status.json
             tests\~selftest_OneDrive\~bootstrap.status.json
-            tests/~selftest_longpath/
-            tests\~selftest_longpath\
             tests/~selftest_path_negative/~path_negative_bootstrap.log
             tests\~selftest_path_negative\~path_negative_bootstrap.log
             tests/~selftest_path_negative/~setup.log
