@@ -101,7 +101,23 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
 
 ## [REQ-001] Prime Directive Expanded
 
-- From only one or more `.py` files on a clean Windows 10+ machine with internet, a **single batch file** (double-clicked) must bootstrap everything to run the Python app **with all imports installed**.
+**Goal.** A person who has only one or more `.py` files on a clean Windows 10+ machine with internet access
+should be able to double-click a **single batch file** and have the Python program run **with all of its
+imports installed**.
+
+- **REQ-001.1** [critical] The bootstrapper **shall**, when the user starts `run_setup.bat` in a folder that
+  holds `.py` files on a Windows 10 or newer machine with internet access, set up everything the program needs
+  and run the program with all of its imports installed, without anything having been installed or configured
+  beforehand.
+- **REQ-001.2** [major] The bootstrapper **shall**, when the path of the folder contains an accented Latin
+  letter (for example e with an acute accent, U+00E9), set up and run the program the same way it does for a
+  path of ASCII letters only.
+
+> **Notes (non-normative).**
+> - REQ-001.2 is exercised with the folder `Caf<U+00E9> Test\Jos<U+00E9>` (an accented letter in two
+>   components, one with a space). The environment name, and so the EXE name, loses the accented letter
+>   (`Jos_.exe`). Characters outside the system code page, and the Miniconda location (REQ-003.2), are not
+>   covered by it.
 
 ### [REQ-002] Entry selection (current behavior)
 - **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
@@ -132,16 +148,27 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
 
 ## [REQ-003] Platform & Locations
 
-- Platform: Windows 10 (1809+) or newer to leverage built-in `curl` and PowerShell.
-- Conda environments (when conda is the selected provider): use **Miniconda** (non-admin).
-- Writable, non-admin locations under Public Documents (conda provider):
-  - Miniconda root: `%PUBLIC%\Documents\Miniconda3`
-  - App workspace: current folder (where the batch runs)
+**Goal.** The bootstrapper should run on Windows 10 (1809) or newer using the `curl` and PowerShell that
+Windows ships, and should keep everything it installs in writable, non-admin locations.
 
-### Limitations
+- **REQ-003.1** [major] The bootstrapper **shall** run on Windows 10 (version 1809) or newer, using the
+  `curl` and PowerShell that Windows ships.
+- **REQ-003.2** [major] When conda is the selected provider, the bootstrapper **shall** use Miniconda, installed
+  under `%PUBLIC%\Documents\Miniconda3`.
+- **REQ-003.3** [major] The bootstrapper **shall** create its working files and its build output in the
+  folder where it was started.
+- **REQ-003.4** [minor] When the bootstrapper is started from a UNC path (`\\server\share\...`), it **shall**
+  print a warning that names the UNC path, report `Workspace path invalid`, exit with code 1 and leave the
+  folder without a `dist` folder or a setup log.
 
-- UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. Map the share to a drive letter before running `run_setup.bat`.
-- Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap steps.
+> **Notes (non-normative).**
+> - Limitation: UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. The
+>   warning of REQ-003.4 recommends mapping the share to a drive letter and running `run_setup.bat` again,
+>   which is what the user should do. CMD cannot make a UNC path its current directory, which is why the
+>   run stops. The test starts a copy through the runner's own administrative share
+>   (`\\localhost\<drive>$\...`).
+> - Limitation: Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap
+>   steps. REQ-001.2 covers accented letters in the folder path; other characters are not covered.
 
 ---
 
@@ -194,6 +221,34 @@ shall governs. The writing rules are in AGENTS.md, "Writing README requirements"
 
   **Provider fallback trigger:** environment-creation failure (e.g., uv venv create fails, Miniconda download fails, the embedded-Python download fails) cascades immediately to the next provider tier. A warnfix hard failure (dependencies still unresolved after the repair loop exhausts) also cascades to the next tier and re-attempts dependency installation there, gated by explicit user consent before the run continues under a different provider (see REQ-005.10, and REQ-014 for the system tier's own consent gate).
 
+  **Provider memory.** The bootstrapper should start each run with the provider most likely to work for the
+  program, so that a program that only works on Miniconda does not repeat the failed providers on every run.
+
+  - **REQ-009.9** [major] The bootstrapper **shall**, after a fresh build is verified on the Miniconda provider
+    reached through a provider cascade from uv, or after the user confirmed that the program opened and worked
+    (REQ-018.29), record that provider in `~provider.state.json` in the program folder.
+  - **REQ-009.10** [major] The bootstrapper **shall**, when `~provider.state.json` names Miniconda and Miniconda
+    is installed, start with Miniconda and not acquire uv.
+  - **REQ-009.11** [major] The bootstrapper **shall**, on every run that starts from the record, state that it
+    does and how to go back to the normal provider order (delete `~provider.state.json`).
+  - **REQ-009.12** [major] The bootstrapper **shall not** clear the record because `requirements.txt`,
+    `pyproject.toml`, `runtime.txt` or a `.py` file changed, or because a run failed.
+  - **REQ-009.13** [major] The bootstrapper **shall**, when the record names Miniconda and Miniconda is not
+    installed, delete the record, say so and use the normal provider order.
+  - **REQ-009.14** [major] The bootstrapper **shall**, when the record cannot be read, ignore it, say so and use
+    the normal provider order.
+  - **REQ-009.15** [major] The bootstrapper **shall**, when `PVW_PROVIDER` is `conda`, use only the Miniconda
+    provider for that run, not cascade after a failure, and neither read nor write the record.
+  - **REQ-009.16** [major] The bootstrapper **shall**, when `PVW_PROVIDER` has any other value, stop with one
+    message that names the accepted value and does not repeat the given value.
+
+  > **Notes (non-normative).**
+  > - Rationale for REQ-009.12 (maintainer decision, 2026-10-17): if it took Miniconda to solve the program once,
+  >   the other providers are unlikely to help after an edit, so only the user's deletion of the file, or a
+  >   missing Miniconda, resets the record.
+  > - A run that reuses a valid cached EXE does not reach provider selection, so the record and `PVW_PROVIDER`
+  >   have no effect on it (the same holds for the first-argument checks of REQ-026).
+
 - [REQ-006] Channels policy (applies when **conda is the selected provider**; determinism and legal-friction avoidance):
   - Before any conda updates or installs, force **community conda-forge only**:
     ```
@@ -226,7 +281,7 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
   1. PEP 723 inline script metadata (`# /// script`)
      - If present, valid, and non-empty -> authoritative
      - Parsed before any file-based source
-     - If malformed or empty: `[WARN] PEP 723 metadata invalid or empty` -> fall through
+     - If malformed or empty: `[WARN] PEP 723 block found but dependency list is empty or malformed; falling back` -> fall through
   2. `pyproject.toml` `[project].dependencies`
      - If present and non-empty -> authoritative; overrides `requirements.txt`
   3. `requirements.txt`
@@ -342,7 +397,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
   - Success (application runs), or
   - Hard failure (unresolvable within the current provider)
   - On hard failure: cascade to the next REQ-009 provider (uv exhausted -> conda, conda exhausted -> embedded Python, embedded Python exhausted -> venv, venv exhausted -> system Python) and re-attempt from the dependency installation phase, after explicit user consent (REQ-014 for the system tier).
-  - A run that fails under uv can also reach the uv -> conda cascade after the run, through the last-chance offer described under REQ-018 (planned, not yet built), with the same consent rule.
+  - A run that fails under uv can also reach the uv -> conda cascade after the run, through the last-chance offer of REQ-018.23, with the same consent rule.
 
 ---
 
@@ -517,51 +572,129 @@ At completion:
 
 ## [REQ-018] Controlled execution of user code
 
-Running the user's program IS the goal -- a beginner who cannot launch it themselves is exactly who this tool serves -- but each run must be treated as potentially destructive: a program is not guaranteed to be idempotent, and one run can overwrite files, send network requests or email, mutate a database, or actuate connected hardware (e.g. a VISA/serial instrument). The bootstrapper therefore runs the user's code purposefully and at most once per invocation, never repeatedly and never via two launch methods in the same run.
+**Goal.** The bootstrapper should get the user's program running and verified, and should treat every run of it
+as potentially destructive. Running the program is the point (a beginner who cannot launch it is exactly who this
+tool serves), but a program is not guaranteed to be idempotent: one run can overwrite files, send network
+requests or email, change a database or drive connected hardware, for example a VISA or serial instrument. The
+bootstrapper should therefore run the program once per invocation and should ask before any further run.
 
-- **Fast path is the user's run (frictionless).** When a current, already-verified EXE exists (sources unchanged since it was built), double-clicking the batch runs it directly and untimed, with no prompt and no console interaction -- the double-click is the user's intent to run, and this is the session's single run. A fast non-zero exit is still treated as a stale/broken EXE and triggers a rebuild (REQ-007); a program that keeps running is the user's app, left to run.
-- **Verifying a fresh build is activity-aware and announced.** When the bootstrapper builds or rebuilds the EXE, it runs it once to verify, preceded by a clear warning that this is a throwaway check so the user does not start real work in it. This run is only force-stopped if it stays completely silent for about 30 seconds; any output at all -- including a prompt waiting on input -- keeps it running for as long as needed, so an interactive program gets a real chance to be exercised. (A separate, narrower re-verification inside the `--hidden-import` auto-recovery loop remains unconditionally time-boxed at ~30 seconds, since it exists only to confirm one specific repair worked.) This is the only primary verification run that can be force-stopped at all.
-- **After a build, the real run is offered, not forced.** Following a successful build and verification, the bootstrapper offers to launch the app untimed for real, so a beginner need not launch it manually. The offer is consent-gated and names the side-effect/idempotency risk; declining leaves the verified EXE plus the post-flight guidance.
-- **Consent before any extra run.** Beyond the single automatic run, any further execution -- re-running, or running via the other launch method -- requires explicit consent that names the risk that the program may not be safe to run twice.
-- **Missing packages named at runtime.** After each run of your program that the bootstrapper
-  makes (the EXE verification run, the interpreter run, and the optional second run), it reads that
-  run's error output, whatever the exit code was. A program can print
-  `ModuleNotFoundError: No module named X` and still exit 0, because a window toolkit catches an error
-  raised in a button handler, prints it and keeps running. When X is not installed in the environment,
-  the console says so right after the run and again at the end, and tells you to add X, or the package
-  that provides it, to the file your dependencies come from and run again: `requirements.txt`, the
-  `[project]` dependencies in `pyproject.toml`, or the PEP 723 header of your script, whichever the run
-  reported as its dependency source (the last two are copied over `requirements.txt` on every run, so
-  editing `requirements.txt` would not last). This reading step itself installs and edits nothing and does
-  not run your program again; the offer below is a separate step that asks first. Standard library names (such as `tkinter`) and modules
-  that sit next to your script are not reported. The cached-EXE fast path skips this check, because it
-  runs before any interpreter is chosen.
-- **Installing a missing package.** When the check above finds a module that is not installed, the
-  bootstrapper asks once per run, before it installs anything, edits `requirements.txt` or rebuilds: it
-  lists the packages and waits 30 seconds for Y or N (a quiet run, a CI run and a bare Enter all mean no). A
-  yes installs each package into the program's own environment (never into a system Python, and never under
-  the fallback build system's EXE), adds it to `requirements.txt` unless it is already listed (when your
-  dependency source is `pyproject.toml` or a PEP 723 header, which are copied over `requirements.txt` on
-  every run, nothing is edited: the prompt and the log tell you to add the package to that file yourself),
-  rebuilds the EXE with `--hidden-import` and `--collect-submodules` for each new module when there is one,
-  and runs your program one more time to check; that one extra run is covered by the yes. The log ends with
-  `verified` when the check run no longer names the module, or says it still does. A failed install or
-  rebuild stops there, with no provider cascade. A no changes nothing and the module is only named, as
-  above. The import name is turned into the package name from a small table (`cv2` becomes `opencv-python`,
-  `PIL` becomes `pillow`); any other name is used as it is.
-- **Last-chance offer to try conda (planned, not yet built; shape agreed 2026-10-11).** If a fresh
-  build that ran under uv ends with your program stopping on a real error, the bootstrapper asks once,
-  after the verification run and the optional interpreter re-run, with no timer: it shows the last
-  line of your program's error output and offers "it actually worked", "try again with Miniconda" or
-  "neither" (the default). The Miniconda choice says that your program will run one more time. The
-  offer is not made on the cached-EXE fast path, after a silent timeout (normal for a window app),
-  when conda is already the provider, or when the earlier dependency prompt already approved a
-  cascade, and every non-interactive or CI run resolves it to "neither" without waiting. On a conda
-  run reached this way, a window app that was still running when the check stopped it is asked once
-  whether it opened and worked; the question says the check stops the program after about 30 seconds,
-  so a window that stays open is expected. Only an explicit yes is remembered for the next run; pressing
-  Enter alone, or any other answer, remembers nothing.
-- **Non-interactive and CI** resolve every gate without hanging: no untimed run, and offers auto-decline.
+- **REQ-018.1** [critical] The bootstrapper **shall** start the user's program at most once per invocation,
+  through one launch method, except for a further run the user has consented to under REQ-018.2.
+- **REQ-018.2** [critical] The bootstrapper **shall** obtain the user's explicit consent, in a prompt that names
+  the risk that the program may not be safe to run twice, before any run beyond the single automatic run,
+  whether a re-run or a run through the other launch method.
+- **REQ-018.3** [major] The bootstrapper **shall**, when a current, already-verified EXE exists (the sources are
+  unchanged since it was built), start that EXE directly, with no prompt, no console interaction of its own and
+  no time limit; this start is the invocation's single run.
+- **REQ-018.4** [major] The bootstrapper **shall not** force-stop a program it started under REQ-018.3; a
+  program that keeps running is the user's application and is left to run.
+- **REQ-018.5** [major] The bootstrapper **shall**, when it builds or rebuilds the EXE, verify the build by
+  running the EXE once, after a clear warning that this run is a throwaway check so that the user does not
+  start real work in it.
+- **REQ-018.6** [major] The bootstrapper **shall** force-stop the verification run of REQ-018.5 only if the run
+  has produced no output 30 seconds after it started; any output, including a prompt that waits for input,
+  **shall** keep the run going for as long as it needs.
+- **REQ-018.7** [minor] The bootstrapper **shall** end the re-verification run inside the `--hidden-import`
+  auto-recovery loop after 30 seconds, whatever output the run produces.
+- **REQ-018.8** [major] The bootstrapper **shall**, after a successful build and verification, offer to launch
+  the application untimed for real; the offer **shall** be consent-gated and name the side-effect and
+  idempotency risk, and declining **shall** leave the verified EXE and the post-flight guidance in place.
+- **REQ-018.9** [critical] The bootstrapper **shall**, in a non-interactive run, decline each elective offer
+  (the post-execution checkpoint, the optimized build, the missing-package install and the last-chance offer)
+  without waiting for input.
+- **REQ-018.10** [major] The bootstrapper **shall** read the error output of each run it makes (the EXE
+  verification run, the interpreter run and the optional second run) whatever the exit code, and **shall**, when
+  that output shows `ModuleNotFoundError: No module named X` for an X that is not installed in the environment,
+  name X on the console right after the run and again at the end.
+- **REQ-018.11** [major] The bootstrapper **shall**, in the message under REQ-018.10, tell the user to add X, or
+  the package that provides it, to the file the dependencies come from and to run again: `requirements.txt`, the
+  `[project]` dependencies in `pyproject.toml` or the PEP 723 header of the script, whichever the run reported
+  as its dependency source.
+- **REQ-018.12** [major] The reading step of REQ-018.10 **shall** install nothing, edit no file and not start
+  the program again.
+- **REQ-018.13** [minor] The bootstrapper **shall not** report a standard library module (such as `tkinter`) or
+  a module that sits next to the script as missing, and **shall** skip the check of REQ-018.10 on the
+  cached-EXE fast path.
+- **REQ-018.14** [major] The bootstrapper **shall**, when REQ-018.10 finds a missing module, ask the user once
+  per invocation whether to install the packages it lists, before it installs anything, edits a dependency
+  file or rebuilds, and **shall** wait at most 30 seconds for the answer.
+- **REQ-018.15** [major] The bootstrapper **shall**, when the answer under REQ-018.14 is not an explicit yes (N,
+  a bare Enter or no answer), install nothing, edit nothing, rebuild nothing and only name the module as
+  REQ-018.10 does.
+- **REQ-018.16** [major] The bootstrapper **shall not** make the offer of REQ-018.14 when the selected
+  interpreter is a system Python, when no interpreter was selected, or when the EXE was built by the fallback
+  build system, and **shall** log that the offer was not made.
+- **REQ-018.17** [major] The bootstrapper **shall**, on a yes under REQ-018.14, install each listed package into
+  the program's own environment.
+- **REQ-018.18** [major] The bootstrapper **shall**, on a yes under REQ-018.14, add each installed package to
+  `requirements.txt` unless it is already listed; when the dependency source is `pyproject.toml` or a PEP 723
+  header, it **shall** edit no file and **shall** tell the user, in the prompt and in the log, which file to
+  edit.
+- **REQ-018.19** [major] The bootstrapper **shall**, on a yes under REQ-018.14 and when the run has an EXE,
+  rebuild the EXE with `--hidden-import` and `--collect-submodules` for each installed module.
+- **REQ-018.20** [major] The bootstrapper **shall**, on a yes under REQ-018.14, run the program once more to
+  check (the yes covers that run), and **shall** state in the log `verified` when the output no longer names
+  the module and that it still does otherwise.
+- **REQ-018.21** [major] The bootstrapper **shall**, when an install or rebuild under REQ-018.14 fails, stop
+  that step there and not start a provider cascade.
+- **REQ-018.22** [minor] The bootstrapper **shall** list, in the prompt of REQ-018.14, every package it would
+  install, naming the package that provides a module from a small table (`cv2` is `opencv-python`, `PIL` is
+  `pillow`) and using any other module name as the package name.
+- **REQ-018.23** [major] The bootstrapper **shall**, when the verification run of a fresh build under the uv
+  provider ends with an exit code that is neither 0 nor -1, ask the user once, with no time limit and before the
+  build is finished, to choose "it actually worked", "try again with Miniconda" or "neither", with "neither" as
+  the default.
+- **REQ-018.24** [major] The bootstrapper **shall** show, before the question of REQ-018.23, the last non-blank
+  line of the program's error output, with every character outside printable ASCII replaced by `?` and cut at
+  200 characters.
+- **REQ-018.25** [major] The bootstrapper **shall** state, in the Miniconda choice of REQ-018.23, that the
+  program runs once more.
+- **REQ-018.26** [major] The bootstrapper **shall not** make the offer of REQ-018.23 when the program exited 0,
+  when the bootstrapper force-stopped a silent verification run, when the cached EXE was reused, when the
+  provider is not uv, when an earlier prompt already approved a provider cascade, when the offer of
+  REQ-018.14 already asked about the run, or when the accepted post-execution checkpoint ran the program through
+  the interpreter and it exited 0.
+- **REQ-018.27** [major] The bootstrapper **shall**, when the user chooses "try again with Miniconda", continue
+  with the Miniconda provider through the provider cascade of REQ-009.
+- **REQ-018.28** [major] The bootstrapper **shall**, when the verification run of a fresh build under the
+  Miniconda provider, reached through a provider cascade, was force-stopped after the program produced no
+  output, ask the user once whether the program opened and worked, with "no" as the default.
+- **REQ-018.29** [major] The bootstrapper **shall** record the build as confirmed by the user only when the
+  user answers yes to the question of REQ-018.28 explicitly.
+- **REQ-018.30** [major] The bootstrapper **shall** state in the question of REQ-018.28 that the check stops the
+  program 30 seconds after it started.
+- **REQ-018.31** [major] The bootstrapper **shall not** ask the question of REQ-018.28 when the program ended by
+  itself, including with exit code -1, or when the provider is not the Miniconda provider reached through a
+  provider cascade.
+
+> **Notes (non-normative).**
+> - Rationale: the bootstrapper cannot know whether the program is safe to run twice, so the run that verifies
+>   a build is also the user's run wherever that is possible, and every other run is the user's decision.
+> - REQ-018.3: a start that ends with a non-zero exit is still treated as a stale or broken EXE and triggers a
+>   rebuild ([REQ-007]); once the fail-fast window has passed, a later non-zero exit is the program's own
+>   outcome and the EXE is kept.
+> - REQ-018.6 is the only primary verification run that can be force-stopped at all. The separate re-verification
+>   of REQ-018.7 exists only to confirm that one specific repair worked.
+> - REQ-018.8 and REQ-018.2: the second-run prompts (the post-execution checkpoint and the optimized build, whose
+>   prompt says that building starts the program once more for up to 30 seconds to check it works, so the user
+>   should say no if running it twice could cause harm) are the consent prompts of REQ-018.2.
+> - REQ-018.9 names the elective offers, which read all three signals of the Terms section's non-interactive
+>   run. The consent gates of the provider cascade, the system-Python build and a corrupt conda install read
+>   only `HP_CI_LANE`, and the connectivity retry reads `NOINPUT` and `HP_NONINTERACTIVE` (open question 2 in
+>   `docs/open-questions.md`); each is worded in its own requirement until that is settled.
+> - REQ-018.10: a program can print `ModuleNotFoundError` and still exit 0, because a window toolkit catches an
+>   error raised in a button handler, prints it and keeps running. The fast path skips the check because it
+>   runs before any interpreter is chosen. `pyproject.toml` and a PEP 723 header are copied over
+>   `requirements.txt` on every run, so advice to edit `requirements.txt` would not last for those two sources.
+> - REQ-018.14 to REQ-018.22: the answer prompt waits 30 seconds, and a quiet run, a CI run and a bare Enter all
+>   mean no. A native DLL that a newly installed conda package needs is not bundled by the rebuild.
+> - REQ-018.23 to REQ-018.27: untimed on purpose, because it is a decision and not a timeout guard. A late
+>   approval reuses the provider cascade and does not change it. The question is not asked on the cached-EXE
+>   fast path because the offer sits at the end of a fresh build.
+> - REQ-018.28 to REQ-018.31: a window application never exits by itself, so the check stops it; only an
+>   explicit yes lets the next run start with the remembered provider (REQ-009). The bootstrapper recognises a
+>   stopped silent run by a marker the smoke runner writes, not by exit code -1 alone, because a failed launch
+>   or a program that exits with -1 on its own also leaves -1.
 
 ---
 
@@ -679,14 +812,41 @@ blip or a temporary outage.
 
 ## [REQ-012] Super-user Execution-skip Hooks
 
-- For advanced/CI use, two environment variables let a caller build the environment and EXE **without executing any user code**:
-  - `HP_SKIP_ENTRY_SMOKE=1` -- skip the entry-script interpreter smoke test (and the fast-path EXE reuse, which also runs the program). The build still runs; the result is left **unverified** (not a fake pass or fail).
-  - `HP_SKIP_EXE_SMOKERUN=1` -- skip running the built/cached EXE for verification (both first-build and fast-path). "Skipped by request" is distinct from "failed verification": the post-flight panel shows a neutral note rather than the unverified caveat.
-- With both set, env creation, dependency install, and the PyInstaller build all still run, but no user code executes.
-- Log contract:
-  - `[INFO] REQ-012: HP_SKIP_ENTRY_SMOKE set; skipping entry-script smoke test (no user code executed).`
-  - `[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; skipping EXE verification (skipped by request).`
-- Test NDJSON row: `self.skiphooks.combined` (in `tests/selfapps_skiphooks.ps1`).
+**Goal.** A developer or a CI job should be able to have the environment and the EXE built without the
+program being run, and should be able to tell a verification skipped on request from one that failed.
+
+- **REQ-012.1** [major] When `HP_SKIP_ENTRY_SMOKE` is set, the bootstrapper **shall** not verify a fresh build by
+  running the program through the interpreter, and **shall** state in the setup log that this step was skipped
+  by request.
+- **REQ-012.2** [major] The bootstrapper **shall**, when `HP_SKIP_ENTRY_SMOKE` is set and
+  `HP_SKIP_EXE_SMOKERUN` is not, still verify a fresh build by running the built EXE once.
+- **REQ-012.3** [major] When `HP_SKIP_EXE_SMOKERUN` is set, the bootstrapper **shall** not run the built or
+  cached EXE to verify it, and **shall** state in the setup log that the verification was skipped by request.
+- **REQ-012.4** [major] The bootstrapper **shall**, when `HP_SKIP_EXE_SMOKERUN` is set and
+  `HP_SKIP_ENTRY_SMOKE` is not, verify a fresh build by running the program once through the interpreter
+  instead.
+- **REQ-012.5** [major] When `HP_SKIP_EXE_SMOKERUN` is set, the post-flight panel **shall** show a neutral note
+  that the EXE verification was skipped by request, and **shall** not show the unverified caveat.
+- **REQ-012.6** [critical] The bootstrapper **shall**, when both `HP_SKIP_ENTRY_SMOKE` and
+  `HP_SKIP_EXE_SMOKERUN` are set, create the environment, install the dependencies and build the EXE, and
+  **shall** not run the program.
+
+> **Notes (non-normative).**
+> - Rationale: for advanced and CI use. "Skipped by request" is a different state from "failed
+>   verification", which is why REQ-012.5 exists and why a skipped verification is never reported as a pass or
+>   a fail. REQ-012.4 exists so that skipping the EXE run does not silently skip all verification.
+> - Log lines: `[INFO] REQ-012: HP_SKIP_ENTRY_SMOKE set; skipping entry-script smoke test (no user code executed).`
+>   and `[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; skipping EXE verification (skipped by request).`
+>   A current cached EXE found at the start of a run is reused without being run:
+>   `[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; reusing cached EXE without running it (skipped by request).`
+> - `HP_SKIP_ENTRY_SMOKE` alone leaves the cached-EXE fast path of [REQ-018] untouched: it skips only the
+>   interpreter check and the check for a reusable EXE made inside a build. A repeat run of an unchanged
+>   program therefore still starts the cached EXE once, which is the user's run under REQ-018, unless
+>   `HP_SKIP_EXE_SMOKERUN` is set too. An earlier version of this section said that the hook also skipped the
+>   fast-path reuse; REQ-012.6 is the guarantee that holds, and the single-hook launch counts are checked by
+>   rows `self.skiphooks.entry_only` and `self.skiphooks.exe_only`.
+> - Tests: `self.skiphooks.combined` (`tests/selfapps_skiphooks.ps1`, REQ-012.6) and `self.skiphooks.entry_only`
+>   and `self.skiphooks.exe_only` (`tests/selfapps_skiphooks_single.ps1`).
 
 ---
 
@@ -700,20 +860,37 @@ blip or a temporary outage.
 
 ## [REQ-019] Environment-Variable Flags Are Scaffolding, Never a Gate
 
-**Intended run paths are double-click and drag-and-drop, with no environment variables set.** All
-`HP_*` and `PVW_*` environment variables are **test/CI/super-user scaffolding only**. No intended
-user path may *require* the user to set such a flag, and the **absence** of any such flag must
-never block a Prime-Directive outcome: a flag may add diagnostic/CI behavior or a super-user
-override, or suppress an optional step (so absence == full behavior), but it is never the gate for
-a behavior the Prime Directive needs. The default no-flag run must still reach every fallback tier
-that gets the code running. Requirements and tests therefore exercise the no-flag path.
+**Goal.** A user should be able to get every Prime Directive outcome by double-clicking or dragging a file onto
+`run_setup.bat`, with no environment variable set. The `HP_*` and `PVW_*` variables should stay
+test, CI and super-user scaffolding: a flag may add diagnostic or CI behavior, give a super-user an
+override, or suppress an optional step (so that absence is full behavior), but it should never be the gate for
+a behavior the Prime Directive needs.
 
-This is a standing design constraint, not just reference documentation -- it was previously only
-stated in this section's own prose with no requirement number, even though `docs/agent-lessons-
-learned.md` and other internal docs already cited it informally as a load-bearing rule (the "Env-
-var flags are scaffolding" principle). Promoted to `[REQ-019]` so it can be cited unambiguously
-going forward, distinct from `[REQ-001]` (the Prime Directive itself, which this rule protects but
-does not replace).
+- **REQ-019.1** [critical] The bootstrapper **shall**, when the user starts `run_setup.bat` with none of the
+  `HP_*`, `PVW_*` and `NOINPUT` environment variables set and nobody answers a prompt, finish the run by
+  itself, with the bootstrap state `ok` for a program that runs.
+- **REQ-019.2** [critical] The absence of an `HP_*` or `PVW_*` environment variable **shall not** prevent the
+  bootstrapper from using a fallback provider that gets the program running.
+- **REQ-019.3** [major] The bootstrapper **shall**, when none of the `HP_*`, `PVW_*` and `NOINPUT`
+  environment variables is set and the folder holds a current, verified EXE, start that EXE once, without
+  rebuilding it.
+
+> **Notes (non-normative).**
+> - Intended run paths are double-click and drag-and-drop with no environment variables set, so requirements
+>   and tests exercise the no-flag path. This is a standing design constraint: it was previously stated only
+>   in this section's prose without a requirement number, although `docs/agent-lessons-learned.md` and other
+>   internal docs already cited it as a load-bearing rule (the "Env-var flags are scaffolding" principle). It
+>   is distinct from `[REQ-001]`, the Prime Directive itself, which this rule protects but does not replace.
+> - REQ-019.1 and REQ-019.3 are exercised by starting the bootstrapper with every such variable removed from
+>   its environment and standard input closed, so the prompts that wait for an answer reach end of input; the
+>   launched shell's own list of such variables is what proves none was set. A repeat run takes the
+>   interactive probe of the cached EXE ("Launching your program now via the cached standalone EXE") rather
+>   than the plain fast path. Every other test scenario sets `HP_CI_LANE`, which resolves these prompts and
+>   the end-of-run pause differently.
+> - REQ-019.2 is checked by inspection: `tests/test_flag_inventory.py` lists every test hook the batch reads,
+>   and the AGENTS.md and `docs/agent-lessons-learned.md` rule is to re-read any new flag for this property.
+>   The one historical breach was system Python hidden behind `HP_ALLOW_SYSTEM_FALLBACK`; it is gated by the
+>   consent prompt of REQ-014 alone now.
 
 ## Advanced Environment Variables (reference)
 
@@ -723,12 +900,13 @@ Operational knobs, not needed for normal double-click use:
 |----------|--------|-----|
 | `HP_PVW_KNOWN_IDEMPOTENT=1` | Opt-in: run the entry live via `uvx autopep723` for execute-mode dependency discovery (uv lane only) | REQ-005.13 |
 | `HP_SKIP_AUTOPEP_DISCOVERY=1` | Skip the `autopep723 check` discovery-merge augmentation of pipreqs (uv lane only) | REQ-005.12 |
-| `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script smoke test (no user code run) | REQ-012 |
-| `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification | REQ-012 |
+| `HP_SKIP_ENTRY_SMOKE=1` | Skip the entry-script interpreter smoke test; the EXE verification run still happens unless `HP_SKIP_EXE_SMOKERUN` is set too | REQ-012 |
+| `HP_SKIP_EXE_SMOKERUN=1` | Skip running the built/cached EXE for verification (the interpreter verifies a fresh build instead unless `HP_SKIP_ENTRY_SMOKE` is set too) | REQ-012 |
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
 | `HP_SKIP_PEP723_WRITEBACK=1` | Skip the PEP 723 header write-back (`uv add --script`) after a fresh install or warnfix repair | REQ-005.11 |
 | `HP_VERBOSE_CONSOLE=1` | Opt-in: also echo `[DEBUG]`/`[TRACE]`/`[INSTALL]`-tagged lines to the live console (suppressed by default; always written to `~setup.log` either way) | -- |
 | `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
+| `PVW_PROVIDER=conda` | Super-user: use only the Miniconda provider for this run, no cascade after a failure, no read or write of `~provider.state.json`; any other value stops the run | REQ-009.15 |
 
 **This table is not exhaustive -- for awareness only.** More `HP_*` / `PVW_*` / `HP_TEST_*`
 variables exist (CI-only test-injection flags such as `HP_TEST_*`, `HP_CI_*`, and
@@ -840,10 +1018,33 @@ further arguments, work as before.
 
 ---
 
+## [REQ-028] Setup log
+
+**Goal.** The bootstrapper should keep one rolling log, `~setup.log`, that holds the history a user needs to
+report a problem and should not let that log grow without bound.
+
+- **REQ-028.1** [major] The bootstrapper **shall**, when `~setup.log` is larger than 10 MiB (10,485,760 bytes) at
+  the start of a run, move it to `~setup.prev.log`, replacing any older `~setup.prev.log`, and start a new
+  `~setup.log`.
+- **REQ-028.2** [major] The bootstrapper **shall**, when `~setup.log` is no larger than 10 MiB at the start of a
+  run, append to it and not create or replace `~setup.prev.log`.
+
+> **Notes (non-normative).**
+> - Rationale: one log file in a known place is easy to attach to a problem report, and keeping exactly one
+>   previous log means a problem seen in the run before a rotation can still be read.
+> - Mechanism: `:rotate_log` runs once, early in the run, before the environment is chosen. The check happens at
+>   the start only, so a single run that writes more than the limit is not trimmed while it runs, and the two
+>   files together can hold up to about twice the limit. An earlier version of this README said the log was
+>   capped near 10 MB in total; that never matched the move to `~setup.prev.log`.
+> - Tests: `self.log.rotate.over` (REQ-028.1) and `self.log.rotate.under` (REQ-028.2) in
+>   `tests/selfapps_log_rotate.ps1` seed real logs of both sizes and start the bootstrapper.
+
+---
+
 ## Maintenance, Logging, and Lessons Learned
 
 - Update conda base periodically (~30 days), but **skip on first Miniconda install**. Ensure base is configured to conda-forge before updating to avoid prompts.
-- Single rolling log `~setup.log` capped near **10 MB** total, don't spin out extra log files. Trim at start. Use debug-level detail when `VERBOSE=1`.
+- Single rolling log `~setup.log`, moved to `~setup.prev.log` at start once it passes **10 MB** (see [REQ-028]); don't spin out extra log files. Use debug-level detail when `VERBOSE=1`.
 - Tilde-prefix any files not meant to persist (or may remain after a crash) so they are easy to ignore in VCS.
 - Avoid `EnableDelayedExpansion`. If unavoidable, enable only around the exact lines, then disable. Force disable at script start.
 - Be robust against parent shells started with `CMD /V:ON` and 3rd-party wrappers.

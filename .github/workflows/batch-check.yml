@@ -1229,6 +1229,15 @@ jobs:
         run: |
           & tests\selfapps_preflight_pycache.ps1
 
+      # docs/plan-test-suite-gaps.md gap T1 (slice E): each REQ-012 skip hook ALONE. selfapps_skiphooks.ps1 sets both
+      # together; neither was ever run on its own, so nothing said how often the program runs with only one set.
+      # A stub appends one line per launch (the ledger idea above). Real lane only, gating from its first run.
+      - name: "Self-test: REQ-012 each skip hook alone -- launch counts (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_skiphooks_single.ps1
+
       # docs/plan-test-suite-gaps.md gap T1 (slices A to D): a stub program appends one line per launch
       # to ~ledger.jsonl, so the suite can count how often and with which arguments the user's program
       # really runs (REQ-026 argv forwarding at the EXE smoke, cached-EXE fast path and interpreter launch
@@ -1240,6 +1249,55 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_launch_ledger.ps1
+
+      # docs/plan-test-suite-gaps.md gap T8 (REQ-001): bootstrap from a folder path with a non-ASCII
+      # character in two components (an accented user profile or project folder is common on real
+      # machines; every other path test is ASCII only). Real lane only, gating from its first run.
+      - name: "Self-test: non-ASCII folder path bootstrap (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_unicode_path.ps1
+
+      # docs/plan-test-suite-gaps.md gap T9 (README REQ-003 limitation): start the bootstrapper through the
+      # runner's own admin share (\\localhost\C$\...) so the UNC branch (warning, then Workspace path invalid and
+      # exit 1) runs in CI for the first time. A probe row says whether the share reaches the scratch folder;
+      # when it does not, self.warn.unc reports skip. Real lane only, gating from its first run.
+      - name: "Self-test: UNC launch path (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_unc.ps1
+
+      # docs/plan-test-suite-gaps.md gap T12 (REQ-019, REQ-018): the default run a double-click user gets.
+      # Every other scenario runs with HP_CI_LANE (the runner sets it), so the flag-free branches (prompts
+      # that reach set /p, the end-of-run pause, the interactive fast-path probe) never execute in CI. This
+      # step removes every HP_*, PVW_* and NOINPUT variable and closes standard input for its own
+      # bootstraps. Real lane only, gating from its first run.
+      - name: "Self-test: no-flag default run, double-click conditions (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_noflag_default.ps1
+
+      # docs/plan-test-suite-gaps.md gap T2 (REQ-005.1): dependency source resolution, one bootstrap per cell
+      # (PEP 723 only, requirements.txt only, all three, malformed PEP 723, pyproject without dependencies,
+      # empty requirements.txt, nothing declared). Asserts the recorded source and what was installed. Both skip
+      # hooks are set so no user code runs. Real lane only, gating from its first run.
+      - name: "Self-test: dependency source matrix (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_dep_source_matrix.ps1
+
+      # docs/plan-test-suite-gaps.md gap T7 (README "Maintenance, Logging"): a ~setup.log over 10 MB is moved to
+      # ~setup.prev.log at start and a small fresh log begins; one under the limit is kept and appended to. Replaces
+      # the harness's text-presence row log.rotate. Real lane only, gating from its first run.
+      - name: "Self-test: setup log rotation (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_log_rotate.ps1
 
       - name: "Self-test: early preflight branches -- line-ending + writable-CWD (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
@@ -2370,6 +2428,22 @@ jobs:
             tests\~selftest_cascade_exec\~cascade_exec_bootstrap.log
             tests/~selftest_cascade_exec/~setup.log
             tests\~selftest_cascade_exec\~setup.log
+            tests/~selftest_skiphooks_entry_only/~hook_f1.log
+            tests\~selftest_skiphooks_entry_only\~hook_f1.log
+            tests/~selftest_skiphooks_entry_only/~hook_f2.log
+            tests\~selftest_skiphooks_entry_only\~hook_f2.log
+            tests/~selftest_skiphooks_entry_only/~ledger.jsonl
+            tests\~selftest_skiphooks_entry_only\~ledger.jsonl
+            tests/~selftest_skiphooks_entry_only/~setup.log
+            tests\~selftest_skiphooks_entry_only\~setup.log
+            tests/~selftest_skiphooks_exe_only/~hook_g1.log
+            tests\~selftest_skiphooks_exe_only\~hook_g1.log
+            tests/~selftest_skiphooks_exe_only/~hook_g2.log
+            tests\~selftest_skiphooks_exe_only\~hook_g2.log
+            tests/~selftest_skiphooks_exe_only/~ledger.jsonl
+            tests\~selftest_skiphooks_exe_only\~ledger.jsonl
+            tests/~selftest_skiphooks_exe_only/~setup.log
+            tests\~selftest_skiphooks_exe_only\~setup.log
             tests/~selftest_launch_ledger_a/~ledger.jsonl
             tests\~selftest_launch_ledger_a\~ledger.jsonl
             tests/~selftest_launch_ledger_a/~ledger_a.log
@@ -2396,6 +2470,32 @@ jobs:
             tests\~selftest_launch_ledger_e\~ledger_e.log
             tests/~selftest_launch_ledger_e/~setup.log
             tests\~selftest_launch_ledger_e\~setup.log
+            tests/~selftest_unicode_path_evidence/~unicode_bootstrap.log
+            tests\~selftest_unicode_path_evidence\~unicode_bootstrap.log
+            tests/~selftest_unicode_path_evidence/~setup.log
+            tests\~selftest_unicode_path_evidence\~setup.log
+            tests/~selftest_unicode_path_evidence/~unicode_token.json
+            tests\~selftest_unicode_path_evidence\~unicode_token.json
+            tests/~selftest_unicode_path_evidence/~bootstrap.status.json
+            tests\~selftest_unicode_path_evidence\~bootstrap.status.json
+            tests/~selftest_unc_evidence/~unc_launch.log
+            tests\~selftest_unc_evidence\~unc_launch.log
+            tests/~selftest_noflag_evidence/~noflag_f.log
+            tests\~selftest_noflag_evidence\~noflag_f.log
+            tests/~selftest_noflag_evidence/~noflag_g.log
+            tests\~selftest_noflag_evidence\~noflag_g.log
+            tests/~selftest_noflag_evidence/~setup.log
+            tests\~selftest_noflag_evidence\~setup.log
+            tests/~selftest_noflag_evidence/~noflag_ledger.jsonl
+            tests\~selftest_noflag_evidence\~noflag_ledger.jsonl
+            tests/~selftest_noflag_evidence/~bootstrap.status.json
+            tests\~selftest_noflag_evidence\~bootstrap.status.json
+            tests/~selftest_depsrc_*/~depsrc_*.log
+            tests/~selftest_depsrc_*/~dependency_installed.txt
+            tests/~selftest_depsrc_*/~dependency_source.txt
+            tests/~selftest_logrotate_over/~rotate_boot.log
+            tests/~selftest_logrotate_over/~setup.log
+            tests/~selftest_logrotate_under/~rotate_boot.log
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

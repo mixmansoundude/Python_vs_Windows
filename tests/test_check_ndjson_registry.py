@@ -192,3 +192,28 @@ def test_main_reports_fail_on_undocumented_code_row(tmp_path, capsys):
     assert result == 1
     assert "self.example.undocumented" in captured.out
     assert "Emitted in code but not registered" in captured.out
+
+
+def _unbalanced_fence_sections(text):
+    """Headings of the sections that hold an odd number of code-fence lines. parse_doc_registry pairs fences over the
+    whole file, so one unclosed fence turns every later prose block into "registered ids" and the advisory registry
+    job fails for a reason nobody can see from the row names (PR #498)."""
+    section, counts = "(top)", {}
+    for line in text.splitlines():
+        if line.startswith("## "):
+            section = line
+        elif line.startswith("```"):
+            counts[section] = counts.get(section, 0) + 1
+    return [name for name, n in counts.items() if n % 2]
+
+
+def test_unbalanced_fence_helper_names_the_broken_section():
+    text = "## Good\n```\nself.a.b\n```\n\n## Broken\n```\nself.c.d\n\n## Next\n```\nself.e.f\n```\n"
+    assert _unbalanced_fence_sections(text) == ["## Broken"]
+
+
+def test_agent_ndjson_doc_has_balanced_code_fences():
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parent.parent / "docs" / "agent-ndjson.md"
+    assert _unbalanced_fence_sections(doc.read_text(encoding="utf-8")) == []
