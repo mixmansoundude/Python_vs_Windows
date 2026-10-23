@@ -286,6 +286,30 @@ if defined PVW_UV_EXE call :log "[DEBUG] Using super-user override for PVW_UV_EX
 if defined PVW_CONDA_EXE call :log "[DEBUG] Using super-user override for PVW_CONDA_EXE: %PVW_CONDA_EXE%"
 if defined PVW_TARGET_PY call :log "[DEBUG] Using super-user override for PVW_TARGET_PY: %PVW_TARGET_PY%"
 if defined PVW_WORKSPACE call :log "[DEBUG] Using super-user override for PVW_WORKSPACE: %PVW_WORKSPACE%"
+rem --- PVW_BUILDER (CLAUDE.md Item 71): super-user choice of build tool, auto|pyinstaller|nuitka|both ---
+rem derived requirement: absent or auto is today's behavior (README REQ-019: a flag may add a super-user
+rem override, never gate a Prime Directive outcome). HP_BUILDER is the normalized choice and only ever holds one of
+rem the four fixed words. The raw value is compared by findstr over the output of set, so cmd never parses it: a value
+rem holding quotes, ampersands, pipes or percent signs is harmless, and no line expands it. Nothing may sit between
+rem the name and the pipe (see docs/agent-lessons-learned.md). An unrecognized value is reported once WITHOUT echoing it,
+rem because :log echoes unquoted and the text is whatever the user typed, and then treated as auto.
+set "HP_BUILDER=auto"
+if not defined PVW_BUILDER goto :pvw_builder_done
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=auto" >nul
+if not errorlevel 1 goto :pvw_builder_done
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=pyinstaller" >nul
+if not errorlevel 1 set "HP_BUILDER=pyinstaller"
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=nuitka" >nul
+if not errorlevel 1 set "HP_BUILDER=nuitka"
+set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=both" >nul
+if not errorlevel 1 set "HP_BUILDER=both"
+if "%HP_BUILDER%"=="auto" call :log "[WARN] PVW_BUILDER is not one of auto, pyinstaller, nuitka or both; using auto."
+:pvw_builder_done
+if not "%HP_BUILDER%"=="auto" call :log "[INFO] Using super-user override for PVW_BUILDER: %HP_BUILDER%"
+rem CLAUDE.md Item 78 slice 2: the remembered answer to the subfolder-only NI-VISA question lives for one run only.
+rem Cleared here, once, so a value inherited from the calling terminal can never stand in for the user's answer. The
+rem VISA block itself runs again on a provider cascade re-entry and must keep the answer, so it cannot clear it.
+set "HP_VISA_DECISION="
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
 if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
@@ -1584,7 +1608,9 @@ set "HP_PIPREQS_BLOCKED_WARNED="
 set "HP_PIPREQS_LAST_LOG="
 set "HP_PIPREQS_DIRECT_LOG=~pipreqs_direct.log"
 if exist "%HP_PIPREQS_DIRECT_LOG%" del "%HP_PIPREQS_DIRECT_LOG%"
-set "HP_PIPREQS_STAGE_LOG=~pipreqs_stage.log"
+rem derived requirement: Item 81 -- the staging scan runs after pushd into a copy that is deleted afterwards, so a
+rem relative log name put the log inside the copy and the summary lost its tail; the absolute path keeps it in the app folder.
+set "HP_PIPREQS_STAGE_LOG=%CD%\~pipreqs_stage.log"
 if exist "%HP_PIPREQS_STAGE_LOG%" del "%HP_PIPREQS_STAGE_LOG%"
 set "HP_PIPREQS_STAGE_COPY_LOG=~pipreqs_stage_copy.log"
 if exist "%HP_PIPREQS_STAGE_COPY_LOG%" del "%HP_PIPREQS_STAGE_COPY_LOG%"
@@ -2047,23 +2073,33 @@ rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
 call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA
 if errorlevel 1 call :die "[ERROR] Could not write ~detect_visa.py"
 set "NEED_VISA=0"
+set "HP_VISA_WHERE="
 if exist "~visa.flag" del "~visa.flag"
+if exist "~visa.where" del "~visa.where"
 "%HP_PY%" "~detect_visa.py" > "~visa.flag" 2>> "%LOG%"
 for /f "usebackq delims=" %%V in ("~visa.flag") do set "NEED_VISA=%%V"
+rem Item 78 slice 2: the scanner prints 0 (nothing), 1 (a match next to this script) or 2 (matches only below
+rem a subfolder) and writes the first match to ~visa.where in a character set that is safe to echo.
+if exist "~visa.where" for /f "usebackq delims=" %%W in ("~visa.where") do set "HP_VISA_WHERE=%%W"
+if exist "~visa.where" del "~visa.where"
 if "%NEED_VISA%"=="1" (
   call :log "[INFO] Detected pyvisa/visa import; NI-VISA install may be required."
+) else if "%NEED_VISA%"=="2" (
+  call :log "[INFO] Detected pyvisa/visa import only in a subfolder; the NI-VISA install needs your OK."
 ) else (
   call :log "[INFO] No pyvisa/visa imports detected."
 )
 if exist "~visa.flag" del "~visa.flag"
 
 rem --- NI-VISA presence check and install (REQ-008) ---
-rem derived requirement: NEED_VISA must be exactly "1"; any other value (0, empty, error)
-rem skips install to avoid hanging CI on non-visa projects.
-if not "%NEED_VISA%"=="1" (
-  call :log "[VISA] skipped (not_required)"
-  goto visa_done
-)
+rem derived requirement: NEED_VISA must be exactly "1" at the install step; any other value (0, empty,
+rem error) skips install to avoid hanging CI on non-visa projects. "2" means the import sits only below a
+rem subfolder, so it passes this check but is turned into "1" only by an explicit yes at :visa_subfolder_gate.
+if "%NEED_VISA%"=="1" goto visa_wanted
+if "%NEED_VISA%"=="2" goto visa_wanted
+call :log "[VISA] skipped (not_required)"
+goto visa_done
+:visa_wanted
 rem REQ-008: allow disabling the NI-VISA install for debugging, even when pyvisa/visa is detected.
 if "%HP_SKIP_NIVISA%"=="1" (
   call :log "[VISA] skipped (disabled)"
@@ -2074,6 +2110,10 @@ if not errorlevel 1 (
   call :log "[VISA] present"
   goto visa_done
 )
+rem Item 78 slice 2: only a file below a subfolder wants the driver, so ask before a 30 to 45 minute install.
+rem Placed after the disabled and already-installed checks so nobody is asked about a step that will not run.
+if "%NEED_VISA%"=="2" call :visa_subfolder_gate
+if not "%NEED_VISA%"=="1" goto visa_done
 set "NIVISA_INSTALLER=~ni-visa-runtime.exe"
 set "HP_VISA_DLVIA=curl"
 rem derived requirement: --retry/--max-time match every other curl download in this file
@@ -3658,8 +3698,14 @@ rem (auto-decline on HP_CI_LANE/NOINPUT/HP_NONINTERACTIVE, since like the checkp
 rem on essentially every successful bootstrap run) -- see that subroutine's own header comment
 rem for why this broader 4-way auto-decline set is used here instead of the narrower 3-branch
 rem gates elsewhere in this file (:system_build_consent_gate etc.).
+rem CLAUDE.md Item 71 (PVW_BUILDER): pyinstaller never offers Nuitka. both skips the question, because the
+rem override is the user's consent (same reasoning as HP_PVW_KNOWN_IDEMPOTENT), and still builds to a temp
+rem name, verifies, and swaps only on success, so a verified EXE is never replaced by an unverified one.
+if /I "%HP_BUILDER%"=="pyinstaller" exit /b 0
 if defined HP_NUITKA_FALLBACK_USED exit /b 0
+if /I "%HP_BUILDER%"=="both" if not "%HP_EXE_EXIT%"=="0" call :log "[INFO] PVW_BUILDER=both: the optimized build is skipped because the standard build did not run cleanly."
 if not "%HP_EXE_EXIT%"=="0" exit /b 0
+if /I "%HP_BUILDER%"=="both" goto :optbuild_both
 echo.
 echo *** Your app is ready. ***
 echo *** Want to build an optimized version too? It takes a bit longer to build right now, ***
@@ -3687,6 +3733,10 @@ if /I not "%HP_OPTBUILD_CHOICE%"=="Y" (
 set "HP_OPTBUILD_RAW="
 set "HP_OPTBUILD_CHOICE="
 call :log "[INFO] Optimized build: accepted; building now. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+goto :optbuild_build
+:optbuild_both
+call :log "[INFO] PVW_BUILDER=both: building the optimized version now without asking. It starts your program once more for up to 30 seconds to check it works. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+:optbuild_build
 rem Build to a distinct temp filename first -- the already-working dist\%ENVNAME%.exe is never
 rem touched until a build AND a verification run both succeed. HP_OPTBUILD_TMP is set before
 rem the test-hook check below so :optbuild_cleanup can always reference it safely, including in
@@ -3803,6 +3853,7 @@ if /I "%HP_FASTPATH_TOKEN%"=="fresh" (
   set "HP_FASTPATH_USED=1"
 )
 if not defined HP_FASTPATH_USED exit /b 0
+if /I not "%HP_BUILDER%"=="auto" call :log "[INFO] PVW_BUILDER=%HP_BUILDER%: the cached EXE is still fresh, so no build runs this time. Delete dist\%ENVNAME%.exe to build again."
 rem REQ-012: super-user hook -- reuse the fresh cached EXE but do not run it.
 if defined HP_SKIP_EXE_SMOKERUN (
   call :log "[INFO] REQ-012: HP_SKIP_EXE_SMOKERUN set; reusing cached EXE without running it (skipped by request)."
@@ -4026,7 +4077,10 @@ if not defined HP_BUILD_OK (
     :: Version is intentionally unpinned so future PyInstaller releases are adopted automatically.
     :: If CI starts failing parse_warn tests after a PyInstaller update, review ~parse_warn.py
     :: against the new warn-file format and update the translation table as needed.
-    if "%HP_ENV_MODE%"=="uv" (
+    rem CLAUDE.md Item 71: PVW_BUILDER=nuitka means PyInstaller is not wanted, so do not download it either.
+    if /I "%HP_BUILDER%"=="nuitka" (
+      call :log "[INFO] PVW_BUILDER=nuitka: PyInstaller is not installed for this run."
+    ) else if "%HP_ENV_MODE%"=="uv" (
       "%HP_UV_EXE%" pip install --python "%HP_PY%" -q pyinstaller >> "%LOG%" 2>&1
     ) else (
       "%HP_PY%" -m pip install -q pyinstaller >> "%LOG%" 2>&1
@@ -4104,7 +4158,20 @@ if not defined HP_BUILD_OK (
     rem verification must not leak a stale hint into a later provider tier's own caveat panel.
     set "HP_EXE_TIMEDOUT_SILENT="
     set "HP_EXE_KILLED_SILENT="
-    if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
+    rem CLAUDE.md Item 71: PVW_BUILDER=nuitka skips the PyInstaller build and builds with Nuitka only. The
+    rem result is handled like the Tier A success below. A stale PyInstaller warn file is removed so warnfix
+    rem cannot rebuild over this Nuitka EXE with PyInstaller, which the user asked not to run.
+    if /I "%HP_BUILDER%"=="nuitka" (
+      call :log "[INFO] PVW_BUILDER=nuitka: skipping the standard PyInstaller build."
+      if exist "build\%ENVNAME%\warn-%ENVNAME%.txt" del "build\%ENVNAME%\warn-%ENVNAME%.txt" >nul 2>&1
+      call :try_nuitka_tier_a
+      if errorlevel 1 (
+        call :warn_build_incomplete "[WARN] The fallback build failed and PVW_BUILDER=nuitka skipped PyInstaller; will verify your code directly via Python instead. reason=builder_nuitka"
+      ) else (
+        set "HP_NUITKA_FALLBACK_USED=1"
+        set "HP_FRESH_BUILD_OK=1"
+      )
+    ) else if defined HP_TEST_FORCE_PYINSTALLER_FAIL (
       call :log "[TEST] HP_TEST_FORCE_PYINSTALLER_FAIL: simulating PyInstaller build failure."
       call :try_nuitka_tier_a
       if errorlevel 1 (
@@ -4187,6 +4254,12 @@ if not defined HP_BUILD_OK (
     if exist "~parse_warn.py" del "~parse_warn.py" >nul 2>&1
     set "HP_WARNFIX_NEEDED="
     for /f "usebackq delims=" %%M in ("~missing_modules.txt") do set "HP_WARNFIX_NEEDED=1"
+    rem CLAUDE.md Item 71: PVW_BUILDER=nuitka means PyInstaller is never run, and the repair below ends in a PyInstaller
+    rem rebuild. The build block deletes a stale warn file, but a delete can fail when another program holds the file
+    rem open, and parse_warn.py reads it by path, so the dispatch flag is cleared here for the nuitka choice. Two lines,
+    rem not one: a second if on an else-if line would capture the later else branches.
+    if defined HP_WARNFIX_NEEDED if /I "%HP_BUILDER%"=="nuitka" call :log "[INFO] PVW_BUILDER=nuitka: the warnfix repair is skipped because it ends in a PyInstaller rebuild."
+    if /I "%HP_BUILDER%"=="nuitka" set "HP_WARNFIX_NEEDED="
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if defined HP_WARNFIX_NEEDED (
       set "HP_WARNFIX_APPLIED=1"
@@ -4435,10 +4508,19 @@ rem HP_CI_LANE auto-declines with no set /p (no CI hang); else interactive promp
 rem string is echoed unconditionally so prompt assertions see it even on auto-decline.
 rem exit 0 = consent (build), exit 1 = decline (skip the build).
 echo.
+rem CLAUDE.md Item 71: with PVW_BUILDER=nuitka the build installs Nuitka, not PyInstaller, so the question names the tool
+rem it is about to install. The default wording below is matched by tests/selfapps_sysbuild.ps1.
+if /I "%HP_BUILDER%"=="nuitka" goto :sbcg_nuitka_text
 echo *** The standalone EXE build installs PyInstaller into your system Python. ***
 echo *** This is the same PyInstaller build used for every provider -- not a special path -- and ***
 echo *** its footprint is small and self-contained (it does not pin common libraries), so it is ***
 echo *** unlikely to conflict with your existing packages. ***
+goto :sbcg_text_done
+:sbcg_nuitka_text
+echo *** PVW_BUILDER=nuitka is set, so the standalone EXE build installs Nuitka into your system Python. ***
+echo *** PyInstaller is not used. Nuitka compiles your program, which can take a long time, and it may ***
+echo *** download a C compiler on the first build. ***
+:sbcg_text_done
 echo.
 set "HP_SYSBUILD_RAW="
 if defined HP_TEST_SYSBUILD_ANSWER (
@@ -4489,6 +4571,7 @@ if "%HP_SMOKE_RC%"=="0" (
   rem [REQ-027] P2 honest messaging: :print_no_exe_briefing reads this to stop claiming
   rem "your code ran successfully" when it did not.
   set "HP_NOEXE_VERIFY_FAILED=1"
+  call :warn_runtime_dll
 )
 call :scan_runtime_missing_module interpreter "~run.err.txt"
 call :runtime_install_offer interpreter
@@ -4516,6 +4599,7 @@ rem [REQ-027] P2 honest messaging: same flag as the legacy branch above. No -1/t
 rem ambiguity at this call site -- :run_failfast_probe never kills, so HP_SMOKE_RC is always
 rem the interpreter's true final exit code once it exits, not a force-stopped placeholder.
 if not "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED=1"
+if not "%HP_SMOKE_RC%"=="0" call :warn_runtime_dll
 rem derived requirement: clear a stale flag from an earlier failed REQ-009 cascade tier's
 rem no-EXE run -- mirrors HP_EXE_VERIFY_FAILED's own clear-on-success at :smokerun_ok.
 if "%HP_SMOKE_RC%"=="0" set "HP_NOEXE_VERIFY_FAILED="
@@ -4747,6 +4831,50 @@ if /I "%HP_CASCADE_CHOICE%"=="Y" (
 )
 call :log "[INFO] REQ-009: cascade consent: declined."
 exit /b 1
+:visa_subfolder_gate
+rem CLAUDE.md Item 78 slice 2 / README REQ-008: the pyvisa or visa import sits only below a subfolder (an
+rem archived older program, say), so ask before the 30 to 45 minute NI-VISA driver install. Same CI-safe shape
+rem as :cascade_consent_gate: the prompt is echoed unconditionally, HP_TEST_VISA_ANSWER overrides first, a CI
+rem lane or a non-interactive run declines with no wait (HP_TEST_FORCE_INTERACTIVE_VISA keeps the real timed
+rem prompt reachable in CI, shrunk to 2 seconds), and a real user gets a timed choice that defaults to no.
+rem Declined leaves NEED_VISA at 2, which the caller treats as not installing; accepted sets it to 1. The
+rem decision is remembered in HP_VISA_DECISION so a cascade re-entry does not ask a second time. The path
+rem comes from ~visa.where, already reduced to a safe character set, so echoing it unquoted is safe.
+if defined HP_VISA_DECISION goto :visa_gate_remembered
+if not defined HP_VISA_WHERE set "HP_VISA_WHERE=see ~setup.log"
+echo.
+echo *** The NI-VISA driver looks needed only by a file in a subfolder: %HP_VISA_WHERE% ***
+echo *** Installing it can take 30 to 45 minutes, and the program you are setting up may not use it. ***
+echo *** The Python pyvisa package is installed either way. ***
+set "HP_VISA_CHOICE="
+if defined HP_TEST_VISA_ANSWER goto :visa_gate_from_override
+if defined HP_CI_LANE if not defined HP_TEST_FORCE_INTERACTIVE_VISA goto :visa_gate_decline
+if defined NOINPUT goto :visa_gate_decline
+if defined HP_NONINTERACTIVE goto :visa_gate_decline
+set "HP_VISA_T=30"
+if defined HP_TEST_FORCE_INTERACTIVE_VISA set "HP_VISA_T=2"
+where choice >nul 2>&1
+if errorlevel 1 goto :visa_gate_decline
+choice /C YN /N /T %HP_VISA_T% /D N /M "  Install the NI-VISA driver now? [Y/N, defaults to N after %HP_VISA_T%s] "
+if errorlevel 2 goto :visa_gate_decline
+goto :visa_gate_accept
+:visa_gate_from_override
+set "HP_VISA_RAW=%HP_TEST_VISA_ANSWER%"
+set "HP_VISA_CHOICE=%HP_VISA_RAW:~0,1%"
+if /I "%HP_VISA_CHOICE%"=="Y" goto :visa_gate_accept
+goto :visa_gate_decline
+:visa_gate_remembered
+if /I "%HP_VISA_DECISION%"=="Y" goto :visa_gate_accept
+goto :visa_gate_decline
+:visa_gate_accept
+set "HP_VISA_DECISION=Y"
+call :log "[INFO] NI-VISA install for a subfolder-only import: accepted."
+set "NEED_VISA=1"
+exit /b 0
+:visa_gate_decline
+set "HP_VISA_DECISION=N"
+call :log "[VISA] skipped (subfolder_only)"
+exit /b 0
 :dll_bundle_recover
 rem CLAUDE.md Active Backlog Item 24 / docs/prd-conda-native-dll-bundling.md: reactive,
 rem bounded repair loop for a conda-installed native extension whose compiled .pyd depends
@@ -5328,6 +5456,7 @@ if "%HP_EXE_EXIT%"=="0" (
   call :log "[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap; force-stopped, not necessarily broken)"
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_EXE_EXIT%)"
+  call :warn_runtime_dll
 )
 if defined HP_NDJSON (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -5961,13 +6090,13 @@ if defined HP_PIPREQS_SUMMARY_NOTE (
 )
 if defined HP_PIPREQS_FAILURE_LOG (
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$summary = '%HP_SUMMARY_PATH%'; $logPath = '%HP_PIPREQS_FAILURE_LOG%';" ^
-    "Add-Content -Path $summary -Value '---' -Encoding ASCII;" ^
-    "Add-Content -Path $summary -Value 'Pipreqs log tail:' -Encoding ASCII;" ^
-    "if (Test-Path $logPath) {" ^
-    "  Get-Content -LiteralPath $logPath -Tail 20 | Out-File -FilePath $summary -Encoding ASCII -Append;" ^
+    "$summary = $env:HP_SUMMARY_PATH; $logPath = $env:HP_PIPREQS_FAILURE_LOG;" ^
+    "Add-Content -LiteralPath $summary -Value '---' -Encoding ASCII;" ^
+    "Add-Content -LiteralPath $summary -Value 'Pipreqs log tail:' -Encoding ASCII;" ^
+    "if (Test-Path -LiteralPath $logPath) {" ^
+    "  Get-Content -LiteralPath $logPath -Tail 20 | Out-File -LiteralPath $summary -Encoding ASCII -Append;" ^
     "} else {" ^
-    "  Add-Content -Path $summary -Value '<log tail unavailable>' -Encoding ASCII;" ^
+    "  Add-Content -LiteralPath $summary -Value '<log tail unavailable>' -Encoding ASCII;" ^
     "}" >> "%LOG%" 2>&1
 )
 exit /b 0
@@ -6052,7 +6181,7 @@ set "HP_INSTALLER_TIMEOUT=IyBSdW5zIGFuIGV4dGVybmFsIGluc3RhbGxlciBleGVjdXRhYmxlIH
 :: Tests: selfapps_pandas_excel.ps1 validates REQ-005.8.1 translation
 :: --------------------------------------------------------------------
 set "HP_PREP_REQUIREMENTS=T1BfT1JERVIgPSAoIj09IiwgIiE9IiwgIj49IiwgIj4iLCAiPD0iLCAiPCIpCk9QX1JBTksgPSB7b3A6IGlkeCBmb3IgaWR4LCBvcCBpbiBlbnVtZXJhdGUoT1BfT1JERVIpfQoKaW1wb3J0IG9zCmltcG9ydCByZQppbXBvcnQgc3lzCmZyb20gY29sbGVjdGlvbnMgaW1wb3J0IE9yZGVyZWREaWN0CgpJTlAgPSBzeXMuYXJndlsxXSBpZiBsZW4oc3lzLmFyZ3YpID4gMSBlbHNlICJyZXF1aXJlbWVudHMudHh0IgpPVVRfQ09OREEgPSAifnJlcXNfY29uZGEudHh0IgpPVVRfUElQID0gIn5yZXFzX3BpcC50eHQiClNQRUNfUEFUVEVSTiA9IHJlLmNvbXBpbGUociIofj18PT18IT18Pj18Pnw8PXw8KVxzKihbXlxzLDtdKylccyokIikKTkFNRV9QQVRURVJOID0gcmUuY29tcGlsZShyIl5ccyooW0EtWmEtejAtOV8uLV0rKVxzKiguKikkIikKCmRlZiBzcGxpdF9tYXJrZXIodGV4dDogc3RyKSAtPiBzdHI6CiAgICByZXR1cm4gdGV4dC5zcGxpdCgiOyIpWzBdLnN0cmlwKCkKCmRlZiBfdmVyc2lvbl9rZXkodGV4dDogc3RyKToKICAgIHBhcnRzID0gW10KICAgIGZvciBjaHVuayBpbiB0ZXh0LnNwbGl0KCcuJyk6CiAgICAgICAgdHJ5OgogICAgICAgICAgICBwYXJ0cy5hcHBlbmQoaW50KGNodW5rKSkKICAgICAgICBleGNlcHQgVmFsdWVFcnJvcjoKICAgICAgICAgICAgcGFydHMuYXBwZW5kKDApCiAgICByZXR1cm4gdHVwbGUocGFydHMpCgpkZWYgX2J1bXBfY29tcGF0aWJsZSh2YWx1ZTogc3RyKSAtPiBzdHI6CiAgICBwaWVjZXMgPSB2YWx1ZS5zcGxpdCgnLicpCiAgICBpZiBub3QgcGllY2VzIG9yIG5vdCBwaWVjZXNbMF0uaXNkaWdpdCgpOgogICAgICAgIHJldHVybiB2YWx1ZQogICAgbWFqb3IgPSBpbnQocGllY2VzWzBdKQogICAgaWYgbGVuKHBpZWNlcykgPj0gMyBhbmQgcGllY2VzWzFdLmlzZGlnaXQoKToKICAgICAgICByZXR1cm4gZiJ7bWFqb3J9LntpbnQocGllY2VzWzFdKSArIDF9IgogICAgaWYgbGVuKHBpZWNlcykgPj0gMjoKICAgICAgICByZXR1cm4gZiJ7bWFqb3IgKyAxfS4wIgogICAgcmV0dXJuIHN0cihtYWpvciArIDEpCgpkZWYgX2V4cGFuZF9mcmFnbWVudChmcmFnbWVudDogc3RyKToKICAgIGlmIG5vdCBmcmFnbWVudDoKICAgICAgICByZXR1cm4gW10KICAgIHZhbHVlID0gZnJhZ21lbnQuc3RyaXAoKQogICAgaWYgbm90IHZhbHVlOgogICAgICAgIHJldHVybiBbXQogICAgbWF0Y2ggPSBTUEVDX1BBVFRFUk4uZnVsbG1hdGNoKHZhbHVlKQogICAgaWYgbm90IG1hdGNoOgogICAgICAgIHJldHVybiBbXQogICAgb3AsIHZlciA9IG1hdGNoLmdyb3VwcygpCiAgICB2ZXIgPSB2ZXIuc3RyaXAoKQogICAgaWYgbm90IHZlcjoKICAgICAgICByZXR1cm4gW10KICAgIGlmIG9wID09ICJ+PSI6CiAgICAgICAgdXBwZXIgPSBfYnVtcF9jb21wYXRpYmxlKHZlcikKICAgICAgICByZXR1cm4gW2YiPj17dmVyfSIsIGYiPHt1cHBlcn0iXQogICAgcmV0dXJuIFtmIntvcH17dmVyfSJdCgpkZWYgY2Fub25pY2FsX29wcyhzcGVjcykgLT4gbGlzdDoKICAgIGJ1Y2tldCA9IE9yZGVyZWREaWN0KCkKICAgIGZvciByYXcgaW4gc3BlY3M6CiAgICAgICAgZm9yIG5vcm1hbGl6ZWQgaW4gX2V4cGFuZF9mcmFnbWVudChyYXcpOgogICAgICAgICAgICBidWNrZXRbbm9ybWFsaXplZF0gPSBOb25lCiAgICBvcmRlcmVkID0gbGlzdChidWNrZXQua2V5cygpKQogICAgb3JkZXJlZC5zb3J0KGtleT1fc3BlY19zb3J0X2tleSkKICAgIHJldHVybiBfZW5mb3JjZV9ib3VuZHNfb3JkZXIob3JkZXJlZCkKCmRlZiBfc3BlY19zb3J0X2tleSh2YWx1ZTogc3RyKToKICAgIGZvciBvcCBpbiBPUF9PUkRFUjoKICAgICAgICBpZiB2YWx1ZS5zdGFydHN3aXRoKG9wKToKICAgICAgICAgICAgdmVyID0gdmFsdWVbbGVuKG9wKTpdCiAgICAgICAgICAgIHJldHVybiBPUF9SQU5LW29wXSwgX3ZlcnNpb25fa2V5KHZlciksIHZlcgogICAgcmV0dXJuIGxlbihPUF9PUkRFUiksIF92ZXJzaW9uX2tleSh2YWx1ZSksIHZhbHVlCgpkZWYgX2VuZm9yY2VfYm91bmRzX29yZGVyKGl0ZW1zOiBsaXN0KSAtPiBsaXN0OgogICAgb3BzID0gbGlzdChpdGVtcykKICAgIGxvd2VyX2luZGV4ID0gbmV4dCgoaWR4IGZvciBpZHgsIHRleHQgaW4gZW51bWVyYXRlKG9wcykgaWYgdGV4dC5zdGFydHN3aXRoKCI+PSIpKSwgTm9uZSkKICAgIGlmIGxvd2VyX2luZGV4IGlzIE5vbmU6CiAgICAgICAgcmV0dXJuIG9wcwogICAgZm9yIHVwcGVyX29wIGluICgiPD0iLCAiPCIpOgogICAgICAgIHVwcGVyX2luZGV4ID0gbmV4dCgoaWR4IGZvciBpZHgsIHRleHQgaW4gZW51bWVyYXRlKG9wcykgaWYgdGV4dC5zdGFydHN3aXRoKHVwcGVyX29wKSksIE5vbmUpCiAgICAgICAgaWYgdXBwZXJfaW5kZXggaXMgbm90IE5vbmUgYW5kIHVwcGVyX2luZGV4IDwgbG93ZXJfaW5kZXg6CiAgICAgICAgICAgIHZhbHVlID0gb3BzLnBvcChsb3dlcl9pbmRleCkKICAgICAgICAgICAgb3BzLmluc2VydCh1cHBlcl9pbmRleCwgdmFsdWUpCiAgICAgICAgICAgIGxvd2VyX2luZGV4ID0gdXBwZXJfaW5kZXgKICAgIHJldHVybiBvcHMKCmRlZiBmb3JtYXRfbGluZShuYW1lOiBzdHIsIHNwZWNzKSAtPiBsaXN0OgogICAgb3BzID0gY2Fub25pY2FsX29wcyhzcGVjcykKICAgIHJldHVybiBbZiJ7bmFtZX0gIiArICIsIi5qb2luKG9wcyldIGlmIG9wcyBlbHNlIFtuYW1lXQoKZGVmIHRvX2NvbmRhKGxpbmU6IHN0cik6CiAgICBzZWN0aW9uID0gc3BsaXRfbWFya2VyKGxpbmUpCiAgICBpZiBub3Qgc2VjdGlvbiBvciBzZWN0aW9uLnN0YXJ0c3dpdGgoJyMnKToKICAgICAgICByZXR1cm4gW10KICAgIG1hdGNoID0gTkFNRV9QQVRURVJOLm1hdGNoKHNlY3Rpb24pCiAgICBpZiBub3QgbWF0Y2g6CiAgICAgICAgcmV0dXJuIFtdCiAgICBuYW1lLCByZXN0ID0gbWF0Y2guZ3JvdXBzKCkKICAgIHJlc3QgPSByZS5zdWIociJcWy4qP1xdIiwgIiIsIHJlc3QpCiAgICBzcGVjcyA9IFtjaHVuay5zdHJpcCgpIGZvciBjaHVuayBpbiByZXN0LnNwbGl0KCcsJykgaWYgY2h1bmsuc3RyaXAoKV0KICAgIHJldHVybiBmb3JtYXRfbGluZShuYW1lLCBzcGVjcykKCmRlZiB0b19waXAobGluZTogc3RyKToKICAgIHNlY3Rpb24gPSBzcGxpdF9tYXJrZXIobGluZSkKICAgIGlmIG5vdCBzZWN0aW9uIG9yIHNlY3Rpb24uc3RhcnRzd2l0aCgnIycpOgogICAgICAgIHJldHVybiBOb25lCiAgICBtYXRjaCA9IE5BTUVfUEFUVEVSTi5tYXRjaChzZWN0aW9uKQogICAgaWYgbm90IG1hdGNoOgogICAgICAgIHJldHVybiBzZWN0aW9uLnN0cmlwKCkKICAgIG5hbWUsIHJlc3QgPSBtYXRjaC5ncm91cHMoKQogICAgcmV0dXJuIChuYW1lICsgcmVzdCkuc3RyaXAoKQoKZGVmIG1haW4oKToKICAgIGhhdmVfZmlsZSA9IG9zLnBhdGguZXhpc3RzKElOUCkgYW5kIG9zLnBhdGguZ2V0c2l6ZShJTlApID4gMAogICAgbGluZXMgPSBbXQogICAgaWYgaGF2ZV9maWxlOgogICAgICAgIHdpdGggb3BlbihJTlAsICdyJywgZW5jb2Rpbmc9J3V0Zi04JywgZXJyb3JzPSdpZ25vcmUnKSBhcyBoYW5kbGU6CiAgICAgICAgICAgIGxpbmVzID0gW2l0ZW0uc3RyaXAoKSBmb3IgaXRlbSBpbiBoYW5kbGUgaWYgaXRlbS5zdHJpcCgpXQogICAgY29uZGFfc3BlY3MgPSBbXQogICAgcGlwX3NwZWNzID0gW10KICAgIGZvciBsaW5lIGluIGxpbmVzOgogICAgICAgIGNvbmRhX3NwZWNzLmV4dGVuZCh0b19jb25kYShsaW5lKSkKICAgICAgICBwaXBfZW50cnkgPSB0b19waXAobGluZSkKICAgICAgICBpZiBwaXBfZW50cnk6CiAgICAgICAgICAgIHBpcF9zcGVjcy5hcHBlbmQocGlwX2VudHJ5KQogICAgbmFtZXNfbG93ZXIgPSBbcmUuc3BsaXQociJbPD49IX4sXHNcW10iLCB2YWx1ZSwgbWF4c3BsaXQ9MSlbMF0uc3RyaXAoKS5sb3dlcigpIGZvciB2YWx1ZSBpbiBwaXBfc3BlY3NdCiAgICBuMCA9IGxlbihwaXBfc3BlY3MpCiAgICBpZiBvcy5lbnZpcm9uLmdldCgnSFBfRElTQUJMRV9IRVVSSVNUSUNTJykgIT0gJzEnOgogICAgICAgIGlmICdwYW5kYXMnIGluIG5hbWVzX2xvd2VyIGFuZCAnb3BlbnB5eGwnIG5vdCBpbiBuYW1lc19sb3dlcjoKICAgICAgICAgICAgcGlwX3NwZWNzLmFwcGVuZCgnb3BlbnB5eGwnKQogICAgICAgICAgICBjb25kYV9zcGVjcy5leHRlbmQoZm9ybWF0X2xpbmUoJ29wZW5weXhsJywgW10pKQogICAgICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCdbSEVVUklTVElDXSBwYW5kYXMtPm9wZW5weXhsXG4nKQogICAgICAgIGlmICdwYW5kYXMnIGluIG5hbWVzX2xvd2VyIGFuZCAneGxzeHdyaXRlcicgbm90IGluIG5hbWVzX2xvd2VyOgogICAgICAgICAgICBwaXBfc3BlY3MuYXBwZW5kKCd4bHN4d3JpdGVyJykKICAgICAgICAgICAgY29uZGFfc3BlY3MuZXh0ZW5kKGZvcm1hdF9saW5lKCd4bHN4d3JpdGVyJywgW10pKQogICAgICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCdbSEVVUklTVElDXSBwYW5kYXMtPnhsc3h3cml0ZXJcbicpCiAgICAgICAgaWYgJ3JlcXVlc3RzJyBpbiBuYW1lc19sb3dlciBhbmQgJ2NlcnRpZmknIG5vdCBpbiBuYW1lc19sb3dlcjoKICAgICAgICAgICAgcGlwX3NwZWNzLmFwcGVuZCgnY2VydGlmaScpCiAgICAgICAgICAgIGNvbmRhX3NwZWNzLmV4dGVuZChmb3JtYXRfbGluZSgnY2VydGlmaScsIFtdKSkKICAgICAgICAgICAgc3lzLnN0ZGVyci53cml0ZSgnW0hFVVJJU1RJQ10gcmVxdWVzdHMtPmNlcnRpZmlcbicpCiAgICAgICAgaWYgJ3NxbGFsY2hlbXknIGluIG5hbWVzX2xvd2VyIGFuZCAncHlteXNxbCcgbm90IGluIG5hbWVzX2xvd2VyOgogICAgICAgICAgICBwaXBfc3BlY3MuYXBwZW5kKCdweW15c3FsJykKICAgICAgICAgICAgY29uZGFfc3BlY3MuZXh0ZW5kKGZvcm1hdF9saW5lKCdweW15c3FsJywgW10pKQogICAgICAgICAgICBzeXMuc3RkZXJyLndyaXRlKCdbSEVVUklTVElDXSBzcWxhbGNoZW15LT5weW15c3FsXG4nKQogICAgICAgIGlmICdtYXRwbG90bGliJyBpbiBuYW1lc19sb3dlciBhbmQgJ3RrJyBub3QgaW4gbmFtZXNfbG93ZXI6CiAgICAgICAgICAgIGNvbmRhX3NwZWNzLmV4dGVuZChmb3JtYXRfbGluZSgndGsnLCBbXSkpCiAgICAgICAgICAgIHN5cy5zdGRlcnIud3JpdGUoJ1tIRVVSSVNUSUNdIG1hdHBsb3RsaWItPnRrXG4nKQogICAgICAgIGlmICgnY3J5cHRvZ3JhcGh5JyBpbiBuYW1lc19sb3dlciBvciAncHljcnlwdG9kb21lJyBpbiBuYW1lc19sb3dlcikgYW5kICdjZmZpJyBub3QgaW4gbmFtZXNfbG93ZXI6CiAgICAgICAgICAgIHBpcF9zcGVjcy5hcHBlbmQoJ2NmZmknKQogICAgICAgICAgICBjb25kYV9zcGVjcy5leHRlbmQoZm9ybWF0X2xpbmUoJ2NmZmknLCBbXSkpCiAgICAgICAgICAgIHN5cy5zdGRlcnIud3JpdGUoJ1tIRVVSSVNUSUNdIGNyeXB0by0+Y2ZmaVxuJykKICAgIHdpdGggb3BlbihPVVRfQ09OREEsICd3JywgZW5jb2Rpbmc9J2FzY2lpJykgYXMgaGFuZGxlOgogICAgICAgIGZvciBpdGVtIGluIGNvbmRhX3NwZWNzOgogICAgICAgICAgICBpZiBpdGVtOgogICAgICAgICAgICAgICAgaGFuZGxlLndyaXRlKGl0ZW0gKyAnXG4nKQogICAgd2l0aCBvcGVuKE9VVF9QSVAsICd3JywgZW5jb2Rpbmc9J2FzY2lpJykgYXMgaGFuZGxlOgogICAgICAgIGZvciBpdGVtIGluIHBpcF9zcGVjczoKICAgICAgICAgICAgaWYgaXRlbToKICAgICAgICAgICAgICAgIGhhbmRsZS53cml0ZShpdGVtICsgJ1xuJykKICAgIGFkZGVkID0gcGlwX3NwZWNzW24wOl0KICAgIGlmIGFkZGVkOgogICAgICAgIHdpdGggb3BlbihJTlAsICdhJywgZW5jb2Rpbmc9J3V0Zi04JykgYXMgaGFuZGxlOgogICAgICAgICAgICBoYW5kbGUud3JpdGUoJ1xuJyArICdcbicuam9pbihhZGRlZCkgKyAnXG4nKQogICAgc3lzLnN0ZG91dC53cml0ZSgnT0tcbicpCgppZiBfX25hbWVfXyA9PSAnX19tYWluX18nOgogICAgbWFpbigpCg=="
-set "HP_DETECT_VISA=IiIiZGV0ZWN0X3Zpc2EgKEhQX0RFVEVDVF9WSVNBKSAtLSBzY2FucyB0aGUgcHJvamVjdCBkaXJlY3RvcnkgZm9yCk5JLVZJU0EtaW5zdHJ1bWVudC1jb250cm9sIGltcG9ydHMgKHB5dmlzYSkgdG8gZGVjaWRlIHdoZXRoZXIgdGhlIFJFUS0wMDgKTkktVklTQSBkcml2ZXIgaW5zdGFsbCBicmFuY2ggc2hvdWxkIHJ1bi4KClJ1biBmcm9tIHRoZSBhcHBsaWNhdGlvbiBkaXJlY3Rvcnk7IHJlY3Vyc2l2ZWx5IHdhbGtzIHRoZSBjdXJyZW50IGRpcmVjdG9yeQooc2tpcHBpbmcgIn4iLyIuIi1wcmVmaXhlZCBzdWJkaXJlY3RvcmllcyBhbmQgZmlsZXMsIG1hdGNoaW5nIHRoaXMgcmVwbydzCnVzdWFsIHNjcmF0Y2gtZmlsZSBjb252ZW50aW9uKSBhbmQgcHJpbnRzICIxIiB0byBzdGRvdXQgKG5vIHRyYWlsaW5nCm5ld2xpbmUpIGlmIGFueSBzY2FubmVkIC5weSBmaWxlJ3Mgc291cmNlIG1hdGNoZXMgYSBweXZpc2Etc3R5bGUgaW1wb3J0LAplbHNlICIwIi4KClBBVFRFUk5TIGFuY2hvciBvbiB0aGUgZnVsbCBtb2R1bGUgbmFtZSAoInB5dmlzYSIvInZpc2EiKSB3aXRoIGEgdHJhaWxpbmcKXGIsIG5vdCBhIHRydW5jYXRlZCAicHl2aXMiLyJ2aXMiIHByZWZpeCAtLSB0aGlzIGRlbGliZXJhdGVseSBleGNsdWRlcyBhbgp1bnJlbGF0ZWQgaW1wb3J0IHRoYXQgbWVyZWx5IFNUQVJUUyB3aXRoIHRob3NlIGxldHRlcnMgKGUuZy4gImltcG9ydApweXZpc3RhIiwgYSByZWFsLCBwb3B1bGFyLCB1bnJlbGF0ZWQgM0QtdmlzdWFsaXphdGlvbiBwYWNrYWdlOyAiaW1wb3J0CnZpc2lvbiI7ICJpbXBvcnQgcHl2aXNjb2VsYXN0aWMiKS4gXGIgYWZ0ZXIgdGhlIGZ1bGwgd29yZCBhbHNvIGFsbG93cyBhCmRvdHRlZCBzdWJtb2R1bGUgaW1wb3J0ICgiaW1wb3J0IHB5dmlzYS5jb25zdGFudHMiKSB0byBzdGlsbCBtYXRjaCwgc2luY2UKIi4iIGlzIGEgbm9uLXdvcmQgY2hhcmFjdGVyLiBOb3RlOiBhbmNob3JpbmcgXGIgcmlnaHQgYWZ0ZXIgdGhlIHRydW5jYXRlZAoidmlzIi8icHl2aXMiIHByZWZpeCAocmF0aGVyIHRoYW4gdGhlIGZ1bGwgd29yZCkgd291bGQgTk9UIHdvcmsgaGVyZSAtLSBcYgpvbmx5IG1hdGNoZXMgYXQgYSB3b3JkL25vbi13b3JkIHRyYW5zaXRpb24sIGFuZCB0aGVyZSBpcyBubyBzdWNoIGJvdW5kYXJ5CmJldHdlZW4gInZpcyIgYW5kIHRoZSAiYSIgaW4gInZpc2EiIChib3RoIGFyZSB3b3JkIGNoYXJhY3RlcnMpLCBzbyBhCiJ2aXNcYiIgcGF0dGVybiB3b3VsZCBmYWlsIHRvIG1hdGNoIHRoZSBnZW51aW5lICJpbXBvcnQgdmlzYSIgY2FzZS4KClRoaXMgaXMgdGhlIGNhbm9uaWNhbCBzb3VyY2UgZm9yIHRoZSBIUF9ERVRFQ1RfVklTQSBiYXNlNjQgcGF5bG9hZCBlbWJlZGRlZAppbiBydW5fc2V0dXAuYmF0LiBBZnRlciBlZGl0aW5nLCByZS1lbmNvZGUgYW5kIHBhc3RlIGl0IGludG8gdGhlCmBzZXQgIkhQX0RFVEVDVF9WSVNBPS4uLiJgIGxpbmU7IHRlc3RzL3Rlc3RfZGV0ZWN0X3Zpc2EucHkgYXNzZXJ0cyB0aGUKZW1iZWRkZWQgcGF5bG9hZCBtYXRjaGVzIHRoaXMgZmlsZS4KIiIiCmltcG9ydCBvcywgcmUsIHN5cwoKUk9PVCA9IG9zLmdldGN3ZCgpClBBVFRFUk5TID0gWwogICAgciIoP20pXlxzKig/OmZyb21ccytweXZpc2FcYnxpbXBvcnRccytweXZpc2FcYikiLAogICAgciIoP20pXlxzKmltcG9ydFxzK3Zpc2FcYiIsCl0KCmRlZiBuZWVkc192aXNhKCk6CiAgICBmb3IgY3VycmVudCwgZGlycywgZmlsZXMgaW4gb3Mud2FsayhST09UKToKICAgICAgICBkaXJzWzpdID0gW2l0ZW0gZm9yIGl0ZW0gaW4gZGlycyBpZiBub3QgaXRlbS5zdGFydHN3aXRoKCgnficsICcuJykpXQogICAgICAgIGZvciBuYW1lIGluIGZpbGVzOgogICAgICAgICAgICBpZiBub3QgbmFtZS5lbmRzd2l0aCgnLnB5Jykgb3IgbmFtZS5zdGFydHN3aXRoKCd+Jyk6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBwYXRoID0gb3MucGF0aC5qb2luKGN1cnJlbnQsIG5hbWUpCiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIHdpdGggb3BlbihwYXRoLCAncicsIGVuY29kaW5nPSd1dGYtOCcsIGVycm9ycz0naWdub3JlJykgYXMgaGFuZGxlOgogICAgICAgICAgICAgICAgICAgIHRleHQgPSBoYW5kbGUucmVhZCgpCiAgICAgICAgICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgZm9yIHBhdHRlcm4gaW4gUEFUVEVSTlM6CiAgICAgICAgICAgICAgICBpZiByZS5zZWFyY2gocGF0dGVybiwgdGV4dCk6CiAgICAgICAgICAgICAgICAgICAgcmV0dXJuIFRydWUKICAgIHJldHVybiBGYWxzZQoKZGVmIG1haW4oKToKICAgIHN5cy5zdGRvdXQud3JpdGUoJzEnIGlmIG5lZWRzX3Zpc2EoKSBlbHNlICcwJykKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6CiAgICBtYWluKCkK"
+set "HP_DETECT_VISA=IiIiZGV0ZWN0X3Zpc2EgKEhQX0RFVEVDVF9WSVNBKSAtLSBzY2FucyB0aGUgcHJvamVjdCBkaXJlY3RvcnkgZm9yCk5JLVZJU0EtaW5zdHJ1bWVudC1jb250cm9sIGltcG9ydHMgKHB5dmlzYSkgdG8gZGVjaWRlIHdoZXRoZXIgdGhlIFJFUS0wMDgKTkktVklTQSBkcml2ZXIgaW5zdGFsbCBicmFuY2ggc2hvdWxkIHJ1bi4KClJ1biBmcm9tIHRoZSBhcHBsaWNhdGlvbiBkaXJlY3Rvcnk7IHJlY3Vyc2l2ZWx5IHdhbGtzIHRoZSBjdXJyZW50IGRpcmVjdG9yeQooc2tpcHBpbmcgIn4iLyIuIi1wcmVmaXhlZCBzdWJkaXJlY3RvcmllcyBhbmQgZmlsZXMsIG1hdGNoaW5nIHRoaXMgcmVwbydzCnVzdWFsIHNjcmF0Y2gtZmlsZSBjb252ZW50aW9uKSBhbmQgcHJpbnRzIG9uZSBkaWdpdCB0byBzdGRvdXQgKG5vIHRyYWlsaW5nCm5ld2xpbmUpOiAiMCIgbm8gc2Nhbm5lZCAucHkgZmlsZSBtYXRjaGVzIGEgcHl2aXNhLXN0eWxlIGltcG9ydCwgIjEiIGF0CmxlYXN0IG9uZSBtYXRjaCBzaXRzIGluIHRoZSBmb2xkZXIgbmV4dCB0byBydW5fc2V0dXAuYmF0LCAiMiIgZXZlcnkgbWF0Y2gKc2l0cyBiZWxvdyBhIHN1YmZvbGRlciAoYW4gYXJjaGl2ZWQgb2xkZXIgcHJvZ3JhbSwgc2F5KS4gVGhlIGJhdGNoIGFza3MKYmVmb3JlIGluc3RhbGxpbmcgdGhlIGRyaXZlciBmb3IgIjIiIGFuZCBpbnN0YWxscyB3aXRob3V0IGFza2luZyBmb3IgIjEiCihJdGVtIDc4IHNsaWNlIDIsIFJFQURNRSBSRVEtMDA4KS4KCkl0IGFsc28gbG9ncyB1cCB0byB0aHJlZSBtYXRjaGluZyBmaWxlcyBvbiBzdGRlcnIsIHdoaWNoIHRoZSBiYXRjaCBhcHBlbmRzCnRvIHRoZSBzZXR1cCBsb2csIGFuZCB3cml0ZXMgdGhlIGZpcnN0IG9uZSB0byB+dmlzYS53aGVyZSBmb3IgdGhlIHByb21wdC4KQSBwYXRoIGNhbiBob2xkIGNoYXJhY3RlcnMgY21kLmV4ZSB0cmVhdHMgYXMgb3BlcmF0b3JzLCBzbyBldmVyeSBwYXRoIGlzCnJlZHVjZWQgdG8gQVNDSUkgbGV0dGVycywgZGlnaXRzIGFuZCAiLiBfIC0gc3BhY2UgXFwiIGJlZm9yZSBpdCBpcyBwcmludGVkLgoKUEFUVEVSTlMgYW5jaG9yIG9uIHRoZSBmdWxsIG1vZHVsZSBuYW1lICgicHl2aXNhIi8idmlzYSIpIHdpdGggYSB0cmFpbGluZwpcYiwgbm90IGEgdHJ1bmNhdGVkICJweXZpcyIvInZpcyIgcHJlZml4IC0tIHRoaXMgZGVsaWJlcmF0ZWx5IGV4Y2x1ZGVzIGFuCnVucmVsYXRlZCBpbXBvcnQgdGhhdCBtZXJlbHkgU1RBUlRTIHdpdGggdGhvc2UgbGV0dGVycyAoZS5nLiAiaW1wb3J0CnB5dmlzdGEiLCBhIHJlYWwsIHBvcHVsYXIsIHVucmVsYXRlZCAzRC12aXN1YWxpemF0aW9uIHBhY2thZ2U7ICJpbXBvcnQKdmlzaW9uIjsgImltcG9ydCBweXZpc2NvZWxhc3RpYyIpLiBcYiBhZnRlciB0aGUgZnVsbCB3b3JkIGFsc28gYWxsb3dzIGEKZG90dGVkIHN1Ym1vZHVsZSBpbXBvcnQgKCJpbXBvcnQgcHl2aXNhLmNvbnN0YW50cyIpIHRvIHN0aWxsIG1hdGNoLCBzaW5jZQoiLiIgaXMgYSBub24td29yZCBjaGFyYWN0ZXIuIE5vdGU6IGFuY2hvcmluZyBcYiByaWdodCBhZnRlciB0aGUgdHJ1bmNhdGVkCiJ2aXMiLyJweXZpcyIgcHJlZml4IChyYXRoZXIgdGhhbiB0aGUgZnVsbCB3b3JkKSB3b3VsZCBOT1Qgd29yayBoZXJlIC0tIFxiCm9ubHkgbWF0Y2hlcyBhdCBhIHdvcmQvbm9uLXdvcmQgdHJhbnNpdGlvbiwgYW5kIHRoZXJlIGlzIG5vIHN1Y2ggYm91bmRhcnkKYmV0d2VlbiAidmlzIiBhbmQgdGhlICJhIiBpbiAidmlzYSIgKGJvdGggYXJlIHdvcmQgY2hhcmFjdGVycyksIHNvIGEKInZpc1xiIiBwYXR0ZXJuIHdvdWxkIGZhaWwgdG8gbWF0Y2ggdGhlIGdlbnVpbmUgImltcG9ydCB2aXNhIiBjYXNlLgoKVGhpcyBpcyB0aGUgY2Fub25pY2FsIHNvdXJjZSBmb3IgdGhlIEhQX0RFVEVDVF9WSVNBIGJhc2U2NCBwYXlsb2FkIGVtYmVkZGVkCmluIHJ1bl9zZXR1cC5iYXQuIEFmdGVyIGVkaXRpbmcsIHJlLWVuY29kZSBhbmQgcGFzdGUgaXQgaW50byB0aGUKYHNldCAiSFBfREVURUNUX1ZJU0E9Li4uImAgbGluZTsgdGVzdHMvdGVzdF9kZXRlY3RfdmlzYS5weSBhc3NlcnRzIHRoZQplbWJlZGRlZCBwYXlsb2FkIG1hdGNoZXMgdGhpcyBmaWxlLgoiIiIKaW1wb3J0IG9zLCByZSwgc3lzCgpST09UID0gb3MuZ2V0Y3dkKCkKUEFUVEVSTlMgPSBbCiAgICByIig/bSleXHMqKD86ZnJvbVxzK3B5dmlzYVxifGltcG9ydFxzK3B5dmlzYVxiKSIsCiAgICByIig/bSleXHMqaW1wb3J0XHMrdmlzYVxiIiwKXQoKZGVmIHNhZmUocmVsKToKICAgIHJlbCA9IHJlbC5yZXBsYWNlKG9zLnNlcCwgJ1xcJykKICAgIHJldHVybiAnJy5qb2luKGMgaWYgKGMuaXNhc2NpaSgpIGFuZCAoYy5pc2FsbnVtKCkgb3IgYyBpbiAnLl8tIFxcJykpIGVsc2UgJ18nIGZvciBjIGluIHJlbClbOjEwMF0KCmRlZiBtYXRjaGVzKCk6CiAgICBmb3VuZCA9IFtdCiAgICBmb3IgY3VycmVudCwgZGlycywgZmlsZXMgaW4gb3Mud2FsayhST09UKToKICAgICAgICBkaXJzWzpdID0gW2l0ZW0gZm9yIGl0ZW0gaW4gZGlycyBpZiBub3QgaXRlbS5zdGFydHN3aXRoKCgnficsICcuJykpXQogICAgICAgIGZvciBuYW1lIGluIGZpbGVzOgogICAgICAgICAgICBpZiBub3QgbmFtZS5lbmRzd2l0aCgnLnB5Jykgb3IgbmFtZS5zdGFydHN3aXRoKCd+Jyk6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBwYXRoID0gb3MucGF0aC5qb2luKGN1cnJlbnQsIG5hbWUpCiAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgIHdpdGggb3BlbihwYXRoLCAncicsIGVuY29kaW5nPSd1dGYtOCcsIGVycm9ycz0naWdub3JlJykgYXMgaGFuZGxlOgogICAgICAgICAgICAgICAgICAgIHRleHQgPSBoYW5kbGUucmVhZCgpCiAgICAgICAgICAgIGV4Y2VwdCBPU0Vycm9yOgogICAgICAgICAgICAgICAgY29udGludWUKICAgICAgICAgICAgaWYgYW55KHJlLnNlYXJjaChwYXR0ZXJuLCB0ZXh0KSBmb3IgcGF0dGVybiBpbiBQQVRURVJOUyk6CiAgICAgICAgICAgICAgICBmb3VuZC5hcHBlbmQoKG9zLnBhdGgucmVscGF0aChwYXRoLCBST09UKSwgY3VycmVudCA9PSBST09UKSkKICAgICAgICAgICAgICAgIGlmIGxlbihmb3VuZCkgPT0gMzoKICAgICAgICAgICAgICAgICAgICByZXR1cm4gZm91bmQKICAgIHJldHVybiBmb3VuZAoKZGVmIG1haW4oKToKICAgIHdoZXJlID0gb3MucGF0aC5qb2luKFJPT1QsICd+dmlzYS53aGVyZScpCiAgICB0cnk6CiAgICAgICAgaWYgb3MucGF0aC5leGlzdHMod2hlcmUpOgogICAgICAgICAgICBvcy5yZW1vdmUod2hlcmUpCiAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICBwYXNzCiAgICBmb3VuZCA9IG1hdGNoZXMoKQogICAgZm9yIHJlbCwgdG9wIGluIGZvdW5kOgogICAgICAgIHN5cy5zdGRlcnIud3JpdGUoJ1tWSVNBXSBweXZpc2EvdmlzYSBpbXBvcnQgZm91bmQgaW46ICVzICglcylcbicgJSAoc2FmZShyZWwpLCAndG9wIGZvbGRlcicgaWYgdG9wIGVsc2UgJ3N1YmZvbGRlcicpKQogICAgaWYgZm91bmQ6CiAgICAgICAgdHJ5OgogICAgICAgICAgICB3aXRoIG9wZW4od2hlcmUsICd3JywgZW5jb2Rpbmc9J2FzY2lpJykgYXMgaGFuZGxlOgogICAgICAgICAgICAgICAgaGFuZGxlLndyaXRlKHNhZmUoZm91bmRbMF1bMF0pICsgJ1xuJykKICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgcGFzcwogICAgc3lzLnN0ZG91dC53cml0ZSgnMCcgaWYgbm90IGZvdW5kIGVsc2UgKCcxJyBpZiBhbnkodG9wIGZvciBfLCB0b3AgaW4gZm91bmQpIGVsc2UgJzInKSkKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6CiAgICBtYWluKCkK"
 rem ~find_entry.py emits a normalized crumb, logs it for tests, and skip mode reads its stdout
 set "HP_FIND_ENTRY=IiIiZmluZF9lbnRyeSAoUkVRLTAwMikgLS0gZGV0ZXJtaW5pc3RpYyBlbnRyeS1wb2ludCBzZWxlY3Rvci4KClJ1biBmcm9tIHRoZSBhcHBsaWNhdGlvbiBkaXJlY3Rvcnk7IHByaW50cyB0aGUgY2hvc2VuIGVudHJ5IHNjcmlwdCAob25lIGxpbmUpIHRvCnN0ZG91dCBhbmQgZGlhZ25vc3RpYyBbQk9PVF0gbGluZXMgdG8gc3RkZXJyLiBTZWxlY3Rpb24gb3JkZXI6CgogIDEuIFBSRUZFUlJFRCBuYW1lIG1hdGNoIChtYWluLnB5ID4gYXBwLnB5ID4gcnVuLnB5ID4gY2xpLnB5KS4KICAyLiBUaGUgc29sZSAucHkgZmlsZSwgd2hlbiB0aGVyZSBpcyBleGFjdGx5IG9uZS4KICAzLiBUaGUgc29sZSBmaWxlIGNvbnRhaW5pbmcgYSBzdWJzdGFudGl2ZSBgaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjpgIGd1YXJkLgogIDQuIERldGVybWluaXN0aWMgYWxwaGFiZXRpY2FsIGZhbGxiYWNrIC0tIHByZWZlciBmaWxlcyB0aGF0IGRlY2xhcmVkIGEgX19tYWluX18KICAgICBndWFyZCwgZWxzZSBhbnkgLnB5IGZpbGUgLS0gc28gc29tZXRoaW5nIGFsd2F5cyBydW5zL2J1aWxkcyByYXRoZXIgdGhhbiB0aGUKICAgICBlbnRyeSByZXNvbHZpbmcgdG8gZW1wdHkgKHdoaWNoIHNpbGVudGx5IHNraXBzIHJ1biArIHBhY2thZ2luZykuCgpUaGlzIGlzIHRoZSBjYW5vbmljYWwgc291cmNlIGZvciB0aGUgSFBfRklORF9FTlRSWSBiYXNlNjQgcGF5bG9hZCBlbWJlZGRlZCBpbgpydW5fc2V0dXAuYmF0LiBBZnRlciBlZGl0aW5nLCByZS1lbmNvZGUgYW5kIHBhc3RlIGl0IGludG8gdGhlIGBzZXQgIkhQX0ZJTkRfRU5UUlk9Li4uImAKbGluZTsgdGVzdHMvdGVzdF9maW5kX2VudHJ5LnB5IGFzc2VydHMgdGhlIGVtYmVkZGVkIHBheWxvYWQgbWF0Y2hlcyB0aGlzIGZpbGUuCiIiIgppbXBvcnQgYXN0CmltcG9ydCBvcwppbXBvcnQgc3lzCgpQUkVGRVJSRUQgPSAoIm1haW4ucHkiLCAiYXBwLnB5IiwgInJ1bi5weSIsICJjbGkucHkiKQoKCmRlZiBpc19weShuYW1lKToKICAgIGxvd2VyID0gbmFtZS5sb3dlcigpCiAgICAjICIuXyItcHJlZml4OiBtYWNPUyBBcHBsZURvdWJsZSBtZXRhZGF0YSBmaWxlcyAoZS5nLiAiLl9tYWluLnB5IiksIGEgY29tbW9uCiAgICAjIGNyb3NzLXBsYXRmb3JtIHBhcGVyY3V0IHdoZW4gYSBXaW5kb3dzIHVzZXIgdW56aXBzIHNvbWV0aGluZyBhIE1hYyB1c2VyIHppcHBlZC4KICAgIHJldHVybiAoCiAgICAgICAgbG93ZXIuZW5kc3dpdGgoIi5weSIpCiAgICAgICAgYW5kIG5vdCBsb3dlci5zdGFydHN3aXRoKCJ+IikKICAgICAgICBhbmQgbm90IGxvd2VyLnN0YXJ0c3dpdGgoIi5fIikKICAgICAgICBhbmQgb3MucGF0aC5pc2ZpbGUobmFtZSkKICAgICkKCgpkZWYgX2lzX21haW5fZ3VhcmQodGVzdCk6CiAgICAiIiJUcnVlIGlmIGFuIElmIHRlc3QgaXMgYF9fbmFtZV9fID09ICJfX21haW5fXyJgIChlaXRoZXIgb3BlcmFuZCBvcmRlcikuIiIiCiAgICBpZiBub3QgaXNpbnN0YW5jZSh0ZXN0LCBhc3QuQ29tcGFyZSkgb3IgbGVuKHRlc3Qub3BzKSAhPSAxOgogICAgICAgIHJldHVybiBGYWxzZQogICAgaWYgbm90IGlzaW5zdGFuY2UodGVzdC5vcHNbMF0sIGFzdC5FcSk6CiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICBuYW1lcyA9IHNldCgpCiAgICBjb25zdHMgPSBzZXQoKQogICAgZm9yIHNpZGUgaW4gKHRlc3QubGVmdCwgdGVzdC5jb21wYXJhdG9yc1swXSk6CiAgICAgICAgaWYgaXNpbnN0YW5jZShzaWRlLCBhc3QuTmFtZSk6CiAgICAgICAgICAgIG5hbWVzLmFkZChzaWRlLmlkKQogICAgICAgIGVsaWYgaXNpbnN0YW5jZShzaWRlLCBhc3QuQ29uc3RhbnQpOgogICAgICAgICAgICBjb25zdHMuYWRkKHNpZGUudmFsdWUpCiAgICByZXR1cm4gIl9fbmFtZV9fIiBpbiBuYW1lcyBhbmQgIl9fbWFpbl9fIiBpbiBjb25zdHMKCgpkZWYgX2lzX3N1YnN0YW50aXZlKHN0bXQpOgogICAgIiIiQSBzdGF0ZW1lbnQgdGhhdCBkb2VzIHJlYWwgd29yayAobm90IHBhc3MgLyBkb2NzdHJpbmcgLyBiYXJlIC4uLikuIiIiCiAgICBpZiBpc2luc3RhbmNlKHN0bXQsIGFzdC5QYXNzKToKICAgICAgICByZXR1cm4gRmFsc2UKICAgIGlmIGlzaW5zdGFuY2Uoc3RtdCwgYXN0LkV4cHIpIGFuZCBpc2luc3RhbmNlKHN0bXQudmFsdWUsIGFzdC5Db25zdGFudCk6CiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICByZXR1cm4gVHJ1ZQoKCmRlZiBoYXNfbWFpbihwYXRoKToKICAgICIiIlRydWUgaWYgdGhlIGZpbGUgaGFzIGFuIGBpZiBfX25hbWVfXyA9PSAiX19tYWluX18iOmAgZ3VhcmQgdGhhdCBkb2VzIHJlYWwgd29yay4KCiAgICBBIGd1YXJkIHdob3NlIGJvZHkgaXMgZXhjbHVzaXZlbHkgcGFzcy9jb21tZW50cy9kb2NzdHJpbmcvYC4uLmAgZG9lcyBub3QgY291bnQKICAgIChpdCBzZWxmLWlkZW50aWZpZXMgdGhlIG1vZHVsZSBhcyBub24tcnVubmFibGUpLCBzbyBhIHNpYmxpbmcgcmVhbCBlbnRyeSB3aW5zLgogICAgIiIiCiAgICB0cnk6CiAgICAgICAgd2l0aCBvcGVuKHBhdGgsICJyIiwgZW5jb2Rpbmc9InV0Zi04IiwgZXJyb3JzPSJpZ25vcmUiKSBhcyBoYW5kbGU6CiAgICAgICAgICAgIHNyYyA9IGhhbmRsZS5yZWFkKCkKICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICB0cnk6CiAgICAgICAgdHJlZSA9IGFzdC5wYXJzZShzcmMpCiAgICBleGNlcHQgRXhjZXB0aW9uOgogICAgICAgICMgVW5wYXJzZWFibGUgc291cmNlIGlzIGEgcG9vciBlbnRyeSBjYW5kaWRhdGU7IGRvIG5vdCByZXN1cnJlY3QgdGhlIG9sZAogICAgICAgICMgc3Vic3RyaW5nIGhldXJpc3RpYyAod2hpY2ggbWlzLWZpcmVkIG9uICJfX21haW5fXyIgaW4gc3RyaW5ncy9jb21tZW50cykuCiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICAjIE9ubHkgYSBtb2R1bGUtbGV2ZWwgZ3VhcmQgbWFya3MgYSBydW5uYWJsZSBzY3JpcHQ7IGEgZ3VhcmQgbmVzdGVkIGluc2lkZSBhCiAgICAjIGZ1bmN0aW9uIG9yIGNsYXNzIChlLmcuIGEgaGVscGVyJ3MgYGRlZiBydW4oKTogLi4uIGlmIF9fbmFtZV9fID09IC4uLmApIGlzIG5vdC4KICAgIGZvciBub2RlIGluIHRyZWUuYm9keToKICAgICAgICBpZiBpc2luc3RhbmNlKG5vZGUsIGFzdC5JZikgYW5kIF9pc19tYWluX2d1YXJkKG5vZGUudGVzdCk6CiAgICAgICAgICAgIGlmIGFueShfaXNfc3Vic3RhbnRpdmUoc3RtdCkgZm9yIHN0bXQgaW4gbm9kZS5ib2R5KToKICAgICAgICAgICAgICAgIHJldHVybiBUcnVlCiAgICByZXR1cm4gRmFsc2UKCgpkZWYgZW1pdChwYXRoKToKICAgIHByaW50KG9zLnBhdGgubm9ybXBhdGgocGF0aCkpCgoKIyBFeGl0IGNvZGVzOiAwID0gYSBjbGVhciwgdW5hbWJpZ3VvdXMgcGljayB3YXMgZW1pdHRlZDsgQU1CSUdVT1VTX1JDICgzKSA9IHRoZQojIGFscGhhYmV0aWNhbCBmYWxsYmFjayB3YXMgdXNlZCAobXVsdGlwbGUgZmlsZXMsIG5vIGNsZWFyIHdpbm5lcikgLS0gcnVuX3NldHVwLmJhdAojIHJlYWRzIHRoaXMgdG8gZGVjaWRlIHdoZXRoZXIgdG8gb2ZmZXIgdGhlIGludGVyYWN0aXZlIHBpY2tlci4gc3Rkb3V0IGFsd2F5cyBob2xkcwojIHRoZSBjaG9zZW4gZW50cnkgcmVnYXJkbGVzcywgc28gbm9uLWludGVyYWN0aXZlIGNhbGxlcnMgYXJlIHVuYWZmZWN0ZWQgYnkgdGhlIGNvZGUuCkFNQklHVU9VU19SQyA9IDMKCgpkZWYgbWFpbigpOgogICAgZmlsZXMgPSBbbmFtZSBmb3IgbmFtZSBpbiBvcy5saXN0ZGlyKCIuIikgaWYgaXNfcHkobmFtZSldCgogICAgaWYgbGVuKGZpbGVzKSA+IDE6CiAgICAgICAgc3lzLnN0ZGVyci53cml0ZSgiW0JPT1RdIFJFUS0wMDI6IE11bHRpcGxlIHNjcmlwdHMgZm91bmQ6ICVyXG4iICUgc29ydGVkKGZpbGVzKSkKCiAgICBmb3IgY2FuZGlkYXRlIGluIFBSRUZFUlJFRDoKICAgICAgICBpZiBjYW5kaWRhdGUgaW4gZmlsZXM6CiAgICAgICAgICAgIGlmIGxlbihmaWxlcykgPiAxOgogICAgICAgICAgICAgICAgc3lzLnN0ZGVyci53cml0ZSgKICAgICAgICAgICAgICAgICAgICAiW0JPT1RdIFJFUS0wMDI6IFByaW9yaXR5IExvZ2ljIFRyaWdnZXJlZDogRm91bmQgJXIuICIKICAgICAgICAgICAgICAgICAgICAiU2VsZWN0aW5nICVyIChSRVEtMDAyOiBQcmlvcml0eSBuYW1lIG1hdGNoKS5cbiIKICAgICAgICAgICAgICAgICAgICAlIChzb3J0ZWQoZmlsZXMpLCBjYW5kaWRhdGUpCiAgICAgICAgICAgICAgICApCiAgICAgICAgICAgIGVtaXQoY2FuZGlkYXRlKQogICAgICAgICAgICByZXR1cm4gMAoKICAgIGlmIGxlbihmaWxlcykgPT0gMToKICAgICAgICBlbWl0KGZpbGVzWzBdKQogICAgICAgIHJldHVybiAwCgogICAgY2FuZGlkYXRlcyA9IFtuYW1lIGZvciBuYW1lIGluIGZpbGVzIGlmIGhhc19tYWluKG5hbWUpXQogICAgaWYgbGVuKGNhbmRpZGF0ZXMpID09IDE6CiAgICAgICAgZW1pdChjYW5kaWRhdGVzWzBdKQogICAgICAgIHJldHVybiAwCgogICAgIyBEZXRlcm1pbmlzdGljIGZhbGxiYWNrIChSRVEtMDAyKTogbm8gUFJFRkVSUkVEIG5hbWUgYW5kIG5vdCBleGFjdGx5IG9uZQogICAgIyBzdWJzdGFudGl2ZSBfX21haW5fXyBndWFyZC4gUHJlZmVyIGZpbGVzIHRoYXQgZGVjbGFyZWQgYSBndWFyZCwgZWxzZSBhbnkgZmlsZS4KICAgICMgVGhpcyBhbWJpZ3VvdXMgcGF0aCBleGl0cyBBTUJJR1VPVVNfUkMgc28gdGhlIGJhdGNoIG1heSBvZmZlciB0aGUgaW50ZXJhY3RpdmUKICAgICMgcGlja2VyIGJlZm9yZSBhY2NlcHRpbmcgdGhpcyBhbHBoYWJldGljYWwgZGVmYXVsdC4KICAgIHBvb2wgPSBjYW5kaWRhdGVzIGlmIGNhbmRpZGF0ZXMgZWxzZSBmaWxlcwogICAgaWYgcG9vbDoKICAgICAgICBjaG9pY2UgPSBzb3J0ZWQocG9vbClbMF0KICAgICAgICBzeXMuc3RkZXJyLndyaXRlKAogICAgICAgICAgICAiW0JPT1RdIFJFUS0wMDI6IE5vIGNsZWFyIGVudHJ5IGZvdW5kOyBzZWxlY3RpbmcgJXIgKGFscGhhYmV0aWNhbCBmYWxsYmFjaykuXG4iCiAgICAgICAgICAgICUgY2hvaWNlCiAgICAgICAgKQogICAgICAgIGVtaXQoY2hvaWNlKQogICAgICAgIHJldHVybiBBTUJJR1VPVVNfUkMKCiAgICAjIE5vIC5weSBmaWxlcyBhdCBhbGwgLS0gdGhlIGJvb3RzdHJhcHBlciBoYW5kbGVzIG5vLXB5dGhvbi1maWxlcyBzZXBhcmF0ZWx5LgogICAgcmV0dXJuIDAKCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgc3lzLmV4aXQobWFpbigpKQo="
 rem ~env_state.py records envMode/envName/envPath/lockSize after a successful
@@ -6100,6 +6229,27 @@ set "HP_ELEVATED="
 if "%HP_TEST_NOT_ELEVATED%"=="1" exit /b 0
 fsutil dirty query %systemdrive% <nul >nul 2>&1
 if not errorlevel 1 set "HP_ELEVATED=1"
+exit /b 0
+:warn_runtime_dll
+rem Item 77: "DLL load failed" is Windows' generic text for a .pyd, or a DLL it needs, not loading; it never
+rem names the file. On a clean Windows image the usual cause is the missing Microsoft Visual C++ runtime
+rem (msvcp140.dll, vcruntime140_1.dll), which packages such as PyMuPDF need. A conda env carries its own copy,
+rem a uv or venv env relies on the machine. Scans the captured run output and warns only when BOTH the text
+rem is there AND System32 lacks one of the two files, so a DLL failure with another cause stays silent here.
+rem Never installs the runtime: that needs administrator rights and the core flow does not.
+rem HP_TEST_VCRT_MISSING=1 reports both files as missing (CI runners have the runtime). No setlocal.
+set "HP_VCRT_GONE="
+findstr /i /l /c:"DLL load failed" "~run.err.txt" "~run.out.txt" >nul 2>&1
+if errorlevel 1 exit /b 0
+if "%HP_TEST_VCRT_MISSING%"=="1" set "HP_VCRT_GONE=msvcp140.dll and vcruntime140_1.dll"
+if defined HP_VCRT_GONE goto :warn_runtime_dll_say
+if not exist "%SystemRoot%\System32\msvcp140.dll" set "HP_VCRT_GONE=msvcp140.dll"
+if not exist "%SystemRoot%\System32\vcruntime140_1.dll" if defined HP_VCRT_GONE set "HP_VCRT_GONE=%HP_VCRT_GONE% and vcruntime140_1.dll"
+if not exist "%SystemRoot%\System32\vcruntime140_1.dll" if not defined HP_VCRT_GONE set "HP_VCRT_GONE=vcruntime140_1.dll"
+if not defined HP_VCRT_GONE exit /b 0
+:warn_runtime_dll_say
+call :log "[WARN] Windows could not load a DLL that your program needs, and the Microsoft Visual C++ runtime does not look installed here, missing from System32: %HP_VCRT_GONE%. Some packages, PyMuPDF among them, will not load without it. Install the Visual C++ Redistributable for x64 from https://aka.ms/vc14/vc_redist.x64.exe and run again. Setup does not install it for you because that needs administrator rights."
+set "HP_VCRT_GONE="
 exit /b 0
 :log
 rem derived requirement (CLAUDE.md Item 42, lever 1): DEBUG/TRACE/INSTALL-tagged lines are
@@ -6291,7 +6441,23 @@ rem :warn_build_incomplete site (CLAUDE.md Item 46 Bucket B migrated these calle
 rem see that subroutine's own header comment for why it is not a :die call anymore).
 rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
 rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
-call :log "[INFO] Standard build did not complete; attempting a fallback build. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+rem derived requirement: remove an EXE left by an earlier run BEFORE anything below can fail or return early. A failed
+rem install of the fallback build tool, a forced failure, or the pyinstaller choice below would otherwise leave that
+rem old program in dist and the verification run would start it as this build while the log says the code is verified
+rem through Python. Nothing is built from the current sources at this point, so there is nothing worth keeping.
+if exist "dist\%ENVNAME%.exe" del "dist\%ENVNAME%.exe" >nul 2>&1
+rem CLAUDE.md Item 71 (PVW_BUILDER): pyinstaller switches this fallback off, so a PyInstaller failure stands
+rem and the caller reports it exactly as it does after a failed fallback. nuitka reaches this subroutine
+rem directly, without a failed PyInstaller build before it, so the message must not claim one.
+if /I "%HP_BUILDER%"=="pyinstaller" (
+  call :log "[INFO] PVW_BUILDER=pyinstaller: the fallback build system is switched off, so the failed standard build stands."
+  exit /b 1
+)
+if /I "%HP_BUILDER%"=="nuitka" (
+  call :log "[INFO] Building with the fallback build system only. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+) else (
+  call :log "[INFO] Standard build did not complete; attempting a fallback build. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+)
 if defined HP_TEST_FORCE_NUITKA_FAIL (
   call :log "[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure."
   exit /b 1
@@ -6305,7 +6471,6 @@ if errorlevel 1 (
   call :log "[WARN] Fallback build: could not install the fallback build tool; fallback unavailable."
   exit /b 1
 )
-if exist "dist\%ENVNAME%.exe" del "dist\%ENVNAME%.exe" >nul 2>&1
 rem --assume-yes-for-downloads: Nuitka can otherwise prompt interactively to confirm its own
 rem dependency downloads (e.g. the MinGW64 compiler) -- fatal for both CI and a real
 rem non-interactive double-click user; the Prime Directive tolerates zero prompts here.

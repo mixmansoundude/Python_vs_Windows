@@ -346,6 +346,25 @@ class BatchCallSite(unittest.TestCase):
         self.assertLess(call, direct)
 
 
+class SummaryWriterIsApostropheSafe(unittest.TestCase):
+    """Item 81 follow-up: the summary writer must not paste a path into a single-quoted PowerShell string.
+
+    The staging log path is now absolute, so it holds the folder the user chose. A folder name with an apostrophe
+    (a normal name like O'Brien) would end the PowerShell literal early and drop the log tail from the summary.
+    """
+
+    def setUp(self):
+        bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
+        start = bat.index("\n:write_pipreqs_summary\n")
+        self.body = bat[start:bat.index("\n:write_status\n", start)]
+
+    def test_paths_are_read_from_the_environment(self):
+        self.assertNotIn("'%HP_SUMMARY_PATH%'", self.body)
+        self.assertNotIn("'%HP_PIPREQS_FAILURE_LOG%'", self.body)
+        self.assertIn("$env:HP_SUMMARY_PATH", self.body)
+        self.assertIn("$env:HP_PIPREQS_FAILURE_LOG", self.body)
+
+
 class EmbeddedHelperBaseline(unittest.TestCase):
     def test_source_is_ascii(self):
         SOURCE.read_bytes().decode("ascii")

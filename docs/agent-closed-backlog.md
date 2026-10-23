@@ -3515,6 +3515,178 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   touched here. (2) A summary file that cannot be deleted (held open with `FileShare.Read`) let a script that exits 0
   without writing pass on the stale file; `.summary_locked` reproduces it and the batch now reports and fails.
 
+### Item 73 (closed 2026-10-17; PR #488)
+
+- **A failed PEP 723 write-back now logs the reason uv gave.** Symptom (2026-08 field report): `~setup.log`
+  showed only `ERROR:uv_rc_1`, so nobody could say why the `# /// script` header was not written. Cause:
+  `tools/pep723_writeback.py` threw uv's stderr away. Fix: the last five non-blank lines of a failed uv call
+  (each cut to 200 ASCII characters) go to stderr, which the batch already appends to `~setup.log`, for the first
+  call and for the strip-and-retry call. A successful call logs nothing. `HP_TEST_PEP723_UV_ERR` makes the helper
+  act as if uv had failed, so the real-lane scenario needs no network.
+- **Test first.** `tests/selfapps_pep723_uverr.ps1` (`real` lane, gating, row `self.pep723.writeback.uverr`) plus six
+  unit tests in `tests/test_pep723_writeback.py` landed alone: red in run `38962853577` (head `7da1dcb`), where the
+  log said `PEP 723 header write-back succeeded via uv add --script` because the hook did not exist yet and the
+  app file had been rewritten (`appUnchanged:false`). Green with the fix in run `38984687670` (`reasonOne`,
+  `reasonTwo` and `appUnchanged` all true) and again in `39004972181`.
+
+### Item 70 (closed 2026-10-17; PR #488)
+
+- **The data-file and hidden-import hints name actions the user can take.** The genuine `_MEI` data-file hint said
+  `Consider adding: --add-data ...` and the hidden-import hint said `Consider adding: --hidden-import=X`, both
+  PyInstaller flags a double-click user has no way to pass. The first now says the bootstrapper does not bundle
+  data files and to keep the file next to the built `.exe`; the second says to add the module to `requirements.txt`,
+  which the bootstrapper installs and rebuilds from. A `PVW_` passthrough was not built (it would touch every
+  rebuild line); `docs/plan-field-report-2026-10.md` records why.
+- **Test first.** `self.hint.hidden_import.wording` (`selfapps_exedyn_fail.ps1`) and the `mei_genuine` expectation
+  (`selfapps_exedata_fail.ps1`) were red in run `38962853577` (`hintMentionsRequirements:false`; `hintCorrect:false`
+  with a genuine `_MEI` path seen) and green in `38984687670` and `39004972181`.
+
+### Item 76 (closed 2026-10-17; PR #488)
+
+- **Every file the bootstrapper writes at the top of the app folder now takes a tilde, so the standard ignores keep
+  it out of the user's git history (README REQ-015).** `dependency_source.txt` became `~dependency_source.txt`
+  (the `:success` writer, its console line and the three CI collection points), and the new litter row found two
+  more writers nobody had listed: `.ci_bootstrap_marker` (written empty at the top of every run, now
+  `~ci_bootstrap_marker`, with the harness check and the three workflow steps that touch it) and
+  `requirements.autopep.txt` (autopep723's raw output on the uv-first lanes, now `~requirements.autopep.txt`).
+- **Test first.** `self.litter.appfolder` (`tests/selftest.ps1`, enforced on every lane; a top-level entry passes if
+  it is tilde-prefixed or in the row's short allow-list, and the record `~dependency_source.txt` must exist) plus
+  `tests/test_dependency_source_file.py`. The litter row could not be read red in the first run, because a red
+  harness row stops `run_tests.bat` before `selftest.ps1` (see Item 84 and `docs/agent-lessons-learned.md`); it was
+  read red in run `38984687670`: `listed:true`, `record:false`, litter `dependency_source.txt` on every lane plus
+  `.ci_bootstrap_marker` everywhere and `requirements.autopep.txt` on the uv-first lanes. Green on all eight lanes in
+  `39004972181` (`litter:[]`, `record:true`).
+
+### Item 78 slice 1 (closed 2026-10-17; PR #488; slice 2 is the next entry)
+
+- **The log says whether the run was elevated, and a failed NI-VISA install is no longer silent.** One
+  `:detect_elevation` subroutine (`fsutil dirty query`, `HP_TEST_NOT_ELEVATED=1` to simulate a non-admin run)
+  feeds both the new per-run `[INFO] Elevated: yes|no` line and the Miniconda AllUsers branch, which used to carry
+  its own copy of the test. The two NI-VISA `install_failed` sites (download, post-check timeout) print a console
+  `[WARN]` that says the driver is missing, that the pyvisa package is installed anyway, and that talking to real
+  instruments needs the driver. Neither is fatal.
+- **Test first.** `self.elevation.logged` (`tests/selftest.ps1`, every lane; `count` must be 1) was read red in run
+  `38984687670` (`count:0` on every lane) and green in `39004972181` (`count:1`, `value:"yes"`; `justme-test`,
+  which simulates a non-admin run, reports `"no"`). `pyvisa.nivisa.warn` (`selfapps_pyvisa.ps1`, `real` and
+  `conda-full`, which already reach `install_failed` with installer exit `-125202`) was red with
+  `installFailed:true`, `warnShown:false` in `38962853577` and `38984687670`, green in `39004972181`.
+
+### Item 68 (closed 2026-10-17; PR #488)
+
+- **Wording that told the user something untrue or useless now tells the truth.** The fail-fast probe line says
+  `still running after 10 seconds` instead of `10000ms`; the Nuitka fallback and optimized-build messages say the
+  build can take tens of minutes and point at `~setup.log` instead of promising "a minute or two";
+  `~pipreqs.diff.txt` names the requirements file that is missing instead of "not both present"; a cached EXE
+  that is not reused logs one line saying so before the rebuild; the optimized-build prompt carries the sentence
+  naming the risk of the extra run (REQ-018.2, maintainer decision 2026-10-11, option A); both post-flight
+  run-command panels say what a bare interpreter prompt is and how to run pip.
+- **A dead gate.** The pipreqs auto-detect warning sat behind `if not defined DEP_SOURCE`, but `DEP_SOURCE` is
+  initialized to `unknown` near the top of the file, so the warning never printed and `dependency_source.txt` never
+  said `pipreqs`. The gate now tests for `unknown`. The static row `batch.req005.warn_gate` only matched the dead
+  text and stayed green for months; it was retired, and the behavior rows `self.wording.dep_source_warn_shown` and
+  `self.pipreqs.warn.gated` replace it (the lesson is in `docs/agent-lessons-learned.md`).
+- **Test first.** `tests/selfapps_honest_wording.ps1` (`real` lane, gating: `self.wording.dep_source_warn_shown`,
+  `.rebuild_notice`, `.diff_placeholder`), `self.failfast.probe.seconds`, the optimized-build decline scenario
+  (prompt sentence, and exactly one program launch), and harness rows `batch.wording.nuitka_duration`,
+  `batch.wording.optbuild_rerun`, `batch.wording.interpreter_prompt_note`; `batch.optbuild.noninteractive_default`
+  guards that the offer resolves to no, without a prompt and without a second launch, under `HP_CI_LANE`,
+  `NOINPUT` and `HP_NONINTERACTIVE`. All were read red for the right reasons in run `38962853577` (for example
+  `warnShown:false`, `run2Rebuilt:true` with `run2Notice:false`, the old placeholder text, `1000ms`,
+  `promptWarnsRerun:false` with `launchCount:1`) and green in `38984687670` and `39004972181`.
+- **The cascade-prompt wording stays with Item 82.**
+
+### Item 71 (closed 2026-10-17; PR #499)
+
+- **`PVW_BUILDER=auto|pyinstaller|nuitka|both` is a super-user override, never a prompt** (decided 2026-10-09, Q6 = A).
+  Absent or `auto` is today's behavior; `pyinstaller` never installs or tries Nuitka and never shows the optimized-build
+  offer; `nuitka` skips the PyInstaller install and build and reports a failed build as `reason=builder_nuitka`; `both`
+  builds with PyInstaller, then answers the optimized-build question itself and keeps the verify-then-swap path, so a
+  verified EXE is never replaced by an unverified one. An unrecognized value is ignored with one warning that does not
+  echo it. A cached EXE is still reused whatever the choice, and the fast path says so. Detail: `docs/agent-interconnect.md`.
+- **Test first.** `self.builder.override` (five deterministic scenarios gate on `real` and `conda-full`; the `nuitka`
+  and `both` scenarios build with real Nuitka on the `uv` lane and are non-gating because the compiler download can fail
+  for network reasons). Read red for the right reason in run `39032527889` (`overrideLogged:false` in every
+  scenario), green in `39044948167`. A review round added two proofs the first version lacked: the `invalid` scenario
+  feeds a hostile value (`valueEchoed:false`), and the `nuitka` scenarios
+  require `pyiInstallSkipped:true`, so a run that quietly installed PyInstaller no longer passes.
+
+### Item 78 slice 2 (closed 2026-10-17; PR #499)
+
+- **A driver import found only below a sub-folder asks before NI-VISA is installed.** Sub-folder scanning stays (an
+  archived program keeps its real imports in packages), but the scanner now tells the two cases apart (`0` none, `1` a
+  match next to `run_setup.bat`, `2` every match below a sub-folder), logs the file that triggered the question, and
+  `:visa_subfolder_gate` asks with a 30 second timed prompt that defaults to no. A top-folder match installs exactly as
+  before without a question. The answer is remembered for the run so a cascade re-entry does not ask twice, and the
+  remembered answer is cleared once at the top of the file, because an `HP_VISA_DECISION=Y` inherited from the calling
+  terminal would otherwise be taken as the user's answer (`self.nivisa.subfolder.declined` runs with exactly that stale
+  value). Detail: `docs/agent-interconnect.md`'s NI-VISA scanner contract.
+- **Test first.** `self.nivisa.subfolder.accepted`, `.declined`, `.timeout` and `self.nivisa.topfolder.noprompt` (`real`
+  and `conda-full`, gating; `accepted` runs last because it may really install NI-VISA on the runner), plus
+  `tests/test_detect_visa.py`. Red for the right reason in `39032527889` (`foundLine:false`), green in `39044948167`.
+
+### Item 81 (closed 2026-10-17; PR #499)
+
+- **The older pipreqs staging scan keeps its log, so a failed scan shows its reason.** `HP_PIPREQS_STAGE_LOG` was the
+  relative name `~pipreqs_stage.log`, written after `pushd` into the copy that `:after_pipreqs_run` deletes, so the
+  summary ended with `<log tail unavailable>` and the setup log had no traceback. It is now an absolute path in the
+  app folder. A review round found that the PowerShell block of `:write_pipreqs_summary` pasted the (now absolute,
+  user-chosen) paths into single-quoted literals, which an apostrophe or `[`/`]` in a folder name would break; it reads
+  `$env:HP_SUMMARY_PATH`/`$env:HP_PIPREQS_FAILURE_LOG` with `-LiteralPath` instead. The apostrophe case is pinned by a
+  static test only (`SummaryWriterIsApostropheSafe`), not by a Windows scenario.
+- **Test first.** `self.pipreqs.output.locked_crash` now requires the crash reason (`reasonVisible`) in the summary or
+  setup log and no `<log tail unavailable>`; read red in `39032527889` (`reasonVisible:false`, `summaryTailUnavailable:true`,
+  `crashSeen:true`), green in `39044948167`.
+
+### Item 77 (closed 2026-10-17; PR #499)
+
+- **A run that fails with `DLL load failed` and a runner without the Visual C++ runtime gets a warning with the download
+  link; nothing is installed.** `:warn_runtime_dll` reads `~run.err.txt`/`~run.out.txt` and warns only when System32 also
+  lacks `msvcp140.dll` or `vcruntime140_1.dll`. It is called where a failed verification run is reported (the EXE path,
+  the legacy interpreter branch, and after the fail-fast probe). CI runners have the runtime, so `HP_TEST_VCRT_MISSING=1`
+  reports both missing; the real failure cannot be reproduced in CI.
+- **Test first.** `self.vcruntime.warn.interp`, `.interp_probe`, `.exe` (`real`, gating) were red in `39032527889`
+  (`warn.count:0`) and green in `39044948167`; `.runtime_present` and `.unrelated_error` are guard rows that are green
+  before and after by design (the warning is neither printed when the runtime is present nor for an unrelated error).
+
+### Item 66 (closed 2026-10-23; PR #497)
+
+- **A provider that produced a verified run after a cascade is remembered, so the next run does not redo uv first.**
+  Separate state file `~provider.state.json` (not `~env.state.json`), plus a super-user `PVW_PROVIDER=conda` switch
+  (decided 2026-10-09, Q3, option B). A failed forced solve stops; it does not cascade.
+- **Memory survives edits** (decided 2026-10-17, Q11, option A): `requirements.txt`, `pyproject.toml`, `runtime.txt` and
+  `.py` edits never clear it; it is cleared only when the remembered provider is gone (Miniconda uninstalled) or the user
+  deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
+- **Built** (one PR with Item 82 slice 2, README wording in the PR body): switch check after the `Python file count`
+  log line, `:provider_memory_read` before the uv block, `:provider_memory_write` from `:success`,
+  `~runtime_writeback.txt` record so a stale exact pin is dropped when conda goes first. Rows `self.provider.*` (real
+  lane gating, the three uv rows non-gating because of the Miniconda download), unit tests
+  `tests/test_provider_memory.py`. Not covered, by design: the cached-EXE fast path runs first, a failed memory-start
+  conda run follows the existing conda-failure chain and uv is not retried, only conda is remembered. Detail:
+  `docs/agent-interconnect.md`'s "Provider memory" section.
+
+### Item 82 (closed 2026-10-23; slice 1 PR #495, slice 2 PR #497; filed 2026-10-11 from a maintainer brainstorm)
+
+- **The problem**: the early cascade prompt (30 s, default N) fires only when warnfix leaves an import unresolved AND a
+  repair install fails, so a missed prompt, or a failure that only shows at run time, got no later offer. Shape agreed
+  2026-10-11 (option A), plan in `docs/plan-field-report-2026-10.md`.
+- **Slice 1 (the W/C/N prompt)**: ONE untimed prompt after the verification run and the optional checkpoint, default
+  "neither": it shows the last error line and offers worked-anyway / try Miniconda (says it runs the program once more,
+  README REQ-018) / neither. uv to conda only; never on the fast path; auto-declines on
+  `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE`. Setting `HP_CASCADE_APPROVED` late reuses the existing cascade with no
+  change to it. `:last_chance_offer` is at the end of `:run_entry_smoke`, with its own helper `HP_LAST_ERROR_LINE`, the
+  checkpoint's interpreter result kept as `HP_LC_CKPT_RC`, and the `RUNTIME_MISMATCH` hint reworded so it no longer
+  rules out the environment. Rows `self.lastchance.*` (real lane gating; the silent-timeout and cascade scenarios on the
+  uv lane, non-gating because of the Miniconda download and the force-stopped EXE).
+- **Slice 2 (the window question)**, decided 2026-10-11 (was Q10, option a): on the cascade-reached conda tier only, a
+  window app's silent timeout asks once whether it opened and worked, and only an explicit yes (a bare Enter means no)
+  is recorded as `user_confirmed`. The gate is a marker the smoke runner writes when it stops a silent process
+  (`~smokerun_killed.txt`, written by `tools/exe_smokerun.ps1` only inside its `Kill()` branch, read into
+  `HP_EXE_KILLED_SILENT`), not `HP_EXE_EXIT=-1` alone, because a failed launch or a program exiting `-1` also leaves
+  `-1`. The prompt says the check stops the program after about 30 seconds; the CI fixture is a silent script. Rows
+  `self.lastchance.window_yes/_enter/_auto/_selfexit` (uv lane, non-gating), unit tests `tests/test_window_confirm.py`
+  and the `KilledMarker` cases in `tests/test_exe_smokerun.py`. Item 66 receives the pass type (`exe_ok`,
+  `interpreter_ok`, `user_confirmed`) as a field. Detail: `docs/agent-interconnect.md`'s "Last-chance offer" section.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

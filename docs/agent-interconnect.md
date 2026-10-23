@@ -329,6 +329,58 @@ temp cleaned up), `decline` (prompt shown, no build attempted).
 
 ---
 
+## `PVW_BUILDER` (Item 71): the build-tool choice touches four sites in two build paths
+
+**Touch the build block, `:try_nuitka_tier_a`, `:offer_optimized_build` or `:try_fast_exe`, must understand
+the others.** `PVW_BUILDER=auto|pyinstaller|nuitka|both` is a super-user override (README REQ-019: absent
+or `auto` is today's behavior; nothing a Prime Directive run needs depends on it). It is parsed once near
+the other `PVW_` overrides into `HP_BUILDER` (lowercase, default `auto`). The raw value is compared with
+`set PVW_BUILDER| findstr /x /l /i /c:"PVW_BUILDER=<choice>"` (the `PVW_PROVIDER` pattern, plus `/i` so any case is
+accepted), so cmd never parses it and **no line may expand `%PVW_BUILDER%`** (a unit test forbids it); only the
+normalized `HP_BUILDER` is ever expanded. An unrecognized value is logged once as `PVW_BUILDER is not one of ...;
+using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever the user typed). Where each choice acts:
+- `pyinstaller`: `:try_nuitka_tier_a` returns 1 at its top (before it installs Nuitka), so all three call
+  sites report the PyInstaller failure exactly as they report a failed fallback, and
+  `:offer_optimized_build` returns before its prompt, so the offer is never shown.
+- **Stale EXE**: `:try_nuitka_tier_a` deletes `dist\<env>.exe` as its FIRST statement, before the pyinstaller guard,
+  the forced-failure hook and the Nuitka install. Any earlier return would otherwise leave an EXE from an earlier run
+  for `:run_exe_smokerun` to start as this build, while the log says the code is verified through Python (the
+  `:verify_no_exe_interpreter` skip is keyed on the file existing). A new early return in that subroutine must come
+  after the delete. Rows: `self.builder.override` scenarios `nuitka_stale` and `pyinstaller_nofallback` (both seed a
+  copy of `hostname.exe` at the EXE path: a real program that exits 0, so a wrongly started stale EXE looks like a
+  passing build; a first version seeded a text file and left the step running for over ten minutes, see Item 87).
+- `nuitka`: the build block in `:run_entry_smoke` skips the `pip install pyinstaller` step (one `if` chain with
+  the uv and pip variants; it logs `PyInstaller is not installed for this run`), takes a branch ahead of the
+  forced-PyInstaller-failure hook, never runs PyInstaller, deletes a stale PyInstaller warn file (otherwise warnfix could rebuild over
+  the Nuitka EXE with PyInstaller), calls `:try_nuitka_tier_a`, and on failure reports
+  `reason=builder_nuitka` through `:warn_build_incomplete`. On success it sets
+  `HP_NUITKA_FALLBACK_USED` and `HP_FRESH_BUILD_OK` like Tier A, so the Nuitka-only repair-loop guards apply.
+  **The delete is not the guard**: it can fail (another program holds the file open) and `~parse_warn.py` reads
+  `build\<env>\warn-<env>.txt` by path, so the warnfix repair, which ends in a PyInstaller rebuild, is switched off for the
+  nuitka choice where its dispatch flag is decided: `if /I "%HP_BUILDER%"=="nuitka" set "HP_WARNFIX_NEEDED="` between the
+  `for /f` scan of `~missing_modules.txt` and `if defined HP_WARNFIX_NEEDED (`, on its own line (a second `if` on the
+  dispatch's else-if line would capture the later else branches), with an `[INFO] PVW_BUILDER=nuitka: the warnfix repair is
+  skipped` line first. Row: `self.builder.override` scenario `nuitka_warnfile` (the test holds the warn file open with
+  `FileShare.Read` and requires that log line, which is only written when the surviving file was read and named a module).
+- `both`: PyInstaller builds and verifies as usual, then `:offer_optimized_build` skips the question
+  (`goto :optbuild_both`; the override is the consent, same reasoning as `HP_PVW_KNOWN_IDEMPOTENT`, and the
+  log line says the program starts once more for up to 30 seconds) and continues into the unchanged
+  build-to-temp, verify, swap-on-success path, so a verified EXE is never replaced by an unverified one. It is
+  skipped, with a log line, when the verification run did not exit 0.
+- System-Python consent: `:system_build_consent_gate` words its question by `HP_BUILDER` (`goto :sbcg_nuitka_text`
+  for `nuitka`, which installs Nuitka and not PyInstaller). The default wording stays byte-identical because
+  `self.sysbuild.decline` matches it; `self.sysbuild.nuitka_prompt` proves the nuitka wording and that
+  PyInstaller is not named.
+- Fast path: a fresh cached EXE is still reused whatever the choice; `:try_fast_exe` logs that no build ran
+  and that deleting `dist\<env>.exe` builds again. No builder record is kept, so changing the choice does
+  not by itself trigger a rebuild.
+`tests/selfapps_pvw_builder.ps1` covers it (row `self.builder.override`); `tests/test_builder_override.py`
+pins the order of the guards (the fallback guard before the Nuitka install, the offer guards before the
+prompt). The default order (PyInstaller first, Nuitka as fallback or elective upgrade) is deliberately
+unchanged until Tier B matures (`docs/prd-av-safe-build-path.md`).
+
+---
+
 ## Standalone Python-download tier (REQ-009 Tier 5 by naming; executed 3rd in provider order)
 
 **Provider chain: `uv -> conda -> embed -> venv -> system`** (embed sits right after conda, not
@@ -817,10 +869,15 @@ Windows before Python 3.15) and aborts the whole scan at the first file it canno
   and the older fallback's good copy-back), since that scan wrote the file. `:after_pipreqs_run` calls
   `:pipreqs_output_blocked` just before the promotion guard so the console names the file on that path too;
   the subroutine warns once per run (`HP_PIPREQS_BLOCKED_WARNED`, reset with the other pipreqs state).
-  Known and not fixed (Item 81 in CLAUDE.md): the older robocopy fallback writes `~pipreqs_stage.log` with a
-  relative path after `pushd` into the copy, so the log lands in the copy's folder, which is deleted: a failed
-  staging scan shows `<log tail unavailable>` in the summary, and the Traceback check in
-  `:pipreqs_zero_requirements` cannot read it there.
+  The older robocopy fallback's log, `HP_PIPREQS_STAGE_LOG`, is an ABSOLUTE path in the app folder (Item 81):
+  that scan runs after `pushd` into the copy, which `:after_pipreqs_run` deletes, so a relative name put the
+  log inside the copy and a failed staging scan ended with `<log tail unavailable>` in the summary and no
+  traceback in the setup log. `self.pipreqs.output.locked_crash` requires the crash reason to be visible in the
+  summary or setup log. Any new log written after a `pushd` must be absolute for the same reason.
+  **An absolute path is a user-chosen folder name, so `:write_pipreqs_summary` hands the summary and log paths to
+  PowerShell through `$env:HP_SUMMARY_PATH`/`$env:HP_PIPREQS_FAILURE_LOG` and uses `-LiteralPath`**, never pasted into a
+  single-quoted literal (a folder named `O'Brien` ends the literal early and the log tail is silently lost; a
+  folder with `[` or `]` is a wildcard to `-Path`). `tests/test_pipreqs_precheck.py::SummaryWriterIsApostropheSafe`.
 - Regression: `tests/selfapps_pipreqs_encoding.ps1` (`real` lane, gating, forces `PYTHONUTF8=0` because
   Python 3.15 defaults to UTF-8 mode and would hide the cp1252 read) and
   `tests/selfapps_pipreqs_output.ps1` (`real` lane, gating: read-only old output replaced, scan temp folder
@@ -841,6 +898,42 @@ branch skips straight to JustMe when it is empty. Test with `if defined`/`if not
 inside a parenthesized block. The NI-VISA failure `[WARN]` lines (`pyvisa.nivisa.warn`) are console
 `call :log "[WARN] ..."` lines at the two `[VISA] install_failed` sites; the elevation line is what lets a
 reader of a field log tell an elevated failure (the reported `-125202`) from a non-elevated one.
+
+## NI-VISA scanner contract `0|1|2` and `:visa_subfolder_gate` (Item 78 slice 2)
+
+**Touch `tools/detect_visa.py` (`HP_DETECT_VISA`), the VISA block in `:lock_done`'s tail, or the gate, must
+understand the others.** The scanner prints `0` (no match), `1` (a match in the folder next to `run_setup.bat`)
+or `2` (every match below a subfolder), logs up to three `[VISA] pyvisa/visa import found in: <path> (top
+folder|subfolder)` lines on stderr (the batch appends stderr to `%LOG%`, so they never pass through `:log`), and
+writes the first path to `~visa.where`. Every path is reduced to ASCII letters, digits and `. _ - space \`
+before it is printed, because the batch echoes it unquoted in the prompt; a new output field must get the same
+treatment. The batch lets both `1` and `2` through the first check, but the install step still requires
+`NEED_VISA` to be exactly `1`: `:visa_subfolder_gate` is `call`ed for `2` after the `HP_SKIP_NIVISA` and
+already-installed checks, sets `NEED_VISA=1` only on an explicit yes, and leaves it at `2` (logging
+`[VISA] skipped (subfolder_only)`) otherwise. The gate follows the CI-safe pattern (prompt echoed first,
+`HP_TEST_VISA_ANSWER`, then `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE` decline, then a 30 second `choice` that
+defaults to no; `HP_TEST_FORCE_INTERACTIVE_VISA` forces the real prompt at 2 seconds). It remembers its answer
+in `HP_VISA_DECISION` so a cascade re-entry does not ask twice. That variable is cleared ONCE at the top of the
+file (next to the `PVW_BUILDER` parse), never inside the VISA block, which a cascade re-entry runs again: an
+`HP_VISA_DECISION` inherited from the calling terminal would otherwise be taken as the user's answer and the
+question never asked (`self.nivisa.subfolder.declined` runs with a stale `Y` inherited; `tests/test_detect_visa.py`
+pins the single clear before the scanner). The `accepted` scenario runs last in `tests/selfapps_pyvisa_subfolder.ps1`
+because it may really install NI-VISA on the runner, after which every later scenario would see `[VISA] present`.
+A top-folder match (`1`) never prompts and installs exactly as before. Regression: `tests/test_detect_visa.py` and `tests/selfapps_pyvisa_subfolder.ps1`.
+
+---
+
+## Visual C++ runtime warning (`:warn_runtime_dll`, Item 77) reads the captured run output at three call sites
+
+`:warn_runtime_dll` scans `~run.err.txt` and `~run.out.txt` for `DLL load failed` and warns only when
+System32 also lacks `msvcp140.dll` or `vcruntime140_1.dll` (`HP_TEST_VCRT_MISSING=1` reports both missing, since CI
+runners have the runtime); it never installs the runtime. It is called where a failed verification run is
+reported: `:smokerun_ndjson`'s FAILED branch (EXE path), `:verify_no_exe_interpreter`'s legacy else branch,
+and the line after `:run_failfast_probe interpreter` (the path a double-click user takes). Any new
+verification site that writes a failed run's output to `~run.*` should call it too. Not covered on purpose:
+`:try_fast_exe` (a cached EXE that fails is discarded and rebuilt, so the rebuilt run reports it) and
+`:hidden_import_recover`'s diagnostic re-run. A DLL failure with another cause stays silent. Regression:
+`tests/selfapps_vcruntime.ps1` (`real` lane, gating).
 
 ---
 
