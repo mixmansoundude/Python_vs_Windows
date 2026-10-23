@@ -600,7 +600,7 @@ behaves as auto),
 `pyinstaller_nofallback` (Nuitka fallback switched off, never reached, and an EXE left by an earlier run is removed), `pyinstaller` (a real build is
 kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller is neither installed nor run,
 failure reported with `reason=builder_nuitka`), `nuitka_stale` (a `dist\<env>.exe` left by an earlier run is removed
-by a failed Nuitka-only build, so the verification run goes through the interpreter as the log says), `both_forcefail` (the optimized build starts without a prompt
+by a failed Nuitka-only build, so the verification run goes through the interpreter as the log says), `nuitka_warnfile` (a PyInstaller warn file the bootstrapper cannot delete, held open by the test, never starts the warnfix repair, an install or a PyInstaller rebuild), `both_forcefail` (the optimized build starts without a prompt
 and its failure leaves the verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
 build needs a compiler download that can fail for network reasons (same precedent as
 `self.exe.build.tiera`): `nuitka`, `both`.

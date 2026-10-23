@@ -111,6 +111,21 @@ def test_nuitka_choice_skips_pyinstaller_in_the_build_block():
     assert "-m PyInstaller" not in block, "the nuitka branch must not run PyInstaller"
 
 
+def test_nuitka_choice_never_reaches_the_warnfix_rebuild():
+    # derived requirement: PVW_BUILDER=nuitka means PyInstaller is never run. The build block deletes a stale warn
+    # file, but a delete can fail (another program holds the file open) and parse_warn.py reads the file by path, so
+    # a survivor would start the warnfix repair, whose rebuild is a PyInstaller build over the Nuitka EXE. The
+    # dispatch flag is therefore cleared for the nuitka choice, on its own line (a second if on the else-if line
+    # would capture the later else branches).
+    assert BAT.count("if defined HP_WARNFIX_NEEDED (") == 1
+    found = BAT.find('do set "HP_WARNFIX_NEEDED=1"')
+    dispatch = BAT.find("if defined HP_WARNFIX_NEEDED (")
+    assert -1 < found < dispatch
+    assert 'if /I "%HP_BUILDER%"=="nuitka" set "HP_WARNFIX_NEEDED="' in BAT[found:dispatch], (
+        "the nuitka choice must clear HP_WARNFIX_NEEDED between the scan and the repair dispatch"
+    )
+
+
 def test_offer_guards_come_before_the_prompt():
     body = _between("offer_optimized_build", "try_fast_exe")
     prompt = body.find("echo *** Your app is ready. ***")

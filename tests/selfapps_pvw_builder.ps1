@@ -24,6 +24,11 @@
 #                          guards against). The failed fallback must not leave that old EXE to be verified in place of
 #                          the current sources: the file is removed and the verification run goes through the
 #                          interpreter, as the log says.
+#   nuitka_warnfile      - PVW_BUILDER=nuitka with the Nuitka build forced to fail while build\<env>\warn-<env>.txt from an
+#                          earlier PyInstaller run is held open by another program (FileShare.Read: it can be read, not
+#                          deleted), so the bootstrapper's own delete of it fails. The file names a module (xlrd) that
+#                          the warnfix repair would install and then rebuild for with PyInstaller, which the user asked
+#                          not to run: no repair starts, nothing is installed, no PyInstaller rebuild.
 #   both_forcefail       - PVW_BUILDER=both with the optimized build forced to fail: the standard build is
 #                          verified first, the optimized build starts without a prompt, and its failure leaves
 #                          the verified EXE untouched.
@@ -97,6 +102,7 @@ switch ($scenario) {
     'pyinstaller'            { $env:PVW_BUILDER = 'pyinstaller' }
     'nuitka_forcefail'       { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'nuitka_stale'           { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
+    'nuitka_warnfile'        { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'both_forcefail'         { $env:PVW_BUILDER = 'both'; $env:HP_TEST_FORCE_OPTBUILD_FAIL = '1' }
     'nuitka'                 { $env:PVW_BUILDER = 'nuitka' }
     'both'                   { $env:PVW_BUILDER = 'both' }
@@ -118,6 +124,25 @@ if ($scenario -eq 'nuitka_stale' -or $scenario -eq 'pyinstaller_nofallback') {
     $staleSeeded = (Test-Path -LiteralPath $staleSeedPath) -and ((Get-Item -LiteralPath $staleSeedPath).Length -gt 0)
 }
 
+# nuitka_warnfile: a PyInstaller warn file from an earlier run, held open with FileShare.Read for the whole bootstrap so the
+# bootstrapper can read it but its own delete fails (the same lock as selfapps_pipreqs_output.ps1). It names xlrd, a real
+# package, so a repair that wrongly starts installs something harmless and visible in the log.
+$warnPath   = Join-Path $workDir "build\$envName\warn-$envName.txt"
+$warnSeeded = $false
+$lockHeld   = $false
+$warnLock   = $null
+if ($scenario -eq 'nuitka_warnfile') {
+    New-Item -ItemType Directory -Force -Path (Join-Path $workDir "build\$envName") | Out-Null
+    Set-Content -LiteralPath $warnPath -Value 'missing module named xlrd - imported by app (top-level)' -Encoding ASCII
+    $warnSeeded = Test-Path -LiteralPath $warnPath
+    if ($warnSeeded) {
+        $warnLock = [System.IO.File]::Open($warnPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        # Prove the lock works here: a delete must fail and leave the file.
+        try { [System.IO.File]::Delete($warnPath) } catch { }
+        $lockHeld = Test-Path -LiteralPath $warnPath
+    }
+}
+
 $pass = $false
 try {
     Push-Location $workDir
@@ -126,6 +151,7 @@ try {
         $runExit = $LASTEXITCODE
     } finally {
         Pop-Location
+        if ($warnLock) { $warnLock.Dispose() }
     }
 
     $logPath  = Join-Path $workDir $bootstrapLog
@@ -217,6 +243,17 @@ try {
             $pass = $staleSeeded -and $overrideLogged -and $skipLogged -and $nuitkaHookFired -and $reasonOk -and (-not $exeExists) -and (-not $ranViaExe) -and $ranViaInterp -and ($statusState -eq 'error')
             $details.staleSeeded = [bool]$staleSeeded; $details.skipLogged = $skipLogged; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk; $details.ranViaExe = $ranViaExe; $details.ranViaInterp = $ranViaInterp
             $desc = 'PVW_BUILDER=nuitka: a failed Nuitka build removes the EXE left by an earlier run, so the verification run goes through the interpreter as logged'
+        }
+        'nuitka_warnfile' {
+            $skipLogged   = Has 'PVW_BUILDER=nuitka: skipping the standard PyInstaller build'
+            $warnFound    = Has 'warnfix: warn file found'
+            $repairStarted = Has '[REPAIR] missing modules detected'
+            $installTried = Has 'Attempting to install'
+            $pyiRebuild   = Has 'Rebuilding standalone executable after warnfix'
+            $pass = $warnSeeded -and $lockHeld -and $overrideLogged -and $skipLogged -and $nuitkaHookFired -and $warnFound -and (-not $repairStarted) -and (-not $installTried) -and (-not $pyiRebuild) -and (-not $pyiProduced) -and (-not $exeExists) -and ($statusState -eq 'error')
+            $details.warnSeeded = [bool]$warnSeeded; $details.lockHeld = [bool]$lockHeld; $details.skipLogged = $skipLogged; $details.nuitkaHookFired = $nuitkaHookFired
+            $details.warnFound = $warnFound; $details.repairStarted = $repairStarted; $details.installTried = $installTried; $details.pyiRebuild = $pyiRebuild
+            $desc = 'PVW_BUILDER=nuitka: a PyInstaller warn file that survives the delete never starts the warnfix repair or a PyInstaller rebuild'
         }
         'both_forcefail' {
             $bothLogged = Has 'PVW_BUILDER=both: building the optimized version now without asking.'
