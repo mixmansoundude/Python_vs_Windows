@@ -79,7 +79,7 @@ def test_system_build_prompt_names_the_selected_tool():
     # With PVW_BUILDER=nuitka the system-Python build installs Nuitka, not PyInstaller, so the consent prompt must say so
     # before it asks (CodeRabbit on PR 499). The default wording stays as it is: tests/selfapps_sysbuild.ps1 matches it.
     gate = _between("system_build_consent_gate", "verify_no_exe_interpreter")
-    ask = gate.find("set /p")
+    ask = gate.find('set /p "HP_SYSBUILD_RAW=')  # the question itself; the header comment also says "set /p"
     nuitka = gate.find('if /I "%HP_BUILDER%"=="nuitka"')
     assert ask != -1 and -1 < nuitka < ask, "the nuitka wording must be chosen before the question is asked"
     assert "installs PyInstaller into your system Python" in gate

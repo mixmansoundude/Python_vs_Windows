@@ -4502,10 +4502,19 @@ rem HP_CI_LANE auto-declines with no set /p (no CI hang); else interactive promp
 rem string is echoed unconditionally so prompt assertions see it even on auto-decline.
 rem exit 0 = consent (build), exit 1 = decline (skip the build).
 echo.
+rem CLAUDE.md Item 71: with PVW_BUILDER=nuitka the build installs Nuitka, not PyInstaller, so the question names the tool
+rem it is about to install. The default wording below is matched by tests/selfapps_sysbuild.ps1.
+if /I "%HP_BUILDER%"=="nuitka" goto :sbcg_nuitka_text
 echo *** The standalone EXE build installs PyInstaller into your system Python. ***
 echo *** This is the same PyInstaller build used for every provider -- not a special path -- and ***
 echo *** its footprint is small and self-contained (it does not pin common libraries), so it is ***
 echo *** unlikely to conflict with your existing packages. ***
+goto :sbcg_text_done
+:sbcg_nuitka_text
+echo *** PVW_BUILDER=nuitka is set, so the standalone EXE build installs Nuitka into your system Python. ***
+echo *** PyInstaller is not used. Nuitka compiles your program, which can take a long time, and it may ***
+echo *** download a C compiler on the first build. ***
+:sbcg_text_done
 echo.
 set "HP_SYSBUILD_RAW="
 if defined HP_TEST_SYSBUILD_ANSWER (
@@ -6426,6 +6435,11 @@ rem :warn_build_incomplete site (CLAUDE.md Item 46 Bucket B migrated these calle
 rem see that subroutine's own header comment for why it is not a :die call anymore).
 rem Called via `call` (never `goto`) from inside the PyInstaller-build if/else nesting above, so
 rem it is safe regardless of block depth -- see the "Nested if/else (no goto)" comment there.
+rem derived requirement: remove an EXE left by an earlier run BEFORE anything below can fail or return early. A failed
+rem install of the fallback build tool, a forced failure, or the pyinstaller choice below would otherwise leave that
+rem old program in dist and the verification run would start it as this build while the log says the code is verified
+rem through Python. Nothing is built from the current sources at this point, so there is nothing worth keeping.
+if exist "dist\%ENVNAME%.exe" del "dist\%ENVNAME%.exe" >nul 2>&1
 rem CLAUDE.md Item 71 (PVW_BUILDER): pyinstaller switches this fallback off, so a PyInstaller failure stands
 rem and the caller reports it exactly as it does after a failed fallback. nuitka reaches this subroutine
 rem directly, without a failed PyInstaller build before it, so the message must not claim one.
@@ -6451,7 +6465,6 @@ if errorlevel 1 (
   call :log "[WARN] Fallback build: could not install the fallback build tool; fallback unavailable."
   exit /b 1
 )
-if exist "dist\%ENVNAME%.exe" del "dist\%ENVNAME%.exe" >nul 2>&1
 rem --assume-yes-for-downloads: Nuitka can otherwise prompt interactively to confirm its own
 rem dependency downloads (e.g. the MinGW64 compiler) -- fatal for both CI and a real
 rem non-interactive double-click user; the Prime Directive tolerates zero prompts here.

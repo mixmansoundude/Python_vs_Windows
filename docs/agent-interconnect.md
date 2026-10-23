@@ -342,6 +342,12 @@ using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever 
 - `pyinstaller`: `:try_nuitka_tier_a` returns 1 at its top (before it installs Nuitka), so all three call
   sites report the PyInstaller failure exactly as they report a failed fallback, and
   `:offer_optimized_build` returns before its prompt, so the offer is never shown.
+- **Stale EXE**: `:try_nuitka_tier_a` deletes `dist\<env>.exe` as its FIRST statement, before the pyinstaller guard,
+  the forced-failure hook and the Nuitka install. Any earlier return would otherwise leave an EXE from an earlier run
+  for `:run_exe_smokerun` to start as this build, while the log says the code is verified through Python (the
+  `:verify_no_exe_interpreter` skip is keyed on the file existing). A new early return in that subroutine must come
+  after the delete. Rows: `self.builder.override` scenarios `nuitka_stale` and `pyinstaller_nofallback` (both seed a
+  text file at the EXE path).
 - `nuitka`: the build block in `:run_entry_smoke` skips the `pip install pyinstaller` step (one `if` chain with
   the uv and pip variants; it logs `PyInstaller is not installed for this run`), takes a branch ahead of the
   forced-PyInstaller-failure hook, never runs PyInstaller, deletes a stale PyInstaller warn file (otherwise warnfix could rebuild over
@@ -353,6 +359,10 @@ using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever 
   log line says the program starts once more for up to 30 seconds) and continues into the unchanged
   build-to-temp, verify, swap-on-success path, so a verified EXE is never replaced by an unverified one. It is
   skipped, with a log line, when the verification run did not exit 0.
+- System-Python consent: `:system_build_consent_gate` words its question by `HP_BUILDER` (`goto :sbcg_nuitka_text`
+  for `nuitka`, which installs Nuitka and not PyInstaller). The default wording stays byte-identical because
+  `self.sysbuild.decline` matches it; `self.sysbuild.nuitka_prompt` proves the nuitka wording and that
+  PyInstaller is not named.
 - Fast path: a fresh cached EXE is still reused whatever the choice; `:try_fast_exe` logs that no build ran
   and that deleting `dist\<env>.exe` builds again. No builder record is kept, so changing the choice does
   not by itself trigger a rebuild.
