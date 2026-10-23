@@ -31,6 +31,7 @@ self.empty_repo.no_spurious_warn,
 self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run, self.exe.build.xfail,
+self.builder.override,
 self.exe.smokerun.xfail, self.exe.smokerun.exedata.xfail, self.exe.smokerun.exedyn.xfail,
 self.hint.hidden_import.wording,
 self.exe.smokerun.cwd_consistency,
@@ -293,7 +294,7 @@ self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
-self.sysbuild.decline,
+self.sysbuild.decline, self.sysbuild.nuitka_prompt,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
@@ -332,6 +333,24 @@ write-back proved nothing) and records `skip=true` only off the real lane.
 
 ```
 self.pep723.writeback.uverr
+```
+
+## selfapps-vcruntime NDJSON rows (selfapps_vcruntime.ps1, real lane, gating)
+
+Item 77: a run that prints `DLL load failed` on a machine without Microsoft's Visual C++ runtime
+(`msvcp140.dll` or `vcruntime140_1.dll` missing from System32) must print a console `[WARN]` naming the
+runtime and the download link, once. CI runners have the runtime, so the test hook
+`HP_TEST_VCRT_MISSING=1` reports it as missing. Five scenarios, each its own scratch folder; the
+fixture raises the exact message the field run printed. `interp` and `interp_probe` force the build to
+fail so the interpreter runs the program (legacy branch, and the fail-fast probe a double-click user
+gets); `exe` pays for a real EXE build; `runtime_present` has no simulation and expects the warning
+exactly when this runner's System32 really lacks the files; `unrelated_error` has the simulation on and a
+non-DLL failure and expects no warning. Every row also requires proof the program ran (its captured
+stderr holds the fixture text).
+
+```
+self.vcruntime.warn.interp, self.vcruntime.warn.interp_probe, self.vcruntime.warn.exe,
+self.vcruntime.warn.runtime_present, self.vcruntime.warn.unrelated_error
 ```
 
 ## selfapps-pvw-quickstart NDJSON rows (selfapps_pvw_quickstart.ps1, uv lane only)
@@ -587,6 +606,25 @@ build attempted).
 
 ```
 self.optbuild.offer
+```
+
+## selfapps-pvw-builder NDJSON rows (selfapps_pvw_builder.ps1; five scenarios on real/conda-full, two on the uv lane)
+
+Item 71: the `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user override (see
+`docs/agent-interconnect.md`'s "PVW_BUILDER" entry). Absence of the variable is today's behavior, so
+every scenario sets it and asserts a decision the default run would not make. Gating, deterministic
+(`PVW_BUILDER_SCENARIO`): `invalid` (an unknown value full of cmd syntax warns once, is not echoed or acted on,
+behaves as auto),
+`pyinstaller_nofallback` (Nuitka fallback switched off, never reached, and an EXE left by an earlier run is removed), `pyinstaller` (a real build is
+kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller is neither installed nor run,
+failure reported with `reason=builder_nuitka`), `nuitka_stale` (a `dist\<env>.exe` left by an earlier run is removed
+by a failed Nuitka-only build, so the verification run goes through the interpreter as the log says), `nuitka_warnfile` (a PyInstaller warn file the bootstrapper cannot delete, held open by the test, never starts the warnfix repair, an install or a PyInstaller rebuild), `both_forcefail` (the optimized build starts without a prompt
+and its failure leaves the verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
+build needs a compiler download that can fail for network reasons (same precedent as
+`self.exe.build.tiera`): `nuitka`, `both`.
+
+```
+self.builder.override
 ```
 
 ## selfapps-interactive-stdin NDJSON rows (selfapps_interactive_stdin.ps1, uv lane only, non-gating)
@@ -1209,6 +1247,29 @@ exists) and green once `:runtime_install_offer` exists.
 self.runtime.install.accept
 self.runtime.install.decline
 self.runtime.install.pyproject
+```
+
+## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
+
+CLAUDE.md Item 78 slice 2 (README REQ-008). An `import visa` that sits only below a subfolder (an archived
+older program) must not start a 30 to 45 minute NI-VISA driver install without asking, and the log always
+names the file that triggered the install branch. Four real runs, each in its own folder (a second run in one
+folder would take the cached-EXE fast path and never reach the VISA step); the gate sits after the
+`HP_SKIP_NIVISA` and already-installed checks, so a runner without NI-VISA reaches it, and `accepted` really
+enters the install branch like `selfapps_pyvisa.ps1` does (any ending counts). `declined` (CI lane auto-decline: the
+`found in: archive\old_tool.py (subfolder)` line in `~setup.log`, the prompt echoed on the console,
+`[VISA] skipped (subfolder_only)`, no download, no installer file; run with a stale `HP_VISA_DECISION=Y` inherited from the
+caller, which must not stand in for the answer), `accepted` (`HP_TEST_VISA_ANSWER=Y`: the
+accepted line, then a `[VISA]` install-branch line, no `subfolder_only`; runs LAST because it may really install
+NI-VISA, after which a later scenario would see `[VISA] present`), `topfolder` (the import next to
+`run_setup.bat` with `HP_SKIP_NIVISA=1`: logged as `(top folder)`, no prompt, `skipped (disabled)`), `timeout` (`HP_TEST_FORCE_INTERACTIVE_VISA=1`
+reaches the timed `choice` prompt, shrunk to 2 seconds, nobody answers, default no). Skips with `skip=true,
+reason=non-windows-host` off Windows. Expected red on the commit that adds it (the scanner printed only 0 or
+1 and the batch never asked). The unit side is `tests/test_detect_visa.py` (the 0/1/2 contract, the three-path
+cap, the character set of the logged path).
+
+```
+self.nivisa.subfolder.declined, self.nivisa.subfolder.accepted, self.nivisa.topfolder.noprompt, self.nivisa.subfolder.timeout
 ```
 
 ## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
