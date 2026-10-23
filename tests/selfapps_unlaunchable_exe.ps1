@@ -41,18 +41,15 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$allIds = @('self.unlaunchable.smoke_stub', 'self.unlaunchable.fastpath_stub')
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; pass = $true; desc = 'Unlaunchable EXE (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
-    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.unlaunchable.smoke_stub'; pass = $true; desc = 'Unlaunchable EXE (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.unlaunchable.fastpath_stub'; pass = $true; desc = 'Unlaunchable EXE (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     exit 0
 }
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; pass = $false; desc = 'Unlaunchable EXE: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
-    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.unlaunchable.smoke_stub'; pass = $false; desc = 'Unlaunchable EXE: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.unlaunchable.fastpath_stub'; pass = $false; desc = 'Unlaunchable EXE: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     exit 1
 }
 

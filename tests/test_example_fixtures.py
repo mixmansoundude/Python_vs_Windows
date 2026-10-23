@@ -113,7 +113,11 @@ def check_tree(root):
     if not readme.is_file():
         problems.append("README.txt is missing in %s" % root)
     else:
-        text = readme.read_text(encoding="ascii", errors="replace")
+        try:
+            text = readme.read_bytes().decode("ascii")
+        except UnicodeDecodeError as exc:
+            problems.append("README.txt: not ASCII (%s)" % exc)
+            text = readme.read_bytes().decode("ascii", errors="replace")
         for name in APPS:
             if name not in text:
                 problems.append("README.txt does not mention %s" % name)
@@ -188,6 +192,10 @@ class CheckerCanFail(unittest.TestCase):
     def test_requirements_must_list_the_declared_package(self):
         out = self._problems(overrides={"pandas_excel/requirements.txt": "openpyxl\n"})
         self.assertTrue(any("does not list pandas" in p for p in out), out)
+
+    def test_readme_with_non_ascii_bytes_is_reported_even_when_it_names_every_app(self):
+        out = self._problems(overrides={"README.txt": "stdlib_single pandas_excel gui_exits multifile_sibling " + chr(0x2014) + "\n"})
+        self.assertTrue(any("README.txt: not ASCII" in p for p in out), out)
 
     def test_readme_must_name_every_app(self):
         out = self._problems(overrides={"README.txt": "stdlib_single pandas_excel gui_exits\n"})

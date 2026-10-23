@@ -111,15 +111,27 @@ $outPath = Join-Path $work 'out.xlsx'
 # The app and its requirements come from the curated example folder (CLAUDE.md Item 74), so the files a person can
 # drop next to run_setup.bat are the files this scenario runs. A missing folder leaves no app.py/requirements.txt, so
 # the rows below fail with fixtureFound false in their details.
+# Files staged by an earlier run are removed first, so a missing fixture cannot pass on leftovers, and every row below
+# also requires fixtureFound.
 $fixtureDir = Join-Path (Join-Path (Join-Path $here 'fixtures') 'examples') 'pandas_excel'
-$fixtureFound = Test-Path -LiteralPath $fixtureDir -PathType Container
+foreach ($stale in @($appPath, $reqPath, $condaReqPath)) {
+    if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force -ErrorAction SilentlyContinue }
+}
+$fixtureFound = (Test-Path -LiteralPath (Join-Path $fixtureDir 'app.py') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $fixtureDir 'requirements.txt') -PathType Leaf)
+$fixtureError = $null
 if ($fixtureFound) {
-    Copy-Item -LiteralPath (Join-Path $fixtureDir 'app.py') -Destination $appPath -Force
-    Copy-Item -LiteralPath (Join-Path $fixtureDir 'requirements.txt') -Destination $reqPath -Force
+    try {
+        Copy-Item -LiteralPath (Join-Path $fixtureDir 'app.py') -Destination $appPath -Force -ErrorAction Stop
+        Copy-Item -LiteralPath (Join-Path $fixtureDir 'requirements.txt') -Destination $reqPath -Force -ErrorAction Stop
+    } catch {
+        $fixtureFound = $false
+        $fixtureError = 'copying the fixture failed: ' + $_.Exception.Message
+    }
 }
 
 $translationDetails = [ordered]@{ pandasFound = $false; openpyxlFound = $false; file = $condaReqPath; fixtureFound = [bool]$fixtureFound }
-$installDetails = [ordered]@{ exitCode = -1; environment = '_envsmoke'; file = $condaReqPath }
+$installDetails = [ordered]@{ exitCode = -1; environment = '_envsmoke'; file = $condaReqPath; fixtureFound = [bool]$fixtureFound }
+if ($fixtureError) { $translationDetails.error = $fixtureError }
 $runtimeDetails = [ordered]@{ exitCode = -1; outExists = $false; outPath = $outPath; fixtureFound = [bool]$fixtureFound }
 
 $condaInfo = Get-CondaBatPath
@@ -181,7 +193,7 @@ try {
         Add-Content -LiteralPath $logPath -Value $condaText -Encoding Ascii
         $translationDetails.pandasFound = $condaText.Contains('pandas')
         $translationDetails.openpyxlFound = $condaText.Contains('openpyxl')
-        $translatePass = [bool]$translationDetails.pandasFound -and [bool]$translationDetails.openpyxlFound
+        $translatePass = $fixtureFound -and [bool]$translationDetails.pandasFound -and [bool]$translationDetails.openpyxlFound
     } else {
         Add-Content -LiteralPath $logPath -Value ("missing translated requirements file: {0}" -f $condaReqPath) -Encoding Ascii
     }
@@ -225,7 +237,7 @@ try {
     $installDetails.error = $_.Exception.Message
     Add-Content -LiteralPath $logPath -Value ("conda install exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
-$installPass = ($installDetails.exitCode -eq 0)
+$installPass = $fixtureFound -and ($installDetails.exitCode -eq 0)
 
 if (Test-Path -LiteralPath $outPath) { Remove-Item -LiteralPath $outPath -Force -ErrorAction SilentlyContinue }
 $runtimeCommand = "`"$condaBat`" run -n _envsmoke --cwd `"$work`" python `"$appPath`""
@@ -243,7 +255,7 @@ try {
     Add-Content -LiteralPath $logPath -Value ("runtime exception: {0}" -f $_.Exception.Message) -Encoding Ascii
 }
 $runtimeDetails.outExists = (Test-Path -LiteralPath $outPath)
-$runtimePass = ($runtimeDetails.exitCode -eq 0) -and [bool]$runtimeDetails.outExists
+$runtimePass = $fixtureFound -and ($runtimeDetails.exitCode -eq 0) -and [bool]$runtimeDetails.outExists
 
 Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.translate';            req = 'REQ-005'; pass = $translatePass; desc = 'prep_requirements translates pandas and openpyxl'; details = $translationDetails })
 Write-NdjsonRow ([ordered]@{ id = 'pandas_excel.conda.install';        req = 'REQ-005'; pass = $installPass;   desc = 'conda installs translated pandas/openpyxl requirements'; details = $installDetails })

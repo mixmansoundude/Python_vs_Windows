@@ -47,18 +47,17 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$allIds = @('self.examples.stdlib_single', 'self.examples.multifile_sibling', 'self.examples.gui_exits')
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-001.1'; pass = $true; desc = 'Example app run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
-    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.examples.stdlib_single'; req = 'REQ-001.1'; pass = $true; desc = 'Example app run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.examples.multifile_sibling'; req = 'REQ-001.1'; pass = $true; desc = 'Example app run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.examples.gui_exits'; req = 'REQ-001.1'; pass = $true; desc = 'Example app run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     exit 0
 }
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-001.1'; pass = $false; desc = 'Example app run: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
-    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.examples.stdlib_single'; req = 'REQ-001.1'; pass = $false; desc = 'Example app run: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.examples.multifile_sibling'; req = 'REQ-001.1'; pass = $false; desc = 'Example app run: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.examples.gui_exits'; req = 'REQ-001.1'; pass = $false; desc = 'Example app run: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     exit 1
 }
 

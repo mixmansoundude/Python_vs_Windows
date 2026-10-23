@@ -2556,17 +2556,38 @@ jobs:
             tests/~selftest_logrotate_over/~setup.log
             tests/~selftest_logrotate_under/~rotate_boot.log
             tests/~longpath_near_*.log
+            tests/~selftest_example_*/~example_launch.cmd
+            tests\~selftest_example_*\~example_launch.cmd
             tests/~selftest_example_*/~example_boot.log
+            tests\~selftest_example_*\~example_boot.log
             tests/~selftest_example_*/~setup.log
+            tests\~selftest_example_*\~setup.log
             tests/~selftest_example_*/~run.out.txt
+            tests\~selftest_example_*\~run.out.txt
             tests/~selftest_example_*/~run.err.txt
+            tests\~selftest_example_*\~run.err.txt
             tests/~selftest_example_*/~bootstrap.status.json
+            tests\~selftest_example_*\~bootstrap.status.json
             tests/~selftest_example_*/requirements.txt
+            tests\~selftest_example_*\requirements.txt
+            tests/~selftest_unlaunch_*/~unlaunch_launch.cmd
+            tests\~selftest_unlaunch_*\~unlaunch_launch.cmd
             tests/~selftest_unlaunch_*/~unlaunch_boot.log
+            tests\~selftest_unlaunch_*\~unlaunch_boot.log
             tests/~selftest_unlaunch_*/~unlaunch_run1.log
+            tests\~selftest_unlaunch_*\~unlaunch_run1.log
             tests/~selftest_unlaunch_*/~unlaunch_run2.log
+            tests\~selftest_unlaunch_*\~unlaunch_run2.log
             tests/~selftest_unlaunch_*/~setup.log
+            tests\~selftest_unlaunch_*\~setup.log
             tests/~selftest_unlaunch_*/~bootstrap.status.json
+            tests\~selftest_unlaunch_*\~bootstrap.status.json
+            tests/~selftest_unlaunch_*/~launch_failed.txt
+            tests\~selftest_unlaunch_*\~launch_failed.txt
+            tests/~selftest_unlaunch_*/~run.out.txt
+            tests\~selftest_unlaunch_*\~run.out.txt
+            tests/~selftest_unlaunch_*/~run.err.txt
+            tests\~selftest_unlaunch_*\~run.err.txt
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log
