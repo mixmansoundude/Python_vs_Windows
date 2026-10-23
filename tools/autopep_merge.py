@@ -19,6 +19,26 @@ import sys
 
 DEP_LINE_RE = re.compile(r'^#\s*"([^"]+)",?\s*$')
 NAME_RE = re.compile(r'^\s*([A-Za-z0-9_.-]+)')
+IGNORE_DIRS = frozenset((".git", ".github", ".venv", "venv", "env", ".uv_env", "build", "dist", "__pycache__", "tests"))
+
+
+def normalize(name):
+    """PEP 503 form: lowercase, runs of - _ . become one -."""
+    return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def local_names(root):
+    """Normalized names of the .py files and folders below root: the program's own modules and packages."""
+    names = set()
+    for base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and d[:1] not in ("~", ".")]
+        for d in dirs:
+            names.add(normalize(d))
+        for f in files:
+            stem, ext = os.path.splitext(f)
+            if ext.lower() == ".py" and not f.startswith("~"):
+                names.add(normalize(stem))
+    return names
 
 
 def extract_autopep_deps(path):
@@ -74,17 +94,26 @@ def main():
         return 0
 
     current = existing_names(reqs_path)
+    local = local_names(os.path.dirname(os.path.abspath(reqs_path)))
     seen = set()
     additions = []
+    skipped = []
     for dep in autopep_deps:
         key = dep.lower()
         if key in current or key in seen:
             continue
+        match = NAME_RE.match(dep)
+        if match and normalize(match.group(1)) in local:
+            seen.add(key)
+            skipped.append(dep)
+            continue
         seen.add(key)
         additions.append(dep)
 
+    if skipped:
+        sys.stdout.write("skipped local: " + ",".join(skipped) + "\n")
     if not additions:
-        sys.stdout.write("no-op: all autopep723 dependencies already present\n")
+        sys.stdout.write("no-op: all autopep723 dependencies already present or local\n")
         return 0
 
     ensure_trailing_newline(reqs_path)

@@ -439,9 +439,17 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
     invocation, avoiding a real environment-leak hazard where a direct invocation silently
     under-reports already-installed packages as "not third-party" (see
     `docs/agent-lessons-learned.md`'s autopep723 section for the full empirical trail).
+  - The merge **shall** not add a name that is the program's own: a `.py` file or a folder next to
+    `requirements.txt`, compared the way pip compares package names (case, `-`, `_` and `.` are the same
+    letter), skipping the folders pipreqs ignores (`.git`, `.github`, `.venv`, `venv`, `env`, `.uv_env`,
+    `build`, `dist`, `__pycache__`, `tests`), hidden folders and tilde-prefixed files. The scanner lists a
+    sibling module as a dependency, and one name PyPI does not know fails the whole dependency install, so
+    pandas and everything else in the list would be left out (Item 88). Each skipped name is logged once in
+    the merge's output line.
   - Scope gate: only runs when `HP_ENV_MODE=uv` (v1, matching REQ-005.11's own scope decision).
   - Opt-out: `HP_SKIP_AUTOPEP_DISCOVERY=1` (suppression-only flag, see `[REQ-019]`).
-  - TESTED: `tests/test_autopep_merge.py`, `tests/selfapps_autopep_discovery.ps1`.
+  - TESTED: `tests/test_autopep_merge.py`, `tests/selfapps_autopep_discovery.ps1`,
+    `tests/selfapps_realapp_pandas_excel.ps1` (`self.realapp.local_modules`).
 
 ---
 

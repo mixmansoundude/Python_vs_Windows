@@ -3515,6 +3515,50 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   touched here. (2) A summary file that cannot be deleted (held open with `FileShare.Read`) let a script that exits 0
   without writing pass on the stale file; `.summary_locked` reproduces it and the batch now reports and fails.
 
+### Item 75 (closed 2026-10-23, PR #503; umbrella from the Aug-Sep 2026 field report)
+
+- **What the umbrella asked for.** Real-app end-to-end scenarios modelled on the maintainer's own runs, each asserting
+  on intermediate files and log lines and not only the exit code: (a) a multi-file pandas + Excel app with no
+  `requirements.txt`, (b) the same app run twice with a `requirements.txt` edit in between, (c) `%1` misuse. (c) already
+  shipped as Item 67 (`tests/selfapps_entryarg.ps1`); (a) and (b) are `tests/selfapps_realapp_pandas_excel.ps1`.
+- **What shipped.** One folder, three bootstraps, no skip hook, `real` lane only, gating from its first run (a new test
+  gates; the soak rule is for promoting an existing row). The app is `main.py`, a sibling module and a sibling package
+  (names no PyPI project uses); it writes an `.xlsx` next to the EXE, reads it back with pandas and writes a token file.
+  Rows `self.realapp.first_run`, `.deps_discovered`, `.local_modules`, `.fastpath_rerun`, `.edit_rerun`
+  (`docs/agent-ndjson.md`). Each row records its sub-checks by name, so a red row says which one failed. Three README
+  requirements were corrected from what the rows showed: REQ-007's freshness test is a content hash, not an EXE
+  timestamp, and the one-line "Fast path: not reusing" notice is now a shall; REQ-008 gained the elevation record and
+  the NI-VISA failure notice (Item 78 slice 1); REQ-005.12 gained the local-name rule below.
+- **Found on the first run: Item 88 (below).** The red-test run (`39972748549`, head `e66b22b`, planted wrong values)
+  turned up a real default-path failure, not only the planted reds. The red proof for the planted values is the same run:
+  each row's `details` shows the planted expectation next to what was read.
+
+### Item 88 (closed 2026-10-23, PR #503; filed 2026-10-23 from the Item 75 real-app run)
+
+- **A sibling module of the program was installed as a dependency, and one unknown name sank the whole install.**
+  `uvx autopep723 check main.py` listed the app's own sibling module and package (`pvw-realapp-sheetio`,
+  `pvw-realapp-report`) among the third-party imports, `tools/autopep_merge.py` appended them to `requirements.txt`, and
+  the single atomic `uv pip install -r requirements.txt` then failed on the first name PyPI does not have
+  (`uv pip install -r requirements.txt failed; some packages may be missing.`). Nothing in the list was installed,
+  including pandas, openpyxl and xlsxwriter that pipreqs and the heuristics had found correctly. Run 1 of the scenario
+  read: installed set without pandas, warnfix installing `pandas` alone, the EXE built without openpyxl and
+  `ModuleNotFoundError: No module named 'openpyxl'` from the verification run (exit 1, no token). pipreqs itself is not
+  at fault: it counts every `.py` basename and folder basename in the tree as local. The uv lane only; conda and the
+  other providers never run the autopep723 merge.
+- **Evidence (red run `39972748549`, `real` lane, pre-harness rows).** `self.realapp.local_modules`:
+  `autopepReportedLocal` and `localInRequirements` both `["pvw-realapp-sheetio","pvw-realapp-report"]`,
+  `localInstalled: []`, `installFailedWarn: true`; `self.realapp.deps_discovered`: pandas, openpyxl and xlsxwriter all
+  not installed, `repairBlockRan: true`, `attempted: ["pandas","pandas"]`; `first_run`: `smokeExit: 1`, empty token.
+- **Fix.** `tools/autopep_merge.py` collects the program's own names (every `.py` stem and folder name below the
+  requirements.txt folder, PEP 503 normalized, skipping the folders pipreqs ignores, hidden folders and tilde files) and
+  skips a discovered dependency whose name is in that set, writing `skipped local: a,b` to the setup log. Payload
+  `HP_AUTOPEP_MERGE` re-synced (line 6207 characters, margin 1984). README REQ-005.12 states the rule as a shall. Unit
+  tests `LocalNames` and `MainSkipsLocalModules` in `tests/test_autopep_merge.py` failed first (6 failures), the CI row
+  `self.realapp.local_modules` was read red for its real reason before the fix was pushed (early-push rule).
+- **Known and not fixed.** A program whose sibling module shares a name with a real PyPI package it also needs (a local
+  `requests.py` next to code that imports the real `requests`) loses that dependency; that program is already shadowed
+  at run time, so skipping the name matches what Python would import. The conda lane has no equivalent step.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

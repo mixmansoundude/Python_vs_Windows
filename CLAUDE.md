@@ -72,6 +72,7 @@ tests/
   selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
   selfapps_provider_memory.ps1 Item 66: the provider memory file `~provider.state.json` and the `PVW_PROVIDER=conda` switch (no-switch, invalid value, Miniconda gone, unreadable file and cached-EXE rows on the real lane, gating; forced, remember and forced-stop rows on the uv lane, non-gating because of the Miniconda download)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
+  selfapps_realapp_pandas_excel.ps1 Item 75: a multi-file pandas + Excel app run three times in one folder (first run, unchanged re-run, requirements.txt edit); five `self.realapp.*` rows (real lane, gating); found Item 88
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
@@ -301,6 +302,7 @@ Test files and what they cover:
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
+| `test_autopep_merge.py` | REQ-005.12 / Item 88: autopep723 name extraction, dedup against `requirements.txt`, newline repair, `main()` dispatch, and the local-module filter (sibling `.py` files and folders in any spelling are skipped and logged, ignored and hidden folders are not walked, a real package is still added), HP_AUTOPEP_MERGE payload sync |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -789,8 +791,6 @@ the original symptom (see that doc's "CI-first testing policy").
   first-launch experiment (`--onefile-tempdir-spec`).
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
-- **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
-  second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
 - **Item 77 (likely cause, runtime DLLs reported missing, small)**: `import pymupdf` fails with
   `DLL load failed while importing _extra` in the env's own interpreter on a clean Windows image;
   the wheel's `mupdfcpp64.dll` needs `msvcp140.dll` and `vcruntime140_1.dll` (Visual C++ runtime),

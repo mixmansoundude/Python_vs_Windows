@@ -69,12 +69,12 @@ if (-not (Test-Path $batchPath)) {
     exit 1
 }
 
-# PLANTED wrong expectations for the red-test run (CI proof that each row can fail where it matters).
-# The next commit replaces each with the value in its trailing comment.
-$expectedToken    = 'realapp-ok total=33 rows=3'   # real: 'realapp-ok total=32 rows=3'
-$expectedSource   = 'requirements.txt'            # real: 'pipreqs'
-$expectExeChanged = $true                          # real: $false (the unchanged re-run keeps the same EXE)
-$expectNotReusing = $false                         # real: $true (the edited requirements.txt makes the cached EXE stale)
+# Expected values. The red-test run planted a wrong value for each (total=33, source requirements.txt, EXE changed,
+# not-reusing absent) to prove the rows can fail; the real values below are what the first run read back.
+$expectedToken    = 'realapp-ok total=32 rows=3'
+$expectedSource   = 'pipreqs'
+$expectExeChanged = $false   # the unchanged re-run keeps the same EXE
+$expectNotReusing = $true    # the edited requirements.txt makes the cached EXE stale
 
 # Names that no PyPI project uses (checked 2026-10-23: pypi.org/simple answers 404), so a stray install attempt
 # fails loudly instead of fetching a stranger's package.

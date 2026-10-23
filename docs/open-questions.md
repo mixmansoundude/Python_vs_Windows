@@ -25,6 +25,22 @@ chat one at a time; the later ones wait their turn.
    the gates that read fewer signals. Which gates should read all three? Default: no code change until the
    no-flag default-run scenario (T12) shows how much it matters; word each shall per gate until then.
 
+## From the real-app scenario (Item 75, filed 2026-10-23)
+
+3. **A requirements.txt edit made after the first run is silently superseded by the PEP 723 header the first run wrote.**
+   After a fully successful first run (uv lane) the bootstrapper writes a `# /// script` block with the program's
+   dependencies into the entry file (README REQ-005.11). On every later run that header outranks `requirements.txt`
+   (README REQ-005.1, `run_setup.bat` ~1615: `copy /y "%PEP723_REQ%" "requirements.txt"`), so a user who adds a package to
+   `requirements.txt` gets nothing installed, the file is overwritten with the header's list, and the console prints
+   `Using requirements.txt for dependencies` followed by `Using dependencies from PEP 723 metadata`. Seen in
+   `~realapp_run3.log` of the Item 75 scenario (`self.realapp.edit_rerun`: `recordedSource: "pep723"`,
+   `termcolorInstalled: false`, `termcolorInRequirementsAfter: false`). The row asserts the run is consistent with the
+   source it names, so it passes whichever way this is decided. Which behavior should a user get?
+   (A) Keep the documented precedence and print one line when the two lists differ ("requirements.txt was not used:
+   the PEP 723 header in main.py outranks it; edit the header or delete it"). (B) A newer `requirements.txt` than the
+   header wins and the header is rewritten from it. (C) Stop writing the header back unless the user asked for it.
+   Default meanwhile: no code change. A is reversible and keeps REQ-005.1 as written, so it is what gets built on a yes.
+
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 
 Each question names the backlog item it blocks and the default an implementing agent should use
