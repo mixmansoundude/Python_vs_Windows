@@ -76,6 +76,7 @@ tests/
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
+  selfapps_nuitka_cachespec.ps1 Item 72 follow-up: the Nuitka unpack cache (rows self.nuitka.cachespec: the bootstrapper's own Tier A build names the per-app folder; self.nuitka.cachesafety: concurrent, overlapping and killed-mid-unpack launches recover; uv lane, non-gating)
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -305,6 +306,7 @@ Test files and what they cover:
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
+| `test_nuitka_cachespec.py` | Item 72 follow-up: both Nuitka command lines carry `%HP_NUITKA_CACHE_ARG%` after `--output-dir=dist`, each after a `call :nuitka_cache_arg` in the same subroutine; the subroutine fails open (never `exit /b 1`), validates a 12-hex token with `findstr /r /x`, builds `--onefile-tempdir-spec={CACHE_DIR}/PVW/%ENVNAME%-%HP_NK_TOKEN%`, keeps `%`/`"` out of its Python line, and its token recipe is executed (12 hex characters, different for two folders with the same name, stable, ASCII for a non-ASCII path); the two-row script and its uv-only non-gating step; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch

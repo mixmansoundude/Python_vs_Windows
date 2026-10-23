@@ -1064,6 +1064,18 @@ jobs:
         run: |
           & tests\selfapps_nuitka_launchcache.ps1
 
+      # Item 72 follow-up: both Nuitka command lines in run_setup.bat pass --onefile-tempdir-spec with a
+      # per-app token. Row self.nuitka.cachespec: the bootstrapper's own Tier A build creates exactly the folder
+      # the rule names and a relaunch reuses it. Row self.nuitka.cachesafety: concurrent launches, an overlapping
+      # launch and a launch killed mid-unpack all recover (a red safety row means the flag must not be adopted).
+      # Non-gating: two real Nuitka builds and a possible compiler download.
+      - name: "Self-test: Nuitka unpack cache folder and safety (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_nuitka_cachespec.ps1
+
       # AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?"
       # upsell after a normal successful PyInstaller build. Four scenarios in one file/lane
       # (uv, non-gating) -- 'accept'/'swapfail' depend on a real Nuitka build succeeding (same

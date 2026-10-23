@@ -78,6 +78,7 @@ self.console.tiering (uv lane only -- selfapps_console_tiering.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
 self.nuitka.launchcache (uv lane only -- selfapps_nuitka_launchcache.ps1; non-gating),
+self.nuitka.cachespec, self.nuitka.cachesafety (uv lane only -- selfapps_nuitka_cachespec.ps1; non-gating),
 self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
@@ -607,6 +608,26 @@ builds and a possible compiler download.
 
 ```
 self.nuitka.launchcache
+```
+
+## selfapps-nuitka-cachespec NDJSON rows (selfapps_nuitka_cachespec.ps1, uv lane only, non-gating)
+
+Item 72 follow-up. Both Nuitka command lines in `run_setup.bat` pass
+`--onefile-tempdir-spec={CACHE_DIR}/PVW/<env>-<token>`, where `<token>` is the first 12 hex characters of the
+SHA-256 of the lower-cased app folder path (`:nuitka_cache_arg`), so two apps never share a folder.
+`self.nuitka.cachespec`: the bootstrapper's own Tier A build (PyInstaller failure forced, a real Nuitka build)
+created exactly `%LOCALAPPDATA%\PVW\<env>-<token>` with files in it, logged the `Unpack cache:` line, and a second
+launch of `dist\<env>.exe` ran from it without creating another folder (`details`: `tokenCandidates`,
+`pvwFolders`, `cacheFolder`, `relaunchNoNewFolder`). `self.nuitka.cachesafety`: with the same flag text (build
+independent of `run_setup.bat`), three copies started at once with the folder warm and cold, a copy started while
+another still runs, and five launches killed mid-unpack each followed by a normal launch must all exit 0 and print the
+payload's real SHA-256; at least one kill must land while the folder was partly unpacked (`partialKills`), or the
+row is red because it tested nothing. A red safety row means the flag must not be adopted. Non-gating: two real
+Nuitka builds and a possible compiler download.
+
+```
+self.nuitka.cachespec
+self.nuitka.cachesafety
 ```
 
 ## selfapps-optimized-build NDJSON rows (selfapps_optimized_build.ps1, uv lane only, non-gating)
