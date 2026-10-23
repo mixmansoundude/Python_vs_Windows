@@ -909,6 +909,27 @@ self.examples.multifile_sibling
 self.examples.gui_exits
 ```
 
+## selfapps-unlaunchable-exe NDJSON rows (selfapps_unlaunchable_exe.ps1, real lane only, gating)
+
+CLAUDE.md Item 87 (README REQ-018.3 and REQ-018.5). A `dist\<env>.exe` that Windows cannot start (a text file, a
+zero-byte file, a cut-off copy) used to hang the three bounded-launch helpers, because `Process.Start()` threw and the read
+loop waited for a process that never ran. Each scenario is a real bootstrapper run of the `stdlib_single` fixture in
+`tests\~selftest_unlaunch_<name>` under a 15-minute watchdog, so a hang is a red row (`timedOut`). `smoke_stub`: the hook
+`HP_TEST_CORRUPT_BUILT_EXE=1` turns the freshly built EXE into a text file right before its verification run; the row
+passes only when the run ends (exit 0, state `ok`), the hook fired, the console says the program `could not be started`
+and gives a reason line, the stub is gone from `dist`, `~launch_failed.txt` is consumed, the program was then checked
+through the interpreter (`Entry smoke exit=0`, `from-single` in `~run.out.txt`) and the log does not claim a timeout.
+`fastpath_stub`: run 1 builds (EXE over 1 MB, source hash file written), the EXE is replaced with a text file, run 2 forces
+the interactive fail-fast probe; the row passes only when the probe started the stub (`Launching your program now via the
+cached standalone EXE`), said it could not be started with a reason, discarded and rebuilt it (a real EXE over 1 MB again,
+`Entry smoke exit=0`) and never claimed the program was still running. The third helper (`~exe_hint_rerun.ps1`) has no
+bootstrapper scenario, only `tests/test_unlaunchable_exe.py`. Skips on non-Windows.
+
+```
+self.unlaunchable.smoke_stub
+self.unlaunchable.fastpath_stub
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to

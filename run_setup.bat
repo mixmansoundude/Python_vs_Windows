@@ -5363,6 +5363,12 @@ if exist "%HP_SMOKERUN_RESULT%" del "%HP_SMOKERUN_RESULT%" >nul 2>&1
 rem Item 82 slice 2: the runner writes this marker only when it really stops a silent program. Clear any old one.
 if exist "~smokerun_killed.txt" del "~smokerun_killed.txt" >nul 2>&1
 set "HP_EXE_KILLED_SILENT="
+rem Item 87 test hook: HP_TEST_CORRUPT_BUILT_EXE=1 swaps the built EXE for a text file right before the launch, the
+rem shape an interrupted build or a quarantined EXE leaves. Absence changes nothing, README REQ-019.
+if defined HP_TEST_CORRUPT_BUILT_EXE (
+  call :log "[TEST] HP_TEST_CORRUPT_BUILT_EXE: replacing dist\%ENVNAME%.exe with a text file before the launch."
+  >"dist\%ENVNAME%.exe" echo this is not a program
+)
 call :emit_from_base64 "~exe_smokerun.ps1" HP_EXE_SMOKERUN
 if errorlevel 1 (
   rem Extremely rare -- disk/permission failure writing a work file; HP_EXE_EXIT stays -1.
