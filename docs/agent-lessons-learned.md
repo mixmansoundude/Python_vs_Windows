@@ -164,6 +164,12 @@ by a shared id variable. This check is advisory (non-gating) but the finding is 
 sight. Verify a new multi-scenario file:
 `python3 -c "import re; print(re.findall(r'\bid\s*=\s*[\'\"]([A-Za-z0-9][A-Za-z0-9_.-]*)[\'\"]', open('tests/the_file.ps1').read()))"`
 
+**The doc side is just as literal: `docs/agent-ndjson.md` is read by pairing ``` fence lines over the whole file, so ONE
+unclosed fence turns every later prose block into "registered ids"** (PR #498: the registry job failed with 144 junk
+"registered but never emitted" ids such as `CI`, `anything` and `REQ-005.1`, and every new row listed as unregistered,
+while the doc looked fine in a viewer). Run `python3 tools/check_ndjson_registry.py` after editing the doc; the unit test
+`test_agent_ndjson_doc_has_balanced_code_fences` names the section with the odd fence count.
+
 ---
 
 ## Never open a real source file in Python `'w'` mode as part of a "dry run" -- write to a NEW path and diff before overwriting
@@ -798,6 +804,19 @@ a new prompt or cleanup to those subroutines, check it against that flag. A per-
 
 **`HP_RUNTIME_MODULE_SCAN` has 354 characters of payload headroom left.** The slice 2 modes (package table,
 requirements append) took most of it; check `tools/sync_payload.py`'s margin line before the next addition.
+
+---
+
+## Clearing an environment variable for a child process: do not trust `SetEnvironmentVariable($name, $null)`; ask the child what it sees
+
+A test that must start the bootstrapper with no `HP_*`/`PVW_*`/`NOINPUT` variable (`tests/selfapps_noflag_default.ps1`,
+T12) removed them with `[Environment]::SetEnvironmentVariable($name, $null)` and then read its own `Get-ChildItem Env:`:
+on the Windows runner the job's four variables were still listed there AND in a launched `cmd` (`set HP_`), so both
+`self.noflag.default.run` and `.rerun` went red twice while the bootstrapper plainly took the flag-free branches. Use
+`Remove-Item -LiteralPath ('Env:' + $name)` in PowerShell, clear again in the launched shell with `set "NAME="`
+(names validated as `[A-Za-z0-9_]+` first), and take the verdict from a listing the CHILD prints after its own clear,
+keeping the before-clear listing in the details so a removal that stops working is visible by name. Never dump the
+whole environment into a CI artifact (tokens): list by prefix only.
 
 ---
 

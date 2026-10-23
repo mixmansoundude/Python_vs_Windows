@@ -179,7 +179,7 @@ only on the rare `run_setup.bat missing` guard; `bootstrap.status` once per run;
 ```
 file.hash, bootstrap.state, bootstrap.exit, emit.extract (x many),
 batch.delayed.off, batch.delayed.enable_absent, batch.bang.scan,
-conda.channels, pipreqs.flags, pyi.onefile, log.rotate, tilde.naming,
+conda.channels, pipreqs.flags, pyi.onefile, tilde.naming,
 visa.detect, emit.helpers, env.state.write, dep.check.parse_lock,
 dp.compat, prep.multi.constraint, batch.paren.balance, env.foldername,
 conda.path, conda.url, env.mode,
@@ -669,6 +669,23 @@ self.launch.argv.checkpoint
 self.launch.argv.none
 ```
 
+## selfapps-skiphooks-single NDJSON rows (selfapps_skiphooks_single.ps1, real lane only, gating)
+
+Gap T1 slice E of `docs/plan-test-suite-gaps.md` (README REQ-012). `selfapps_skiphooks.ps1` sets
+`HP_SKIP_ENTRY_SMOKE` and `HP_SKIP_EXE_SMOKERUN` together; this script runs each ALONE, with the launch ledger
+idea of `selfapps_launch_ledger.ps1` (a stub appends one JSON line per launch to `~ledger.jsonl`). Each scenario is
+one fresh folder bootstrapped twice. `entry_only`: the interpreter smoke test is skipped but the EXE verification run
+is not, so the build launches the program once (frozen) and the repeat, which reuses the cached EXE, once more (two
+lines). `exe_only`: the EXE is built and not run, the interpreter verifies the build once (not frozen) because
+skipping the EXE run must not leave the build unverified, and the repeat logs `reusing cached EXE without running it`
+and launches nothing (the ledger stays at one line). Details also record whether the `entry_only` repeat reused the
+cached EXE or rebuilt (informational, not asserted). Skips on non-Windows.
+
+```
+self.skiphooks.entry_only
+self.skiphooks.exe_only
+```
+
 ## selfapps-runtests-contract NDJSON rows (selfapps_runtests_contract.ps1, every lane, gating)
 
 CLAUDE.md Item 84. Runs a copy of the real `run_tests.bat` against stub `harness.ps1` /
@@ -692,6 +709,121 @@ self.runtests.selftest_red
 self.runtests.selftest_unreported
 self.runtests.selftests_unreported
 self.runtests.summary_locked
+```
+
+## selfapps-unicode-path NDJSON rows (selfapps_unicode_path.ps1, real lane only, gating)
+
+Gap T8 of `docs/plan-test-suite-gaps.md` (README REQ-001). The stub program is bootstrapped from
+`<tests>\~selftest_unicode_path\Caf<U+00E9> Test\Jos<U+00E9>` (an accented e in two components, one with
+a space; built at run time so repo files stay ASCII) through a generated `~unicode_launch.cmd`, so no
+non-ASCII text is typed into a command line by the script. The row passes only if the bootstrap exits 0,
+`~bootstrap.status.json` says `ok`, an EXE exists under `dist`, the log shows `Entry smoke exit=0` with no
+path error, and the frozen program's own record (`~unicode_token.json`) names the same two folder
+components (compared by code points, so a lossy `?` would not match) and carries the expected token. ASCII
+copies of the logs go to `tests\~selftest_unicode_path_evidence`. First real run (CI run 39023711765): the
+bootstrap succeeded and the program saw the exact folder names; the environment name (and so the EXE) loses the
+accented letter, `Jos_.exe`, which the row records without asserting. The two `The system cannot find the drive
+specified.` lines in `suspectLines` are the known stray message the batch announces before the PyInstaller build.
+Skips on non-Windows.
+
+```
+self.prime.unicode-path
+```
+
+## selfapps-unc NDJSON rows (selfapps_unc.ps1, real lane only, gating)
+
+Gap T9 of `docs/plan-test-suite-gaps.md` (README REQ-003 limitation: UNC paths are not supported for reliable
+bootstrap). A copy of the bootstrapper is started through the runner's own admin share, `\\localhost\<drive>$\...`,
+from a local working directory (a wrapper `~unc_launch.cmd` logs locally). `self.warn.unc.probe` writes a marker
+file locally and reads it back through the share; it only records whether the share reaches the folder
+(`reachable`) and is `pass:true` whenever the probe ran. `self.warn.unc` runs only when `reachable` is true and
+passes only if the batch printed the UNC warning and `Workspace path invalid`, exited 1, left no `dist` folder and
+finished inside 180 seconds. When the share is unavailable it reports `skip` with reason `unc-share-unavailable`,
+which is a skip and not a pass of the behavior (a lane where that happens everywhere is a finding, plan criterion
+C5). A copy of the launch log goes to `tests\~selftest_unc_evidence`. Skips on non-Windows.
+
+```
+self.warn.unc.probe
+self.warn.unc
+```
+
+## selfapps-noflag-default NDJSON rows (selfapps_noflag_default.ps1, real lane only, gating)
+
+Gap T12 of `docs/plan-test-suite-gaps.md` (README REQ-019, REQ-018). Every other scenario runs under
+`HP_CI_LANE`, so the branches a double-click user takes (the elective prompts reaching `set /p`, the
+end-of-run `pause`, the interactive fast-path probe) never ran in CI. This script removes every `HP_*`,
+`PVW_*` and `NOINPUT` variable from its own environment (restored afterwards; the lane tag is captured
+first so rows keep it) and starts the bootstrapper with standard input closed (`< nul`, so `set /p` and
+`pause` get end-of-file, which is the closest stand-in for nobody answering) and a hard time limit. A
+stub program appends one line per launch to `~noflag_ledger.jsonl`. Scenario F is a fresh folder, G the
+same folder again. `.run`: finished within the limit, exit code, state `ok`, both `[Y/N]` prompts and the
+end-of-run `Press any key` line shown, and no flag in the environment the bootstrapper is started with. That last
+check reads the launched shell's own listing (`set HP_`, `set PVW_`, `set NOINPUT`, prefixes only so no token is
+dumped). Two real runs showed that `[Environment]::SetEnvironmentVariable($name, $null)` does NOT remove the job's own
+variables on the runner (`HP_ALLOW_SYSTEM_FALLBACK`, `HP_ALLOW_VENV_FALLBACK`, `HP_CI_LANE`, `HP_CI_TEST_CONDA_DL`
+stayed listed both in the script and in the launched shell), so the script removes them with the `Env:` drive, and
+the wrapper clears every one again with `set "NAME="` before the verdict listing. The details keep all three views:
+`flagsAtLaunch` (the shell's list before its own clear), `flagsSeenByRun` (after it, the verdict) and `parentStillSet`
+(what the script's own removal left behind), so a removal that stops working shows up by name instead of as a bare red.
+`.once`: the unanswered
+prompts decline and the ledger holds exactly one launch (EXE). `.rerun`: the repeat run takes the
+interactive probe branch ("Launching your program now via the cached standalone EXE", not "Fast path:
+reusing") and starts the program once more. Limits: only the happy path through the provider chain is
+exercised (REQ-019 asks the default run to reach every fallback tier that gets the code running). Skips on non-Windows.
+
+```
+self.noflag.default.run
+self.noflag.default.once
+self.noflag.default.rerun
+```
+
+## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
+
+Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"). One
+fresh folder and one bootstrap per row. Each folder holds a stdlib-only stub (or one importing `six` in the two
+pipreqs cells) and one distinct tiny package per declared source: requirements.txt `termcolor`, pyproject.toml
+`iniconfig`, PEP 723 header `toolz`. Both skip hooks are set (no user code runs; the build still does), and the
+PEP 723 write-back and autopep723 merge are off so the declared lists stay as written. A row passes only if the
+one-line source record the bootstrapper writes (`~dependency_source.txt`, Item 76; only that name is read, so a
+return to the old non-tilde name leaves the cells without a record) names the expected source, exactly the expected watched packages are
+in `~dependency_installed.txt` (so a losing source's package is absent) and the run exited 0. `.pep723_malformed`
+also needs the documented `PEP 723 block found but dependency list is empty or malformed` warning. Details carry the
+recorded source, the watched packages installed, and `sourceOk`/`watchedOk`/`ran`. Cells: `.pep723_only`,
+`.requirements_only`, `.all_three` (PEP 723 wins), `.pep723_malformed` (falls to requirements.txt),
+`.pyproject_nodeps` (falls to requirements.txt), `.requirements_empty` (an empty file is deleted, the scan decides)
+and `.nothing_declared` (the scan decides); the last two read `pipreqs` and so depend on Item 68's `DEP_SOURCE`
+fix. Limits: only the winner and the packages are asserted, not the console wording of every branch. Skips on
+non-Windows.
+
+```
+self.depsource.pep723_only
+self.depsource.requirements_only
+self.depsource.all_three
+self.depsource.pep723_malformed
+self.depsource.pyproject_nodeps
+self.depsource.requirements_empty
+self.depsource.nothing_declared
+```
+
+## selfapps-log-rotate NDJSON rows (selfapps_log_rotate.ps1, real lane only, gating)
+
+Gap T7 of `docs/plan-test-suite-gaps.md` (README "Maintenance, Logging"; replaces the static harness row
+`log.rotate`, which only looked for the text `Length -gt 10485760` in the batch). The script seeds real logs and
+lets the real bootstrapper start through the short system-Python path (`HP_CI_SKIP_ENV=1`, the same as
+`selfapps_isolation.ps1`; rotation happens before the environment is chosen, so a provider run would only add
+minutes). `.over`: `~setup.log` holds 11 MiB starting with a marker line and an older `~setup.prev.log` exists; the
+row passes only if the old log is now in `~setup.prev.log` (first line is the marker, at least the seed's size, the
+older prev content is gone) and the new `~setup.log` is smaller than `newLogMaxBytes` and does not carry the marker.
+`.under`: `~setup.log` holds 1 MiB; the row passes only if it is kept (first line is still the marker), grew with this
+run's lines and no `~setup.prev.log` appeared (a rotation on every start would throw the history away). Details carry
+the sizes and first lines. The seeded big logs are deleted at the end; only the boot logs and the new
+`~setup.log` of the over-limit folder are uploaded. Skips on non-Windows. Limit: the bootstrapper is stopped after
+the early system-Python path, so the row proves what the start does with the log, not that a later run in a long
+session trims a log that grew past the limit midway.
+
+```
+self.log.rotate.over
+self.log.rotate.under
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
