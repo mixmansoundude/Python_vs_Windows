@@ -1105,6 +1105,27 @@ jobs:
         run: |
           & tests\selfapps_optimized_build.ps1
 
+      # CLAUDE.md Item 71: the two PVW_BUILDER scenarios that run a REAL Nuitka build. Non-gating (uv lane)
+      # because the compiler download behind a real Nuitka build can fail for network reasons, the same
+      # reason as the Tier A and optimized-build steps above; their deterministic siblings gate.
+      - name: "Self-test: PVW_BUILDER nuitka choice builds with Nuitka only (nuitka, uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER both choice swaps in a verified Nuitka build (both, uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: both
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
       # docs/plan-cli-interactive-verification.md requirement 2: proves piped stdin flows
       # unbroken through the real cmd.exe -> :run_exe_smokerun -> ~exe_smokerun.ps1 -> EXE chain
       # for a genuine multi-round input()-driven program, closing the gap the unit tests
@@ -1161,6 +1182,64 @@ jobs:
           PYI_FAIL_SCENARIO: execfail_runtimefail
         run: |
           & tests\selfapps_pyinstaller_fail.ps1
+
+      # CLAUDE.md Item 71: PVW_BUILDER super-user override. These five scenarios are deterministic (forced
+      # failures or a real PyInstaller build, no Nuitka compile), so they gate from their first run.
+      - name: "Self-test: PVW_BUILDER unknown value warns and behaves as auto (invalid, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: invalid
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER pyinstaller choice never attempts the fallback (pyinstaller_nofallback, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: pyinstaller_nofallback
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER pyinstaller choice shows no optimized-build offer (pyinstaller, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: pyinstaller
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER nuitka choice never runs PyInstaller (nuitka_forcefail, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka_forcefail
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER nuitka choice removes an EXE left by an earlier run when the Nuitka build fails (nuitka_stale, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka_stale
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER nuitka choice never starts the warnfix PyInstaller rebuild from a warn file it could not delete (nuitka_warnfile, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka_warnfile
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER both choice builds the optimized version without a prompt (both_forcefail, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: both_forcefail
+        run: |
+          & tests\selfapps_pvw_builder.ps1
 
       - name: "Self-test: REQ-021 pre-flight syntax error (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
@@ -1357,6 +1436,16 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_honest_wording.ps1
+
+      # derived requirement: CLAUDE.md Item 77 -- a "DLL load failed" run on a machine without Microsoft's
+      # Visual C++ runtime must say what the runtime is and where to get it. Gating on purpose (real
+      # lane): nothing here depends on the network beyond what every real-lane bootstrap already needs.
+      # CI runners have the runtime, so the missing half is simulated with HP_TEST_VCRT_MISSING.
+      - name: "Self-test: Visual C++ runtime warning on a DLL load failure (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_vcruntime.ps1
 
       - name: "Self-test: super-user skip hooks (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
@@ -1597,6 +1686,12 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_pyvisa.ps1
+
+      - name: "Self-test: NI-VISA install asks before running for a subfolder-only import (real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_pyvisa_subfolder.ps1
 
       - name: "Self-test: pyproject.toml Python version precedence (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
@@ -2211,6 +2306,74 @@ jobs:
             tests\~selftest_honest_wording\~pipreqs.diff.txt
             tests/~selftest_honest_wording/~dependency_source.txt
             tests\~selftest_honest_wording\~dependency_source.txt
+            tests/~selftest_pvw_builder_invalid/~pvw_builder_invalid_bootstrap.log
+            tests\~selftest_pvw_builder_invalid\~pvw_builder_invalid_bootstrap.log
+            tests/~selftest_pvw_builder_invalid/~setup.log
+            tests\~selftest_pvw_builder_invalid\~setup.log
+            tests/~selftest_pvw_builder_pyinstaller_nofallback/~pvw_builder_pyinstaller_nofallback_bootstrap.log
+            tests\~selftest_pvw_builder_pyinstaller_nofallback\~pvw_builder_pyinstaller_nofallback_bootstrap.log
+            tests/~selftest_pvw_builder_pyinstaller_nofallback/~setup.log
+            tests\~selftest_pvw_builder_pyinstaller_nofallback\~setup.log
+            tests/~selftest_pvw_builder_pyinstaller/~pvw_builder_pyinstaller_bootstrap.log
+            tests\~selftest_pvw_builder_pyinstaller\~pvw_builder_pyinstaller_bootstrap.log
+            tests/~selftest_pvw_builder_pyinstaller/~setup.log
+            tests\~selftest_pvw_builder_pyinstaller\~setup.log
+            tests/~selftest_pvw_builder_nuitka_forcefail/~pvw_builder_nuitka_forcefail_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka_forcefail\~pvw_builder_nuitka_forcefail_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka_forcefail/~setup.log
+            tests\~selftest_pvw_builder_nuitka_forcefail\~setup.log
+            tests/~selftest_pvw_builder_nuitka_stale/~pvw_builder_nuitka_stale_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka_stale\~pvw_builder_nuitka_stale_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka_stale/~setup.log
+            tests\~selftest_pvw_builder_nuitka_stale\~setup.log
+            tests/~selftest_pvw_builder_nuitka_warnfile/~pvw_builder_nuitka_warnfile_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka_warnfile\~pvw_builder_nuitka_warnfile_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka_warnfile/~setup.log
+            tests\~selftest_pvw_builder_nuitka_warnfile\~setup.log
+            tests/~selftest_sysbuild_nuitka/~sysbuild_test.log
+            tests\~selftest_sysbuild_nuitka\~sysbuild_test.log
+            tests/~selftest_pvw_builder_both_forcefail/~pvw_builder_both_forcefail_bootstrap.log
+            tests\~selftest_pvw_builder_both_forcefail\~pvw_builder_both_forcefail_bootstrap.log
+            tests/~selftest_pvw_builder_both_forcefail/~setup.log
+            tests\~selftest_pvw_builder_both_forcefail\~setup.log
+            tests/~selftest_pvw_builder_nuitka/~pvw_builder_nuitka_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka\~pvw_builder_nuitka_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka/~setup.log
+            tests\~selftest_pvw_builder_nuitka\~setup.log
+            tests/~selftest_pvw_builder_both/~pvw_builder_both_bootstrap.log
+            tests\~selftest_pvw_builder_both\~pvw_builder_both_bootstrap.log
+            tests/~selftest_pvw_builder_both/~setup.log
+            tests\~selftest_pvw_builder_both\~setup.log
+            tests/~selftest_vcruntime_interp/~vcruntime_interp_bootstrap.log
+            tests\~selftest_vcruntime_interp\~vcruntime_interp_bootstrap.log
+            tests/~selftest_vcruntime_interp/~setup.log
+            tests\~selftest_vcruntime_interp\~setup.log
+            tests/~selftest_vcruntime_interp/~run.err.txt
+            tests\~selftest_vcruntime_interp\~run.err.txt
+            tests/~selftest_vcruntime_interp_probe/~vcruntime_interp_probe_bootstrap.log
+            tests\~selftest_vcruntime_interp_probe\~vcruntime_interp_probe_bootstrap.log
+            tests/~selftest_vcruntime_interp_probe/~setup.log
+            tests\~selftest_vcruntime_interp_probe\~setup.log
+            tests/~selftest_vcruntime_interp_probe/~run.err.txt
+            tests\~selftest_vcruntime_interp_probe\~run.err.txt
+            tests/~selftest_vcruntime_exe/~vcruntime_exe_bootstrap.log
+            tests\~selftest_vcruntime_exe\~vcruntime_exe_bootstrap.log
+            tests/~selftest_vcruntime_exe/~setup.log
+            tests\~selftest_vcruntime_exe\~setup.log
+            tests/~selftest_vcruntime_exe/~run.err.txt
+            tests\~selftest_vcruntime_exe\~run.err.txt
+            tests/~selftest_vcruntime_present/~vcruntime_present_bootstrap.log
+            tests\~selftest_vcruntime_present\~vcruntime_present_bootstrap.log
+            tests/~selftest_vcruntime_present/~setup.log
+            tests\~selftest_vcruntime_present\~setup.log
+            tests/~selftest_vcruntime_present/~run.err.txt
+            tests\~selftest_vcruntime_present\~run.err.txt
+            tests/~selftest_vcruntime_unrelated/~vcruntime_unrelated_bootstrap.log
+            tests\~selftest_vcruntime_unrelated\~vcruntime_unrelated_bootstrap.log
+            tests/~selftest_vcruntime_unrelated/~setup.log
+            tests\~selftest_vcruntime_unrelated\~setup.log
+            tests/~selftest_vcruntime_unrelated/~run.err.txt
+            tests\~selftest_vcruntime_unrelated\~run.err.txt
             tests/~reqspec/~reqspec_run.log
             tests\~reqspec\~reqspec_run.log
             tests/~selftest_stub/~stub_bootstrap.log
@@ -2753,6 +2916,22 @@ jobs:
             tests\~pyvisa_disabled\~pyvisa_disabled_bootstrap.log
             tests/~pyvisa_disabled/~setup.log
             tests\~pyvisa_disabled\~setup.log
+            tests/~selftest_pyvisa_sub_declined/~pyvisa_sub_declined.log
+            tests\~selftest_pyvisa_sub_declined\~pyvisa_sub_declined.log
+            tests/~selftest_pyvisa_sub_declined/~setup.log
+            tests\~selftest_pyvisa_sub_declined\~setup.log
+            tests/~selftest_pyvisa_sub_accepted/~pyvisa_sub_accepted.log
+            tests\~selftest_pyvisa_sub_accepted\~pyvisa_sub_accepted.log
+            tests/~selftest_pyvisa_sub_accepted/~setup.log
+            tests\~selftest_pyvisa_sub_accepted\~setup.log
+            tests/~selftest_pyvisa_sub_topfolder/~pyvisa_sub_topfolder.log
+            tests\~selftest_pyvisa_sub_topfolder\~pyvisa_sub_topfolder.log
+            tests/~selftest_pyvisa_sub_topfolder/~setup.log
+            tests\~selftest_pyvisa_sub_topfolder\~setup.log
+            tests/~selftest_pyvisa_sub_timeout/~pyvisa_sub_timeout.log
+            tests\~selftest_pyvisa_sub_timeout\~pyvisa_sub_timeout.log
+            tests/~selftest_pyvisa_sub_timeout/~setup.log
+            tests\~selftest_pyvisa_sub_timeout\~setup.log
             tests/~pyproject_prec/~pyproject_prec_bootstrap.log
             tests\~pyproject_prec\~pyproject_prec_bootstrap.log
             tests/~pyproject_prec/~setup.log
