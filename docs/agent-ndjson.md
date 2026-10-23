@@ -37,6 +37,7 @@ self.exe.smokerun.cwd_consistency,
 self.exe.fastpath.graceful, self.skiphooks.combined,
 self.fastpath,
 self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
+self.honest.fastpath.note, self.honest.fastpath.outcome,
 self.checkpoint.accept, self.checkpoint.decline,
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
@@ -534,10 +535,17 @@ a genuine build failure used to fall through `:die` all the way to a `state=ok` 
 NOT assert process exit code. Also sets `HP_TEST_FORCE_NUITKA_FAIL=1` so Tier A's own fallback is
 deterministically forced to fail too (otherwise a real Nuitka build could silently succeed here,
 turning this "everything fails" test into a fallback-success case, covered separately by
-`self.exe.build.tiera`).
+`self.exe.build.tiera`). The `execfail_runtimefail` scenario also writes `self.honest.noexe.caveat` (README
+REQ-027.1): the closing panel names the caveat heading and says it cannot tell whether the failure is the program's
+or the bootstrapper's, the success heading and the "ran successfully" sentence are absent, the setup log carries the
+matching `[WARN] REQ-016` line, and the `[STATUS]` line shows the interpreter's exit code (3 from the stub app).
+The two cached-EXE rows of the same requirement, `self.honest.fastpath.note` (REQ-027.2: one note, names the EXE to
+delete) and `self.honest.fastpath.outcome` (REQ-027.3: state `ok` and exit code 0), are written by
+`selfapps_failfast_probe.ps1` from its alive scenario (real/conda-full lanes, gating).
 
 ```
 self.exe.build.xfail
+self.honest.noexe.caveat
 ```
 
 ## selfapps-nuitka-tiera NDJSON rows (selfapps_nuitka_tiera.ps1, uv lane only, non-gating)

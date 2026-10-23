@@ -15,6 +15,11 @@
 #     own code is not something a rebuild could fix). This is the critical decoupling fix for the
 #     "silent success" gap: HP_FASTPATH_USED alone must never be read as proof of a clean run.
 #
+#   self.honest.fastpath.note and self.honest.fastpath.outcome - README REQ-027.2 and REQ-027.3: the same alive
+#     scenario, read for the closing note the user sees when a kept cached EXE later exits non-zero (it must say it
+#     cannot confirm the run and name the file to delete for a fresh build) and for what the bootstrapper records
+#     (state ok, process exit code 0).
+#
 # Lane: real and conda-full only (matches selfapps_exefastpath.ps1).
 param()
 $ErrorActionPreference = 'Continue'
@@ -48,6 +53,20 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
             details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
         })
     }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.honest.fastpath.note'
+        req     = 'REQ-027.2'
+        pass    = $true
+        desc    = 'Honest cached-EXE note test skipped on non-Windows host'
+        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.honest.fastpath.outcome'
+        req     = 'REQ-027.3'
+        pass    = $true
+        desc    = 'Honest cached-EXE outcome test skipped on non-Windows host'
+        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+    })
     exit 0
 }
 
@@ -62,6 +81,20 @@ if (-not (Test-Path $batchPath)) {
             details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
         })
     }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.honest.fastpath.note'
+        req     = 'REQ-027.2'
+        pass    = $false
+        desc    = 'Honest cached-EXE note test: run_setup.bat not found'
+        details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.honest.fastpath.outcome'
+        req     = 'REQ-027.3'
+        pass    = $false
+        desc    = 'Honest cached-EXE outcome test: run_setup.bat not found'
+        details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+    })
     exit 1
 }
 
@@ -156,6 +189,11 @@ Write-NdjsonRow ([ordered]@{
 # user's own code is not proof of a stale artifact and not something a rebuild would fix).
 $alivePass = $false
 $aliveDetails = [ordered]@{}
+$notePass = $false
+$outcomePass = $false
+$noteDetails = [ordered]@{}
+$outcomeDetails = [ordered]@{}
+$expectedHonestState = 'error'   # planted wrong on purpose in the red commit; the real state is ok
 try {
     $alDir = Join-Path $here '~selftest_failfastprobe_alive'
     if (Test-Path $alDir) { Remove-Item -Recurse -Force $alDir }
@@ -228,6 +266,34 @@ sys.exit(0)
     $alAmbiguousNoteFound = $alRun2Text -match [regex]::Escape('WANT A FRESH BUILD instead (re-checks all dependencies from scratch)?')
 
     $alivePass = ($alRun1Exit -eq 0) -and ($alRun2Exit -eq 0) -and $alLaunchedInteractive -and $alAliveMsg -and $alStatusFailed -and $alNotDiscarded -and $alExeStillPresent -and $alBootstrapStayedOk -and $alAmbiguousNoteFound
+    # README REQ-027.2 / REQ-027.3, read from the same run-2 console text. Whitespace is flattened because the panel
+    # wraps its sentences over several echo lines.
+    $alFlat = ($alRun2Text -replace '\s+', ' ')
+    $alExeName = if ($alExeCandidates.Count -gt 0) { [string]$alExeCandidates[0].Name } else { '' }
+    $hTitle = $alFlat -match [regex]::Escape("SETUP COMPLETE -- BUT WE CAN'T CONFIRM YOUR LAST RUN WORKED")
+    $hTitleCount = ([regex]::Matches($alFlat, [regex]::Escape("SETUP COMPLETE -- BUT WE CAN'T CONFIRM YOUR LAST RUN WORKED"))).Count
+    $hCannotTell = $alFlat -match [regex]::Escape("so we can't tell whether that's a bug in the Python code we tried to run, or something else.")
+    $hFreshBuild = ($alExeName -ne '') -and ($alFlat -match [regex]::Escape('Delete dist\' + $alExeName + ' and run this bootstrapper again.'))
+    $hLogLine = $alRun2Text -match [regex]::Escape('[WARN] REQ-016: Post-flight note printed; cached EXE kept despite a non-zero exit after the fail-fast probe.')
+    $notePass = $alStatusFailed -and $hTitle -and ($hTitleCount -eq 1) -and $hCannotTell -and $hFreshBuild -and $hLogLine
+    $noteDetails = [ordered]@{
+        statusFailedLogged = [bool]$alStatusFailed
+        titleFound         = [bool]$hTitle
+        titleCount         = $hTitleCount
+        cannotTellFound    = [bool]$hCannotTell
+        freshBuildFound    = [bool]$hFreshBuild
+        exeName            = $alExeName
+        logLineFound       = [bool]$hLogLine
+        run2Log            = '~al_run2.log'
+    }
+    $outcomePass = $alStatusFailed -and $hTitle -and ($alRun2Exit -eq 0) -and ($alStatusState -eq $expectedHonestState)
+    $outcomeDetails = [ordered]@{
+        statusFailedLogged = [bool]$alStatusFailed
+        noteShown          = [bool]$hTitle
+        run2Exit           = $alRun2Exit
+        bootstrapState     = $alStatusState
+        expectedState      = $expectedHonestState
+    }
     $aliveDetails = [ordered]@{
         run1Exit             = $alRun1Exit
         run2Exit             = $alRun2Exit
@@ -242,6 +308,8 @@ sys.exit(0)
     }
 } catch {
     $aliveDetails = [ordered]@{ error = $_.Exception.Message }
+    $noteDetails = [ordered]@{ error = $_.Exception.Message }
+    $outcomeDetails = [ordered]@{ error = $_.Exception.Message }
 }
 
 Write-NdjsonRow ([ordered]@{
@@ -250,6 +318,21 @@ Write-NdjsonRow ([ordered]@{
     pass    = $alivePass
     desc    = 'Fail-fast probe: a cached EXE still running past the probe window is never discarded, even if it later exits non-zero; the bootstrap reports the true outcome and stays state=ok'
     details = $aliveDetails
+})
+
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.honest.fastpath.note'
+    req     = 'REQ-027.2'
+    pass    = [bool]$notePass
+    desc    = 'README REQ-027.2: a kept cached EXE that exits non-zero after the probe window ends the run with one note that says it cannot confirm the run and names the EXE to delete'
+    details = $noteDetails
+})
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.honest.fastpath.outcome'
+    req     = 'REQ-027.3'
+    pass    = [bool]$outcomePass
+    desc    = 'README REQ-027.3: when that note is shown the bootstrapper records state ok and exits with code 0'
+    details = $outcomeDetails
 })
 
 # CLAUDE.md Item 68: the line that tells the user the program is still running past the probe window
@@ -271,5 +354,5 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ lineFound = [bool]$secLine; inSeconds = $secInSeconds; noMilliseconds = $secNoMs; line = $secLine.Trim() }
 })
 
-if (-not ($fastfailPass -and $alivePass -and $secondsPass)) { exit 1 }
+if (-not ($fastfailPass -and $alivePass -and $secondsPass -and $notePass -and $outcomePass)) { exit 1 }
 exit 0

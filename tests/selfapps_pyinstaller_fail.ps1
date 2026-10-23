@@ -59,6 +59,9 @@
 # a different scenario with its own test (self.exe.build.tiera). Forcing the fallback to also
 # fail keeps this test's original scope: tier EXHAUSTION still reaches a correctly-reported error.
 #
+# The execfail_runtimefail scenario also writes self.honest.noexe.caveat (README REQ-027.1): the closing panel says it
+# cannot confirm the run, gives the interpreter's exit code as the reason, and does not also claim success.
+#
 # Lane: real and conda-full only (matches selfapps_exefail.ps1 and siblings).
 param()
 $ErrorActionPreference = 'Continue'
@@ -94,12 +97,18 @@ function Write-PyiFailRow {
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-PyiFailRow -Pass $true -Desc "PyInstaller build XFAIL ($scenario, skipped on non-Windows)" -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host'; scenario = $scenario })
+    if ($scenario -eq 'execfail_runtimefail') {
+        Write-NdjsonRow ([ordered]@{ id = 'self.honest.noexe.caveat'; req = 'REQ-027.1'; pass = $true; desc = 'No-EXE caveat panel test skipped on non-Windows host'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    }
     exit 0
 }
 
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-PyiFailRow -Pass $false -Desc 'PyInstaller build XFAIL: run_setup.bat not found' -Details ([ordered]@{ error = 'run_setup.bat not found at ' + $batchPath; scenario = $scenario })
+    if ($scenario -eq 'execfail_runtimefail') {
+        Write-NdjsonRow ([ordered]@{ id = 'self.honest.noexe.caveat'; req = 'REQ-027.1'; pass = $false; desc = 'No-EXE caveat panel test: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
+    }
     exit 1
 }
 
@@ -121,6 +130,9 @@ print("should-not-matter")
 }
 
 $bootstrapLog = "~pyi_fail_${scenario}_bootstrap.log"
+
+$honestPass = $true   # stays true unless the execfail_runtimefail scenario writes a failing self.honest.noexe.caveat row
+$expectedInterpreterExit = 4   # planted wrong on purpose in the red commit; the stub app exits 3
 
 $prevSkipPipreqs = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $prevForceExecfail = if (Test-Path Env:HP_TEST_FORCE_PYINSTALLER_FAIL) { $env:HP_TEST_FORCE_PYINSTALLER_FAIL } else { $null }
@@ -201,6 +213,36 @@ try {
         xfailPass            = $xfailPass
         log                  = $bootstrapLog
     })
+
+    # README REQ-027.1, execfail_runtimefail only: the panel after a failed packaging and a failed interpreter run.
+    # Whitespace is flattened because the panel wraps its sentences over several echo lines.
+    if ($scenario -eq 'execfail_runtimefail') {
+        $flat = ($combined -replace '\s+', ' ')
+        $statusMatch = [regex]::Match($combined, '\[STATUS\] Run Status: FAILED \(Exit Code: (\d+)\)')
+        $interpreterExit = if ($statusMatch.Success) { [int]$statusMatch.Groups[1].Value } else { -1 }
+        $caveatTitle = $flat -match [regex]::Escape("NO STANDALONE .EXE -- AND WE CAN'T CONFIRM YOUR CODE RAN CLEANLY")
+        $cannotTell = $flat -match [regex]::Escape("so we can't tell whether that's a bug in the Python code we tried to run or something this bootstrapper missed.")
+        $successTitleAbsent = -not ($flat -match [regex]::Escape('YOUR CODE RAN -- BUT NO STANDALONE .EXE WAS PRODUCED'))
+        $successClaimAbsent = -not ($flat -match [regex]::Escape('your code ran successfully just now'))
+        $caveatLog = $combined -match [regex]::Escape('[WARN] REQ-016: Post-flight briefing printed; no EXE produced, interpreter run also unverified.')
+        $honestPass = $caveatTitle -and $cannotTell -and $successTitleAbsent -and $successClaimAbsent -and $caveatLog -and ($interpreterExit -eq $expectedInterpreterExit)
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.honest.noexe.caveat'
+            req     = 'REQ-027.1'
+            pass    = [bool]$honestPass
+            desc    = 'README REQ-027.1: when no EXE was built and the interpreter run also exits non-zero, the closing panel says it cannot confirm the run and does not claim success'
+            details = [ordered]@{
+                caveatTitleFound       = [bool]$caveatTitle
+                cannotTellFound        = [bool]$cannotTell
+                successTitleAbsent     = [bool]$successTitleAbsent
+                successClaimAbsent     = [bool]$successClaimAbsent
+                logLineFound           = [bool]$caveatLog
+                interpreterExit        = $interpreterExit
+                expectedInterpreterExit = $expectedInterpreterExit
+                log                    = $bootstrapLog
+            }
+        })
+    }
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
     if ($null -eq $prevForceExecfail) { Remove-Item Env:HP_TEST_FORCE_PYINSTALLER_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PYINSTALLER_FAIL = $prevForceExecfail }
@@ -208,5 +250,5 @@ try {
     if ($null -eq $prevForceNuitkaFail) { Remove-Item Env:HP_TEST_FORCE_NUITKA_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_NUITKA_FAIL = $prevForceNuitkaFail }
 }
 
-if (-not $xfailPass) { exit 1 }
+if (-not ($xfailPass -and $honestPass)) { exit 1 }
 exit 0
