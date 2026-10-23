@@ -54,6 +54,20 @@ function Write-CacheRow {
     Write-NdjsonRow ([ordered]@{ id = 'self.nuitka.launchcache'; req = 'REQ-AV'; pass = $Pass; desc = $Desc; details = $Details })
 }
 
+# A Nuitka onefile program reports its own folder in 8.3 form on a hosted runner (RUNNER~1, PVWEXP~1), so any
+# check by folder name needs the long form first (the first run read cachedFolderInSpec false for that reason).
+function Get-LongPath {
+    param([string]$Path)
+    if (-not $Path) { return $Path }
+    if (-not ('PvwLaNative' -as [type])) {
+        Add-Type -TypeDefinition 'using System.Runtime.InteropServices; using System.Text; public static class PvwLaNative { [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern int GetLongPathName(string path, StringBuilder buf, int len); }'
+    }
+    $sb = New-Object System.Text.StringBuilder 1024
+    $n = [PvwLaNative]::GetLongPathName($Path, $sb, $sb.Capacity)
+    if ($n -gt 0 -and $n -lt $sb.Capacity) { return $sb.ToString() }
+    return $Path
+}
+
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-CacheRow -Pass $true -Desc 'Nuitka onefile launch cache experiment (skipped on non-Windows)' -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' })
@@ -211,9 +225,12 @@ print("launchcache marker=%s payload=%d dir=%s" % (MARK, size, here))
             $cachedDirs = @($cachedRuns | ForEach-Object { $_.dir } | Select-Object -Unique)
             $d.cachedSameFolder = ($cachedDirs.Count -eq 1 -and [bool]$cachedDirs[0])
             $d.cachedFolderKept = (@($cachedRuns | Where-Object { $_.dirKept }).Count -eq 3)
-            $d.cachedFolderInSpec = ($d.cachedSameFolder -and $cachedDirs[0].Contains($token))
-            if ($cachedDirs.Count -ge 1) { $cacheDirSeen = $cachedDirs[0] }
+            $cachedLong = $null
+            if ($cachedDirs.Count -ge 1 -and $cachedDirs[0]) { $cachedLong = Get-LongPath $cachedDirs[0] }
+            $d.cachedFolderInSpec = ($d.cachedSameFolder -and $cachedLong.Contains($token) -and $cachedLong.Contains('pvw_launchcache_exp'))
+            $cacheDirSeen = $cachedLong
             $d.defaultExampleDir = $defaultRuns[0].dir
+            $d.cachedFolderAsReported = $cachedDirs[0]
             $d.cachedFolder = $cacheDirSeen
 
             # Step 5: the safety question. Same spec, changed source, rebuilt EXE.
@@ -256,6 +273,12 @@ print("launchcache marker=%s payload=%d dir=%s" % (MARK, size, here))
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
     if ($null -eq $prevForceExecfail) { Remove-Item Env:HP_TEST_FORCE_PYINSTALLER_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PYINSTALLER_FAIL = $prevForceExecfail }
+    # Drop the large build leftovers (the data file, both EXEs, the venv) but keep the ~build_*.log files: the
+    # diagnostics snapshot copies tests/ recursively, and a venv's license .txt files would ride along.
+    foreach ($big in @('payload.bin', 'exp', '.uv_env')) {
+        $bigPath = Join-Path $workDir $big
+        if (Test-Path -LiteralPath $bigPath) { Remove-Item -LiteralPath $bigPath -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     # The cache folder lives outside the workspace; remove exactly the folder named by this run's token.
     if ($cacheDirSeen -and $cacheDirSeen.Contains($token) -and (Test-Path -LiteralPath $cacheDirSeen)) {
         Remove-Item -LiteralPath $cacheDirSeen -Recurse -Force -ErrorAction SilentlyContinue

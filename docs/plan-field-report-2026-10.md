@@ -595,6 +595,17 @@ first, and no leftover default folders. If it is adopted, the cache folder name 
 outside the app folder (say so in README Known Limitations), and it goes on exactly two lines: the
 `-m nuitka --onefile` command in `:try_nuitka_tier_a` and the one in `:offer_optimized_build`.
 
+**First Windows run (2026-10-23, uv lane, Nuitka 4.3.1, 40 MB data file, Defender real-time protection
+off so this cannot show the field's 60 s).** Default build: launches 481, 435 and 579 ms, its `onefile_*`
+folder removed after every launch. Static spec: first launch 347 ms (pays the extraction), later launches
+200 and 202 ms, the folder kept and the same on all three. A rebuild with the SAME spec from changed source
+ran the NEW code (`rebuildRanNewCode` true, `rebuildRanStaleCode` false) and its second launch took 202 ms.
+Builds took 53.1 s (default) and 41.8 s (cached): the flag does not change build time. So the mechanism
+holds on Windows; the saving here is about 280 ms per launch, and the field effect (Defender scanning a
+fresh unpack every launch) stays unmeasured. The row was red only because the test compared the folder
+name in the program's 8.3 form (`RUNNER~1\PVW_LA~1\PVWEXP~1`) against the long token; the script now
+converts with `GetLongPathName` first (also fixes the cleanup, which matched on the same name).
+
 ### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 
 `[WARN] REQ-005.11: PEP 723 header write-back failed (ERROR:uv_rc_1)` gives no reason because

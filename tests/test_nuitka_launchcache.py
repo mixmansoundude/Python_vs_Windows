@@ -56,7 +56,20 @@ def step_problems(workflow_text):
     return found
 
 
-GOOD_STEP = """      - name: "Self-test: Nuitka onefile launch cache experiment (uv lane, non-gating)"
+def long_form_problems(script_text):
+    """The first Windows run read the cache folder back as RUNNER~1\\PVWEXP~1, so a name check on it fails."""
+    found = []
+    if "GetLongPathName" not in script_text:
+        found.append("the script never converts the reported folder to its long form")
+    m = re.search(r"^\s*\$d\.cachedFolderInSpec\s*=.*$", script_text, re.MULTILINE)
+    if not m:
+        found.append("the script has no cachedFolderInSpec check")
+    elif "$cachedLong" not in m.group(0) or "$cachedDirs" in m.group(0):
+        found.append("cachedFolderInSpec must test the long form ($cachedLong), not the reported folder")
+    return found
+
+
+GOOD_STEP ="""      - name: "Self-test: Nuitka onefile launch cache experiment (uv lane, non-gating)"
         if: ${{ matrix.mode == 'uv' }}
         continue-on-error: true
         shell: pwsh
@@ -103,6 +116,30 @@ class WorkflowStep(unittest.TestCase):
 
     def test_a_missing_step_is_caught(self):
         self.assertIn("found 0", step_problems("      - name: other\n        run: echo hi\n")[0])
+
+
+class CacheFolderLongForm(unittest.TestCase):
+    GOOD = (
+        "function Get-LongPath { [PvwLaNative]::GetLongPathName($Path, $sb, 1024) }\n"
+        "    $d.cachedFolderInSpec = ($d.cachedSameFolder -and $cachedLong.Contains($token))\n"
+    )
+
+    def test_real_script_checks_the_long_form(self):
+        self.assertEqual(long_form_problems(SCRIPT.read_text(encoding="ascii")), [])
+
+    def test_good_shape_passes(self):
+        self.assertEqual(long_form_problems(self.GOOD), [])
+
+    def test_checking_the_reported_folder_is_caught(self):
+        text = self.GOOD.replace("$cachedLong.Contains", "$cachedDirs[0].Contains")
+        self.assertEqual(len(long_form_problems(text)), 1)
+
+    def test_missing_conversion_is_caught(self):
+        text = self.GOOD.replace("GetLongPathName", "Nothing")
+        self.assertIn("never converts", long_form_problems(text)[0])
+
+    def test_missing_check_is_caught(self):
+        self.assertIn("no cachedFolderInSpec", long_form_problems("GetLongPathName\n")[0])
 
 
 class RowIsEmittedByTheScript(unittest.TestCase):
