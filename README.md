@@ -558,6 +558,8 @@ At completion:
 - Leave option to disable for debugging purposes: set `HP_SKIP_NIVISA=1` to skip the NI-VISA install even when `pyvisa`/`visa` is detected. Log contract: `[VISA] skipped (disabled)`.
 - Scan scope (documented behavior): the import scan covers every `.py` below the bootstrapper's folder, subfolders included (directories starting with `~` or `.`, and `.py` files whose names start with `~`, are skipped), not only the entry file or the files it imports. An `import pyvisa` or `import visa` in an archived or unrelated subfolder therefore counts and can start the driver install, which can take 30-45 minutes. The bootstrapper does not trace the entry file's import chain.
 - May require admin rights.
+- Elevation record: at the start of every run the bootstrapper **shall** write one setup-log line stating whether the process is elevated (`[INFO] Elevated: yes` or `[INFO] Elevated: no`), so a report of a failed driver install shows whether it ran with administrator rights.
+- Failure notice: when the NI-VISA driver cannot be downloaded or its install fails, the bootstrapper **shall** print a console `[WARN]` that says the driver was not installed, that the Python `pyvisa` package is installed anyway and that setup continues (the installer exit code is in `~setup.log`).
 
 ---
 
@@ -565,7 +567,8 @@ At completion:
 
 - Attempt to produce a **PyInstaller one-file EXE** after setup.
 - Name the EXE exactly the env name (equals the folder name).
-- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE. Fast path freshness is determined by comparing the EXE timestamp against non-helper *.py files under the working directory (recursively), ignoring infrastructure directories like .git, .github, dist, .venv, __pycache__, etc.
+- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE. Fast path freshness is determined by comparing a hash of the non-helper *.py files under the working directory (recursively) and of `requirements.txt`, `pyproject.toml` and `runtime.txt` with the hash recorded when the EXE was last built, ignoring infrastructure directories like .git, .github, dist, .venv, __pycache__, etc. A newer file timestamp alone changes nothing; an edit that changes the content does.
+- When a cached EXE exists but is not reused because its inputs changed or no build record exists, the bootstrapper **shall** print one line saying why before it rebuilds (`[INFO] Fast path: not reusing <exe> because your .py or requirements files changed since it was built, or no build record was found; it will be rebuilt.`). Covered by `self.wording.rebuild_notice` and, for a `requirements.txt` edit after a first run, `self.realapp.edit_rerun`.
 - **Graceful EXE-failure handling**: a packaged EXE that exits non-zero must never abort the bootstrapper. The environment and dependencies are already installed, so the bootstrap completes and the user is guided to run the app directly.
   - First-build path: the EXE smoke test logs the non-zero exit, emits hints, and continues (`self.exe.smokerun` records the result).
   - Fast path: a reused EXE that exits non-zero is **discarded** (the cached EXE may be stale or carry an unbundled runtime dependency, e.g. a DLL or data file the freshness check cannot see) and a full rebuild runs instead of aborting.
