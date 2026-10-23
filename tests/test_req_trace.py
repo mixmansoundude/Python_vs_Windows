@@ -38,9 +38,7 @@ FREE_TAGS = ("N/A", "REQ-AV")
 FREE_TAG_PREFIXES = ("CLAUDE.md-Item-",)
 
 # Requirement number -> why no NDJSON row carries its tag yet. Delete an entry when its row is tagged.
-NO_ROW_TAG_YET: Dict[str, str] = {
-    "027": "behavior covered by rows tagged REQ-003 (self.exe.build.xfail) and untagged failfast rows",
-}
+NO_ROW_TAG_YET: Dict[str, str] = {}
 
 # Requirement number -> why the README has no mention yet although run_setup.bat uses it.
 NOT_IN_README: Dict[str, str] = {

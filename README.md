@@ -160,6 +160,9 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 - **REQ-003.4** [minor] When the bootstrapper is started from a UNC path (`\\server\share\...`), it **shall**
   print a warning that names the UNC path, report `Workspace path invalid`, exit with code 1 and leave the
   folder without a `dist` folder or a setup log.
+- **REQ-003.5** [minor] The bootstrapper **shall**, when the path of the folder where it was started is 200
+  characters or longer (counting the closing backslash), print a warning that names the length, write the same
+  warning to the setup log, and go on with the run.
 
 > **Notes (non-normative).**
 > - Limitation: UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. The
@@ -167,6 +170,11 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 >   which is what the user should do. CMD cannot make a UNC path its current directory, which is why the
 >   run stops. The test starts a copy through the runner's own administrative share
 >   (`\\localhost\<drive>$\...`).
+> - REQ-003.5 exists because `cmd.exe` fails in ways a beginner cannot read once a path nears its 260-character
+>   limit, so the warning is the only help the user gets; the run goes on because a path of 200 to 259
+>   characters often still works. The test (`self.longpath.near.*`) uses folders of 199, 200 and 215
+>   characters, because a default runner cannot enter a path over 260 characters, which left the earlier
+>   check (`self.warn.longpath`) skipped on every run.
 > - Limitation: Unicode/high-bit characters in key paths are not guaranteed to work across all bootstrap
 >   steps. REQ-001.2 covers accented letters in the folder path; other characters are not covered.
 
@@ -999,22 +1007,34 @@ further arguments, work as before.
 
 ## [REQ-027] Honest Ambiguous-Exit Messaging
 
-- When a verification run ends ambiguously (your program exited with an error, and neither
-  automatic repair -- `--hidden-import` auto-recovery, the dependency-resolution cascade -- fixed
-  it), the bootstrapper no longer claims success it can't actually confirm:
-  - **No-EXE path**: if packaging failed outright (both PyInstaller and the Nuitka fallback) AND
-    the interpreter fallback that then ran your program also exited non-zero, the post-flight
-    panel says so plainly instead of claiming "your code ran successfully."
-  - **Cached-EXE fast path**: if a reused `dist\<env>.exe` was classified alive/healthy by the
-    fail-fast probe (so it was kept, not rebuilt) and it later exited non-zero, a short
-    informational panel now appears -- previously this case had no signal beyond one log line.
-- Neither message claims to know *why* the run was ambiguous (a bug in your own code vs.
-  something this bootstrapper missed) -- both point you at running the program yourself to see
-  the full output, and the fast-path note additionally suggests deleting `dist\<env>.exe` and
-  re-running the bootstrapper if you want a fully fresh dependency check.
-- This is messaging only -- it does not change `~bootstrap.status.json` semantics, the process
-  exit code, or add any new consent prompt (the cached-EXE note is a plain print, preserving the
-  fast path's zero-friction design).
+**Goal.** The bootstrapper should not claim a success it cannot confirm, and when a run ends in a way it cannot
+explain it should say so plainly instead of staying silent or pointing at a cause it does not know.
+
+- **REQ-027.1** [major] The bootstrapper **shall**, when no standalone EXE could be built (PyInstaller and the
+  Nuitka fallback both failed) and the interpreter run that follows exits with a non-zero code, end the run with a
+  panel that states it cannot confirm the program ran cleanly, in place of the panel that says the program ran
+  successfully.
+- **REQ-027.2** [major] The bootstrapper **shall**, when it reused a cached EXE that was still running when the
+  fail-fast probe window of REQ-018 ended and that EXE later exits with a non-zero code, end the run with one note
+  that states it cannot confirm the last run worked and names the EXE file to delete to get a fresh build.
+- **REQ-027.3** [major] The bootstrapper **shall**, when it shows the note of REQ-027.2, record state `ok` in
+  `~bootstrap.status.json` and exit with code 0, because the non-zero exit is the result of the user's program and
+  not a failure of the setup.
+
+> **Notes (non-normative).**
+> - Both messages are printed text only. Neither asks a question, which keeps the cached-EXE path free of prompts,
+>   and neither changes what the bootstrapper records. In the REQ-027.1 case the state is `error` because packaging
+>   failed, which the existing test of that failure (`self.exe.build.xfail`) already checks.
+> - Neither message says why the run ended badly (a bug in the user's own code or something the bootstrapper
+>   missed); both say it cannot tell and point at running the program directly to see its full output. The
+>   cached-EXE note also says that deleting the EXE and running the bootstrapper again re-checks the
+>   dependencies from scratch.
+> - Mechanism: `:print_no_exe_briefing` chooses its heading from `HP_NOEXE_VERIFY_FAILED`, which the interpreter
+>   run sets when it exits non-zero; `:print_fastpath_ambiguous_note` is called from the cached-EXE path when the
+>   probe classified the EXE as running and the later exit was non-zero.
+> - Tests: `self.honest.noexe.caveat` (REQ-027.1, `tests/selfapps_pyinstaller_fail.ps1`, scenario
+>   `execfail_runtimefail`), `self.honest.fastpath.note` (REQ-027.2) and `self.honest.fastpath.outcome`
+>   (REQ-027.3) in `tests/selfapps_failfast_probe.ps1`.
 
 ---
 
