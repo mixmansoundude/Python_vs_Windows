@@ -60,7 +60,7 @@ tests/
   selfapps_envsmoke.ps1        Full environment verification (conda/pip/imports)
   selfapps_single.ps1          Single Python file bootstrap test
   selfapps_reqspec.ps1         Requirements specifier parsing tests (~= compatible release)
-  selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests
+  selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests (the app and requirements.txt come from fixtures/examples/pandas_excel, Item 74)
   selfapps_pipgap.ps1          pip gap-fill safety net (runs run_setup.bat: conda misses opencv-python, pip fills it)
   selfapps_pipreqs_encoding.ps1 Item 63: pipreqs scan survives unreadable files (real lane, gating; PYTHONUTF8=0)
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
@@ -76,6 +76,8 @@ tests/
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
+  selfapps_example_apps.ps1    Item 74: three curated example apps from fixtures/examples (stdlib only, two files with a sibling import, a tkinter window that closes itself) run through the bootstrapper with no skip hook (real lane, gating)
+  fixtures/examples/           Item 74: the curated example apps a person can drop next to run_setup.bat (README.txt inside); CI scenarios read these files, nothing generates them inline
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -303,6 +305,7 @@ Test files and what they cover:
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
+| `test_example_fixtures.py` | Item 74: the example apps under `tests/fixtures/examples` stay plain examples (exactly the listed files, ASCII, compile in memory, every import is stdlib, a sibling file or a declared package, README.txt names every folder) and the places that read them (`selfapps_example_apps.ps1`, `selfapps_pandas_excel.ps1`, the real-lane workflow step and its artifact paths) cannot move back inline; synthetic trees prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 
 ### Static harness (Windows-only, requires PowerShell)

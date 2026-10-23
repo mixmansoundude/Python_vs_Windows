@@ -108,21 +108,19 @@ $prepPath = Join-Path $work '~prep_requirements.py'
 $condaReqPath = Join-Path $work '~reqs_conda.txt'
 $outPath = Join-Path $work 'out.xlsx'
 
-Set-Content -LiteralPath $appPath -Encoding Ascii -Value @'
-import pandas as pd
+# The app and its requirements come from the curated example folder (CLAUDE.md Item 74), so the files a person can
+# drop next to run_setup.bat are the files this scenario runs. A missing folder leaves no app.py/requirements.txt, so
+# the rows below fail with fixtureFound false in their details.
+$fixtureDir = Join-Path (Join-Path (Join-Path $here 'fixtures') 'examples') 'pandas_excel'
+$fixtureFound = Test-Path -LiteralPath $fixtureDir -PathType Container
+if ($fixtureFound) {
+    Copy-Item -LiteralPath (Join-Path $fixtureDir 'app.py') -Destination $appPath -Force
+    Copy-Item -LiteralPath (Join-Path $fixtureDir 'requirements.txt') -Destination $reqPath -Force
+}
 
-df = pd.DataFrame({"a": [1, 2]})
-df.to_excel("out.xlsx")
-'@
-
-Set-Content -LiteralPath $reqPath -Encoding Ascii -Value @(
-    'pandas',
-    'openpyxl'
-)
-
-$translationDetails = [ordered]@{ pandasFound = $false; openpyxlFound = $false; file = $condaReqPath }
+$translationDetails = [ordered]@{ pandasFound = $false; openpyxlFound = $false; file = $condaReqPath; fixtureFound = [bool]$fixtureFound }
 $installDetails = [ordered]@{ exitCode = -1; environment = '_envsmoke'; file = $condaReqPath }
-$runtimeDetails = [ordered]@{ exitCode = -1; outExists = $false; outPath = $outPath }
+$runtimeDetails = [ordered]@{ exitCode = -1; outExists = $false; outPath = $outPath; fixtureFound = [bool]$fixtureFound }
 
 $condaInfo = Get-CondaBatPath
 $condaBat = $condaInfo.path

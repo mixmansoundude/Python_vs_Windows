@@ -887,6 +887,28 @@ self.longpath.near.at
 self.longpath.near.over
 ```
 
+## selfapps-example-apps NDJSON rows (selfapps_example_apps.ps1, real lane only, gating)
+
+CLAUDE.md Item 74 (README REQ-001.1). `tests/fixtures/examples/` holds four small example programs a person can drop next
+to `run_setup.bat`: `stdlib_single` (`solo.py`), `multifile_sibling` (`main.py` imports `helper.py`), `gui_exits` (a
+tkinter window that closes itself after half a second) and `pandas_excel` (`app.py` plus `requirements.txt`, read by the
+conda-full `selfapps_pandas_excel.ps1`). This script copies the first three, one at a time, into
+`tests\~selftest_example_<name>` with a copy of the bootstrapper and starts it with no argument and no skip hook (only
+the skip variables a leaked environment could carry are cleared, `HP_CI_LANE` stays so prompts resolve), so the whole
+default path runs. A row passes only when every named detail holds: `fixtureFound` (the folder exists with the expected
+number of `.py` files), `timedOut` false (a run is stopped after 25 minutes), bootstrapper exit 0, `statusState` `ok`, an
+EXE in `dist`, `entrySmokeExit0` (the EXE's own verification run), `entryOk` (`Chosen entry:` names the expected file, so
+`main.py` and not `helper.py` for the two-file app), `fileCountOk` (`Python file count: N`) and `outputOk` (the program's
+own line is in `~run.out.txt`, the stdout of that verification run). `uvUsed`, `errorLines` and `runOutTail` are
+information for a red row. A missing fixture folder fails the row with `error` naming it. The two-file row is the
+realistic regression guard for Item 88 (a sibling module must not be installed as a dependency). Skips on non-Windows.
+
+```
+self.examples.stdlib_single
+self.examples.multifile_sibling
+self.examples.gui_exits
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to

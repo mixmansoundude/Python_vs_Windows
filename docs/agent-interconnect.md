@@ -798,6 +798,23 @@ downloaded uv. `PVW_UV_EXE` (a super-user override) would also break it, but CI 
 - `selfapps_pandas_excel.ps1`: wired to `conda-full` only in CI; its own `skip=true` guard is
   defensive dead code under current wiring.
 
+### Example apps (`tests/fixtures/examples`, Item 74): files the scenarios read, not generate
+
+**Touch an example file, `selfapps_example_apps.ps1`, `selfapps_pandas_excel.ps1` or `tests/test_example_fixtures.py`,
+must understand the others.** The four example programs are plain files a person can copy next to `run_setup.bat`
+(`README.txt` in the folder says how). Two scripts read them: `selfapps_example_apps.ps1` (real lane, gating) runs
+`stdlib_single`, `multifile_sibling` and `gui_exits` through the whole default path and compares the verification run's
+stdout (`~run.out.txt`) with the line each script passes as `-Expect`, so changing what a fixture prints means changing
+that string in the same commit; `selfapps_pandas_excel.ps1` (conda-full) copies `pandas_excel`'s `app.py` and
+`requirements.txt`. The unit test pins each folder's exact file list (a stray file changes the `Python file count` the
+scenarios assert), ASCII, in-memory compile, imports limited to stdlib / sibling files / declared packages, and the
+places that read the folder, so a scenario cannot drift back to an inline copy. A new example app needs an entry in
+`APPS`, a mention in `README.txt` and a reader. Not yet moved to the folder: the inline apps of other scripts, because
+most are stand-ins for a failure (`selfapps_gui_timeout_hint.ps1`'s `time.sleep(600)`), not examples, and
+`selfapps_single.ps1`'s `solo.py`, which that script never reaches in CI (it skips unless the repo root reports exactly
+one `.py`; `self.examples.stdlib_single` runs the same program for real). `selfapps_realapp_pandas_excel.ps1` (Item 75)
+writes its app inline; extracting it is a follow-up.
+
 ### uv Coverage Status
 
 Covered: `self.contract.uv`/`.pyver`/`.pyver.range`/`.pyver.exactpin` (contract-uv lane -- pyver
