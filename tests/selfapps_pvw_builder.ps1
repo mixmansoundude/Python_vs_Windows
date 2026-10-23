@@ -19,9 +19,11 @@
 #                          installed nor run (no EXE, no "PyInstaller produced" line, the "not installed for
 #                          this run" line is logged) and the failure is reported with reason=builder_nuitka.
 #   nuitka_stale         - PVW_BUILDER=nuitka with the Nuitka build forced to fail while a dist\<env>.exe from an
-#                          earlier run is lying there (seeded, a text file so it can never be mistaken for a build). The
-#                          failed fallback must not leave that old EXE to be verified in place of the current sources: the
-#                          file is removed and the verification run goes through the interpreter, as the log says.
+#                          earlier run is lying there (seeded as a copy of hostname.exe: a real, harmless program that
+#                          exits 0, so a run that verifies it looks like a passing build, which is the false green this
+#                          guards against). The failed fallback must not leave that old EXE to be verified in place of
+#                          the current sources: the file is removed and the verification run goes through the
+#                          interpreter, as the log says.
 #   both_forcefail       - PVW_BUILDER=both with the optimized build forced to fail: the standard build is
 #                          verified first, the optimized build starts without a prompt, and its failure leaves
 #                          the verified EXE untouched.
@@ -104,14 +106,16 @@ $envLeaf  = Split-Path $workDir -Leaf
 $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $envName) { $envName = '_env' }
 
-# nuitka_stale and pyinstaller_nofallback: an EXE from an earlier run, in the place the bootstrapper builds into. A text file on purpose: whatever
-# the run does with it, it cannot pass for a build of this program.
+# nuitka_stale and pyinstaller_nofallback: an EXE from an earlier run, in the place the bootstrapper builds into. A copy
+# of hostname.exe: it is a real program that exits 0, so if the run ever starts it, the verification looks like a pass,
+# which is the false green being guarded against. (A text file named .exe was the first version; it made the first red
+# run sit on the smoke-runner step for over ten minutes, which proves nothing about this bug.)
 $staleSeedPath = Join-Path $workDir "dist\$envName.exe"
 $staleSeeded   = $false
 if ($scenario -eq 'nuitka_stale' -or $scenario -eq 'pyinstaller_nofallback') {
     New-Item -ItemType Directory -Force -Path (Join-Path $workDir 'dist') | Out-Null
-    Set-Content -LiteralPath $staleSeedPath -Value 'stale-exe-from-an-earlier-run' -Encoding Ascii
-    $staleSeeded = Test-Path -LiteralPath $staleSeedPath
+    Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\hostname.exe') -Destination $staleSeedPath -Force
+    $staleSeeded = (Test-Path -LiteralPath $staleSeedPath) -and ((Get-Item -LiteralPath $staleSeedPath).Length -gt 0)
 }
 
 $pass = $false
