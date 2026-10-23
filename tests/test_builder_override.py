@@ -63,15 +63,16 @@ def test_fallback_guard_comes_before_the_nuitka_install():
 def test_stale_exe_is_removed_before_anything_in_the_fallback_can_fail():
     # A dist\\<env>.exe left from an earlier run survives every early return of :try_nuitka_tier_a if the delete sits
     # after them, and the verification run then starts that OLD program while the log says the code is verified
-    # through Python (CodeRabbit on PR 499). The delete must follow the pyinstaller guard (which leaves everything
-    # untouched, nothing is built) and precede the forced-failure hook and the Nuitka install.
+    # through Python (CodeRabbit on PR 499). The delete is the first statement: the pyinstaller choice returns failure
+    # from the guard right after a failed PyInstaller build, and that build can leave the old EXE in place too.
     body = _between("try_nuitka_tier_a", "die")
-    guard = body.find('if /I "%HP_BUILDER%"=="pyinstaller"')
     delete = body.find('if exist "dist\\%ENVNAME%.exe" del "dist\\%ENVNAME%.exe"')
+    guard = body.find('if /I "%HP_BUILDER%"=="pyinstaller"')
     hook = body.find("if defined HP_TEST_FORCE_NUITKA_FAIL")
     install = body.find("-q nuitka")
     assert min(guard, delete, hook, install) != -1
-    assert guard < delete < hook < install, "the stale EXE must be removed right after the pyinstaller guard"
+    assert delete < guard < hook < install, "the stale EXE must be removed before the pyinstaller guard and everything after it"
+    assert body.count('del "dist\\%ENVNAME%.exe"') == 1, "the old delete between the install and the build must move, not be copied"
 
 
 def test_system_build_prompt_names_the_selected_tool():

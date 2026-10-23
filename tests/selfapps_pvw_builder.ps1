@@ -11,7 +11,8 @@
 #                          Both build tools are forced to fail, so no real build.
 #   pyinstaller_nofallback - PVW_BUILDER=PyInstaller (mixed case, proves case-insensitive) with the PyInstaller
 #                          build forced to fail: the Nuitka fallback is switched off, so it is never attempted
-#                          (the forced-Nuitka-failure hook is never reached) and the failure is reported.
+#                          (the forced-Nuitka-failure hook is never reached) and the failure is reported. A dist\<env>.exe
+#                          from an earlier run is seeded here too (see nuitka_stale) and must be gone afterwards.
 #   pyinstaller          - PVW_BUILDER=pyinstaller, a real PyInstaller build succeeds: the optimized-build
 #                          offer is not shown at all (the user asked for PyInstaller only).
 #   nuitka_forcefail     - PVW_BUILDER=nuitka with the Nuitka build forced to fail: PyInstaller is neither
@@ -103,11 +104,11 @@ $envLeaf  = Split-Path $workDir -Leaf
 $envName  = ($envLeaf -replace '[^A-Za-z0-9_-]', '_')
 if (-not $envName) { $envName = '_env' }
 
-# nuitka_stale: an EXE from an earlier run, in the place the bootstrapper builds into. A text file on purpose: whatever
+# nuitka_stale and pyinstaller_nofallback: an EXE from an earlier run, in the place the bootstrapper builds into. A text file on purpose: whatever
 # the run does with it, it cannot pass for a build of this program.
 $staleSeedPath = Join-Path $workDir "dist\$envName.exe"
 $staleSeeded   = $false
-if ($scenario -eq 'nuitka_stale') {
+if ($scenario -eq 'nuitka_stale' -or $scenario -eq 'pyinstaller_nofallback') {
     New-Item -ItemType Directory -Force -Path (Join-Path $workDir 'dist') | Out-Null
     Set-Content -LiteralPath $staleSeedPath -Value 'stale-exe-from-an-earlier-run' -Encoding Ascii
     $staleSeeded = Test-Path -LiteralPath $staleSeedPath
@@ -186,9 +187,10 @@ try {
         'pyinstaller_nofallback' {
             $switchedOff = Has 'PVW_BUILDER=pyinstaller: the fallback build system is switched off'
             $reasonOk    = Has 'reason=test_forced_fail'
-            $pass = $overrideLogged -and $switchedOff -and (-not $fallbackTried) -and (-not $nuitkaHookFired) -and $reasonOk -and (-not $exeExists) -and ($statusState -eq 'error')
-            $details.switchedOff = $switchedOff; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk
-            $desc = 'PVW_BUILDER=pyinstaller: a PyInstaller failure is reported and the Nuitka fallback is never attempted'
+            $ranViaExe   = Has 'smoke test via packaged EXE'
+            $pass = $staleSeeded -and $overrideLogged -and $switchedOff -and (-not $fallbackTried) -and (-not $nuitkaHookFired) -and $reasonOk -and (-not $exeExists) -and (-not $ranViaExe) -and ($statusState -eq 'error')
+            $details.staleSeeded = [bool]$staleSeeded; $details.switchedOff = $switchedOff; $details.nuitkaHookFired = $nuitkaHookFired; $details.reasonOk = $reasonOk; $details.ranViaExe = $ranViaExe
+            $desc = 'PVW_BUILDER=pyinstaller: a PyInstaller failure is reported, the Nuitka fallback is never attempted, and an EXE left by an earlier run is not verified in its place'
         }
         'pyinstaller' {
             $optOffer = Has 'Optimized build:'

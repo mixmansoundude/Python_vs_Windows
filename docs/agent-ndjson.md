@@ -597,7 +597,7 @@ Item 71: the `PVW_BUILDER=auto|pyinstaller|nuitka|both` super-user override (see
 every scenario sets it and asserts a decision the default run would not make. Gating, deterministic
 (`PVW_BUILDER_SCENARIO`): `invalid` (an unknown value full of cmd syntax warns once, is not echoed or acted on,
 behaves as auto),
-`pyinstaller_nofallback` (Nuitka fallback switched off, never reached), `pyinstaller` (a real build is
+`pyinstaller_nofallback` (Nuitka fallback switched off, never reached, and an EXE left by an earlier run is removed), `pyinstaller` (a real build is
 kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller is neither installed nor run,
 failure reported with `reason=builder_nuitka`), `nuitka_stale` (a `dist\<env>.exe` left by an earlier run is removed
 by a failed Nuitka-only build, so the verification run goes through the interpreter as the log says), `both_forcefail` (the optimized build starts without a prompt
