@@ -50,8 +50,9 @@ chat one at a time; the later ones wait their turn.
    Dependabot show an error or a last-checked time for `github-actions`? (A) If it is off, switch it on and the first
    pull requests arrive within a week; each is read in CI like any other. (B) If it is on and shows an error, paste the
    error (it names no secret) and the cause gets fixed in `dependabot.yml`. (C) If you would rather not run
-   Dependabot, say so and a backlog item bumps the pins by hand, one action per pull request. Default meanwhile: no
-   pin edits; the runner already forces the Node.js 20 actions onto Node.js 24, so old majors keep working.
+   Dependabot, say so and a backlog item bumps the pins by hand, one action per pull request. Default meanwhile: the
+   pins are bumped by hand, one action per pull request (CLAUDE.md Item 90, started with `codeql-action`), which is
+   what C would do anyway; the runner forces the Node.js 20 actions onto Node.js 24, so nothing is urgent.
 
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 
