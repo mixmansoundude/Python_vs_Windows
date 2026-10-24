@@ -219,7 +219,9 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   on `40084563527`, so it is intermittent), which would show a beginner an error after a double-click during a first
   unpack, and a new build over a running old one fails every time. **Trigger to thaw**: the uv-lane row `self.nuitka.cachesafety`
   reports `adoptable` true in several consecutive runs (three clean cold rounds and a clean update-while-running
-  scenario), or a Nuitka release says cold or concurrent onefile launches are serialized. Then rebuild the shape the
+  scenario), and only that. A Nuitka release note saying cold or concurrent onefile launches are serialized is a reason
+  to read the next rows, not a trigger: it says nothing about replacing a build whose old copy is still running.
+  Then rebuild the shape the
   closed-backlog entry describes (per-app token, fail open, folder named in words in the log, README Known
   Limitations saying the folder lives in the user's profile and stays after the app is deleted) and delete the guard
   in `tests/test_nuitka_cachesafety.py`'s `RunSetupStaysFlagFree`. Do not re-adopt on the 3.7x number alone.

@@ -3804,7 +3804,10 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `self.nuitka.cachesafety` was red. With the folder cold, three simultaneous launches ended `[0, 2, 0]`, the failing
   one printing `failed to open '...\PVW\safety-...\vcruntime140_1.dll' for writing` (the launch that arrives second
   tries to write a file the first has already loaded). It is intermittent: two of nine cold launches failed on run
-  `40066145187` and none of nine on `40084563527`; building a new copy over a running old one exited 2 on both. Warm concurrent launches, an overlapping launch, five launches
+  `40066145187` and none of nine on `40084563527`; building a new copy over a running old one exited 2 on both, and the follow-up launch
+  after the old build was stopped (`updateAfterOldGoneOk`) failed on `40066145187` with the same
+  `failed to open ... safety.exe` message and passed on `40084563527` with the stop confirmed, so read it together with
+  `updateOldStopConfirmed`. Warm concurrent launches, an overlapping launch, five launches
   killed mid-unpack (each followed by a normal launch) and a normal launch after the failed cold race all passed.
   A beginner who double-clicks twice during a first unpack would see an error where today a second copy simply starts,
   so `run_setup.bat` keeps its two Nuitka lines without the flag; the subroutine and the `self.nuitka.cachespec` row

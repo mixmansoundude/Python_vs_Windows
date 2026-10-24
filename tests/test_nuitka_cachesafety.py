@@ -114,7 +114,7 @@ def script_problems(script_text):
     if adopt is None:
         found.append("the script has no $dSafe.adoptable = [bool](...) statement")
     else:
-        for needed in ("safePass", "coldConcurrentOk", "updateWhileRunningOk"):
+        for needed in ("safePass", "coldConcurrentOk", "updateWhileRunningTested", "updateWhileRunningOk"):
             if needed not in adopt:
                 found.append("adoptable does not require %s" % needed)
     return found
@@ -182,7 +182,7 @@ $safePass = [bool]($dSafe.nuitkaUsable -and $built -and $dSafe.baselineOk -and
                    $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1) -and
                    ($dSafe.coldUnexpectedFailures -eq 0))
 $dSafe.updateWhileRunningTested = [bool]$dSafe.updateOldStillRunningAfter
-$dSafe.adoptable = [bool]($safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningOk)
+$dSafe.adoptable = [bool]($safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningTested -and $dSafe.updateWhileRunningOk)
 $measured = [bool]($dSafe.nuitkaUsable -and $built)
 $dSafe.inconclusive = (-not $measured)
 $rowPass = [bool]((-not $measured) -or $safePass)
@@ -299,8 +299,15 @@ class ScriptRules(unittest.TestCase):
         self.assertTrue(any("recorded finding" in p for p in script_problems(bad)))
 
     def test_adoptable_without_the_cold_result_is_caught(self):
-        bad = GOOD_SCRIPT.replace("$safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningOk", "$safePass")
+        bad = GOOD_SCRIPT.replace("$safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningTested -and $dSafe.updateWhileRunningOk", "$safePass")
         self.assertTrue(any("adoptable does not require" in p for p in script_problems(bad)))
+
+    def test_adoptable_without_the_overlap_result_is_caught(self):
+        bad = GOOD_SCRIPT.replace(
+            "$safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningTested -and $dSafe.updateWhileRunningOk",
+            "$safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningOk",
+        )
+        self.assertTrue(any("adoptable does not require updateWhileRunningTested" in p for p in script_problems(bad)))
 
 
 class StepAndDocs(unittest.TestCase):
