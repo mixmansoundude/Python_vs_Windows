@@ -947,6 +947,37 @@ self.unlaunchable.smoke_stub
 self.unlaunchable.fastpath_stub
 ```
 
+## selfapps-embed-version NDJSON rows (selfapps_embed_version.ps1, real lane only, gating)
+
+README REQ-009 Tier 5. The embed tier always downloads the table's newest minor first; when `runtime.txt` asks for another
+minor, `~embed_pyver_check.py` downloads it into `~embed_python_swap` and the batch swaps it into `~embed_python` (`rd`,
+then `move`, guarded because a directory `move` onto an existing folder nests). That swap was recorded as "NOT
+CI-confirmed" in `docs/agent-interconnect.md` because the older embed rows never request a version, and a failed swap is
+quiet by design (the helper exits 1, the batch keeps the interpreter it has), so each scenario judges by the version the
+program really runs under. Each scenario is a real bootstrapper run (conda forced to fail, offline mode on, the embed
+download let through) of `import sys; print("embed-version-ok %d.%d" % sys.version_info[:2])` under a 30-minute watchdog in
+`tests\~selftest_embed_ver_<name>`. The expected minors are read from `tools/embed_pyver_check.py` (`LATEST_MINOR`,
+`FLOOR_MINOR`, `EMBED_PYTHON_TABLE`), so a table refresh needs no change here; the rows fail (`tableOk` false) if 3.12 ever
+leaves the table or becomes the newest or oldest minor, because the swap scenario would then prove nothing. `swap`
+(`runtime.txt` asks for 3.12): the log says `swapped to requested Python`, no WARN, the line in `~run.out.txt` and the
+interpreter in `~embed_python` (asked directly) both say 3.12, exactly one `python3NN.dll` (the requested one) is there, no
+`~embed_python_swap` is left and nothing is nested inside `~embed_python`. `floor` (`python-3.9`, below the table): the WARN
+`requested Python not in embed table` names the floor minor and the program runs under it. `ceiling` (`python-3.99`): the
+WARN names the newest minor, no swap download happens and the program runs under the newest minor. `range` (`pyproject.toml`
+with `requires-python = ">=3.11,<3.13"`, no `runtime.txt`): the newest minor the range allows (3.12) is swapped in, not the
+range's lower bound. Every scenario also requires the log line `embed fallback: a Python version request was found in this
+folder.`: the first run of these rows (PR #507, run `40074772192`) showed all of them red with the program under the newest
+minor and no WARN, because a chain with neither uv nor Miniconda reaches the embed tier before `~detect_python.py` has run, so
+the tier saw no request; it now runs that helper under its own fresh interpreter. Skips on non-Windows and under
+`HP_FORCE_CONDA_ONLY=1`.
+
+```
+self.embed.version.swap
+self.embed.version.floor
+self.embed.version.ceiling
+self.embed.version.range
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to

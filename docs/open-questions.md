@@ -54,6 +54,21 @@ chat one at a time; the later ones wait their turn.
    non-interactive run declines and `both` only builds the optimized EXE when someone answers. Default meanwhile: no code
    change; README REQ-009.20 carries a note pointing here. A is reversible and is what gets written on a yes.
 
+## From the October 2026 maintenance scan (CLAUDE.md "Periodic Maintenance Checks", filed 2026-10-24)
+
+5. **Dependabot has never opened a pull request here, while six of the nine pinned GitHub Actions are one to two
+   majors behind.** `.github/dependabot.yml` (the `github-actions` ecosystem, weekly) was added 2026-08-17. Since then no
+   pull request and no `dependabot/*` branch has existed, but the pins in `.github/workflows/*.yml` are behind
+   (`checkout` v5 against v7, `cache` v5 against v6, `upload-artifact` v6 against v7, `download-artifact` v6 against
+   v8, `github-script` v8 against v9, `codeql-action` v3 against v4), so Dependabot should have had something to
+   propose. A session cannot read the repository settings that say why. On github.com, under Settings, Code security
+   (or Advanced Security), is "Dependabot version updates" switched on, and does Insights, Dependency graph,
+   Dependabot show an error or a last-checked time for `github-actions`? (A) If it is off, switch it on and the first
+   pull requests arrive within a week; each is read in CI like any other. (B) If it is on and shows an error, paste the
+   error (it names no secret) and the cause gets fixed in `dependabot.yml`. (C) If you would rather not run
+   Dependabot, say so and a backlog item bumps the pins by hand, one action per pull request. Default meanwhile: no
+   pin edits; the runner already forces the Node.js 20 actions onto Node.js 24, so old majors keep working.
+
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 
 Each question names the backlog item it blocks and the default an implementing agent should use

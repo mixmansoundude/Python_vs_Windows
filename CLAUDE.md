@@ -80,6 +80,7 @@ tests/
   selfapps_example_apps.ps1    Item 74: three curated example apps from fixtures/examples (stdlib only, two files with a sibling import, a tkinter window that closes itself) run through the bootstrapper with no skip hook (real lane, gating)
   fixtures/examples/           Item 74: the curated example apps a person can drop next to run_setup.bat (README.txt inside); CI scenarios read these files, nothing generates them inline
   selfapps_unlaunchable_exe.ps1 Item 87: a dist\<env>.exe that Windows cannot start (text-file stub) ends the EXE verification run and the fail-fast probe instead of hanging them (real lane, gating, 15-minute watchdog per run; HP_TEST_CORRUPT_BUILT_EXE hook)
+  selfapps_embed_version.ps1   REQ-009 Tier 5: the embed tier honors the Python version a program asks for (runtime.txt 3.12 is swapped in and is what the program runs under; 3.9 runs under the table floor with a WARN; 3.99 runs under the newest minor with a WARN; a pyproject.toml `>=3.11,<3.13` gets 3.12, the newest minor the range allows; four full builds, real lane, gating, 30-minute watchdog per run)
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -311,6 +312,7 @@ Test files and what they cover:
 | `test_example_fixtures.py` | Item 74: the example apps under `tests/fixtures/examples` stay plain examples (exactly the listed files, ASCII, compile in memory, every import is stdlib, a sibling file or a declared package, README.txt names every folder) and the places that read them (`selfapps_example_apps.ps1`, `selfapps_pandas_excel.ps1`, the real-lane workflow step and its artifact paths) cannot move back inline; synthetic trees prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 | `test_autopep_merge.py` | REQ-005.12 / Item 88: autopep723 name extraction, dedup against `requirements.txt`, newline repair, `main()` dispatch, and the local-module filter (sibling `.py` files and folders in any spelling are skipped and logged, ignored and hidden folders are not walked, a real package is still added), HP_AUTOPEP_MERGE payload sync |
+| `test_embed_tier.py` | REQ-009 Tier 5: version-table resolution (floor/ceiling fallback, the newest minor a range allows, the swap download with the network mocked), the batch step that reads the request when no earlier step did, batch `HP_EMBED_LATEST_*` constants equal the table's `LATEST_MINOR` entry, HP_EMBED_EXTRACT / HP_EMBED_PYVER_CHECK payload sync, and static pins for `tests/selfapps_embed_version.ps1` (literal ids, own exit codes, watchdog, real-lane gating step, 3.12 strictly inside the table); synthetic cases prove each rule can fail |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
@@ -763,7 +765,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 73, 74, 75, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 73, 74, 75, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -771,13 +773,6 @@ starting any of these. No maintainer decisions are open. Q1-Q11 are decided or r
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-- **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
-  when the run exits 0 (GUI callbacks do this). Slice 1 (name the missing package) is built on PR #487
-  (merged, PR #487; red run `38146234107`, green rows on `real` in runs `38157389535`, `38178273898` and
-  `38878638543`; `HP_RUNTIME_MODULE_SCAN` has little payload room left, see the interconnect doc). Slice 2
-  (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any install, requirements
-  edit, or rebuild; a yes also covers one verification run; a no changes nothing. Slice 2 is built on PR #493
-  (red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with `prompted:false`, nothing else red there).
 - **Item 72 (investigation, three parts)**: (a) the long-build heartbeat is considered and dropped
   (it needs a second process or a new helper that owns the Nuitka process, and Item 68's wording already
   tells the user to expect a long quiet step and where the log is); (c) the observed hour and the
@@ -790,28 +785,6 @@ the original symptom (see that doc's "CI-first testing policy").
   Open: decide whether to add the flag to the two Nuitka command lines (`:try_nuitka_tier_a`,
   `:offer_optimized_build`), (PR #499 has merged, so the lines are free); a shared cache path also needs a per-app folder name
   so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.
-
-### Item 79: TOML reading hygiene (filed 2026-10-09 from a planning brainstorm, not from the field report)
-
-- **Item 79 (low priority, three test-first slices, one per PR; plan and evidence in
-  `docs/plan-toml-reading-hygiene.md`)**: the PEP 723 reader and the pyproject fallback are two
-  hand-written TOML array walkers that have drifted apart, and `detect_python.py` reads
-  `requires-python` with an unscoped regex. Two live bugs, both reproduced: the pyproject
-  fallback (Python below 3.11) keeps backslashes in escaped markers and accepts an unclosed
-  array; `detect_python.py` matches a commented-out `requires-python` line and one under another
-  table. Slices: (1) oracle tests, tomllib as the oracle for both walkers over a PEP 508 corpus
-  plus a uv-lane row that round-trips a corpus written by real `uv add --script`; (2) port the
-  extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
-  `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
-  dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
-  **In progress (PR #500, all three slices in one PR by the bundle rule: slice 2 and 3 touch disjoint
-  files and slice 1's tests are slice 2's red tests)**: red tests first (`tests/test_toml_oracle.py`,
-  `tests/toml_oracle_check.py`, the `RequiresPythonTomlScope` class, the flipped pyproj test), then
-  `pyproj_deps.py` (escapes decoded, unclosed array exits 2, `HP_PYPROJ_DEPS` margin 198 to 2826) and
-  `detect_python.py` (tomllib, pattern kept for unparseable TOML, `HP_DETECT_PY` margin 520). Row
-  `self.toml.uvcorpus` is non-gating (needs the network). Detail: `docs/agent-interconnect.md`.
-  Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
-  as a Python-version input) are in `docs/agent-cold-storage.md`.
 
 ### Item 80: Nuitka does not support the Python that uv now provisions (filed 2026-10-10 from reading PR #476's CI run)
 
@@ -870,108 +843,139 @@ rather than relying on manual memory.
 
 ### GitHub Actions / CI health (action pins, deprecations, lint)
 
-- **Last scanned**: 2026-07-07.
-- **Findings**: all action pins across `.github/workflows/*.yml` are on their latest majors
-  (`checkout@v5`, `cache@v5`, `upload-artifact@v6`, `download-artifact@v6`, `github-script@v8`,
-  `codeql-action@v3`, `configure-pages@v6`, `upload-pages-artifact@v5`, `deploy-pages@v5`) --
-  nothing to bump. Two informational, non-actionable GitHub-runner-side/action-internal notices
-  observed in CI logs, neither with any fix available on this repo's side: (1) "Node.js 20 is
-  deprecated... forced to run on Node.js 24" against `download-artifact@v6` (already latest --
-  upstream runner behavior); (2) a Node `[DEP0040] DeprecationWarning: The punycode module is
-  deprecated` emitted from inside `actions/deploy-pages@v5`'s own bundled JS during the "Publish
-  diagnostics to Pages" job -- originates inside the action's own execution, not this repo's
-  code, and resolves whenever the action's maintainers update their bundled dependencies.
-  `actionlint` and `yamllint` both clean. `.github/dependabot.yml` now exists (`github-actions`
-  ecosystem, weekly schedule) -- see Closed Backlog.
-- **Going forward**: confirm Dependabot is actually opening PRs against the `github-actions`
-  ecosystem (not just present but inert) at the next scan.
+- **Last scanned**: 2026-10-24.
+- **Findings**: the pins are no longer all on their latest majors (the 2026-07 sweep said they
+  were; `upload-artifact` v7 shipped in 2026-02, so that sweep may already have been wrong). Read
+  from each action's GitHub releases page (the page shows day and month, no year, so read these as
+  indicative): in use -> latest: `checkout` v5 -> v7, `cache` v5 -> v6, `upload-artifact` v6 -> v7,
+  `download-artifact` v6 -> v8, `github-script` v8 -> v9, `codeql-action` v3 -> v4 (v3 still gets
+  releases next to v4). Current: `configure-pages@v6`, `upload-pages-artifact@v5`,
+  `deploy-pages@v5`. No pin was edited in this scan: the artifact actions' majors change behavior
+  CI relies on (artifact naming, `merge-multiple`, hash checks), so each bump is its own CI-proven
+  PR, one action at a time. **Dependabot is inert**: `.github/dependabot.yml` landed 2026-08-17 and
+  not one Dependabot PR or `dependabot/*` branch has existed since (every PR checked by author and
+  head branch). The reason is not visible from a session (repository settings), so it is
+  `docs/open-questions.md` Q5. Notices unchanged: "Node.js 20 is deprecated ... forced to run on
+  Node.js 24" against `download-artifact@v6` (now also explained by the pin being behind); the
+  punycode notice was not seen in the sampled run. `actionlint` and `yamllint` clean.
+- **Going forward**: once Q5 is answered, either Dependabot's first PRs arrive or the pins are
+  bumped by hand. Re-read the latest majors every scan: from a session `gh` and `curl` cannot reach
+  other repositories, but `WebFetch` of `https://github.com/<owner>/<repo>/releases` works.
 
 ### Persisted CI run-page warnings
 
-- **Last scanned**: 2026-07-06.
-- **Findings**: reviewed the latest completed runs (through run #1523); no warnings recur across
-  multiple runs beyond the Node.js-20-deprecation notice already covered above.
+- **Last scanned**: 2026-10-24.
+- **Findings**: annotations of every job of the latest full `main` run (40055643200). (1) NEW on
+  all seven Windows matrix jobs: `Environment variable 'INPUT_PATH' exceeds the maximum supported
+  length` (53197 against 32766): the `test-logs` upload step's `path:` list, about 55k characters
+  today and two lines per file. Nothing is lost today: 160 of the 233 forward-slash patterns that
+  sit past character 32766 matched files in the `real` lane's `test-logs` artifact (the rest are
+  scenario-specific). If a late scenario's log ever goes missing from an artifact, suspect this
+  first, and prefer one directory pattern per scenario over per-file lines before the list doubles.
+  (2) Benign by design, shown as red "failure" annotations: the aggregate-verdict fixtures
+  (`expected lane(s) never reported a verdict`, `bogus-lane`) and the cache self-heal fixtures
+  (`Conda binary health check failed`) on the `real` job, and `Artifact not found for name:
+  iterate-logs-...` in "Publish diagnostics to Pages" (a `continue-on-error` download when the
+  model quick-fix did not run). (3) The `ubuntu-latest will migrate to Ubuntu 26` notice on the
+  Linux jobs: informational, but a Linux job that breaks in the next weeks should be checked
+  against it first.
 - **Going forward**: look for anything recurring across several runs, not one-off transient
   network blips (e.g. the `conda.anaconda.org` 403 already tracked separately as the
   conda-create transient-retry gap above).
 
 ### CI lane gating maturity
 
-- **Last scanned**: 2026-07-08 (added `ndjson-registry-check` to the watch list; see below).
-- **Findings**: only `real` and `conda-full` gate PR merges; `cache`, `justme-test`, `uv`,
-  `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` are deliberately non-gating (see AGENTS.md
-  policy and this file's Closed-Backlog history for why each was made so) -- not a bug. The
-  `ndjson-registry-check` job (a separate advisory job, not a matrix lane) is also
-  `continue-on-error: true` -- as of run #1555 it shows a clean PASS in real CI for the first
-  time after its Python-source-scanning gap closed (see Closed Backlog), but is being watched
-  for soak time before any gating discussion, same as the two lanes below.
-- **Going forward**: `uv` and `justme-test` are the two most mature/stable of the six non-gating
-  lanes -- re-assess each scan whether either has soaked long enough (no flakiness, no
-  lane-specific caveats left) to graduate to gating. Leave `contract-uv`/`contract-uv-fail`/
-  `uv-dl-fallback` non-gating indefinitely (their non-gating status is explicitly load-bearing,
-  not provisional). `ndjson-registry-check` needs several more real-CI runs at clean PASS before
-  even considering gating -- one green run is not a trend.
+- **Last scanned**: 2026-10-24.
+- **Findings**: policy unchanged: only `real` and `conda-full` gate PR merges on their own;
+  `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` are
+  non-gating (see AGENTS.md and the Closed Backlog for why each was made so). Evidence for Item
+  35's soak rule: on the 11 most recent `main` push runs (2026-10-17 to 2026-10-24, run
+  38985194530 through 40055643200) the aggregate step succeeded and "Enforce aggregate self-test
+  verdict" was `skipped` every time, i.e. eleven consecutive complete matrices with no failing row
+  on any of the eight lanes by the aggregate's own verdict, and `ndjson-registry-check` succeeded
+  on all eleven. That is the "several consecutive complete green matrices" Item 35 asks for before
+  removing `continue-on-error: true` from the aggregate gate; it is a one-line change in a step
+  that belongs to the merge-gate owner, not made in this scan.
+- **Going forward**: `uv` is the slowest lane (see the wall-clock entry) and its rows depend on the
+  network (uv, Miniconda, python.org downloads), so a required check of its own would add flake
+  risk the aggregate gate already covers; do not promote it separately. Leave
+  `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` non-gating indefinitely (their non-gating
+  status is explicitly load-bearing, not provisional). `ndjson-registry-check` has now had a long
+  clean run; gate it only after the aggregate gate is, one change at a time.
 
-### CI wall-clock duration (conda-full lane growth)
+### CI wall-clock duration (slowest-lane growth)
 
 This tracks a genuine periodic-reassessment concern, not a one-time backlog item -- moved here
 2026-07-25 from Active Backlog (it was originally filed as a backlog item, but "worth periodic
 reassessment, no action planned" is exactly what this section exists for, and letting it grow
 stale as a single never-closed backlog entry was the wrong home for it).
 
-**What this tracks and why it matters**: `conda-full` (the lane that forces every dependency
-install through real conda, no fallbacks -- the slowest of the 8 matrix lanes, since conda's own
-dependency solver is materially slower than pip/uv) is the dominant single contributor to overall
-CI wall-clock time, which grew from ~20 min to ~1.5h historically. Since all 8 matrix lanes run in
-parallel, the WHOLE workflow's wall-clock is bounded by whichever lane is slowest -- almost always
-`conda-full` -- so this lane's own growth directly sets how long every contributor waits for a PR
-to go green. This matters for development velocity (a slower feedback loop costs real time on
-every single PR), not correctness -- nothing about the lane itself is broken.
+**What this tracks and why it matters**: all 8 matrix lanes run in parallel, so the WHOLE
+workflow's wall-clock is bounded by whichever lane is slowest, and that lane's growth directly sets
+how long every contributor waits for a PR to go green (development velocity, not correctness --
+nothing about the lanes is broken). Through 2026-07 that lane was `conda-full` (real conda solves
+are slower than pip/uv); as of 2026-10-24 it is `uv`.
 
-- **Last scanned**: 2026-07-25. Pulled created/updated timestamps for the 18 most recent
-  successful full-workflow runs on this branch via the GitHub API (`workflow_runs` list) --
-  overall wall-clock ranged 85-110 minutes, averaging ~92 minutes, consistent with the original
-  ~80 min observation and not showing runaway growth since. No single-lane breakdown gathered yet
-  (would need per-job, not per-run, timestamps to isolate `conda-full` specifically from the
-  other 7 lanes running alongside it).
-- **Findings**: likely accumulated feature/test-scenario growth over time (more selftest scripts
-  each doing a real `conda create`/`conda install`), not a regression traceable to any single
-  change -- no evidence of a single fixable root cause has surfaced across multiple scans.
-- **Going forward**: re-check the same 18-run wall-clock sample each scan; flag if the average
-  climbs meaningfully above ~92 minutes (would suggest either unchecked growth or an actual
-  regression, not just noise) rather than plateauing. If a real investigation is ever warranted,
-  it needs per-job (not per-run) timestamps to isolate `conda-full`'s own duration from the other
-  7 lanes -- not yet gathered, since no action has been planned either way.
+- **Last scanned**: 2026-10-24. The 18 most recent successful full runs on `main` (2026-10-11 to
+  2026-10-24, `workflow_runs` list, `run_started_at` to `updated_at`): 70-139 minutes, average
+  102 (2026-07-25: 85-110, average 92). Two regimes: 70-93 minutes through the middle of 2026-10-17,
+  125-139 minutes since. Per-job durations (the breakdown the July scan lacked), run 40055643200
+  (125 min): `uv` 122, `real` 97, `conda-full` 56, `justme-test` 37, `cache` 37, `contract-uv-fail`
+  28, `uv-dl-fallback` 27, `contract-uv` 19, Pages publish 2. For comparison, run 39032331726 (91
+  min): `uv` 91, `conda-full` 73, `real` 60.
+- **Findings**: the premise above changed. `conda-full` got faster (73 to 56), `real` grew from 60
+  to 97 minutes (the gating scenarios added to it since 2026-10-11), and `uv` (91 to 122) now sets
+  the wall-clock. Cause is accumulated scenarios on the `uv` lane (many non-gating rows build
+  EXEs, download Miniconda or run Nuitka), not one change. No single fixable root cause found.
+- **Going forward**: re-check the same 18-run sample and the per-job table each scan (`gh api
+  repos/.../actions/runs/<id>/jobs`). A new `real`-lane step only costs wall-clock once `real`
+  passes `uv`'s duration, so add heavy scenarios to the lane with the most headroom; the
+  embed-version scenario (three builds) was added to `real` for that reason in the 2026-10-24
+  scan. Flag if the average climbs above ~110 minutes outside a queueing spike, or if `uv`
+  passes 150 minutes.
 
 ### pipreqs ecosystem status
 
-- **Last scanned**: 2026-07-04.
-- **Findings**: pipreqs (bndr/pipreqs) still stagnant/maintenance-only as of this scan; no new
-  PyPI release since 0.5.0; still correctly pinned to 0.4.13 here (see "pipreqs pin rationale"
-  above); `self.stub.pipreqs_version_fail` (Closed Backlog) confirms the warnfix safety net
-  covers total pipreqs unavailability regardless of the exact failure mode.
+- **Last scanned**: 2026-10-24.
+- **Findings**: pipreqs (bndr/pipreqs) still stagnant/maintenance-only; PyPI's newest release is
+  still 0.5.0 (uploaded 2024-02-18, `Requires-Python >=3.8.1,<3.13`), none since; still correctly
+  pinned to 0.4.13 here (see "pipreqs pin rationale" above); `self.stub.pipreqs_version_fail`
+  (Closed Backlog) confirms the warnfix safety net covers total pipreqs unavailability regardless
+  of the exact failure mode.
 - **Going forward**: check whether pipreqs has a new maintainer/release that changes the
   `<3.13` Requires-Python situation, or whether it's been removed from PyPI (extremely unlikely)
   -- revisit the internalization decision above if either happens.
 - **Next-pin probe** (add to each scan going forward, see "Next-pin probe concept" below for the
   general idea this instantiates): under the CURRENT latest target Python (not an old ambient
-  one -- this matters, see the concept note), run an unpinned `pip install pipreqs` (or
-  `pip index versions pipreqs`) and check whether the resolved version is still 0.4.13. If a
-  newer version resolves cleanly, pipreqs's own `Requires-Python` ceiling has moved -- open a
-  dedicated loop to re-evaluate the pin (do not bump it inline during a routine scan; re-pinning
-  needs its own verification pass, mirroring how the original 0.4.13 pin was chosen).
+  one -- this matters, see the concept note), run an unpinned `python -m pip install --dry-run
+  pipreqs` and check whether the resolved version is still 0.4.13. If a newer version resolves
+  cleanly, pipreqs's own `Requires-Python` ceiling has moved -- open a dedicated loop to
+  re-evaluate the pin (do not bump it inline during a routine scan; re-pinning needs its own
+  verification pass, mirroring how the original 0.4.13 pin was chosen). **Use pip, not uv, for this
+  probe**: on 2026-10-24 `uv pip install --dry-run pipreqs` resolved 0.5.0 under both Python
+  3.13.16 and 3.15.0b4 although its metadata excludes both, so uv cannot answer the question; pip
+  under 3.15.0b4 resolved 0.4.13 (probe result: pin holds). `pip index versions pipreqs` is a valid
+  shortcut only on a Python 3.13 or newer, where it hides 0.5.0 for the same reason.
 
 ### Embed version table (REQ-009 Tier 5, `tools/embed_pyver_check.py`)
 
-- **Last scanned**: 2026-07-10 (entry added this scan; first run of this specific check).
-- **Findings**: `EMBED_PYTHON_TABLE` currently spans 3.10 through 3.14 (`LATEST_MINOR="3.14"`,
-  `FLOOR_MINOR="3.10"`), pinned to patches 3.10.11 / 3.11.9 / 3.12.10 / 3.13.14 / 3.14.6 with
-  embedded SHA256 checksums, last refreshed 2026-07-09 per the file's own header comment. The
-  `"3.14"` entry's patch/sha256 must stay in sync with `HP_EMBED_LATEST_PATCH`/
-  `HP_EMBED_LATEST_SHA256` in `run_setup.bat`; `tests/test_embed_tier.py`'s
-  `BatchPythonConsistency` test enforces this automatically on every CI run, so a stale
-  cross-reference is caught in CI, not just at scan time. No CPython 3.15 has shipped yet as of
-  this scan (3.14 remains current stable), so the table's ceiling is still accurate.
+- **Last scanned**: 2026-10-24.
+- **Findings**: `EMBED_PYTHON_TABLE` now spans 3.10 through 3.15 (`LATEST_MINOR="3.15"`,
+  `FLOOR_MINOR="3.10"`), pinned to patches 3.10.11 / 3.11.9 / 3.12.10 / 3.13.17 / 3.14.9 / 3.15.1.
+  The SHA256 of each new or changed zip was recomputed on 2026-10-24 from a fresh direct download
+  of python.org's `python-<patch>-embed-amd64.zip` (3.15 is new, 3.13 and 3.14 moved to newer
+  patches; 3.10 to 3.12 are unchanged). The `"3.15"` entry's patch/sha256 must stay in sync with
+  `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` in `run_setup.bat`; `tests/test_embed_tier.py`'s
+  `BatchPythonConsistency` test enforces this on every CI run. `FLOOR_MINOR` stays 3.10 for now:
+  python.org's schedule ends 3.10 on 2026-10-31, so advance the floor to 3.11 (and drop the 3.10
+  entry) in the January scan, not before. **The swap path was not reachable before this scan**: the
+  new `self.embed.version.*` rows (`tests/selfapps_embed_version.ps1`, real lane, gating) went red on
+  all three first scenarios with the program under the newest minor and no WARN, because a chain
+  with neither uv nor Miniconda reaches the embed tier before `~detect_python.py` has run (the
+  conda.bat-not-found branch), so `PYSPEC` was empty and `runtime.txt` / `pyproject.toml` were
+  ignored in exactly the case README REQ-009 names for this tier. The tier now runs the helper under
+  its own fresh interpreter, and `embed_pyver_check.py` picks the newest table minor a range
+  allows (it used to take the range's first number, so `>=3.10` swapped down to 3.10).
 - **Going forward**: each scan, check python.org for (a) a new CPython minor release --
   add a table entry and bump `LATEST_MINOR`/`HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256`
   together (re-run `test_embed_tier.py` to confirm the sync); (b) any of the pinned patch
