@@ -78,6 +78,7 @@ self.console.tiering (uv lane only -- selfapps_console_tiering.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
 self.nuitka.launchcache (uv lane only -- selfapps_nuitka_launchcache.ps1; non-gating),
+self.nuitka.cachesafety (uv lane only -- selfapps_nuitka_cachesafety.ps1; non-gating),
 self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
@@ -607,6 +608,30 @@ builds and a possible compiler download.
 
 ```
 self.nuitka.launchcache
+```
+
+## selfapps-nuitka-cachesafety NDJSON rows (selfapps_nuitka_cachesafety.ps1, uv lane only, non-gating)
+
+Item 72 follow-up (closed, the flag was NOT adopted; the numbers are in `docs/agent-closed-backlog.md`). With the
+production Nuitka flag text plus `--onefile-tempdir-spec={CACHE_DIR}/PVW/safety-<token>` (a build independent of
+`run_setup.bat`, whose Nuitka lines carry no such flag), the script launches a `--onefile` EXE that hashes a 100 MB
+data file: baseline, three copies at once with the folder warm, three copies at once with the folder cold (three
+rounds, a normal launch after each), a second and third copy while the first still runs, five launches killed
+mid-unpack each followed by a normal launch, and a NEW build of the same spec started while the old build is still
+running. `pass` means the experiment ran and every check the finding relies on held (build, baseline, warm
+concurrent, overlap, kill recovery with at least one kill landing on a partly unpacked folder, a normal launch after
+every cold round, and `coldUnexpectedFailures` 0, i.e. no cold launch failing for a reason other than
+`failed to open ... for writing`). Nuitka missing from the venv or the safety build not completing is a provider
+problem, not a result: the row is then `pass:true` with `details.inconclusive` true, because the aggregate self-test
+gate (CLAUDE.md Item 35) turns every `pass:false` row in any lane into a red check. The cold rounds
+(`coldConcurrentOk`, `coldFailedLaunches`, `coldConcurrentSample`) and the update scenario (`updateWhileRunningOk`,
+`updateWhileRunningSample`, `updateOldStopConfirmed`, `updateAfterOldGoneOk`) are RECORDED, not asserted.
+`details.adoptable` is true only when `safePass`, `coldConcurrentOk`, `updateWhileRunningTested` and
+`updateWhileRunningOk` all hold; that is the revisit trigger in `docs/agent-cold-storage.md`. Non-gating: two real
+Nuitka builds and a possible compiler download.
+
+```
+self.nuitka.cachesafety
 ```
 
 ## selfapps-optimized-build NDJSON rows (selfapps_optimized_build.ps1, uv lane only, non-gating)

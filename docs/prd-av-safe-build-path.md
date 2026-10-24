@@ -114,7 +114,10 @@ pulled in scipy, pyvisa and black, with the fallback forced by `HP_TEST_FORCE_PY
   keeps the unpacked folder instead. `tests/selfapps_nuitka_launchcache.ps1` (row
   `self.nuitka.launchcache`, uv lane) measures first and later launches of both variants and checks that
   a rebuild with the same spec runs the new code; hosted CI runners usually have real-time protection
-  off (the row records it), so the timings may show less than the field machine did.
+  off (the row records it), so the timings may show less than the field machine did. Result (2026-10-24): the folder
+  makes later launches about 3.7 times faster on a runner, but with the folder cold one of three simultaneous
+  launches exits 2 (`failed to open ... for writing`), so the bootstrapper does not use it; see the closed Item 72
+  entry in `docs/agent-closed-backlog.md` and the revisit trigger in `docs/agent-cold-storage.md`.
 - **Heartbeat during the build: considered and dropped.** A line every few minutes needs either a second
   background process or a new helper that owns the Nuitka process, with its own lifecycle (orphans on
   Ctrl+C, a log read while Nuitka writes it). The plan said to drop it if it got fragile, and the wording
