@@ -1,40 +1,25 @@
-# :run_exe_smokerun's dedicated helper -- the ONLY place in this file family allowed to
-# force-kill (Kill()) the verification run. Unlike ~failfast_probe.ps1 (never kills), this IS
-# the fresh-build verification run: nothing else will confirm this build worked, so an
-# unresponsive process here cannot be trusted to finish by itself.
+# :run_exe_smokerun's helper -- the ONLY place in this file family allowed to force-kill (Kill()) the verification
+# run: nothing else will confirm a fresh build worked, so a silent process here is presumed hung.
 #
-# Item 82 slice 2: when (and only when) Kill() really stops a silent process, this script also
-# writes ~smokerun_killed.txt. Exit -1 alone is not proof of a stop: a failed launch or a program
-# that exits -1 by itself reads the same, and the batch asks the window question only on the marker.
+# Item 82 slice 2: ~smokerun_killed.txt is written when (and only when) Kill() really stops a silent process. Exit -1
+# alone is not proof: a failed launch or a program that exits -1 reads the same.
+# Item 87: when Start() fails (a stub, empty or cut-off EXE), ~launch_failed.txt gets the reason, one line of
+# printable ASCII, the result is -1 and the script returns. Without it the poll loop below never ends.
 #
-# Reads inputs from env vars (same cmd.exe-quoting-hazard-avoidance reasoning as
-# ~failfast_probe.ps1's own header comment): HP_SMOKERUN_EXE is a path to the built EXE (e.g.
-# dist\<env>.exe), CWD-relative. Caller CWD = app root (CLAUDE.md Item 38; see
-# docs/agent-interconnect.md "Single-verification smoke model").
-# HP_SMOKERUN_OUT/ERR default to ~run.out.txt / ~run.err.txt and HP_SMOKERUN_RESULT to
-# ~smokerun_result.txt (CWD-relative); the exit-code result goes to that file, NOT stdout, because
-# the caller runs this script directly so live-teed output reaches the console (see
-# ~failfast_probe.ps1's header). The caller pre-truncates those files. Same live-tee: chunk reads
-# via StreamReader.ReadAsync(char[], int, int), NOT Register-ObjectEvent or ReadLineAsync()
-# (PowerShell/PowerShell#11937, Finding 9, docs/plan-cli-interactive-verification.md).
+# Inputs come from env vars (no cmd.exe quoting hazards): HP_SMOKERUN_EXE is the CWD-relative or absolute EXE path
+# (CWD = app root); HP_SMOKERUN_OUT/ERR default to ~run.out.txt / ~run.err.txt and HP_SMOKERUN_RESULT to
+# ~smokerun_result.txt. The exit code goes to the result file, NOT stdout, because the caller runs this script
+# directly so the live-teed output reaches the console (see ~failfast_probe.ps1). The caller pre-truncates the files.
+# HP_SMOKERUN_ARGS is a full, already-quoted Arguments string (REQ-026), used verbatim.
 #
-# derived requirement (Open Question 1, owner decision 2026-07-24): HP_SMOKERUN_KILL_MS (default
-# 30000, unchanged) is a classification checkpoint, not an unconditional deadline -- Kill() fires
-# only if $sawOutput is still false at killMs (fully silent = presumed hung). Any bytes observed
-# on either stream skips the kill and the wait becomes unbounded, mirroring
-# ~failfast_probe.ps1's philosophy -- see docs/agent-interconnect.md "Activity-aware EXE-smoke
-# kill" for the full rationale/trade-off. Chunk-based (not line-based) reads are what make this
-# actually fire for the canonical `input("prompt")` case -- see Finding 9 in the plan doc above.
+# Chunk reads via StreamReader.ReadAsync(char[], int, int), one in flight per stream: not Register-ObjectEvent or
+# ReadLineAsync (PowerShell/PowerShell#11937, docs/plan-cli-interactive-verification.md Finding 9).
 #
-# This is the canonical source for the HP_EXE_SMOKERUN base64 payload embedded in run_setup.bat.
-# After editing, re-encode and paste it into the `set "HP_EXE_SMOKERUN=..."` line;
-# tests/test_exe_smokerun.py asserts the embedded payload matches this file (CRLF/LF normalized,
-# per the .ps1 PayloadSync convention -- see docs/agent-lessons-learned.md
-# "Embedded Helper Update Workflow").
+# derived requirement: HP_SMOKERUN_KILL_MS (default 30000) is a classification checkpoint, not a deadline: Kill() fires
+# only if no byte was seen on either stream by then, and any output makes the wait unbounded (docs/agent-interconnect.md
+# "Activity-aware EXE-smoke kill").
 #
-# derived requirement ([REQ-026] argv passthrough): HP_SMOKERUN_ARGS, if set, is a full,
-# already-quoted Windows Arguments string (the EXE is self-contained, so no separate entry-file
-# argv is needed here -- just any forwarded extra args). Used verbatim, no re-quoting.
+# Canonical source of the HP_EXE_SMOKERUN payload in run_setup.bat; re-sync with tools/sync_payload.py.
 $exe = $env:HP_SMOKERUN_EXE
 $killMs = 30000
 if ($env:HP_SMOKERUN_KILL_MS) { $killMs = [int]$env:HP_SMOKERUN_KILL_MS }
@@ -54,7 +39,18 @@ $si.RedirectStandardOutput = $true
 $si.RedirectStandardError = $true
 $p = New-Object System.Diagnostics.Process
 $p.StartInfo = $si
-$p.Start() | Out-Null
+try { $p.Start() | Out-Null } catch {
+    $e = $_.Exception
+    if ($e.InnerException) { $e = $e.InnerException }
+    $why = ($e.Message -replace '[^\x20-\x7E]', '?')
+    if ($why.Length -gt 200) { $why = $why.Substring(0, 200) }
+    $why | Set-Content -Path '~launch_failed.txt' -Encoding ASCII
+    Write-Host '[WARN] The program could not be started, so it was not run.'
+    '' | Set-Content -Path $outPath -Encoding ASCII
+    '' | Set-Content -Path $errPath -Encoding ASCII
+    '-1' | Set-Content -Path $resultPath -Encoding ASCII
+    exit 0
+}
 Write-Host "[INFO] Process ID $($p.Id). If it seems stuck: Task Manager > Details tab > find this PID > End Task (this window stays open)."
 
 $outBuf = New-Object System.Text.StringBuilder

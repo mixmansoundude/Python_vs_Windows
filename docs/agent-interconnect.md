@@ -820,6 +820,25 @@ downloaded uv. `PVW_UV_EXE` (a super-user override) would also break it, but CI 
 - `selfapps_pandas_excel.ps1`: wired to `conda-full` only in CI; its own `skip=true` guard is
   defensive dead code under current wiring.
 
+### Example apps (`tests/fixtures/examples`, Item 74): files the scenarios read, not generate
+
+**Touch an example file, `selfapps_example_apps.ps1`, `selfapps_pandas_excel.ps1` or `tests/test_example_fixtures.py`,
+must understand the others.** The four example programs are plain files a person can copy next to `run_setup.bat`
+(`README.txt` in the folder says how). Two scripts read them: `selfapps_example_apps.ps1` (real lane, gating) runs
+`stdlib_single`, `multifile_sibling` and `gui_exits` through the whole default path and compares the verification run's
+stdout (`~run.out.txt`) with the line each script passes as `-Expect`, so changing what a fixture prints means changing
+that string in the same commit (the log line `Chosen entry: <file>` carries the bare file name, not a path, so the entry
+check matches a name with an optional directory in front); `selfapps_pandas_excel.ps1` (conda-full) copies `pandas_excel`'s `app.py` and
+`requirements.txt`. The unit test pins each folder's exact file list (a stray file changes the `Python file count` the
+scenarios assert), ASCII, in-memory compile, imports limited to stdlib / sibling files / declared packages, and the
+places that read the folder, so a scenario cannot drift back to an inline copy. A new example app needs an entry in
+`APPS`, a mention in `README.txt` and a reader. Not yet moved to the folder: the inline apps of other scripts, because
+most are stand-ins for a failure (`selfapps_gui_timeout_hint.ps1`'s `time.sleep(600)`), not examples, and
+`selfapps_single.ps1`'s `solo.py`, which that script never reaches in CI (it skips unless the repo root reports exactly
+one `.py`; `self.examples.stdlib_single` runs the same program for real). `selfapps_realapp_pandas_excel.ps1` (Item 75)
+writes its app inline on purpose (module names no PyPI project uses and a token file as evidence make it a test
+stand-in, not an example for a beginner; decided when Item 74 closed, `docs/agent-closed-backlog.md`).
+
 ### uv Coverage Status
 
 Covered: `self.contract.uv`/`.pyver`/`.pyver.range`/`.pyver.exactpin` (contract-uv lane -- pyver
@@ -1275,7 +1294,7 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
   it from `HP_EXE_EXIT=-1`. Only an explicit Y records `user_confirmed` (state `window_confirmed`); a bare Enter and
   anything else is `window_declined`; an automated run asks nothing (`window_automated`, test
   override `HP_TEST_WINDOWOK_ANSWER`, forced read `HP_TEST_FORCE_INTERACTIVE_WINDOWOK`). It never starts a cascade.
-  `HP_EXE_SMOKERUN` has 377 characters of margin left after the marker write.
+  `HP_EXE_SMOKERUN` has 1093 characters of margin left (Item 87 trimmed its header comment while adding the launch guard).
 - **The error line** comes from `~last_error_line.py` (`HP_LAST_ERROR_LINE`, `tools/last_error_line.py`), run via
   `%HP_PY%` on `~run.err.txt`, and is shown with `type` and appended to `%LOG%` with `type`, never through `:log`
   or an unquoted echo: it can hold `< > & | % ^`. If the helper cannot be emitted (`HP_TEST_FORCE_EMIT_FAIL=
@@ -1291,6 +1310,41 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
   uv lane, non-gating). Item 66 reads the pass type to decide what to remember (see "Provider memory" below).
 - The `[HINT][RUNTIME_MISMATCH]` line in `:exe_smokerun_hints` no longer says "not your environment or
   dependencies", because the offer that can follow suggests exactly that.
+
+## Launch failures (`~launch_failed.txt`, Item 87): three helpers, one marker, one reporter
+
+**Touch `~exe_smokerun.ps1` (`HP_EXE_SMOKERUN`), `~failfast_probe.ps1` (`HP_FAILFAST_PROBE`), `~exe_hint_rerun.ps1`
+(`HP_EXE_HINT_RERUN`), `:run_exe_smokerun`, `:run_failfast_probe` or `:verify_no_exe_interpreter`, must understand
+this.** A file named `dist\<env>.exe` that Windows cannot start (a text file, a zero-byte file, a cut-off copy: an
+interrupted build, an antivirus stub) makes `Process.Start()` throw. The old helpers did not catch it, the process
+object had no process, `-not $p.HasExited` errored and read as true, and the poll loop never ended. All three helpers now
+wrap `Start()` in `try/catch`. Contract (`tests/test_unlaunchable_exe.py` drives each helper through real `pwsh` under a
+25-second hard timeout, with a text, empty, cut-off and missing file):
+- The helper writes `~launch_failed.txt` (the inner exception message, printable ASCII only, one line, cut at 200
+  characters), prints `[WARN] The program could not be started, so it was not run.`, writes empty output files and the
+  result its caller already treats as a failed run (`-1` for the smoke runner, `0|-1` for the probe: not exceeded, exit
+  -1, which `:try_fast_exe` discards and rebuilds on), and returns exit code 0. It never writes
+  `~smokerun_killed.txt`: a failed launch is not a stop (Item 82 slice 2). The hint re-run has no marker and writes an
+  empty output file, so the hint falls through to the generic one.
+- **The marker holds arbitrary .NET text**, so the batch shows and logs it only with `type` in `:report_launch_failure`
+  (`type "~launch_failed.txt"` to the console and `type ... >> "%LOG%"`), never through `:log`, and deletes it.
+- `:run_exe_smokerun` deletes the old marker before the launch, sets `HP_EXE_LAUNCH_FAILED` when the file exists after
+  it, and tests that flag BEFORE the exit-code judgement (`goto :smokerun_launch_failed`). That branch is neither a pass
+  nor a timeout: it logs one `[WARN]`, calls the reporter, deletes the stub (`del /f /q`), sets `HP_EXE_UNUSABLE` and
+  `HP_EXE_VERIFY_FAILED`, clears `HP_FRESH_BUILD_OK` (no source hash may vouch for an EXE that never ran) and returns,
+  skipping the elective offers, which all need an EXE that ran.
+- `:verify_no_exe_interpreter` runs the program through the interpreter when `dist\<env>.exe` is gone OR
+  `HP_EXE_UNUSABLE` is set (the delete can fail when another program holds the file; then the post-flight caveat is the
+  honest panel). `HP_EXE_UNUSABLE` is reset per fresh build next to `HP_EXE_TIMEDOUT_SILENT`.
+- `:run_failfast_probe` deletes the marker before the helper and calls `:report_launch_failure` after it, so the
+  cached-EXE path, the no-EXE interpreter path and the post-execution checkpoint all print the reason. The cached-EXE
+  caller needs no change: `0|-1` is already "ran and failed fast".
+- Test hook `HP_TEST_CORRUPT_BUILT_EXE=1` (inside `:run_exe_smokerun`, before the launch) turns the freshly built EXE into
+  a text file; absence changes nothing (README REQ-019). It is the only way a bootstrapper run reaches the smoke runner
+  with a stub, because the stale-EXE paths now delete the EXE first (Item 71).
+- Rows: `self.unlaunchable.smoke_stub` and `self.unlaunchable.fastpath_stub` (`tests/selfapps_unlaunchable_exe.ps1`, real
+  lane, gating, 15-minute watchdog per run so a regression is a red row and not a held job). Payload margins after the
+  trim: `HP_EXE_SMOKERUN` 1093, `HP_FAILFAST_PROBE` 1635, `HP_EXE_HINT_RERUN` 1875.
 
 ### Cascade signal reliability
 

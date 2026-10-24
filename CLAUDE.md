@@ -60,7 +60,7 @@ tests/
   selfapps_envsmoke.ps1        Full environment verification (conda/pip/imports)
   selfapps_single.ps1          Single Python file bootstrap test
   selfapps_reqspec.ps1         Requirements specifier parsing tests (~= compatible release)
-  selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests
+  selfapps_pandas_excel.ps1    Pandas/openpyxl heuristic tests (the app and requirements.txt come from fixtures/examples/pandas_excel, Item 74)
   selfapps_pipgap.ps1          pip gap-fill safety net (runs run_setup.bat: conda misses opencv-python, pip fills it)
   selfapps_pipreqs_encoding.ps1 Item 63: pipreqs scan survives unreadable files (real lane, gating; PYTHONUTF8=0)
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
@@ -78,6 +78,9 @@ tests/
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
   selfapps_nuitka_cachesafety.ps1 Item 72 follow-up (closed, flag NOT adopted): row self.nuitka.cachesafety measures what a static Nuitka unpack folder would break (warm and cold concurrent launches, overlap, kill mid-unpack, update while the old build runs) and records adoptable; uv lane, non-gating
+  selfapps_example_apps.ps1    Item 74: three curated example apps from fixtures/examples (stdlib only, two files with a sibling import, a tkinter window that closes itself) run through the bootstrapper with no skip hook (real lane, gating)
+  fixtures/examples/           Item 74: the curated example apps a person can drop next to run_setup.bat (README.txt inside); CI scenarios read these files, nothing generates them inline
+  selfapps_unlaunchable_exe.ps1 Item 87: a dist\<env>.exe that Windows cannot start (text-file stub) ends the EXE verification run and the fail-fast probe instead of hanging them (real lane, gating, 15-minute watchdog per run; HP_TEST_CORRUPT_BUILT_EXE hook)
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -305,6 +308,8 @@ Test files and what they cover:
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
+| `test_unlaunchable_exe.py` | Item 87: the three bounded-launch helpers (`exe_smokerun.ps1`, `failfast_probe.ps1`, `exe_hint_rerun.ps1`) run through real `pwsh` with a text, zero-byte, cut-off or missing file as the program, under a hard timeout: each returns, writes `~launch_failed.txt` (one printable-ASCII line), prints that the program could not be started and leaves the result the caller expects (`-1`, `0\|-1`, empty output); a good program leaves no marker; static pins on the batch (marker cleared before and read after the launch, the unusable EXE removed, the interpreter run that follows, the shared reporter shows the reason with `type`, the test hook before the launch) |
+| `test_example_fixtures.py` | Item 74: the example apps under `tests/fixtures/examples` stay plain examples (exactly the listed files, ASCII, compile in memory, every import is stdlib, a sibling file or a declared package, README.txt names every folder) and the places that read them (`selfapps_example_apps.ps1`, `selfapps_pandas_excel.ps1`, the real-lane workflow step and its artifact paths) cannot move back inline; synthetic trees prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 | `test_autopep_merge.py` | REQ-005.12 / Item 88: autopep723 name extraction, dedup against `requirements.txt`, newline repair, `main()` dispatch, and the local-module filter (sibling `.py` files and folders in any spelling are skipped and logged, ignored and hidden folders are not walked, a real package is still added), HP_AUTOPEP_MERGE payload sync |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
@@ -760,7 +765,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 72, 73, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -775,8 +780,6 @@ the original symptom (see that doc's "CI-first testing policy").
   (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any install, requirements
   edit, or rebuild; a yes also covers one verification run; a no changes nothing. Slice 2 is built on PR #493
   (red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with `prompted:false`, nothing else red there).
-- **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
-  uses.
 
 ### Item 79: TOML reading hygiene (filed 2026-10-09 from a planning brainstorm, not from the field report)
 
@@ -827,21 +830,6 @@ the original symptom (see that doc's "CI-first testing policy").
   accepts 3.15. Confirm the Nuitka version in a `uv`-lane setup log before closing; the slice 1
   row (Nuitka skipped cleanly on an unsupported Python) is still worth adding, since the next
   Python minor will repeat this.
-
-### Item 87: an unlaunchable stale `dist\<env>.exe` may hang the EXE smoke step (filed 2026-10-23 from PR #499's red run)
-
-- **Item 87 (suspected, small to medium; red test first, after Item 74)**: while writing the stale-EXE scenarios
-  of Item 71 (`self.builder.override` `nuitka_stale` and `pyinstaller_nofallback`), the first red-test commit
-  seeded a plain TEXT file named `dist\<env>.exe`. On `real` and `conda-full` the step then ran for over ten
-  minutes (the neighbouring scenarios take 13 to 35 seconds) until the next push cancelled the run; it was
-  reseeded with a copy of `hostname.exe`. Cause not read from a log: `:run_exe_smokerun` starts the file
-  through `tools/exe_smokerun.ps1` (`HP_EXE_SMOKERUN`), whose `$p.Start()` has no handling for a file that
-  Windows cannot launch, and the read loop after it waits on a process that never ran. A real user gets the
-  same file after an interrupted build or an antivirus quarantine that leaves a stub. To do: reproduce with a
-  text file, a zero-byte file and a truncated copy of a real EXE (each as its own row, `uv` lane first if the
-  step time makes it non-gating), read where it waits, then make the launch failure end the check with a
-  clear message and treat the EXE as unusable (rebuild or fall back to the interpreter run). Related: the
-  `Process.Kill()` and bounded-wait notes in `docs/agent-lessons-learned.md`.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

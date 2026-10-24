@@ -3735,6 +3735,57 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   and the `KilledMarker` cases in `tests/test_exe_smokerun.py`. Item 66 receives the pass type (`exe_ok`,
   `interpreter_ok`, `user_confirmed`) as a field. Detail: `docs/agent-interconnect.md`'s "Last-chance offer" section.
 
+### Item 74 (closed 2026-10-24, PR #504; bundled with Item 87)
+
+- **What it asked for.** Curated example apps under `tests/fixtures/` that CI also uses, so a person has ready-made
+  programs to drop next to `run_setup.bat` and every scenario that runs one reads a file, not an inline copy.
+- **What shipped.** `tests/fixtures/examples/` holds `stdlib_single`, `pandas_excel`, `gui_exits` (a tkinter window that
+  closes itself after half a second) and `multifile_sibling` plus a `README.txt` a beginner can follow.
+  `tests/selfapps_example_apps.ps1` runs the first, third and fourth through the whole default path with no skip hook
+  (rows `self.examples.stdlib_single`, `.multifile_sibling`, `.gui_exits`, `real` lane, gating from the first run);
+  `tests/selfapps_pandas_excel.ps1` (conda-full) copies the second. A row passes only when the bootstrapper exited 0, the
+  status is `ok`, an EXE was built, the EXE's own verification run exited 0, the log chose the expected entry, the Python
+  file count is right and the program's own line is in `~run.out.txt`. `tests/test_example_fixtures.py` keeps the folder
+  honest (exact file list, ASCII, in-memory compile, imports limited to stdlib / sibling / declared package, README names
+  every folder) and pins the places that read it so a scenario cannot drift back to an inline copy.
+- **Red first.** Run `40009502514` (tests without the fixtures): every `self.examples.*` row red with `fixture folder
+  missing`, `self.pytest.unit` red for the folder test. The next run showed the three rows red although build and run were
+  fine: the entry check demanded a backslash in front of the name and the log prints the bare name (`Chosen entry:
+  solo.py`). Fixed with a pattern that takes an optional directory and a unit pin; found by reading the row's details,
+  not the lane colour.
+- **Decided, kept: Item 75's inline app stays inline.** `selfapps_realapp_pandas_excel.ps1` writes a multi-file app whose
+  module names are chosen so that no PyPI project uses them and whose token file is the test's evidence; it is a test
+  stand-in, not a program a beginner would try. Moving it into the examples folder would put those names and the
+  `~realapp_*` files in front of the people the folder is for. The other inline apps are failure stand-ins
+  (`selfapps_gui_timeout_hint.ps1`'s `time.sleep(600)`). A future example that shares a test's app is a new decision.
+
+### Item 87 (closed 2026-10-24, PR #504; filed 2026-10-23 from PR #499's red run)
+
+- **The problem.** A `dist\<env>.exe` that Windows cannot start (a text file, a zero-byte file, a cut-off copy after an
+  interrupted build or an antivirus quarantine) made `Process.Start()` throw inside `tools/exe_smokerun.ps1`,
+  `tools/failfast_probe.ps1` and `tools/exe_hint_rerun.ps1`. PowerShell carried on with a process object that has no
+  process, `-not $p.HasExited` errored and read as true, and the poll loop waited for output that could never arrive: the
+  step ran for over ten minutes until the next push cancelled the run (found when PR #499's first red commit seeded a text
+  file for the stale-EXE scenarios of Item 71). Reproduced locally with `pwsh` on all three helpers before the fix.
+- **The fix.** Each helper wraps `Start()` in `try/catch`, writes `~launch_failed.txt` (one printable-ASCII line, at most
+  200 characters), prints `[WARN] The program could not be started, so it was not run.` and returns the failed-run result
+  its caller already understands (`-1`; `0|-1` for the probe). The batch shows the reason with `type` (never `:log`: it is
+  arbitrary .NET text). A fresh stub is removed, `HP_FRESH_BUILD_OK` cleared and the program checked through the
+  interpreter; a cached stub goes through the existing discard-and-rebuild. Test hook `HP_TEST_CORRUPT_BUILT_EXE` turns the
+  freshly built EXE into a text file (absence changes nothing). Payload margins afterwards: `HP_EXE_SMOKERUN` 1093,
+  `HP_FAILFAST_PROBE` 1635, `HP_EXE_HINT_RERUN` 1875. Detail: `docs/agent-interconnect.md`'s "Launch failures" section.
+- **Red first.** Run `40016661511` (fixtures plus the red tests, no fix): `self.unlaunchable.smoke_stub` red with
+  `hookFired: true`, `timedOut: true`, `exitCode: -1`; `self.unlaunchable.fastpath_stub` red with the first run built (a
+  9.9 MB EXE), the stub seeded and the second run `timedOut: true`; `self.pytest.unit` red because the helper tests were
+  still running after their 25 seconds. The fix was pushed under the early-push rule once the real-lane rows were red for
+  that reason; the final run (`40043552353`, head `ac31a8b`, all eight lanes read from the artifacts) shows Windows' own
+  reason line, the stub removed, the interpreter run made, and the cached stub discarded and rebuilt into a real EXE.
+- **Tests.** Rows `self.unlaunchable.smoke_stub` and `.fastpath_stub` (`tests/selfapps_unlaunchable_exe.ps1`, `real`
+  lane, gating, a 15-minute watchdog per bootstrapper run so a regression is a red row and not a held job); unit tests
+  `tests/test_unlaunchable_exe.py` run each helper through real `pwsh` under a 25-second hard timeout with a text, empty,
+  cut-off and missing file. The lesson is in `docs/agent-lessons-learned.md` ("An unguarded `Process.Start()` before a
+  polling loop spins forever instead of failing").
+
 ### Item 72 (closed 2026-10-24; experiment PR #501, follow-up PR #505; filed from the Aug-Sep 2026 field report)
 
 - **The problem**: a field Nuitka fallback build took about an hour and its EXE needed about 60 s to first output

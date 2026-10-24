@@ -383,7 +383,7 @@ print("safety done", flush=True)
                 $dSafe.updateWhileRunningExit = $r2.exit
                 if (-not $dSafe.updateWhileRunningOk) { $dSafe.updateWhileRunningSample = (Get-Sample $r2) }
             }
-            [void](Stop-AppTree $old)
+            $dSafe.updateOldStopConfirmed = [bool](Stop-AppTree $old)
             $r3 = Wait-App -H (Start-App -Exe $exe2)
             $dSafe.updateAfterOldGoneOk = [bool]((Test-Output $r3) -and $r3.out.Contains('safety version=2'))
             if (-not $dSafe.updateAfterOldGoneOk) { $dSafe.updateAfterOldGoneSample = (Get-Sample $r3) }
