@@ -822,12 +822,19 @@ the original symptom (see that doc's "CI-first testing policy").
   action's release notes for the new major (WebFetch of `https://github.com/<owner>/<repo>/releases`), change
   every use of that one action, and read the run, not only its colour. Status (in use -> latest as read on
   2026-10-24): `codeql-action` v3 -> v4 done in `codeql.yml` (v4 runs on Node.js 24, v3 is deprecated in
-  December 2026; the CodeQL run's `init` log names the v4 release). Open: `github-script` v8 -> v9 (6 uses in
-  `pr-automerge.yml`, 3 in `batch-check.yml`), `checkout` v5 -> v7 (every workflow), `cache` v5 -> v6,
-  `upload-artifact` v6 -> v7 (13 uses in `batch-check.yml`, 1 in `workflow-lint.yml`), `download-artifact` v6 -> v8
-  (`merge-multiple` and hash-check behavior must be re-read first, see the GitHub Actions data-passing entry in
-  `docs/agent-lessons-learned.md`). Every open one touches `batch-check.yml`, which lane 1's aggregate-gate edit
-  owns, so those wait for it to merge. Remove this item when every pin is on its latest major.
+  December 2026; the run of PR #508 logged `CODEQL_ACTION_VERSION: 4.39.1` and uploaded its results without a
+  warning). Open, with what the release notes say and what this repo's use of each action means for the bump
+  (release notes read 2026-10-24; none says a Node.js or runner minimum beyond runner 2.327.1, which GitHub-hosted
+  runners exceed): `github-script` v8 -> v9 (6 uses in `pr-automerge.yml`, 3 in `batch-check.yml`): v9 removes
+  `require('@actions/github')` and injects `getOctokit`; no script here uses either (only `require('fs')`), so the
+  bump should be inert. `checkout` v5 -> v7 (every workflow): v7 blocks a fork PR checkout under `pull_request_target`
+  and `workflow_run`; no workflow here uses either trigger. `cache` v5 -> v6: ESM only. `upload-artifact` v6 -> v7: ESM,
+  new `archive: false` option, no breaking change listed (13 uses in `batch-check.yml`, 1 in `workflow-lint.yml`).
+  `download-artifact` v6 -> v8 is the one with a behavior change: v8 fails the step on a hash mismatch by default
+  (`digest-mismatch: error`; v7 only warned) and no longer unzips non-zip downloads, so bump to v7 first, then v8, and
+  re-read the GitHub Actions data-passing entry in `docs/agent-lessons-learned.md` (`merge-multiple`). Every open
+  one touches `batch-check.yml`, which lane 1's aggregate-gate edit owns, so those wait for it to merge. Remove this
+  item when every pin is on its latest major.
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
