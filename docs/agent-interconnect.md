@@ -418,10 +418,19 @@ in Python until SOME interpreter exists on disk (the one this tier itself is ext
    are unsafe in this invocation shape), extraction, and the `._pth` patch (uncomment
    `#import site`, regex `(?m)^#import site\r?$` to survive CRLF). Zero per-request branching.
 2. **Python stage** (`tools/embed_pyver_check.py`, `HP_EMBED_PYVER_CHECK`) -- runs under the
-   freshly extracted interpreter, reuses the SAME `PYSPEC` value `~detect_python.py` already
-   computed. `EMBED_PYTHON_TABLE` maps minor -> `(patch, sha256)` for 3.10-3.14 (5 entries,
+   freshly extracted interpreter, reuses the SAME `PYSPEC` value `~detect_python.py` computes.
+   **`PYSPEC` can still be empty when the tier is reached**: the main flow computes it only after
+   `conda.bat` exists, so a run with neither uv nor Miniconda (the case README REQ-009 gives for this
+   tier) arrives here without it and used to ignore `runtime.txt`/`pyproject.toml` silently (found by
+   `self.embed.version.*`, PR #507). `:try_embed_fallback` therefore runs `~detect_python.py` under the
+   fresh interpreter right after the extraction line when `PYSPEC` is undefined (`PVW_TARGET_PY` wins
+   first) and logs a content-free `a Python version request was found in this folder.` line; the value
+   itself is never logged (it can hold `<` and `>`). **A range picks the newest table minor it allows**
+   (`pick_minor`), not the first number in the spec: `>=3.10,<4.0` stays on the newest minor, `<3.13`
+   gets 3.12, and a spec no table minor allows falls back to the floor or the newest minor with the WARN.
+   `EMBED_PYTHON_TABLE` maps minor -> `(patch, sha256)` for 3.10-3.15 (6 entries,
    matching python.org's currently-supported non-EOL minors, refreshed quarterly -- see CLAUDE.md's
-   "Embed version table" periodic check). The `"3.14"` entry's patch/sha256 MUST match the
+   "Embed version table" periodic check). The `LATEST_MINOR` entry's patch/sha256 (now `"3.15"`) MUST match the
    batch-side `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` exactly --
    `tests/test_embed_tier.py`'s `BatchPythonConsistency` test enforces this.
 3. **Windows self-file-lock**: the Python stage runs FROM `HP_EMBED_DIR` itself, so a version-swap
@@ -431,9 +440,11 @@ in Python until SOME interpreter exists on disk (the one this tier itself is ext
 4. **`:embed_swap_retry` gates `move` on `rd` having genuinely cleared the destination first**
    (`if exist "%HP_EMBED_DIR%" goto :embed_swap_rd_failed`, skip `move` entirely) -- a directory
    `move` onto a still-existing destination silently NESTS the source inside it rather than failing
-   cleanly, so a post-hoc "does it exist now" check cannot detect a failed `rd`. **NOT CI-confirmed**
-   (`self.embed.fallback.real` never requests a non-default version through this path) -- static
-   reasoning about documented Windows semantics only.
+   cleanly, so a post-hoc "does it exist now" check cannot detect a failed `rd`. Covered end to end by
+   `tests/selfapps_embed_version.ps1` (`self.embed.version.swap`/`.floor`/`.ceiling`/`.range`, real lane,
+   gating): the program must really run under the requested minor, with exactly one `python3NN.dll`, no
+   `~embed_python_swap` left and nothing nested, because a failed swap is silent by design (helper exit 1,
+   the batch keeps the interpreter it has).
 
 **Version selection is a small pinned table, never a live python.org scrape** (same "deterministic
 execution > dynamic resolution" principle as the pipreqs 0.4.13 pin). Integrity via embedded SHA256

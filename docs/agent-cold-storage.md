@@ -214,9 +214,10 @@ its own named trigger genuinely fires -- do not speculatively build any of these
 - **Nuitka static unpack folder (`--onefile-tempdir-spec`) on the two Nuitka builds.** Item 72 follow-up, closed
   2026-10-24 (record in `docs/agent-closed-backlog.md`). Later launches of a Nuitka `--onefile` EXE are about 3.7
   times faster with a static folder on a hosted runner, and it may remove the field's per-launch Defender scan of a
-  fresh unpack (unmeasured). It was NOT adopted because, with the folder cold, one of three simultaneous launches
-  exits 2 with `failed to open ... for writing` (run `40043297712`, Nuitka 4.3.1), which would show a beginner an
-  error after a double-click during a first unpack. **Trigger to thaw**: the uv-lane row `self.nuitka.cachesafety`
+  fresh unpack (unmeasured). It was NOT adopted because, with the folder cold, a simultaneous launch can exit 2 with
+  `failed to open ... for writing` (one of three on run `40043297712`, Nuitka 4.3.1; two on `40066145187`; none of nine
+  on `40084563527`, so it is intermittent), which would show a beginner an error after a double-click during a first
+  unpack, and a new build over a running old one fails every time. **Trigger to thaw**: the uv-lane row `self.nuitka.cachesafety`
   reports `adoptable` true in several consecutive runs (three clean cold rounds and a clean update-while-running
   scenario), or a Nuitka release says cold or concurrent onefile launches are serialized. Then rebuild the shape the
   closed-backlog entry describes (per-app token, fail open, folder named in words in the log, README Known

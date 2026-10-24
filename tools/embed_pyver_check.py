@@ -1,10 +1,7 @@
-# REQ-009 Tier 5, Python stage: runs under the "always latest" interpreter ~embed_extract.ps1
-# (PowerShell stage) already downloaded/verified/extracted. This is the ONLY place per-request
-# version logic lives -- deliberately Python, not PowerShell, reusing this codebase's proven
-# version-detection pattern instead of re-deriving it in PowerShell. Full rationale:
-# docs/agent-interconnect.md "Standalone Python-download tier". "3.14" entry below MUST match
-# HP_EMBED_LATEST_PATCH/HP_EMBED_LATEST_SHA256 in run_setup.bat -- a PayloadSync-style unit test
-# asserts this. Last refreshed: 2026-07-09.
+# REQ-009 Tier 5, Python stage: runs under the interpreter ~embed_extract.ps1 extracted (the table's
+# newest minor) and is the only place per-request version logic lives. Design: docs/agent-interconnect.md
+# "Standalone Python-download tier". The LATEST_MINOR entry MUST equal HP_EMBED_LATEST_PATCH and
+# HP_EMBED_LATEST_SHA256 in run_setup.bat (tests/test_embed_tier.py). Last refreshed: 2026-10-24.
 import hashlib
 import os
 import re
@@ -14,12 +11,7 @@ import sys
 import urllib.request
 import zipfile
 
-# derived requirement: urllib.request.urlretrieve has no timeout= parameter (verified via
-# inspect.signature -- passing one raises TypeError), so a stalled (not refused) connection
-# during download_and_verify() would otherwise hang this one-shot script forever. A global
-# default timeout is safe here since the whole script exits immediately after use -- nothing
-# else in this short-lived process is affected. Mirrors the curl --max-time 120 already used
-# for the PowerShell-stage download of the same zip family.
+# urlretrieve has no timeout parameter, so a stalled download would hang this one-shot script.
 socket.setdefaulttimeout(120)
 
 # minor -> (patch, sha256)
@@ -27,10 +19,11 @@ EMBED_PYTHON_TABLE = {
     "3.10": ("3.10.11", "608619f8619075629c9c69f361352a0da6ed7e62f83a0e19c63e0ea32eb7629d"),
     "3.11": ("3.11.9", "009d6bf7e3b2ddca3d784fa09f90fe54336d5b60f0e0f305c37f400bf83cfd3b"),
     "3.12": ("3.12.10", "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"),
-    "3.13": ("3.13.14", "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907"),
-    "3.14": ("3.14.6", "df901e84a896ff1ee720ad03377e0c8d8c2244fda79808aeeaff6316df1cb75c"),
+    "3.13": ("3.13.17", "9e35319bffedab8b36ad44d8f377cb4f1733bcec257a0b6d04d94f01486ddb38"),
+    "3.14": ("3.14.9", "3c01d7cfc666f746a6f064f60fb2156ab0ec464d3d738ab796371a46a9bb24a2"),
+    "3.15": ("3.15.1", "352e232f25b5120508f11a6dfc1bd9076d3e70c30977d552a63338838c2ae8fb"),
 }
-LATEST_MINOR = "3.14"
+LATEST_MINOR = "3.15"
 FLOOR_MINOR = "3.10"
 
 SPEC_MINOR_RE = re.compile(r"([0-9]+\.[0-9]+)")
@@ -38,7 +31,7 @@ SPEC_MINOR_RE = re.compile(r"([0-9]+\.[0-9]+)")
 
 def _minor_key(minor):
     try:
-        major, sub = minor.split(".")
+        major, sub = (minor.split(".") + ["0"])[:2]
         return (int(major), int(sub))
     except (ValueError, AttributeError):
         return (0, 0)
@@ -50,6 +43,18 @@ def resolve_requested_minor(pyspec):
         return None
     match = SPEC_MINOR_RE.search(pyspec)
     return match.group(1) if match else None
+
+
+def pick_minor(pyspec):
+    # Newest table minor that every clause of a conda-style spec allows, else None. A range such as
+    # "python>=3.10,<4.0" therefore resolves to the newest minor, as uv and conda do, not its lower bound.
+    clauses = re.findall(r"(==|!=|>=|<=|=|>|<)\s*([0-9]+(?:\.[0-9]+)*)", pyspec or "")
+    ops = {"=": lambda a, b: a == b, "==": lambda a, b: a == b, "!=": lambda a, b: a != b,
+           ">=": lambda a, b: a >= b, "<=": lambda a, b: a <= b, ">": lambda a, b: a > b, "<": lambda a, b: a < b}
+    for minor in sorted(EMBED_PYTHON_TABLE, key=_minor_key, reverse=True):
+        if clauses and all(ops[op](_minor_key(minor), _minor_key(ver)) for op, ver in clauses):
+            return minor
+    return None
 
 
 def resolve_table_entry(requested_minor):
@@ -103,15 +108,19 @@ def main():
     pyspec = os.environ.get("PYSPEC", "")
     requested_minor = resolve_requested_minor(pyspec)
 
-    if requested_minor is None or requested_minor == LATEST_MINOR:
+    if requested_minor is None:
         sys.stdout.write("unchanged|{}\n".format(LATEST_MINOR))
         return 0
 
-    minor, patch, sha256, fell_back = resolve_table_entry(requested_minor)
+    minor = pick_minor(pyspec)
+    fell_back = minor is None
+    if fell_back:
+        minor, patch, sha256, _ = resolve_table_entry(requested_minor)
+    else:
+        patch, sha256 = EMBED_PYTHON_TABLE[minor]
     if minor == LATEST_MINOR:
-        # Above-ceiling request (only path here, since exact-match-latest is handled above):
-        # no swap needed, but tag "fellback" not "unchanged" so the caller's WARN still fires.
-        sys.stdout.write("fellback|{}\n".format(minor))
+        # Nothing to swap. "fellback" (a request above the table) keeps the caller's WARN.
+        sys.stdout.write("{}|{}\n".format("fellback" if fell_back else "unchanged", minor))
         return 0
 
     url = "https://www.python.org/ftp/python/{p}/python-{p}-embed-amd64.zip".format(p=patch)
