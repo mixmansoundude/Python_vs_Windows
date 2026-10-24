@@ -3786,6 +3786,37 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   cut-off and missing file. The lesson is in `docs/agent-lessons-learned.md` ("An unguarded `Process.Start()` before a
   polling loop spins forever instead of failing").
 
+### Item 72 (closed 2026-10-24; experiment PR #501, follow-up PR #505; filed from the Aug-Sep 2026 field report)
+
+- **The problem**: a field Nuitka fallback build took about an hour and its EXE needed about 60 s to first output
+  with Defender busy at each launch (Finding 7 in `docs/prd-av-safe-build-path.md`). A Nuitka `--onefile` EXE unpacks
+  into a fresh `%TEMP%\onefile_*` folder on every launch.
+- **Decided**: (a) a build heartbeat is dropped (it needs a second process or a helper that owns the Nuitka process,
+  and Item 68's wording already says to expect a long quiet step and where the log is); (c) the observed hour and the
+  60 s launch are recorded as Finding 7. (b) is the experiment `tests/selfapps_nuitka_launchcache.ps1` (row
+  `self.nuitka.launchcache`): on Windows (run `39941938491`, Nuitka 4.3.1) later launches took about 175 ms against a
+  641 ms median for the default build, a same-spec rebuild ran the NEW code, and build time did not change. Defender
+  was off on the runner, so the field effect stays unmeasured.
+- **Adopting the flag was tried and NOT adopted (2026-10-24, run `40043297712`).** The follow-up built a
+  `:nuitka_cache_arg` subroutine that put `--onefile-tempdir-spec={CACHE_DIR}/PVW/<env>-<token>` on both Nuitka lines
+  (`<token>` = first 12 hex characters of the SHA-256 of the lower-cased app folder path, fail open, validated with
+  `findstr /r /x`), with the rule written down first: adopt only if the safety row is green. The row
+  `self.nuitka.cachesafety` was red. With the folder cold, three simultaneous launches ended `[0, 2, 0]`, the failing
+  one printing `failed to open '...\PVW\safety-...\vcruntime140_1.dll' for writing` (the launch that arrives second
+  tries to write a file the first has already loaded). It is intermittent: two of nine cold launches failed on run
+  `40066145187` and none of nine on `40084563527`; building a new copy over a running old one exited 2 on both, and the follow-up launch
+  after the old build was stopped (`updateAfterOldGoneOk`) failed on `40066145187` with the same
+  `failed to open ... safety.exe` message and passed on `40084563527` with the stop confirmed, so read it together with
+  `updateOldStopConfirmed`. Warm concurrent launches, an overlapping launch, five launches
+  killed mid-unpack (each followed by a normal launch) and a normal launch after the failed cold race all passed.
+  A beginner who double-clicks twice during a first unpack would see an error where today a second copy simply starts,
+  so `run_setup.bat` keeps its two Nuitka lines without the flag; the subroutine and the `self.nuitka.cachespec` row
+  were never merged.
+- **What stays**: `tests/selfapps_nuitka_cachesafety.ps1` (uv lane, non-gating, records `adoptable` after three cold
+  rounds and an update-while-the-old-build-runs scenario), `tests/test_nuitka_cachesafety.py` (fails if the batch gains
+  the flag), and the revisit trigger in `docs/agent-cold-storage.md`. Detail and numbers:
+  `docs/plan-field-report-2026-10.md`.
+
 ### Item 65 (closed 2026-10-24; slice 1 PR #487, slice 2 PR #493; filed 2026-10-08 from the Aug-Sep 2026 field report)
 
 - **The problem.** A program can print `ModuleNotFoundError: No module named X` to stderr and still exit 0 (a GUI toolkit

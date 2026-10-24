@@ -610,11 +610,28 @@ converts with `GetLongPathName` first (also fixes the cleanup, which matched on 
 build: launches 801, 474 and 641 ms (median 641). Static spec: 333 ms for the first launch, then 174 and
 175 ms (about 3.7 times faster than the default median). Same-spec rebuild: new code again, first launch
 682 ms (re-extracts the changed payload), second 181 ms. Builds 43.7 s (default) and 34.7 s (cached).
-Reading: the mechanism is safe and the saving is real, so adopt in a follow-up after PR #499 merges, with a
-per-app folder name and a README Known Limitations line; the field effect stays unmeasured. A review of the
+Reading at the time: the mechanism works and the saving is real, so try adopting it in a follow-up with a
+per-app folder name (the follow-up below measured it unsafe); the field effect stays unmeasured. A review of the
 script also found that `Build-App` repeated the production flags as literals instead of reading the
 `$prodFlags` text that the unit test pins to `run_setup.bat`; it now derives its arguments from `$prodFlags`
 (only the output folder differs), and a unit test pins that.
+
+**Follow-up outcome (2026-10-24, run `40043297712`, PR #505): measured, NOT adopted.** The rule written down
+before the run was "adopt only if the safety row is green". `self.nuitka.cachesafety` builds with the production
+flag text plus a static spec and launches the EXE in the ways a user can. Green: three copies at once with the
+folder warm, a second and third copy while the first runs, five launches killed while the folder was partly
+unpacked (bytes at kill 1.1 to 7.7 MB of 131.8 MB) each followed by a normal launch, and a normal launch after a
+cold race. Red: three copies at once with the folder cold ended with exit codes `[0, 2, 0]`; the failing one printed
+`Error, failed to open 'C:\Users\runneradmin\AppData\Local\PVW\safety-...\vcruntime140_1.dll' for writing.`
+(the launch that arrives second tries to write a DLL the first has already loaded). The cause is Nuitka's, not the
+bootstrapper's. Effect for the target user: a second double-click while a first launch is still unpacking would show
+an error, where the default per-launch folder just starts a second copy. The saving was about 280 to 470 ms per
+launch on a runner with Defender off, and the field effect (Defender scanning each fresh unpack) stays unmeasured, so
+the trade is an unmeasured gain against a measured, if narrow, failure. `run_setup.bat` therefore keeps its two Nuitka
+lines unchanged; the `:nuitka_cache_arg` subroutine and its `self.nuitka.cachespec` row were never merged. What
+stays: the safety script (now three cold rounds plus an update-while-the-old-build-runs scenario, recorded as
+`adoptable`), a unit test that fails if the batch gains the flag, and a cold-storage entry whose trigger is
+`adoptable` true. Item 72 is closed in `docs/agent-closed-backlog.md`.
 
 ### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 

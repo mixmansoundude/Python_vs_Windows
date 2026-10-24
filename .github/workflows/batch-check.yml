@@ -1076,6 +1076,18 @@ jobs:
         run: |
           & tests\selfapps_nuitka_launchcache.ps1
 
+      # Item 72 follow-up: row self.nuitka.cachesafety measures what a static --onefile-tempdir-spec folder would
+      # break (warm and cold concurrent launches, an overlapping launch, a launch killed mid-unpack, an update while
+      # the old build runs). Cold concurrent launches fail, so run_setup.bat's Nuitka lines carry no such flag; the
+      # row records adoptable so a later Nuitka release that fixes it is visible (docs/agent-cold-storage.md).
+      # Non-gating: two real Nuitka builds and a possible compiler download can fail from network or provider problems.
+      - name: "Self-test: Nuitka unpack cache safety finding (uv lane, non-gating)"
+        if: ${{ !cancelled() && matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_nuitka_cachesafety.ps1
+
       # AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?"
       # upsell after a normal successful PyInstaller build. Four scenarios in one file/lane
       # (uv, non-gating) -- 'accept'/'swapfail' depend on a real Nuitka build succeeding (same
@@ -2347,6 +2359,12 @@ jobs:
             tests\~selftest_honest_wording\~pipreqs.diff.txt
             tests/~selftest_honest_wording/~dependency_source.txt
             tests\~selftest_honest_wording\~dependency_source.txt
+            tests/~selftest_nuitka_cachesafety/~cachesafety_bootstrap.log
+            tests\~selftest_nuitka_cachesafety\~cachesafety_bootstrap.log
+            tests/~selftest_nuitka_cachesafety/~build_safety.log
+            tests\~selftest_nuitka_cachesafety\~build_safety.log
+            tests/~selftest_nuitka_cachesafety/~build_safety2.log
+            tests\~selftest_nuitka_cachesafety\~build_safety2.log
             tests/~selftest_pvw_builder_invalid/~pvw_builder_invalid_bootstrap.log
             tests\~selftest_pvw_builder_invalid\~pvw_builder_invalid_bootstrap.log
             tests/~selftest_pvw_builder_invalid/~setup.log

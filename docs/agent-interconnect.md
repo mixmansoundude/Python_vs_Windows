@@ -329,6 +329,20 @@ temp cleaned up), `decline` (prompt shown, no build attempted).
 
 ---
 
+## The Nuitka command lines deliberately carry no `--onefile-tempdir-spec` (Item 72 follow-up)
+
+**Touch `:try_nuitka_tier_a` or `:offer_optimized_build`'s Nuitka command, must understand this.** A static unpack
+folder makes later launches faster but breaks a launch that races another on a cold folder (see
+`docs/agent-lessons-learned.md`), so both lines stay exactly `-m nuitka --onefile --assume-yes-for-downloads
+--remove-output --output-dir=dist -o ...`. `tests/test_nuitka_cachesafety.py` pins that (no `onefile-tempdir-spec`,
+no `:nuitka_cache_arg` anywhere in the batch) and also pins `tests/selfapps_nuitka_cachesafety.ps1`'s `$prodFlags`
+to the same text, so the safety build stays the production build. `tests/selfapps_nuitka_launchcache.ps1` pins its
+own `$prodFlags` the same way, so a change to the shared flag text is made in `run_setup.bat` and in both scripts
+together. The test pins the whole command line (`-o "<name>" "%HP_ENTRY%" >> "%LOG%" 2>&1` after the flags), so an
+option added after `--output-dir=dist` is caught too.
+
+---
+
 ## `PVW_BUILDER` (Item 71): the build-tool choice touches four sites in two build paths
 
 **Touch the build block, `:try_nuitka_tier_a`, `:offer_optimized_build` or `:try_fast_exe`, must understand
