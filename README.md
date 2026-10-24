@@ -354,34 +354,44 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
     tell the user's changes from its own. A failed or partial install **shall** record nothing, so the next run sees the
     same changes again.
   - **REQ-005.1.7** [major] The bootstrapper **shall**, when a record exists, treat a difference between an input and its
-    record as the user's change and keep it. A package added to any input is installed and added to the others.
+    record as the user's change and keep it.
   - **REQ-005.1.8** [major] The bootstrapper **shall**, when the user has removed a package from `requirements.txt`, from
     `pyproject.toml` or from a PEP 723 header that the bootstrapper wrote, and no input keeps it as REQ-005.1.11
-    describes, remove it from the merged set, from `requirements.txt` and, with the uv provider, from the header (by
-    `uv remove --script`), and say `Removed <package>` on the console with the input it was removed from.
+    describes, remove the package from the merged set.
   - **REQ-005.1.9** [major] The bootstrapper **shall**, when the user has edited a pin, replace the older pins in the other
     inputs with it and not report that as a conflict.
   - **REQ-005.1.10** [major] The bootstrapper **shall**, when any input differs from its record, install the merged set and
     not skip the install as already satisfied.
   - **REQ-005.1.11** [minor] The bootstrapper **shall**, when a package was removed from one input while `pyproject.toml`,
-    or an input that is new or edited since its record, still lists it, keep the package in the merged set and say
-    `<package> was removed from <input> but <input> still lists it, so it stays`, naming the input that keeps it as the
-    file to edit. `pyproject.toml` is never rewritten by the bootstrapper.
+    or an input that is new or edited since its record, still lists it, keep the package in the merged set.
   - **REQ-005.1.12** [major] The bootstrapper **shall** only ever add to a PEP 723 header that it did not write, never remove
     from it.
   - **REQ-005.1.13** [major] The bootstrapper **shall**, when the merge cannot run, use the highest ranked input alone,
     exactly as it did before the merge existed, and say so with a `[WARN]`.
   - **REQ-005.1.14** [major] The bootstrapper **shall not** stop the run because the merge could not run.
+  - **REQ-005.1.15** [major] The bootstrapper **shall**, when a package was added to any input since its record, add the
+    package to the outputs that REQ-005.1.5 names.
+  - **REQ-005.1.16** [major] The bootstrapper **shall**, when it removes a package from the merged set as REQ-005.1.8
+    describes, remove the package from the outputs that REQ-005.1.5 names.
+  - **REQ-005.1.17** [major] The bootstrapper **shall**, when it removes a package from the merged set as REQ-005.1.8
+    describes, say `Removed <package>` on the console with the input it was removed from.
+  - **REQ-005.1.18** [minor] The bootstrapper **shall**, when it keeps a package as REQ-005.1.11 describes, say
+    `<package> was removed from <input> but <input> still lists it, so it stays` on the console, where the second
+    `<input>` is the input that keeps the package.
   - Notes (not requirements): a folder that was last run before the merge existed has no record, so its first run
     after the change is a cold run (the union). The run that deletes a package from one input while `pyproject.toml`, which
     the bootstrapper does not rewrite, or an input changed since its record still lists it brings the package back, with
-    the message above; that is the price of never removing something the user wrote elsewhere. Packages removed from every input stay installed in the
+    the message of REQ-005.1.18; that is the price of never removing something the user wrote elsewhere. Packages removed from every input stay installed in the
     environment, which is harmless. A `requirements.txt` that holds only directives such as `-r other.txt` names no
     package of its own, so a package removed from it also leaves the header; the merge does not read the files such a
     directive includes, so editing the directive line (or an `-e` or `--index-url` line) counts as a change to
     `requirements.txt` (REQ-005.1.10) while an edit inside the included file alone does not. `uv add --script` writes a lower bound into the header for a name given without one
     (`toolz` becomes `toolz>=1.2.0`), so the first later run that changes nothing writes that bound into
-    `requirements.txt` too (a bare name never beats a constrained entry); runs after that touch nothing. Tests:
+    `requirements.txt` too (a bare name never beats a constrained entry); runs after that touch nothing. The bootstrapper
+    never rewrites `pyproject.toml`, so a package added to or removed from another input is not added to or removed
+    from it (REQ-005.1.15, REQ-005.1.16). The header is changed only after a run in which every dependency installed
+    (REQ-005.1.5), by `uv add --script` for additions and `uv remove --script`, one call per package, for removals; a
+    failed install changes nothing there and keeps the records (REQ-005.1.6). Tests:
     `tests/test_dep_merge.py` (unit), `self.depsource.*` (cold runs), `self.depmerge.later.*` (later runs),
     `self.pep723.pyproject.merge`, `self.realapp.edit_rerun`.
 
