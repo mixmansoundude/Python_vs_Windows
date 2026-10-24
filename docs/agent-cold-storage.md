@@ -211,3 +211,14 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   `runtime.txt`. It is a REQ-004 precedence decision, not an implementation detail. **Trigger to
   thaw**: a field report of a script header with an upper bound running on a too-new Python;
   a maintainer decision on precedence (add it to `docs/open-questions.md` then) comes first.
+- **Nuitka static unpack folder (`--onefile-tempdir-spec`) on the two Nuitka builds.** Item 72 follow-up, closed
+  2026-10-24 (record in `docs/agent-closed-backlog.md`). Later launches of a Nuitka `--onefile` EXE are about 3.7
+  times faster with a static folder on a hosted runner, and it may remove the field's per-launch Defender scan of a
+  fresh unpack (unmeasured). It was NOT adopted because, with the folder cold, one of three simultaneous launches
+  exits 2 with `failed to open ... for writing` (run `40043297712`, Nuitka 4.3.1), which would show a beginner an
+  error after a double-click during a first unpack. **Trigger to thaw**: the uv-lane row `self.nuitka.cachesafety`
+  reports `adoptable` true in several consecutive runs (three clean cold rounds and a clean update-while-running
+  scenario), or a Nuitka release says cold or concurrent onefile launches are serialized. Then rebuild the shape the
+  closed-backlog entry describes (per-app token, fail open, folder named in words in the log, README Known
+  Limitations saying the folder lives in the user's profile and stays after the app is deleted) and delete the guard
+  in `tests/test_nuitka_cachesafety.py`'s `RunSetupStaysFlagFree`. Do not re-adopt on the 3.7x number alone.

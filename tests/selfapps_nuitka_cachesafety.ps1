@@ -1,29 +1,32 @@
 # ASCII only
-# selfapps_nuitka_cachespec.ps1 - Item 72 follow-up: the Nuitka builds keep their unpacked files in a per-app
-# cache folder, and that is safe.
+# selfapps_nuitka_cachesafety.ps1 - Item 72 follow-up: what a static Nuitka unpack folder would break.
 #
 # Background: a Nuitka --onefile EXE unpacks into a fresh %TEMP%\onefile_* folder on EVERY launch. The Item 72
 # experiment (selfapps_nuitka_launchcache.ps1, docs/plan-field-report-2026-10.md) showed that a static
 # --onefile-tempdir-spec makes later launches about 3.7 times faster and that a same-spec rebuild runs the NEW
-# code. run_setup.bat therefore passes --onefile-tempdir-spec={CACHE_DIR}/PVW/<env>-<token> on both Nuitka command
-# lines (:try_nuitka_tier_a and :offer_optimized_build), where <token> is the first 12 hex characters of the
-# SHA-256 of the lower-cased app folder path, so two apps never share a folder.
+# code. This script measures what that static folder costs, with the production flag text plus
+# --onefile-tempdir-spec={CACHE_DIR}/PVW/safety-<token> (the build is independent of run_setup.bat's command
+# lines, which carry no such flag):
+#   warm concurrent   three copies started at once with the folder already unpacked
+#   cold concurrent   three copies started at once with no folder, three rounds
+#   overlap           a second and third copy started while the first still runs
+#   kill recovery     a launch killed in the middle of unpacking, then a normal launch, five times
+#   update            a NEW build of the same spec started while the OLD build is still running
 #
-# This script emits two rows:
-#   self.nuitka.cachespec   the bootstrapper's own Tier A build (PyInstaller failure forced, a real Nuitka build)
-#                           created exactly the folder the rule names: %LOCALAPPDATA%\PVW\<env>-<token>, with
-#                           files in it, and a second launch of dist\<env>.exe used that same folder.
-#   self.nuitka.cachesafety what a static folder could break, measured on this runner with the same flag text:
-#                           several copies of the program started at once (folder warm and folder cold), a
-#                           second copy started while the first still runs, and a launch killed in the middle of
-#                           unpacking followed by a normal launch. Every launch must exit 0 and print the
-#                           payload's real SHA-256, or adopting the flag is unsafe.
-# The safety row is independent of run_setup.bat's fix: it builds with the flag text itself.
+# FINDING (run 40043297712, Nuitka 4.3.1, 2026-10-24): warm concurrent, overlap and kill recovery are fine, but with
+# the folder cold one of three simultaneous launches exits 2 with "failed to open '<folder>\vcruntime140_1.dll' for
+# writing" (the launch that arrives second tries to write a file the first one has already loaded). The flag
+# was therefore NOT adopted. Revisit it only when this row says adoptable is true; see docs/agent-cold-storage.md.
+#
+# The row passes when the experiment ran and every check the finding relies on held (build, baseline, warm
+# concurrent, overlap, kill recovery, and a normal launch after every cold round). The cold concurrent rounds
+# and the update scenario are RECORDED, not asserted: coldConcurrentOk / updateWhileRunningOk / adoptable say
+# what this runner saw, and a red cold round is the known finding, not a failure of the test.
 #
 # Non-gating (uv lane): two real Nuitka builds and a possible compiler download can fail from network or provider
-# problems. A red safety row means the flag must not be adopted.
+# problems.
 #
-# Emits: self.nuitka.cachespec, self.nuitka.cachesafety
+# Emits: self.nuitka.cachesafety
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -42,15 +45,6 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-function Write-SpecRow {
-    param(
-        [Parameter(Mandatory)]$Pass,
-        [Parameter(Mandatory)][string]$Desc,
-        [Parameter(Mandatory)][hashtable]$Details
-    )
-    Write-NdjsonRow ([ordered]@{ id = 'self.nuitka.cachespec'; req = 'REQ-AV'; pass = $Pass; desc = $Desc; details = $Details })
-}
-
 function Write-SafetyRow {
     param(
         [Parameter(Mandatory)]$Pass,
@@ -60,56 +54,21 @@ function Write-SafetyRow {
     Write-NdjsonRow ([ordered]@{ id = 'self.nuitka.cachesafety'; req = 'REQ-AV'; pass = $Pass; desc = $Desc; details = $Details })
 }
 
-# A Nuitka onefile program reports its own folder in 8.3 form on a hosted runner (RUNNER~1), so any check by
-# folder name needs the long form first (the launch-cache experiment read a false red for that reason).
-function Get-LongPath {
-    param([string]$Path)
-    if (-not $Path) { return $Path }
-    if (-not ('PvwCsNative' -as [type])) {
-        Add-Type -TypeDefinition 'using System.Runtime.InteropServices; using System.Text; public static class PvwCsNative { [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern int GetLongPathName(string path, StringBuilder buf, int len); }'
-    }
-    $sb = New-Object System.Text.StringBuilder 1024
-    $n = [PvwCsNative]::GetLongPathName($Path, $sb, $sb.Capacity)
-    if ($n -gt 0 -and $n -lt $sb.Capacity) { return $sb.ToString() }
-    return $Path
-}
-
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
-    Write-SpecRow   -Pass $true -Desc 'Nuitka unpack cache folder (skipped on non-Windows)' -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' })
     Write-SafetyRow -Pass $true -Desc 'Nuitka unpack cache safety (skipped on non-Windows)' -Details ([ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' })
     exit 0
 }
 
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
-    Write-SpecRow   -Pass $false -Desc 'Nuitka unpack cache folder: run_setup.bat not found' -Details ([ordered]@{ error = 'run_setup.bat not found at ' + $batchPath })
     Write-SafetyRow -Pass $false -Desc 'Nuitka unpack cache safety: run_setup.bat not found' -Details ([ordered]@{ error = 'run_setup.bat not found at ' + $batchPath })
     exit 1
 }
 
 # The flags run_setup.bat passes before the output name; the safety builds take theirs from this text so the
-# build under test is the production one (only the output folder and the data file differ).
+# build under test is the production one (only the output folder, the data file and the spec differ).
 $prodFlags = '-m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist'
-
-function Get-TokenCandidates {
-    # The token is the SHA-256 of the lower-cased current directory the bootstrapper ran in. A runner can hand
-    # out the path in its 8.3 or its long form, so accept either.
-    param([string]$Path)
-    $forms = @($Path, (Get-LongPath $Path)) | Select-Object -Unique
-    $out = @()
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        foreach ($f in $forms) {
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($f.ToLowerInvariant())
-            $hex = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
-            $out += $hex.Substring(0, 12)
-        }
-    } finally {
-        $sha.Dispose()
-    }
-    return @($out | Select-Object -Unique)
-}
 
 function Remove-Folder {
     # A folder can be held briefly by a process that is still exiting; retry before giving up.
@@ -170,90 +129,40 @@ function Stop-AppTree {
     try { $H.Proc.WaitForExit(10000) | Out-Null } catch { }
 }
 
-$workDir = Join-Path $here '~selftest_nuitka_cachespec'
+$workDir = Join-Path $here '~selftest_nuitka_cachesafety'
 if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 Copy-Item -Path $batchPath -Destination $workDir -Force
-Set-Content -Path (Join-Path $workDir 'app.py') -Value 'print("nuitka-cachespec-ok")' -Encoding ASCII
+Set-Content -Path (Join-Path $workDir 'app.py') -Value 'print("nuitka-cachesafety-ok")' -Encoding ASCII
 
-$envName   = ((Split-Path $workDir -Leaf) -replace '[^A-Za-z0-9_-]', '_')
 $cacheRoot = Join-Path $env:LOCALAPPDATA 'PVW'
-$bootstrapLog = '~cachespec_bootstrap.log'
+$bootstrapLog = '~cachesafety_bootstrap.log'
 
 $prevSkipPipreqs   = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $prevForceExecfail = if (Test-Path Env:HP_TEST_FORCE_PYINSTALLER_FAIL) { $env:HP_TEST_FORCE_PYINSTALLER_FAIL } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
 $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'
 
-$dSpec = [ordered]@{}
 $dSafe = [ordered]@{}
-$specPass = $false
 $safePass = $false
-$specFolder = $null
 $safeToken = 'pvwsafe' + ([guid]::NewGuid().ToString('N').Substring(0, 12))
 $safeFolder = Join-Path $cacheRoot ('safety-' + $safeToken)
 try {
-    # ---- Part 1: the bootstrapper's own Tier A build -------------------------------------------------------
+    # ---- Setup: the bootstrapper's own Tier A build leaves a venv with Nuitka in it ------------------------------
     Push-Location $workDir
     try {
         cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
-        $dSpec.bootstrapExit = $LASTEXITCODE
+        $dSafe.setupExit = $LASTEXITCODE
     } finally {
         Pop-Location
     }
     $logPath = Join-Path $workDir $bootstrapLog
     $combined = if (Test-Path -LiteralPath $logPath) { (Get-Content -LiteralPath $logPath -Encoding ASCII) -join "`n" } else { '' }
-    $dSpec.fallbackSucceeded = [bool]($combined -match [regex]::Escape('Fallback build succeeded'))
-    $dSpec.cacheLineLogged = [bool]($combined -match [regex]::Escape('Unpack cache: the program keeps its unpacked files in the PVW folder'))
+    $dSafe.setupFallbackSucceeded = [bool]($combined -match [regex]::Escape('Fallback build succeeded'))
+    # The production Nuitka lines carry no static unpack folder, so the bootstrapper's own build leaves nothing here.
+    $dSafe.pvwFoldersAfterSetup = @()
+    if (Test-Path -LiteralPath $cacheRoot) { $dSafe.pvwFoldersAfterSetup = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
 
-    $exePath = Join-Path $workDir "dist\$envName.exe"
-    $dSpec.exeExists = [bool](Test-Path -LiteralPath $exePath)
-    $runOutPath = Join-Path $workDir '~run.out.txt'
-    $runOut = if (Test-Path -LiteralPath $runOutPath) { Get-Content -LiteralPath $runOutPath -Raw -Encoding ASCII } else { '' }
-    $dSpec.smokeStdoutFound = [bool]($runOut -match [regex]::Escape('nuitka-cachespec-ok'))
-    $statusPath = Join-Path $workDir '~bootstrap.status.json'
-    $statusState = $null
-    if (Test-Path -LiteralPath $statusPath) {
-        try { $statusState = (Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json).state } catch { $statusState = $null }
-    }
-    $dSpec.statusState = $statusState
-
-    $tokens = Get-TokenCandidates $workDir
-    $dSpec.tokenCandidates = $tokens
-    $dSpec.envName = $envName
-    $existing = @()
-    if (Test-Path -LiteralPath $cacheRoot) { $existing = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
-    $dSpec.pvwFolders = $existing
-    foreach ($t in $tokens) {
-        $candidate = Join-Path $cacheRoot ($envName + '-' + $t)
-        if (Test-Path -LiteralPath $candidate) { $specFolder = $candidate; break }
-    }
-    $dSpec.cacheFolderExists = [bool]$specFolder
-    $dSpec.cacheFolder = $specFolder
-    $dSpec.cacheHasFiles = $false
-    if ($specFolder) { $dSpec.cacheHasFiles = ((Get-FolderBytes $specFolder) -gt 0) }
-
-    # A second launch of the built EXE must unpack into the very same folder (and run).
-    $dSpec.relaunchOk = $false
-    $dSpec.relaunchNoNewFolder = $false
-    if ($dSpec.exeExists) {
-        $h = Start-App -Exe $exePath
-        $r = Wait-App -H $h -TimeoutMs 120000
-        $dSpec.relaunchMs = $r.ms
-        $dSpec.relaunchExit = $r.exit
-        $dSpec.relaunchOk = [bool]($r.exit -eq 0 -and $r.out.Contains('nuitka-cachespec-ok'))
-        $after = @()
-        if (Test-Path -LiteralPath $cacheRoot) { $after = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) }
-        $dSpec.pvwFoldersAfterRelaunch = $after
-        $dSpec.relaunchNoNewFolder = [bool]((($existing | Sort-Object) -join '|') -eq (($after | Sort-Object) -join '|'))
-    }
-
-    $specPass = $dSpec.fallbackSucceeded -and $dSpec.cacheLineLogged -and $dSpec.exeExists -and $dSpec.smokeStdoutFound -and
-                ($statusState -eq 'ok') -and $dSpec.cacheFolderExists -and $dSpec.cacheHasFiles -and $dSpec.relaunchOk -and $dSpec.relaunchNoNewFolder
-    $specPass = [bool]$specPass
-    Write-SpecRow -Pass $specPass -Desc 'Item 72: the Tier A Nuitka build keeps its unpacked files in %LOCALAPPDATA%\PVW\<env>-<token> (token from the app folder path)' -Details $dSpec
-
-    # ---- Part 2: what a static folder could break ----------------------------------------------------------
     $py = Join-Path $workDir '.uv_env\Scripts\python.exe'
     $dSafe.envPython = [bool](Test-Path -LiteralPath $py)
     $verRc = -1
@@ -267,6 +176,7 @@ try {
     $dSafe.nuitkaUsable = ($dSafe.envPython -and ($verRc -eq 0))
 
     $expDir = Join-Path $workDir 'exp'
+    $expDir2 = Join-Path $workDir 'exp2'
     New-Item -ItemType Directory -Force -Path $expDir | Out-Null
     $payload = Join-Path $workDir 'payload.bin'
     $buf = New-Object byte[] (100MB)
@@ -280,7 +190,7 @@ try {
     try { $expectedSha = ([System.BitConverter]::ToString($sha.ComputeHash($fs))).Replace('-', '').ToLowerInvariant() } finally { $fs.Dispose(); $sha.Dispose() }
     $dSafe.payloadSha = $expectedSha
 
-    @'
+    $appSource = @'
 import hashlib
 import os
 import sys
@@ -296,33 +206,48 @@ hold = float(sys.argv[1]) if len(sys.argv) > 1 else 0.0
 if hold > 0:
     time.sleep(hold)
 print("safety done", flush=True)
-'@ | Set-Content -LiteralPath (Join-Path $workDir 'safetyapp.py') -Encoding ASCII
+'@
+    $appSource | Set-Content -LiteralPath (Join-Path $workDir 'safetyapp.py') -Encoding ASCII
+    # The second build differs from the first in its code, which is what a user's edit looks like.
+    ($appSource + "`nprint(`"safety version=2`", flush=True)`n") | Set-Content -LiteralPath (Join-Path $workDir 'safetyapp2.py') -Encoding ASCII
 
     function Test-Output {
         param($R)
         return [bool]($R.exit -eq 0 -and -not $R.timedOut -and $R.out.Contains("sha=$expectedSha ") -and $R.out.Contains("size=$($dSafe.payloadBytes)"))
     }
+    function Get-Sample {
+        param($R)
+        return ("exit={0} out={1} err={2}" -f $R.exit, $R.out, $R.err)
+    }
 
-    $built = $false
-    if ($dSafe.nuitkaUsable) {
+    function Build-Safety {
+        # Same flags as the production lines plus the static spec; returns $true when the EXE exists.
+        param([string]$Source, [string]$OutDirName, [string]$LogName)
         $flagArgs = @($prodFlags -split ' ' | Where-Object { $_ -notlike '--output-dir=*' })
         $spec = "--onefile-tempdir-spec={CACHE_DIR}/PVW/safety-$safeToken"
-        $nArgs = $flagArgs + @('--output-dir=exp', '--include-data-files=payload.bin=payload.bin', $spec, '-o', 'safety.exe', 'safetyapp.py')
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $nArgs = $flagArgs + @("--output-dir=$OutDirName", '--include-data-files=payload.bin=payload.bin', $spec, '-o', 'safety.exe', $Source)
+        $logFull = Join-Path $workDir $LogName
         Push-Location $workDir
         try {
-            $buildLog = Join-Path $workDir '~build_safety.log'
-            & $py @nArgs > $buildLog 2>&1
-            $dSafe.buildRc = $LASTEXITCODE
+            & $py @nArgs > $logFull 2>&1
+            $rc = $LASTEXITCODE
         } finally {
             Pop-Location
         }
+        return [pscustomobject]@{ Rc = $rc; Built = [bool]((Test-Path -LiteralPath (Join-Path $workDir "$OutDirName\safety.exe")) -and $rc -eq 0) }
+    }
+
+    $built = $false
+    if ($dSafe.nuitkaUsable) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $b = Build-Safety -Source 'safetyapp.py' -OutDirName 'exp' -LogName '~build_safety.log'
         $sw.Stop()
+        $dSafe.buildRc = $b.Rc
         $dSafe.buildSeconds = [math]::Round($sw.Elapsed.TotalSeconds, 1)
-        $exe = Join-Path $expDir 'safety.exe'
-        $built = [bool]((Test-Path -LiteralPath $exe) -and $dSafe.buildRc -eq 0)
+        $built = $b.Built
     }
     $dSafe.built = $built
+    $exe = Join-Path $expDir 'safety.exe'
 
     if ($built) {
         # baseline: the first launch unpacks, the folder stays
@@ -339,17 +264,34 @@ print("safety done", flush=True)
         $rs = @($hs | ForEach-Object { Wait-App -H $_ })
         $dSafe.warmConcurrentOk = (@($rs | Where-Object { Test-Output $_ }).Count -eq 3)
         $dSafe.warmConcurrentExits = @($rs | ForEach-Object { $_.exit })
-        if (-not $dSafe.warmConcurrentOk) { $dSafe.warmConcurrentSample = ($rs | Where-Object { -not (Test-Output $_) } | Select-Object -First 1 | ForEach-Object { ("exit={0} out={1} err={2}" -f $_.exit, $_.out, $_.err) }) }
+        if (-not $dSafe.warmConcurrentOk) { $dSafe.warmConcurrentSample = ($rs | Where-Object { -not (Test-Output $_) } | Select-Object -First 1 | ForEach-Object { Get-Sample $_ }) }
 
-        # several copies at once, folder cold (they race to unpack)
-        $dSafe.coldRemoved = Remove-Folder $safeFolder
-        $hs = @(); foreach ($i in 1..3) { $hs += ,(Start-App -Exe $exe -ArgText '3') }
-        $rs = @($hs | ForEach-Object { Wait-App -H $_ })
-        $dSafe.coldConcurrentOk = (@($rs | Where-Object { Test-Output $_ }).Count -eq 3)
-        $dSafe.coldConcurrentExits = @($rs | ForEach-Object { $_.exit })
-        if (-not $dSafe.coldConcurrentOk) { $dSafe.coldConcurrentSample = ($rs | Where-Object { -not (Test-Output $_) } | Select-Object -First 1 | ForEach-Object { ("exit={0} out={1} err={2}" -f $_.exit, $_.out, $_.err) }) }
-        $r = Wait-App -H (Start-App -Exe $exe)
-        $dSafe.afterColdOk = Test-Output $r
+        # several copies at once, folder cold (they race to unpack): three rounds, a normal launch after each
+        $coldRounds = @()
+        $coldRemovedAll = $true
+        $coldRecoveryOk = $true
+        $coldFailedLaunches = 0
+        foreach ($round in 1..3) {
+            $entry = [ordered]@{ round = $round }
+            $entry.removed = Remove-Folder $safeFolder
+            if (-not $entry.removed) { $coldRemovedAll = $false }
+            $hs = @(); foreach ($i in 1..3) { $hs += ,(Start-App -Exe $exe -ArgText '3') }
+            $rs = @($hs | ForEach-Object { Wait-App -H $_ })
+            $bad = @($rs | Where-Object { -not (Test-Output $_) })
+            $entry.exits = @($rs | ForEach-Object { $_.exit })
+            $entry.ok = ($bad.Count -eq 0)
+            $coldFailedLaunches += $bad.Count
+            if ($bad.Count -gt 0 -and -not $dSafe.Contains('coldConcurrentSample')) { $dSafe.coldConcurrentSample = (Get-Sample $bad[0]) }
+            $r = Wait-App -H (Start-App -Exe $exe)
+            $entry.afterOk = Test-Output $r
+            if (-not $entry.afterOk) { $coldRecoveryOk = $false; $entry.afterSample = (Get-Sample $r) }
+            $coldRounds += ,$entry
+        }
+        $dSafe.coldRounds = $coldRounds
+        $dSafe.coldRemoved = $coldRemovedAll
+        $dSafe.coldFailedLaunches = $coldFailedLaunches
+        $dSafe.coldConcurrentOk = (@($coldRounds | Where-Object { -not $_.ok }).Count -eq 0)
+        $dSafe.afterColdOk = $coldRecoveryOk
 
         # a second copy started while the first still runs (it holds files in the folder open)
         $a = Start-App -Exe $exe -ArgText '20'
@@ -391,12 +333,38 @@ print("safety done", flush=True)
             $entry.partial = $partial
             $r = Wait-App -H (Start-App -Exe $exe)
             $entry.relaunchOk = Test-Output $r
-            if (-not $entry.relaunchOk) { $recoveryOk = $false; $entry.sample = ("exit={0} out={1} err={2}" -f $r.exit, $r.out, $r.err) }
+            if (-not $entry.relaunchOk) { $recoveryOk = $false; $entry.sample = (Get-Sample $r) }
             $attempts += ,$entry
         }
         $dSafe.killAttempts = $attempts
         $dSafe.partialKills = $partialKills
         $dSafe.killRecoveryOk = $recoveryOk
+
+        # a NEW build of the same spec started while the OLD build still runs (the user edits the program and runs
+        # the bootstrapper again with the window still open); recorded, not asserted
+        $dSafe.updateWhileRunningTested = $false
+        $dSafe.updateWhileRunningOk = $false
+        $b2 = Build-Safety -Source 'safetyapp2.py' -OutDirName 'exp2' -LogName '~build_safety2.log'
+        $dSafe.build2Rc = $b2.Rc
+        if ($b2.Built) {
+            $exe2 = Join-Path $expDir2 'safety.exe'
+            [void](Remove-Folder $safeFolder)
+            $old = Start-App -Exe $exe -ArgText '25'
+            $waited = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($waited.ElapsedMilliseconds -lt 20000 -and -not $old.Proc.HasExited -and (Get-FolderBytes $safeFolder) -lt ($fullBytes - 1MB)) { Start-Sleep -Milliseconds 200 }
+            $dSafe.updateOldStillRunning = (-not $old.Proc.HasExited)
+            if ($dSafe.updateOldStillRunning) {
+                $dSafe.updateWhileRunningTested = $true
+                $r2 = Wait-App -H (Start-App -Exe $exe2)
+                $dSafe.updateWhileRunningOk = [bool]((Test-Output $r2) -and $r2.out.Contains('safety version=2'))
+                $dSafe.updateWhileRunningExit = $r2.exit
+                if (-not $dSafe.updateWhileRunningOk) { $dSafe.updateWhileRunningSample = (Get-Sample $r2) }
+            }
+            Stop-AppTree $old
+            $r3 = Wait-App -H (Start-App -Exe $exe2)
+            $dSafe.updateAfterOldGoneOk = [bool]((Test-Output $r3) -and $r3.out.Contains('safety version=2'))
+            if (-not $dSafe.updateAfterOldGoneOk) { $dSafe.updateAfterOldGoneSample = (Get-Sample $r3) }
+        }
     }
 
     try {
@@ -406,27 +374,28 @@ print("safety done", flush=True)
         $dSafe.realtimeMonitoringDisabled = $null
     }
 
+    # What the finding relies on. Cold concurrent rounds and the update scenario are recorded below, not asserted.
     $safePass = [bool]($dSafe.nuitkaUsable -and $built -and $dSafe.baselineOk -and $dSafe.folderKept -and
-                       $dSafe.warmConcurrentOk -and $dSafe.coldRemoved -and $dSafe.coldConcurrentOk -and $dSafe.afterColdOk -and
+                       $dSafe.warmConcurrentOk -and $dSafe.coldRemoved -and $dSafe.afterColdOk -and
                        $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1))
-    $dSafe.finding = "baseline=$($dSafe.baselineOk) warm=$($dSafe.warmConcurrentOk) cold=$($dSafe.coldConcurrentOk) overlap=$($dSafe.overlapOk) killRecovery=$($dSafe.killRecoveryOk) partialKills=$($dSafe.partialKills)"
-    Write-SafetyRow -Pass $safePass -Desc 'Item 72: a static Nuitka unpack folder survives concurrent launches, an overlapping launch and a launch killed mid-unpack' -Details $dSafe
+    $dSafe.adoptable = [bool]($safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningTested -and $dSafe.updateWhileRunningOk)
+    $dSafe.finding = "baseline=$($dSafe.baselineOk) warm=$($dSafe.warmConcurrentOk) coldOk=$($dSafe.coldConcurrentOk) coldFailedLaunches=$($dSafe.coldFailedLaunches) overlap=$($dSafe.overlapOk) killRecovery=$($dSafe.killRecoveryOk) partialKills=$($dSafe.partialKills) updateTested=$($dSafe.updateWhileRunningTested) updateOk=$($dSafe.updateWhileRunningOk) adoptable=$($dSafe.adoptable)"
+    Write-SafetyRow -Pass $safePass -Desc 'Item 72 finding (flag not adopted): a static Nuitka unpack folder measured for warm and cold concurrent launches, an overlapping launch, a launch killed mid-unpack and an update while the old build runs' -Details $dSafe
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
     if ($null -eq $prevForceExecfail) { Remove-Item Env:HP_TEST_FORCE_PYINSTALLER_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PYINSTALLER_FAIL = $prevForceExecfail }
     # Drop the large leftovers (data file, EXEs, venv) but keep the ~*.log files: the diagnostics snapshot copies
     # tests/ recursively, and a venv's license .txt files would ride along.
-    foreach ($big in @('payload.bin', 'exp', '.uv_env', 'dist', 'build')) {
+    foreach ($big in @('payload.bin', 'exp', 'exp2', '.uv_env', 'dist', 'build')) {
         $bigPath = Join-Path $workDir $big
         if (Test-Path -LiteralPath $bigPath) { Remove-Item -LiteralPath $bigPath -Recurse -Force -ErrorAction SilentlyContinue }
     }
-    # The cache folders live outside the workspace; remove exactly the two this run created.
+    # The cache folder lives outside the workspace; remove exactly the one this run created.
     if ($safeFolder) { [void](Remove-Folder $safeFolder) }
-    if ($specFolder) { [void](Remove-Folder $specFolder) }
     if ((Test-Path -LiteralPath $cacheRoot) -and -not (Get-ChildItem -LiteralPath $cacheRoot -Force -ErrorAction SilentlyContinue)) {
         Remove-Item -LiteralPath $cacheRoot -Force -ErrorAction SilentlyContinue
     }
 }
 
-if (-not ($specPass -and $safePass)) { exit 1 }
+if (-not $safePass) { exit 1 }
 exit 0

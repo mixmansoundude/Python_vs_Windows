@@ -3687,6 +3687,33 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   and the `KilledMarker` cases in `tests/test_exe_smokerun.py`. Item 66 receives the pass type (`exe_ok`,
   `interpreter_ok`, `user_confirmed`) as a field. Detail: `docs/agent-interconnect.md`'s "Last-chance offer" section.
 
+### Item 72 (closed 2026-10-24; experiment PR #501, follow-up PR #505; filed from the Aug-Sep 2026 field report)
+
+- **The problem**: a field Nuitka fallback build took about an hour and its EXE needed about 60 s to first output
+  with Defender busy at each launch (Finding 7 in `docs/prd-av-safe-build-path.md`). A Nuitka `--onefile` EXE unpacks
+  into a fresh `%TEMP%\onefile_*` folder on every launch.
+- **Decided**: (a) a build heartbeat is dropped (it needs a second process or a helper that owns the Nuitka process,
+  and Item 68's wording already says to expect a long quiet step and where the log is); (c) the observed hour and the
+  60 s launch are recorded as Finding 7. (b) is the experiment `tests/selfapps_nuitka_launchcache.ps1` (row
+  `self.nuitka.launchcache`): on Windows (run `39941938491`, Nuitka 4.3.1) later launches took about 175 ms against a
+  641 ms median for the default build, a same-spec rebuild ran the NEW code, and build time did not change. Defender
+  was off on the runner, so the field effect stays unmeasured.
+- **Adopting the flag was tried and NOT adopted (2026-10-24, run `40043297712`).** The follow-up built a
+  `:nuitka_cache_arg` subroutine that put `--onefile-tempdir-spec={CACHE_DIR}/PVW/<env>-<token>` on both Nuitka lines
+  (`<token>` = first 12 hex characters of the SHA-256 of the lower-cased app folder path, fail open, validated with
+  `findstr /r /x`), with the rule written down first: adopt only if the safety row is green. The row
+  `self.nuitka.cachesafety` was red. With the folder cold, three simultaneous launches ended `[0, 2, 0]`, the failing
+  one printing `failed to open '...\PVW\safety-...\vcruntime140_1.dll' for writing` (the launch that arrives second
+  tries to write a file the first has already loaded). Warm concurrent launches, an overlapping launch, five launches
+  killed mid-unpack (each followed by a normal launch) and a normal launch after the failed cold race all passed.
+  A beginner who double-clicks twice during a first unpack would see an error where today a second copy simply starts,
+  so `run_setup.bat` keeps its two Nuitka lines without the flag; the subroutine and the `self.nuitka.cachespec` row
+  were never merged.
+- **What stays**: `tests/selfapps_nuitka_cachesafety.ps1` (uv lane, non-gating, records `adoptable` after three cold
+  rounds and an update-while-the-old-build-runs scenario), `tests/test_nuitka_cachesafety.py` (fails if the batch gains
+  the flag), and the revisit trigger in `docs/agent-cold-storage.md`. Detail and numbers:
+  `docs/plan-field-report-2026-10.md`.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**

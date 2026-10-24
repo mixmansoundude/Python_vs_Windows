@@ -76,7 +76,7 @@ tests/
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
-  selfapps_nuitka_cachespec.ps1 Item 72 follow-up: the Nuitka unpack cache (rows self.nuitka.cachespec: the bootstrapper's own Tier A build names the per-app folder; self.nuitka.cachesafety: concurrent, overlapping and killed-mid-unpack launches recover; uv lane, non-gating)
+  selfapps_nuitka_cachesafety.ps1 Item 72 follow-up (closed, flag NOT adopted): row self.nuitka.cachesafety measures what a static Nuitka unpack folder would break (warm and cold concurrent launches, overlap, kill mid-unpack, update while the old build runs) and records adoptable; uv lane, non-gating
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -306,7 +306,7 @@ Test files and what they cover:
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
-| `test_nuitka_cachespec.py` | Item 72 follow-up: both Nuitka command lines carry `%HP_NUITKA_CACHE_ARG%` after `--output-dir=dist`, each after a `call :nuitka_cache_arg` in the same subroutine; the subroutine fails open (never `exit /b 1`), validates a 12-hex token with `findstr /r /x`, builds `--onefile-tempdir-spec={CACHE_DIR}/PVW/%ENVNAME%-%HP_NK_TOKEN%`, keeps `%`/`"` out of its Python line, and its token recipe is executed (12 hex characters, different for two folders with the same name, stable, ASCII for a non-ASCII path); the two-row script and its uv-only non-gating step; synthetic cases prove each rule can fail |
+| `test_nuitka_cachesafety.py` | Item 72 follow-up: `run_setup.bat` has exactly two Nuitka command lines, with the production flags and NO `--onefile-tempdir-spec`/`:nuitka_cache_arg` anywhere (a static unpack folder failed cold concurrent launches; the message names the cold-storage trigger); the safety script emits its row once, builds with the production flag text plus the spec, asserts warm/overlap/kill-recovery/post-cold-launch but only RECORDS the cold rounds and the update scenario (`adoptable` needs both), ends with its own exit codes, and its step is uv-only and non-gating; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -758,7 +758,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 73, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 72, 73, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -773,18 +773,6 @@ the original symptom (see that doc's "CI-first testing policy").
   (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any install, requirements
   edit, or rebuild; a yes also covers one verification run; a no changes nothing. Slice 2 is built on PR #493
   (red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with `prompted:false`, nothing else red there).
-- **Item 72 (investigation, three parts)**: (a) the long-build heartbeat is considered and dropped
-  (it needs a second process or a new helper that owns the Nuitka process, and Item 68's wording already
-  tells the user to expect a long quiet step and where the log is); (c) the observed hour and the
-  60 s first launch are recorded as Finding 7 in `docs/prd-av-safe-build-path.md`; (b) the experiment is
-  built (`tests/selfapps_nuitka_launchcache.ps1`, row `self.nuitka.launchcache`, uv lane, non-gating:
-  default versus `--onefile-tempdir-spec` launches, and whether a same-spec rebuild runs the new code).
-  Windows result (2026-10-23, run `39941938491`, green): same-spec rebuild ran the new code, later launches
-  about 175 ms against a 641 ms median for the default build, builds 34.7 s against 43.7 s (Defender off on
-  the runner, so the field effect is unmeasured).
-  Open: decide whether to add the flag to the two Nuitka command lines (`:try_nuitka_tier_a`,
-  `:offer_optimized_build`), (PR #499 has merged, so the lines are free); a shared cache path also needs a per-app folder name
-  so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a

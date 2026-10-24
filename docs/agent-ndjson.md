@@ -78,7 +78,7 @@ self.console.tiering (uv lane only -- selfapps_console_tiering.ps1; non-gating),
 self.exe.build.tiera (uv lane only -- selfapps_nuitka_tiera.ps1; non-gating),
 self.exe.tiera.hidden_skip (uv lane only -- selfapps_nuitka_tiera_hidden_skip.ps1; non-gating),
 self.nuitka.launchcache (uv lane only -- selfapps_nuitka_launchcache.ps1; non-gating),
-self.nuitka.cachespec, self.nuitka.cachesafety (uv lane only -- selfapps_nuitka_cachespec.ps1; non-gating),
+self.nuitka.cachesafety (uv lane only -- selfapps_nuitka_cachesafety.ps1; non-gating),
 self.optbuild.offer (uv lane only -- selfapps_optimized_build.ps1; non-gating),
 self.parse_warn.table.v6, self.parse_warn.pytest,
 self.heuristics.pytest,
@@ -610,23 +610,22 @@ builds and a possible compiler download.
 self.nuitka.launchcache
 ```
 
-## selfapps-nuitka-cachespec NDJSON rows (selfapps_nuitka_cachespec.ps1, uv lane only, non-gating)
+## selfapps-nuitka-cachesafety NDJSON rows (selfapps_nuitka_cachesafety.ps1, uv lane only, non-gating)
 
-Item 72 follow-up. Both Nuitka command lines in `run_setup.bat` pass
-`--onefile-tempdir-spec={CACHE_DIR}/PVW/<env>-<token>`, where `<token>` is the first 12 hex characters of the
-SHA-256 of the lower-cased app folder path (`:nuitka_cache_arg`), so two apps never share a folder.
-`self.nuitka.cachespec`: the bootstrapper's own Tier A build (PyInstaller failure forced, a real Nuitka build)
-created exactly `%LOCALAPPDATA%\PVW\<env>-<token>` with files in it, logged the `Unpack cache:` line, and a second
-launch of `dist\<env>.exe` ran from it without creating another folder (`details`: `tokenCandidates`,
-`pvwFolders`, `cacheFolder`, `relaunchNoNewFolder`). `self.nuitka.cachesafety`: with the same flag text (build
-independent of `run_setup.bat`), three copies started at once with the folder warm and cold, a copy started while
-another still runs, and five launches killed mid-unpack each followed by a normal launch must all exit 0 and print the
-payload's real SHA-256; at least one kill must land while the folder was partly unpacked (`partialKills`), or the
-row is red because it tested nothing. A red safety row means the flag must not be adopted. Non-gating: two real
-Nuitka builds and a possible compiler download.
+Item 72 follow-up (closed, the flag was NOT adopted). With the production Nuitka flag text plus
+`--onefile-tempdir-spec={CACHE_DIR}/PVW/safety-<token>` (a build independent of `run_setup.bat`, whose Nuitka lines
+carry no such flag), the script launches a `--onefile` EXE that hashes a 100 MB data file: baseline, three copies at
+once with the folder warm, three copies at once with the folder cold (three rounds, a normal launch after each),
+a second and third copy while the first still runs, five launches killed mid-unpack each followed by a normal launch,
+and a NEW build of the same spec started while the old build is still running. `pass` means the experiment ran and
+every check the finding relies on held (build, baseline, warm concurrent, overlap, kill recovery with at least one
+kill landing on a partly unpacked folder, a normal launch after every cold round). The cold rounds
+(`coldConcurrentOk`, `coldFailedLaunches`, `coldConcurrentSample`) and the update scenario (`updateWhileRunningOk`,
+`updateWhileRunningSample`) are RECORDED, not asserted: the known result is that one cold launch in three exits 2 with
+`failed to open ... for writing`. `details.adoptable` is true only when those two are clean as well; that is the
+revisit trigger in `docs/agent-cold-storage.md`. Non-gating: two real Nuitka builds and a possible compiler download.
 
 ```
-self.nuitka.cachespec
 self.nuitka.cachesafety
 ```
 

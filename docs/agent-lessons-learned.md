@@ -879,6 +879,21 @@ with `[System.IO.File]::Open(path, 'Open', 'Read', 'Read')` and prove the lock w
 
 ---
 
+## A static Nuitka `--onefile` unpack folder fails when two launches race on a cold folder
+
+`--onefile-tempdir-spec={CACHE_DIR}/...` keeps the unpacked files, so later launches are about 3.7 times faster, but
+with the folder cold a launch that arrives while another is still unpacking can exit 2 with `failed to open '...' for
+writing` (a DLL the first launch has loaded cannot be rewritten; run `40043297712`, Nuitka 4.3.1, one of three). Warm
+concurrent launches, an overlapping launch and a launch killed mid-unpack were all fine. **Rule: `run_setup.bat`'s two
+Nuitka command lines carry no tempdir spec**; `tests/test_nuitka_cachesafety.py` fails if one appears, and
+`self.nuitka.cachesafety` (uv lane) keeps measuring so a Nuitka release that fixes it shows as `adoptable` (revisit
+trigger in `docs/agent-cold-storage.md`). Inferred, and recorded by the same row's update scenario rather than assumed:
+rebuilding while the old program is still open hits the same write failure, which in this bootstrapper would be the
+verification launch of the new EXE. A hosted runner has Defender off, so the field benefit is unmeasured; a speed number
+from a runner alone is not a reason to adopt.
+
+---
+
 ## Heuristic dep-augmentation must strip pip extras before name lookup
 
 `HP_PREP_REQUIREMENTS`'s `names_lower` list must strip `[...]` (pip extras, e.g. `pandas[excel]`)
