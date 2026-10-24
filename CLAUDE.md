@@ -304,6 +304,7 @@ Test files and what they cover:
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
+| `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -755,7 +756,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 67, 68, 70, 71, 73, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 73, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -770,16 +771,18 @@ the original symptom (see that doc's "CI-first testing policy").
   (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any install, requirements
   edit, or rebuild; a yes also covers one verification run; a no changes nothing. Slice 2 is built on PR #493
   (red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with `prompted:false`, nothing else red there).
-- **Item 66 (Confirmed gap, medium)**: remember a provider that produced a verified run after a
-  cascade, so the next run does not redo uv first. Separate state file, not `~env.state.json`.
-  Decided 2026-10-09 (Q3, option B): also add a super-user `PVW_PROVIDER=conda` switch; edge cases
-  and the memory-invalidation rules are in the plan doc. A failed forced solve stops; it does not cascade.
-  Decided 2026-10-17 (Q11, option A): the memory survives edits to `requirements.txt`, `pyproject.toml`,
-  `runtime.txt` and `.py` files; it is cleared only when the remembered provider is gone or the user
-  deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
-  **Built 2026-10-17 (PR #497, one PR with Item 82 slice 2, README wording in the PR body)**: switch check after the `Python file count` log line, `:provider_memory_read` before the uv block, `:provider_memory_write` from `:success`, `~runtime_writeback.txt` record so a stale exact pin is dropped when conda goes first; rows `self.provider.*` (real lane gating, three uv rows non-gating), unit tests `tests/test_provider_memory.py`. Not covered, by design: the cached-EXE fast path runs first, a failed memory-start conda run follows the existing conda-failure chain and uv is not retried, only conda is remembered. Detail: `docs/agent-interconnect.md`.
-- **Item 72 (investigation)**: Nuitka long-build heartbeat (only if not fragile) and slow
-  first-launch experiment (`--onefile-tempdir-spec`).
+- **Item 72 (investigation, three parts)**: (a) the long-build heartbeat is considered and dropped
+  (it needs a second process or a new helper that owns the Nuitka process, and Item 68's wording already
+  tells the user to expect a long quiet step and where the log is); (c) the observed hour and the
+  60 s first launch are recorded as Finding 7 in `docs/prd-av-safe-build-path.md`; (b) the experiment is
+  built (`tests/selfapps_nuitka_launchcache.ps1`, row `self.nuitka.launchcache`, uv lane, non-gating:
+  default versus `--onefile-tempdir-spec` launches, and whether a same-spec rebuild runs the new code).
+  Windows result (2026-10-23, run `39941938491`, green): same-spec rebuild ran the new code, later launches
+  about 175 ms against a 641 ms median for the default build, builds 34.7 s against 43.7 s (Defender off on
+  the runner, so the field effect is unmeasured).
+  Open: decide whether to add the flag to the two Nuitka command lines (`:try_nuitka_tier_a`,
+  `:offer_optimized_build`), (PR #499 has merged, so the lines are free); a shared cache path also needs a per-app folder name
+  so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
 - **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
@@ -834,37 +837,6 @@ the original symptom (see that doc's "CI-first testing policy").
   accepts 3.15. Confirm the Nuitka version in a `uv`-lane setup log before closing; the slice 1
   row (Nuitka skipped cleanly on an unsupported Python) is still worth adding, since the next
   Python minor will repeat this.
-
-### Item 82: last-chance offer to try conda after a failed run (filed 2026-10-11 from a maintainer brainstorm)
-
-- **Item 82 (planned, medium; shape agreed 2026-10-11, option A; plan in `docs/plan-field-report-2026-10.md`)**:
-  the early cascade prompt (30 s, default N) fires only when warnfix leaves an import unresolved AND a
-  repair install fails, so a missed prompt, or a failure that only shows at run time, gets no later
-  offer. Add ONE untimed prompt after the verification run and the optional checkpoint, default
-  "neither": it shows the last error line and offers worked-anyway / try Miniconda (says it runs the
-  program once more, README REQ-018) / neither. uv to conda only; never on the fast path or after a
-  silent GUI timeout; auto-declines on `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE`. Setting
-  `HP_CASCADE_APPROVED` late reuses the existing cascade with no change to it. The checkpoint's
-  discarded interpreter result (`:run_postexec_checkpoint`) must be captured. The nine proposed
-  defaults, the CI row per branch and the sequencing with Items 64, 65, 66 and 68 are in the plan doc.
-  Decided 2026-10-11 (was Q10, option a): on the cascade-reached conda tier only, a window app's silent
-  timeout asks once whether it opened and worked, and only an explicit yes (a bare Enter means no) is
-  recorded as `user_confirmed`; the gate is a marker the smoke runner writes when it stops a silent
-  process, not `HP_EXE_EXIT=-1` alone (a failed launch or a program exiting `-1` also leaves `-1`); the
-  prompt says the check stops the program after about 30 seconds, and the CI fixture is a silent script.
-  Test first.
-  Item 66 receives the pass type (`exe_ok`, `interpreter_ok`, `user_confirmed`) as a field.
-  **Slice 1 (the W/C/N prompt, built 2026-10-16, PR #495, README wording in the PR body)**: `:last_chance_offer`
-  at the end of `:run_entry_smoke`, own helper `HP_LAST_ERROR_LINE`, the checkpoint's interpreter result
-  kept as `HP_LC_CKPT_RC`, the `RUNTIME_MISMATCH` hint reworded so it no longer rules out the
-  environment. Rows `self.lastchance.*` (real lane gating, silent-timeout and cascade scenarios on the
-  uv lane non-gating because of the Miniconda download and the force-stopped EXE).
-  **Slice 2 (built 2026-10-16, PR #497)**: `:lc_window` asks "Did it open and work? [y/N]" for exit `-1` on the
-  cascade-reached conda tier only, gated on `HP_EXE_KILLED_SILENT`, which `:run_exe_smokerun` reads from
-  `~smokerun_killed.txt`, written by `tools/exe_smokerun.ps1` only inside its `Kill()` branch
-  (`HP_EXE_SMOKERUN` re-synced). Rows `self.lastchance.window_yes/_enter/_auto/_selfexit` (uv lane,
-  non-gating: Miniconda download and a force-stopped silent EXE), unit tests `tests/test_window_confirm.py`
-  and the `KilledMarker` cases in `tests/test_exe_smokerun.py`.
 
 ### Item 87: an unlaunchable stale `dist\<env>.exe` may hang the EXE smoke step (filed 2026-10-23 from PR #499's red run)
 

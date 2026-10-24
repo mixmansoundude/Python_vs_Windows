@@ -90,6 +90,36 @@ If Tier B (reprovisioned 3.12 environment) is implemented via a process restart,
 
 **Related risk if a restart is used: stale `PATH`/`VIRTUAL_ENV` from the main run.** A restarted process inherits its parent's environment variables by default. If the main run's `VIRTUAL_ENV` and `PATH` (pointing at the 3.13+ environment) aren't explicitly cleared or overridden before the restart, the provider-tier chain in the restarted process could resolve back to the already-active 3.13+ interpreter instead of the pinned 3.12 one -- silently defeating the entire point of Tier B. This needs to be handled explicitly (clear/override those variables before restart, or reference the 3.12 interpreter by explicit resolved path rather than relying on `PATH` lookup), not assumed to work by default.
 
+### Finding 7 -- field data points from a real Nuitka fallback run, Aug-Sep 2026 (CLAUDE.md Item 72)
+
+Recorded as observations, not requirements. They came from one maintainer test machine (Windows Sandbox,
+8 GB of RAM after the first attempt crashed at the default size) building an app whose Nuitka compile
+pulled in scipy, pyvisa and black, with the fallback forced by `HP_TEST_FORCE_PYINSTALLER_FAIL=1`:
+
+- **Build time: about one hour.** Nuitka's own "slow C compilation detected" report repeated every
+  360 seconds; the first three were `black.huffman_table.c` (400 s), `pyvisa.attributes.c` (665 s) and
+  `module.scipy.stats._continuous_distns.c` (500 s), with many `zig.exe` processes in flight and the
+  sandbox's memory nearly full. Large static data tables compiled to one C file are expected Nuitka
+  behavior, so this is a data point about what a "fallback build" can cost for a data-science or
+  instrument-control app, not a defect to fix. The user-facing consequence is already handled by wording:
+  `:try_nuitka_tier_a` and `:offer_optimized_build` now say it can take tens of minutes or more and that
+  progress is in `~setup.log` (Item 68).
+- **Launch time of the finished EXE: about 60 s to first output, against 5 s for the PyInstaller EXE**,
+  with Windows Defender and Advanced Threat Protection at 100% CPU for roughly half a minute at each
+  launch. The cause is NOT established. The explanation offered by a third-party analysis (an unsigned,
+  packed-looking native binary draws deep static analysis, so signing is the only fix) is a theory, and
+  this repo does not adopt it. A mechanism that is known: a Nuitka `--onefile` EXE unpacks its whole
+  payload into a fresh `%TEMP%\onefile_*` folder on every launch and deletes it on exit, so a large
+  app is extracted, and scanned, every time. `--onefile-tempdir-spec` (or `--onefile-cache-mode=cached`)
+  keeps the unpacked folder instead. `tests/selfapps_nuitka_launchcache.ps1` (row
+  `self.nuitka.launchcache`, uv lane) measures first and later launches of both variants and checks that
+  a rebuild with the same spec runs the new code; hosted CI runners usually have real-time protection
+  off (the row records it), so the timings may show less than the field machine did.
+- **Heartbeat during the build: considered and dropped.** A line every few minutes needs either a second
+  background process or a new helper that owns the Nuitka process, with its own lifecycle (orphans on
+  Ctrl+C, a log read while Nuitka writes it). The plan said to drop it if it got fragile, and the wording
+  fix already tells the user to expect a long, quiet step and where the log is.
+
 ## Problem Statement
 
 PyInstaller-built executables are increasingly flagged and quarantined by antivirus engines and Windows Defender heuristics -- a known, worsening industry problem in 2026, serious enough that competing commercial products now market themselves specifically around eliminating it. Python_vs_Windows's Prime Directive promises a non-technical user a working double-click EXE from a raw `.py` file. If the produced EXE gets quarantined, the entire tool looks broken to that user -- even though the root cause is upstream in how PyInstaller packages executables, not in Python_vs_Windows's own logic. This risk has not yet caused a real reported failure, but it is anticipated and worth getting ahead of.
