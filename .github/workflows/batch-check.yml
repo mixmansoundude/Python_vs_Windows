@@ -1082,7 +1082,7 @@ jobs:
       # row records adoptable so a later Nuitka release that fixes it is visible (docs/agent-cold-storage.md).
       # Non-gating: two real Nuitka builds and a possible compiler download can fail from network or provider problems.
       - name: "Self-test: Nuitka unpack cache safety finding (uv lane, non-gating)"
-        if: ${{ matrix.mode == 'uv' }}
+        if: ${{ !cancelled() && matrix.mode == 'uv' }}
         continue-on-error: true
         shell: pwsh
         run: |
@@ -2330,6 +2330,12 @@ jobs:
             tests\~selftest_honest_wording\~pipreqs.diff.txt
             tests/~selftest_honest_wording/~dependency_source.txt
             tests\~selftest_honest_wording\~dependency_source.txt
+            tests/~selftest_nuitka_cachesafety/~cachesafety_bootstrap.log
+            tests\~selftest_nuitka_cachesafety\~cachesafety_bootstrap.log
+            tests/~selftest_nuitka_cachesafety/~build_safety.log
+            tests\~selftest_nuitka_cachesafety\~build_safety.log
+            tests/~selftest_nuitka_cachesafety/~build_safety2.log
+            tests\~selftest_nuitka_cachesafety\~build_safety2.log
             tests/~selftest_pvw_builder_invalid/~pvw_builder_invalid_bootstrap.log
             tests\~selftest_pvw_builder_invalid\~pvw_builder_invalid_bootstrap.log
             tests/~selftest_pvw_builder_invalid/~setup.log

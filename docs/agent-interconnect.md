@@ -338,7 +338,8 @@ folder makes later launches faster but breaks a launch that races another on a c
 no `:nuitka_cache_arg` anywhere in the batch) and also pins `tests/selfapps_nuitka_cachesafety.ps1`'s `$prodFlags`
 to the same text, so the safety build stays the production build. `tests/selfapps_nuitka_launchcache.ps1` pins its
 own `$prodFlags` the same way, so a change to the shared flag text is made in `run_setup.bat` and in both scripts
-together.
+together. The test pins the whole command line (`-o "<name>" "%HP_ENTRY%" >> "%LOG%" 2>&1` after the flags), so an
+option added after `--output-dir=dist` is caught too.
 
 ---
 

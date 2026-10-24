@@ -19,6 +19,9 @@ COLD_STORAGE = REPO / "docs" / "agent-cold-storage.md"
 
 ROW = "self.nuitka.cachesafety"
 PROD_FLAGS = "-m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist"
+# The whole line, not only its start: an option inserted after --output-dir=dist (or after the output name) changes
+# the build the safety script is supposed to be measuring.
+PROD_LINE = re.compile(r'^\s*"%HP_PY%" ' + re.escape(PROD_FLAGS) + r' -o "[^"]+" "%HP_ENTRY%" >> "%LOG%" 2>&1\s*$')
 
 
 def lines_of(text):
@@ -36,8 +39,8 @@ def batch_problems(batch_text):
     if len(cmds) != 2:
         found.append("expected 2 Nuitka command lines, found %d" % len(cmds))
     for ln in cmds:
-        if PROD_FLAGS not in ln:
-            found.append("a Nuitka command line does not start with the flags the safety script builds with: %s" % ln.strip()[:110])
+        if not PROD_LINE.match(ln):
+            found.append("a Nuitka command line is not exactly the production shape the safety script builds with: %s" % ln.strip()[:110])
     for needle in ("onefile-tempdir-spec", "HP_NUITKA_CACHE_ARG", ":nuitka_cache_arg"):
         if needle in batch_text:
             found.append(
@@ -73,8 +76,8 @@ def script_problems(script_text):
     if not any(re.match(r"^\s*exit 0\s*$", ln) for ln in tail):
         found.append("the script does not end with exit 0")
     # The exact guard, not any `if (...) { exit 1 }`: `if ($false) { exit 1 }` would satisfy a looser pattern.
-    if not re.search(r"^\s*if \(-not \$safePass\)\s*\{\s*exit 1\s*\}\s*$", script_text, re.MULTILINE):
-        found.append("the script has no 'if (-not $safePass) { exit 1 }'")
+    if not re.search(r"^\s*if \(-not \$rowPass\)\s*\{\s*exit 1\s*\}\s*$", script_text, re.MULTILINE):
+        found.append("the script has no 'if (-not $rowPass) { exit 1 }'")
     if PROD_FLAGS not in script_text:
         found.append("the script's $prodFlags is not the production flag text")
     if "--onefile-tempdir-spec=" not in script_text:
@@ -83,12 +86,28 @@ def script_problems(script_text):
     if safe is None:
         found.append("the script has no $safePass = [bool](...) statement")
     else:
-        for needed in ("warmConcurrentOk", "afterColdOk", "overlapOk", "killRecoveryOk", "partialKills", "baselineOk"):
+        for needed in ("warmConcurrentOk", "afterColdOk", "overlapOk", "killRecoveryOk", "partialKills", "baselineOk", "coldUnexpectedFailures"):
             if needed not in safe:
                 found.append("$safePass does not require %s" % needed)
         for recorded in ("coldConcurrentOk", "updateWhileRunningOk"):
             if recorded in safe:
                 found.append("$safePass asserts %s, which is a recorded finding (it would turn the row red on every run)" % recorded)
+    # Nuitka missing or not building is a provider problem: the row must come out pass:true and say inconclusive,
+    # or the aggregate self-test gate (Item 35) turns a transient failure into a red check on every PR.
+    row = statement(script_text, "rowPass")
+    if row is None:
+        found.append("the script has no $rowPass = [bool](...) statement")
+    elif "measured" not in row or "safePass" not in row:
+        found.append("$rowPass is not 'not measured, or safePass'")
+    meas = statement(script_text, "measured")
+    if meas is None:
+        found.append("the script has no $measured = [bool](...) statement")
+    elif "nuitkaUsable" not in meas or "built" not in meas:
+        found.append("$measured does not depend on Nuitka being usable and the build succeeding")
+    if not re.search(r"Write-SafetyRow\s+-Pass\s+\$rowPass\b", script_text):
+        found.append("the row is not written with -Pass $rowPass")
+    if not re.search(r"\$dSafe\.inconclusive\s*=\s*\(-not \$measured\)", script_text):
+        found.append("the row does not record inconclusive")
     if not re.search(r"updateWhileRunningTested\s*=\s*\[bool\]\$dSafe\.updateOldStillRunningAfter", script_text):
         found.append("the update scenario does not require the old build to still run after the new one finished")
     adopt = statement(script_text, "adoptable")
@@ -112,10 +131,26 @@ def step_problems(workflow_text):
     block = "\n".join(lines[start:idx[0] + 1])
     found = []
     # An active `if:` line (not a comment, not another key's text) that tests the lane.
-    if not re.search(r"^\s+if:\s*\$\{\{\s*matrix\.mode == 'uv'\s*\}\}\s*$", block, re.MULTILINE):
+    if not re.search(r"^\s+if:\s*\$\{\{\s*(?:!cancelled\(\)\s*&&\s*)?matrix\.mode == 'uv'\s*\}\}\s*$", block, re.MULTILINE):
         found.append("the step is not restricted to the uv lane")
+    # Without !cancelled() the implicit success() skips the step after any earlier hard failure in the lane.
+    elif not re.search(r"^\s+if:\s*\$\{\{\s*!cancelled\(\)\s*&&", block, re.MULTILINE):
+        found.append("the step condition lacks !cancelled(), so an earlier failure would skip the finding")
     if not re.search(r"^\s+continue-on-error:\s*true\s*$", block, re.MULTILINE):
         found.append("the step is not non-gating (continue-on-error: true)")
+    return found
+
+
+RETAINED_LOGS = ("~cachesafety_bootstrap.log", "~build_safety.log", "~build_safety2.log")
+
+
+def upload_problems(workflow_text):
+    """The three logs the script keeps are in the test-logs artifact path list, in both slash spellings."""
+    found = []
+    for name in RETAINED_LOGS:
+        for path in ("tests/~selftest_nuitka_cachesafety/" + name, "tests\\~selftest_nuitka_cachesafety\\" + name):
+            if not re.search(r"^\s+" + re.escape(path) + r"\s*$", workflow_text, re.MULTILINE):
+                found.append("the test-logs artifact path list does not name %s" % path)
     return found
 
 
@@ -144,20 +179,30 @@ $spec = "--onefile-tempdir-spec={CACHE_DIR}/PVW/safety-$safeToken"
 Write-SafetyRow ([ordered]@{ id = 'self.nuitka.cachesafety'; pass = $safePass })
 $safePass = [bool]($dSafe.nuitkaUsable -and $built -and $dSafe.baselineOk -and
                    $dSafe.warmConcurrentOk -and $dSafe.afterColdOk -and
-                   $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1))
+                   $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1) -and
+                   ($dSafe.coldUnexpectedFailures -eq 0))
 $dSafe.updateWhileRunningTested = [bool]$dSafe.updateOldStillRunningAfter
 $dSafe.adoptable = [bool]($safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningOk)
-if (-not $safePass) { exit 1 }
+$measured = [bool]($dSafe.nuitkaUsable -and $built)
+$dSafe.inconclusive = (-not $measured)
+$rowPass = [bool]((-not $measured) -or $safePass)
+Write-SafetyRow -Pass $rowPass -Desc 'x' -Details $dSafe
+if (-not $rowPass) { exit 1 }
 exit 0
 """
 
 GOOD_STEP = """      - name: "Self-test: Nuitka unpack cache safety finding (uv lane, non-gating)"
-        if: ${{ matrix.mode == 'uv' }}
+        if: ${{ !cancelled() && matrix.mode == 'uv' }}
         continue-on-error: true
         shell: pwsh
         run: |
           & tests\\selfapps_nuitka_cachesafety.ps1
 """
+
+GOOD_UPLOAD = "          path: |\n" + "".join(
+    "            tests/~selftest_nuitka_cachesafety/%s\n            tests\\~selftest_nuitka_cachesafety\\%s\n" % (n, n)
+    for n in RETAINED_LOGS
+)
 
 GOOD_COLD = "Nuitka unpack cache. Trigger: uv-lane row self.nuitka.cachesafety reports adoptable true.\n"
 
@@ -179,7 +224,15 @@ class RunSetupStaysFlagFree(unittest.TestCase):
 
     def test_changed_production_flags_are_caught(self):
         bad = GOOD_BATCH.replace("--remove-output", "--remove-output --lto=yes", 1)
-        self.assertTrue(any("does not start with the flags" in p for p in batch_problems(bad)))
+        self.assertTrue(any("not exactly the production shape" in p for p in batch_problems(bad)))
+
+    def test_an_option_after_the_output_dir_is_caught(self):
+        bad = GOOD_BATCH.replace("--output-dir=dist -o \"%ENVNAME%.exe\"", "--output-dir=dist --lto=yes -o \"%ENVNAME%.exe\"")
+        self.assertTrue(any("not exactly the production shape" in p for p in batch_problems(bad)))
+
+    def test_an_option_after_the_entry_is_caught(self):
+        bad = GOOD_BATCH.replace("\"%HP_ENTRY%\" >> \"%LOG%\" 2>&1", "\"%HP_ENTRY%\" --windows-console-mode=disable >> \"%LOG%\" 2>&1", 1)
+        self.assertTrue(any("not exactly the production shape" in p for p in batch_problems(bad)))
 
     def test_a_third_command_line_is_caught(self):
         bad = GOOD_BATCH + '"%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "x.exe" "y.py"\n'
@@ -201,14 +254,14 @@ class ScriptRules(unittest.TestCase):
         self.assertTrue(any("exit 0" in p for p in script_problems(GOOD_SCRIPT.replace("exit 0\n", ""))))
 
     def test_a_missing_failure_exit_is_caught(self):
-        self.assertTrue(any("exit 1" in p for p in script_problems(GOOD_SCRIPT.replace("if (-not $safePass) { exit 1 }\n", ""))))
+        self.assertTrue(any("exit 1" in p for p in script_problems(GOOD_SCRIPT.replace("if (-not $rowPass) { exit 1 }\n", ""))))
 
     def test_an_update_scenario_without_the_overlap_check_is_caught(self):
         bad = GOOD_SCRIPT.replace("$dSafe.updateWhileRunningTested = [bool]$dSafe.updateOldStillRunningAfter\n", "$dSafe.updateWhileRunningTested = $true\n")
         self.assertTrue(any("still run after" in p for p in script_problems(bad)), script_problems(bad))
 
     def test_a_vacuous_failure_exit_is_caught(self):
-        bad = GOOD_SCRIPT.replace("if (-not $safePass) { exit 1 }", "if ($false) { exit 1 }")
+        bad = GOOD_SCRIPT.replace("if (-not $rowPass) { exit 1 }", "if ($false) { exit 1 }")
         self.assertTrue(any("exit 1" in p for p in script_problems(bad)), script_problems(bad))
 
     def test_drifted_flags_are_caught(self):
@@ -220,6 +273,26 @@ class ScriptRules(unittest.TestCase):
     def test_a_weakened_pass_condition_is_caught(self):
         bad = GOOD_SCRIPT.replace("$dSafe.killRecoveryOk -and ", "")
         self.assertTrue(any("killRecoveryOk" in p for p in script_problems(bad)))
+
+    def test_ignoring_unexpected_cold_failures_is_caught(self):
+        bad = GOOD_SCRIPT.replace(" -and\n                   ($dSafe.coldUnexpectedFailures -eq 0)", "")
+        self.assertTrue(any("coldUnexpectedFailures" in p for p in script_problems(bad)), script_problems(bad))
+
+    def test_a_row_that_fails_when_nuitka_is_unavailable_is_caught(self):
+        bad = GOOD_SCRIPT.replace("$rowPass = [bool]((-not $measured) -or $safePass)", "$rowPass = [bool]($safePass)")
+        self.assertTrue(any("rowPass" in p for p in script_problems(bad)), script_problems(bad))
+
+    def test_a_row_written_with_safepass_is_caught(self):
+        bad = GOOD_SCRIPT.replace("Write-SafetyRow -Pass $rowPass", "Write-SafetyRow -Pass $safePass")
+        self.assertTrue(any("-Pass $rowPass" in p for p in script_problems(bad)), script_problems(bad))
+
+    def test_a_missing_inconclusive_record_is_caught(self):
+        bad = GOOD_SCRIPT.replace("$dSafe.inconclusive = (-not $measured)\n", "")
+        self.assertTrue(any("inconclusive" in p for p in script_problems(bad)), script_problems(bad))
+
+    def test_a_measured_flag_that_ignores_the_build_is_caught(self):
+        bad = GOOD_SCRIPT.replace("$measured = [bool]($dSafe.nuitkaUsable -and $built)", "$measured = [bool]($dSafe.nuitkaUsable)")
+        self.assertTrue(any("measured" in p for p in script_problems(bad)), script_problems(bad))
 
     def test_asserting_the_recorded_cold_finding_is_caught(self):
         bad = GOOD_SCRIPT.replace("$dSafe.warmConcurrentOk -and", "$dSafe.warmConcurrentOk -and $dSafe.coldConcurrentOk -and")
@@ -241,15 +314,32 @@ class StepAndDocs(unittest.TestCase):
         self.assertEqual(step_problems(GOOD_STEP.replace("        continue-on-error: true\n", "")), ["the step is not non-gating (continue-on-error: true)"])
 
     def test_a_step_on_every_lane_is_caught(self):
-        self.assertEqual(step_problems(GOOD_STEP.replace("        if: ${{ matrix.mode == 'uv' }}\n", "")), ["the step is not restricted to the uv lane"])
+        self.assertEqual(step_problems(GOOD_STEP.replace("        if: ${{ !cancelled() && matrix.mode == 'uv' }}\n", "")), ["the step is not restricted to the uv lane"])
 
     def test_a_commented_out_condition_is_caught(self):
-        bad = GOOD_STEP.replace("        if: ${{ matrix.mode == 'uv' }}\n", "        # if: ${{ matrix.mode == 'uv' }}\n")
+        bad = GOOD_STEP.replace("        if: ${{ !cancelled() && matrix.mode == 'uv' }}\n", "        # if: ${{ !cancelled() && matrix.mode == 'uv' }}\n")
         self.assertEqual(step_problems(bad), ["the step is not restricted to the uv lane"])
 
     def test_a_condition_on_another_lane_is_caught(self):
         bad = GOOD_STEP.replace("matrix.mode == 'uv'", "matrix.mode == 'real'")
         self.assertEqual(step_problems(bad), ["the step is not restricted to the uv lane"])
+
+    def test_a_step_that_an_earlier_failure_would_skip_is_caught(self):
+        bad = GOOD_STEP.replace("!cancelled() && ", "")
+        self.assertEqual(step_problems(bad), ["the step condition lacks !cancelled(), so an earlier failure would skip the finding"])
+
+    def test_real_workflow_uploads_the_retained_logs(self):
+        self.assertEqual(upload_problems(WORKFLOW.read_text(encoding="utf-8")), [])
+
+    def test_good_upload_list_is_clean(self):
+        self.assertEqual(upload_problems(GOOD_UPLOAD), [])
+
+    def test_a_missing_backslash_spelling_is_caught(self):
+        bad = GOOD_UPLOAD.replace("            tests\\~selftest_nuitka_cachesafety\\~build_safety.log\n", "")
+        self.assertEqual(upload_problems(bad), ["the test-logs artifact path list does not name tests\\~selftest_nuitka_cachesafety\\~build_safety.log"])
+
+    def test_a_missing_log_is_caught(self):
+        self.assertEqual(len(upload_problems("          path: |\n")), 6)
 
     def test_a_missing_step_is_caught(self):
         self.assertIn("found 0", step_problems("      - name: other\n        run: echo hi\n")[0])

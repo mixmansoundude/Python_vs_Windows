@@ -619,7 +619,11 @@ once with the folder warm, three copies at once with the folder cold (three roun
 a second and third copy while the first still runs, five launches killed mid-unpack each followed by a normal launch,
 and a NEW build of the same spec started while the old build is still running. `pass` means the experiment ran and
 every check the finding relies on held (build, baseline, warm concurrent, overlap, kill recovery with at least one
-kill landing on a partly unpacked folder, a normal launch after every cold round). The cold rounds
+kill landing on a partly unpacked folder, a normal launch after every cold round, and no cold launch failing for a
+reason other than the known one: `coldUnexpectedFailures` is 0). Nuitka missing from the venv or the safety build
+not completing is a provider problem, not a result: the row is then `pass:true` with `details.inconclusive` true,
+because the aggregate self-test gate (CLAUDE.md Item 35) turns every `pass:false` row in any lane into a red
+check. The cold rounds
 (`coldConcurrentOk`, `coldFailedLaunches`, `coldConcurrentSample`) and the update scenario (`updateWhileRunningOk`,
 `updateWhileRunningSample`) are RECORDED, not asserted: the known result is that one cold launch in three exits 2 with
 `failed to open ... for writing`. `details.adoptable` is true only when those two are clean as well; that is the

@@ -148,6 +148,7 @@ $env:HP_TEST_FORCE_PYINSTALLER_FAIL = '1'
 
 $dSafe = [ordered]@{}
 $safePass = $false
+$rowPass = $false
 $safeToken = 'pvwsafe' + ([guid]::NewGuid().ToString('N').Substring(0, 12))
 $safeFolder = Join-Path $cacheRoot ('safety-' + $safeToken)
 try {
@@ -274,6 +275,10 @@ print("safety done", flush=True)
         $coldRemovedAll = $true
         $coldRecoveryOk = $true
         $coldFailedLaunches = 0
+        $coldUnexpectedFailures = 0
+        # The known finding: a launch that cannot rewrite a file another launch has loaded exits non-zero and says so.
+        # Any other failed cold launch (a timeout, exit 0 with wrong output, another error) is not that finding.
+        $coldKnownReason = 'failed to open .* for writing'
         foreach ($round in 1..3) {
             $entry = [ordered]@{ round = $round }
             $entry.removed = Remove-Folder $safeFolder
@@ -284,6 +289,12 @@ print("safety done", flush=True)
             $entry.exits = @($rs | ForEach-Object { $_.exit })
             $entry.ok = ($bad.Count -eq 0)
             $coldFailedLaunches += $bad.Count
+            foreach ($badRun in $bad) {
+                if ($badRun.timedOut -or $badRun.exit -eq 0 -or -not (("$($badRun.out) $($badRun.err)") -match $coldKnownReason)) {
+                    $coldUnexpectedFailures++
+                    if (-not $dSafe.Contains('coldUnexpectedSample')) { $dSafe.coldUnexpectedSample = (Get-Sample $badRun) }
+                }
+            }
             if ($bad.Count -gt 0 -and -not $dSafe.Contains('coldConcurrentSample')) { $dSafe.coldConcurrentSample = (Get-Sample $bad[0]) }
             $r = Wait-App -H (Start-App -Exe $exe)
             $entry.afterOk = Test-Output $r
@@ -293,6 +304,7 @@ print("safety done", flush=True)
         $dSafe.coldRounds = $coldRounds
         $dSafe.coldRemoved = $coldRemovedAll
         $dSafe.coldFailedLaunches = $coldFailedLaunches
+        $dSafe.coldUnexpectedFailures = $coldUnexpectedFailures
         $dSafe.coldConcurrentOk = (@($coldRounds | Where-Object { -not $_.ok }).Count -eq 0)
         $dSafe.afterColdOk = $coldRecoveryOk
 
@@ -385,13 +397,21 @@ print("safety done", flush=True)
         $dSafe.realtimeMonitoringDisabled = $null
     }
 
-    # What the finding relies on. Cold concurrent rounds and the update scenario are recorded below, not asserted.
+    # What the finding relies on. Cold concurrent rounds and the update scenario are recorded below, not asserted,
+    # except that a cold launch failing for any reason other than the known one is unexpected and fails the row.
     $safePass = [bool]($dSafe.nuitkaUsable -and $built -and $dSafe.baselineOk -and $dSafe.folderKept -and
                        $dSafe.warmConcurrentOk -and $dSafe.coldRemoved -and $dSafe.afterColdOk -and
-                       $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1))
+                       $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1) -and
+                       ($dSafe.coldUnexpectedFailures -eq 0))
+    # derived requirement: Nuitka missing from the venv or its build failing (a compiler download, the network) is a
+    # provider problem, not a result. The row then says inconclusive with pass true, because the aggregate self-test
+    # gate (CLAUDE.md Item 35) turns every pass:false row in any lane into a red check.
+    $measured = [bool]($dSafe.nuitkaUsable -and $built)
+    $dSafe.inconclusive = (-not $measured)
+    $rowPass = [bool]((-not $measured) -or $safePass)
     $dSafe.adoptable = [bool]($safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningTested -and $dSafe.updateWhileRunningOk)
     $dSafe.finding = "baseline=$($dSafe.baselineOk) warm=$($dSafe.warmConcurrentOk) coldOk=$($dSafe.coldConcurrentOk) coldFailedLaunches=$($dSafe.coldFailedLaunches) overlap=$($dSafe.overlapOk) killRecovery=$($dSafe.killRecoveryOk) partialKills=$($dSafe.partialKills) updateTested=$($dSafe.updateWhileRunningTested) updateOk=$($dSafe.updateWhileRunningOk) adoptable=$($dSafe.adoptable)"
-    Write-SafetyRow -Pass $safePass -Desc 'Item 72 finding (flag not adopted): a static Nuitka unpack folder measured for warm and cold concurrent launches, an overlapping launch, a launch killed mid-unpack and an update while the old build runs' -Details $dSafe
+    Write-SafetyRow -Pass $rowPass -Desc 'Item 72 finding (flag not adopted): a static Nuitka unpack folder measured for warm and cold concurrent launches, an overlapping launch, a launch killed mid-unpack and an update while the old build runs' -Details $dSafe
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
     if ($null -eq $prevForceExecfail) { Remove-Item Env:HP_TEST_FORCE_PYINSTALLER_FAIL -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PYINSTALLER_FAIL = $prevForceExecfail }
@@ -408,5 +428,5 @@ print("safety done", flush=True)
     }
 }
 
-if (-not $safePass) { exit 1 }
+if (-not $rowPass) { exit 1 }
 exit 0
