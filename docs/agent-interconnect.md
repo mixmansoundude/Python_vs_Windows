@@ -681,7 +681,15 @@ v1-scoped to `HP_ENV_MODE=uv` only, silently a no-op elsewhere (`HP_UVX_EXE`, de
 gap-fill step picks up anything Tier 1 adds regardless of dep-check fast-path state. Purely
 additive merge (`tools/autopep_merge.py`, never removes/reorders existing content) -- a failure
 here is non-fatal, the pipreqs-derived `requirements.txt` from earlier in the flow is already
-usable.
+usable. **The merge skips the program's own module and package names** (Item 88): autopep723 lists a
+sibling `.py` file or folder as a third-party import, and one name PyPI does not know makes the single
+atomic `uv pip install -r requirements.txt` install nothing at all (pandas, openpyxl and the rest were
+left out and the EXE verification run exited 1). `local_names()` walks the whole tree below the folder that holds
+`requirements.txt` (nested names count, like pipreqs), normalizes like PEP 503 and skips the same folders pipreqs ignores; its `IGNORE_DIRS`
+must stay equal to `HP_PIPREQS_IGNORE` in `run_setup.bat` and to `SKIP` in `tools/pipreqs_precheck.py`
+(`test_ignored_folders_equal_the_pipreqs_ignore_list` pins the first pair). Skipped names go to the setup
+log as `skipped local: a,b` (the helper's stdout is appended to `%LOG%`). Regression:
+`self.realapp.local_modules` (`tests/selfapps_realapp_pandas_excel.ps1`, real lane, gating).
 
 ### `HP_PVW_KNOWN_IDEMPOTENT` execute-mode discovery (REQ-005.13, Tier 2) hooks in earlier than Tier 1
 

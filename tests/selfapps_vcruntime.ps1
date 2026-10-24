@@ -43,18 +43,18 @@ function Write-NdjsonRow {
 # Non-Windows skip (OSVersion.Platform works under pwsh and Windows PowerShell 5.1; $IsWindows does not).
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
-    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.interp'; req = 'REQ-018'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
-    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.interp_probe'; req = 'REQ-018'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
-    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.exe'; req = 'REQ-018'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
-    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.runtime_present'; req = 'REQ-018'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
-    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.unrelated_error'; req = 'REQ-018'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.interp'; req = 'REQ-018.32'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.interp_probe'; req = 'REQ-018.32'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.exe'; req = 'REQ-018.32'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.runtime_present'; req = 'REQ-018.32'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.vcruntime.warn.unrelated_error'; req = 'REQ-018.32'; pass = $true; desc = 'VC++ runtime warning (skipped on non-Windows)'; details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' } })
     exit 0
 }
 
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
-        id = 'self.vcruntime.warn.interp'; req = 'REQ-018'; pass = $false
+        id = 'self.vcruntime.warn.interp'; req = 'REQ-018.32'; pass = $false
         desc = 'VC++ runtime warning: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
     })
@@ -129,7 +129,7 @@ $aFacts = Get-WarnFacts -Text $a.Text -ExpectedFiles $simBoth
 $aRan = ($a.RunErr -match 'DLL load failed while importing _extra') -and ($a.Text -match 'Entry smoke exit=')
 $aPass = [bool]($aRan -and $aFacts.count -eq 1 -and $aFacts.link -and $aFacts.names -and $aFacts.notInstalled)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.vcruntime.warn.interp'; req = 'REQ-018'
+    id = 'self.vcruntime.warn.interp'; req = 'REQ-018.32'
     pass = $aPass
     desc = 'A DLL load failure in the interpreter run prints the Visual C++ runtime warning once, with the link'
     details = [ordered]@{ programRan = $aRan; warn = $aFacts; exit = $a.Exit; log = $a.Log }
@@ -142,7 +142,7 @@ $bFacts = Get-WarnFacts -Text $b.Text -ExpectedFiles $simBoth
 $bRan = ($b.RunErr -match 'DLL load failed while importing _extra') -and ($b.Text -match 'Launching your program now')
 $bPass = [bool]($bRan -and $bFacts.count -eq 1 -and $bFacts.link -and $bFacts.names -and $bFacts.notInstalled)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.vcruntime.warn.interp_probe'; req = 'REQ-018'
+    id = 'self.vcruntime.warn.interp_probe'; req = 'REQ-018.32'
     pass = $bPass
     desc = 'A DLL load failure under the fail-fast probe prints the Visual C++ runtime warning once, with the link'
     details = [ordered]@{ programRan = $bRan; warn = $bFacts; exit = $b.Exit; log = $b.Log }
@@ -156,7 +156,7 @@ $cRan = ($c.RunErr -match 'DLL load failed while importing _extra') -and ($c.Tex
 $cBuilt = ($c.Text -match 'Running entry script smoke test via packaged EXE') -and (-not ($c.Text -match 'PyInstaller execution failed'))
 $cPass = [bool]($cRan -and $cBuilt -and $cFacts.count -eq 1 -and $cFacts.link -and $cFacts.names -and $cFacts.notInstalled)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.vcruntime.warn.exe'; req = 'REQ-018'
+    id = 'self.vcruntime.warn.exe'; req = 'REQ-018.32'
     pass = $cPass
     desc = 'A DLL load failure in the built EXE prints the Visual C++ runtime warning once, with the link'
     details = [ordered]@{ programRan = $cRan; exeBuilt = $cBuilt; warn = $cFacts; exit = $c.Exit; log = $c.Log }
@@ -169,7 +169,7 @@ $dRan = ($d.RunErr -match 'DLL load failed while importing _extra') -and ($d.Tex
 $dExpectWarn = ($runnerMissing.Count -gt 0)
 $dPass = $dRan -and (($dExpectWarn -and $dFacts.count -eq 1 -and $dFacts.link) -or ((-not $dExpectWarn) -and $dFacts.count -eq 0))
 Write-NdjsonRow ([ordered]@{
-    id = 'self.vcruntime.warn.runtime_present'; req = 'REQ-018'
+    id = 'self.vcruntime.warn.runtime_present'; req = 'REQ-018.32'
     pass = [bool]$dPass
     desc = 'Without the simulation, the warning appears exactly when System32 really lacks the runtime'
     details = [ordered]@{ programRan = $dRan; runnerMissing = @($runnerMissing); expectWarn = $dExpectWarn; warn = $dFacts; exit = $d.Exit; log = $d.Log }
@@ -182,7 +182,7 @@ $eFacts = Get-WarnFacts -Text $e.Text -ExpectedFiles $simBoth
 $eRan = ($e.Text -match 'Entry smoke exit=3')
 $ePass = [bool]($eRan -and $eFacts.count -eq 0)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.vcruntime.warn.unrelated_error'; req = 'REQ-018'
+    id = 'self.vcruntime.warn.unrelated_error'; req = 'REQ-018.32'
     pass = $ePass
     desc = 'A failure that is not a DLL load error does not print the Visual C++ runtime warning'
     details = [ordered]@{ programRan = $eRan; warn = $eFacts; exit = $e.Exit; log = $e.Log }

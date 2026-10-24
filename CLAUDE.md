@@ -72,6 +72,7 @@ tests/
   selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
   selfapps_provider_memory.ps1 Item 66: the provider memory file `~provider.state.json` and the `PVW_PROVIDER=conda` switch (no-switch, invalid value, Miniconda gone, unreadable file and cached-EXE rows on the real lane, gating; forced, remember and forced-stop rows on the uv lane, non-gating because of the Miniconda download)
   selfapps_runtests_contract.ps1 Item 84: runs a copy of run_tests.bat against stub scripts (a red harness still runs the self-tests, an unwritten or unremovable summary fails the run; six rows, every lane, gating)
+  selfapps_realapp_pandas_excel.ps1 Item 75: a multi-file pandas + Excel app run three times in one folder (first run, unchanged re-run, requirements.txt edit); five `self.realapp.*` rows (real lane, gating); found Item 88
   selfapps_pyvisa_subfolder.ps1 Item 78 slice 2: NI-VISA install asks before running when the import is only in a subfolder (real and conda-full lanes, gating)
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
@@ -304,6 +305,7 @@ Test files and what they cover:
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
+| `test_autopep_merge.py` | REQ-005.12 / Item 88: autopep723 name extraction, dedup against `requirements.txt`, newline repair, `main()` dispatch, and the local-module filter (sibling `.py` files and folders in any spelling are skipped and logged, ignored and hidden folders are not walked, a real package is still added), HP_AUTOPEP_MERGE payload sync |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
@@ -785,8 +787,6 @@ the original symptom (see that doc's "CI-first testing policy").
   so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.
 - **Item 74 (small, low priority)**: curated example apps under `tests/fixtures/` that CI also
   uses.
-- **Item 75 (umbrella, medium)**: real-app end-to-end CI scenarios (multi-file pandas+Excel, a
-  second run after a `requirements.txt` edit, `%1` misuse), non-gating first per Item 35.
 
 ### Item 79: TOML reading hygiene (filed 2026-10-09 from a planning brainstorm, not from the field report)
 

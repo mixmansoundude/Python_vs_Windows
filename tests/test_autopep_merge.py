@@ -172,6 +172,92 @@ class MainDispatch(unittest.TestCase):
         self.assertEqual((self.cwd / "custom_reqs.txt").read_text(encoding="utf-8"), "click\n")
 
 
+class LocalNames(unittest.TestCase):
+    """Item 88: the program's own modules and packages are never dependencies."""
+
+    def setUp(self):
+        import tempfile
+        self.root = Path(tempfile.mkdtemp(prefix="autopep_merge_local_"))
+
+    def _touch(self, rel):
+        p = self.root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("", encoding="utf-8")
+
+    def test_sibling_module_and_package_names_are_local(self):
+        self._touch("main.py")
+        self._touch("My_Sheet.IO.py")
+        self._touch("pvw_pkg/__init__.py")
+        self._touch("pvw_pkg/inner.py")
+        names = autopep_merge.local_names(str(self.root))
+        self.assertTrue({"main", "my-sheet-io", "pvw-pkg", "inner"} <= names)
+
+    def test_ignored_and_hidden_folders_are_not_walked(self):
+        for rel in (".venv/Lib/site-packages/requests/api.py", "venv/x/flask.py", "dist/built.py",
+                    "build/lib/numpy.py", "__pycache__/cached.py", "tests/helper_t.py",
+                    ".hidden/secret.py", "~scratch/tmp_mod.py", ".git/hooks/hook.py"):
+            self._touch(rel)
+        names = autopep_merge.local_names(str(self.root))
+        for n in ("requests", "api", "flask", "built", "numpy", "cached", "helper-t", "secret", "tmp-mod", "hook"):
+            self.assertNotIn(n, names)
+
+    def test_tilde_prefixed_files_are_not_local(self):
+        self._touch("~scratch.py")
+        self.assertNotIn("scratch", autopep_merge.local_names(str(self.root)))
+
+    def test_missing_root_gives_empty_set(self):
+        self.assertEqual(autopep_merge.local_names(str(self.root / "nope")), set())
+
+    def test_ignored_folders_equal_the_pipreqs_ignore_list(self):
+        # derived requirement: both scans must call the same trees "not the program's", or a name pipreqs left out
+        # of its scan (a venv's packages) could still be skipped here, or the reverse.
+        batch = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'^set "HP_PIPREQS_IGNORE=([^"\r\n]+)"', batch, re.MULTILINE)
+        self.assertIsNotNone(m, "HP_PIPREQS_IGNORE assignment not found in run_setup.bat")
+        self.assertEqual(set(m.group(1).split(",")), set(autopep_merge.IGNORE_DIRS))
+
+
+class MainSkipsLocalModules(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.cwd = Path(tempfile.mkdtemp(prefix="autopep_merge_localmain_"))
+        (self.cwd / "main.py").write_text("", encoding="utf-8")
+        (self.cwd / "pvw_realapp_sheetio.py").write_text("", encoding="utf-8")
+        (self.cwd / "pvw_realapp_report").mkdir()
+        (self.cwd / "pvw_realapp_report" / "__init__.py").write_text("", encoding="utf-8")
+
+    def test_local_names_are_not_added_in_any_spelling(self):
+        (self.cwd / "requirements.autopep.txt").write_text(
+            '# dependencies = [\n#     "pandas",\n#     "pvw-realapp-sheetio",\n'
+            '#     "PVW_Realapp_Report",\n#     "termcolor>=2",\n# ]\n', encoding="utf-8"
+        )
+        (self.cwd / "requirements.txt").write_text("pandas~=2.3.3\n", encoding="utf-8")
+        rc, out, err = _run_main(self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual((self.cwd / "requirements.txt").read_text(encoding="utf-8"), "pandas~=2.3.3\ntermcolor>=2\n")
+        self.assertIn("added: termcolor>=2", out)
+        self.assertIn("skipped local: pvw-realapp-sheetio,PVW_Realapp_Report", out)
+
+    def test_only_local_names_is_a_noop(self):
+        (self.cwd / "requirements.autopep.txt").write_text(
+            '# dependencies = [\n#     "pvw_realapp_sheetio",\n# ]\n', encoding="utf-8"
+        )
+        (self.cwd / "requirements.txt").write_text("pandas\n", encoding="utf-8")
+        rc, out, err = _run_main(self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertIn("no-op", out)
+        self.assertIn("skipped local: pvw_realapp_sheetio", out)
+        self.assertEqual((self.cwd / "requirements.txt").read_text(encoding="utf-8"), "pandas\n")
+
+    def test_name_of_a_real_package_is_still_added_when_no_local_file_has_it(self):
+        (self.cwd / "requirements.autopep.txt").write_text(
+            '# dependencies = [\n#     "click",\n# ]\n', encoding="utf-8"
+        )
+        rc, out, err = _run_main(self.cwd)
+        self.assertEqual(rc, 0)
+        self.assertEqual((self.cwd / "requirements.txt").read_text(encoding="utf-8"), "click\n")
+
+
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
         bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")

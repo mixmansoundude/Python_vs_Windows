@@ -711,6 +711,10 @@ on intermediate files and log lines, not just exit code: (a) multi-file pandas+E
 between (Items 62, 66); (c) `%1` misuse cases (Item 67). Respect Item 35's process discipline:
 new rows start non-gating and soak before being promoted.
 
+**Shipped (PR #503, 2026-10-23)**: (a) and (b) are `tests/selfapps_realapp_pandas_excel.ps1` (`self.realapp.*`, real
+lane, gating from its first run because a new test gates; see `docs/agent-ndjson.md`); (c) shipped as Item 67. The
+first run found Item 88 (autopep723 lists the program's own sibling modules as dependencies), fixed in the same PR.
+
 ### Item 77 -- `import pymupdf` fails on a clean machine: "DLL load failed while importing _extra" (Likely cause, runtime DLLs confirmed missing, small)
 
 **Symptom (second real run, 2026-10-09, same folder as Items 63 and 64)**: after PyInstaller built

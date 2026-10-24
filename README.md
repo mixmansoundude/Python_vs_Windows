@@ -257,6 +257,41 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
   > - A run that reuses a valid cached EXE does not reach provider selection, so the record and `PVW_PROVIDER`
   >   have no effect on it (the same holds for the first-argument checks of REQ-026).
 
+  **Build tool choice.** A super-user should be able to choose which tool builds the EXE, while a run with no
+  choice should keep the default order: PyInstaller first, with Nuitka as the fallback after a failed PyInstaller
+  build and as the elective upgrade of REQ-018.2. The value of `PVW_BUILDER` is compared without regard to letter
+  case.
+
+  - **REQ-009.17** [minor] The bootstrapper **shall**, when `PVW_BUILDER` is `pyinstaller`, build the EXE with
+    PyInstaller only, not start the Nuitka fallback after a failed PyInstaller build and not offer the optimized
+    build.
+  - **REQ-009.18** [minor] The bootstrapper **shall**, when `PVW_BUILDER` is `nuitka`, build the EXE with Nuitka
+    only: PyInstaller **shall not** be installed or run, and no repair that rebuilds with PyInstaller **shall**
+    start.
+  - **REQ-009.19** [major] The bootstrapper **shall**, when a build under `PVW_BUILDER` `pyinstaller` or `nuitka`
+    fails, not take an EXE left by an earlier run as the result of that build, so that the verification run goes
+    through the interpreter and the log says so.
+  - **REQ-009.20** [minor] The bootstrapper **shall**, when `PVW_BUILDER` is `both`, build the optimized Nuitka
+    EXE after the PyInstaller EXE was built and its verification run exited 0, replace the PyInstaller EXE only
+    after the Nuitka EXE has run successfully, keep the verified PyInstaller EXE when the Nuitka build or its run
+    fails, and skip the Nuitka build, saying so, when that verification run did not exit 0.
+  - **REQ-009.21** [minor] The bootstrapper **shall**, when `PVW_BUILDER` is set to a value other than `auto`,
+    `pyinstaller`, `nuitka` or `both`, say so in one warning that does not repeat the given value, and build as if
+    the value were `auto`.
+
+  > **Notes (non-normative).**
+  > - `PVW_BUILDER` is a super-user override in the sense of REQ-019: absent or `auto` is the default order, and
+  >   nothing a double-click run needs depends on it. A run that reuses a valid cached EXE builds nothing, so the
+  >   value has no effect on it beyond one log line saying that no build ran and that deleting `dist\<name>.exe`
+  >   builds again.
+  > - REQ-009.19: the interpreter verification is skipped whenever `dist\<name>.exe` exists, so an old EXE that
+  >   survived a failed build would otherwise be started and reported as this build's verification.
+  > - REQ-009.20: the setting is taken as the user's request for the optimized build, so the question that
+  >   otherwise comes first is not asked, and the log says the program starts once more for up to 30 seconds.
+  >   REQ-018.2 and REQ-018.9 do not yet say this (open question 4 in `docs/open-questions.md`).
+  > - When the system-Python build consent of REQ-014 is asked under `nuitka`, its question names Nuitka, not
+  >   PyInstaller, as the tool it would install.
+
 - [REQ-006] Channels policy (applies when **conda is the selected provider**; determinism and legal-friction avoidance):
   - Before any conda updates or installs, force **community conda-forge only**:
     ```
@@ -439,9 +474,17 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
     invocation, avoiding a real environment-leak hazard where a direct invocation silently
     under-reports already-installed packages as "not third-party" (see
     `docs/agent-lessons-learned.md`'s autopep723 section for the full empirical trail).
+  - The merge **shall** not add a name that is the program's own: a `.py` file or a folder at or below
+    the folder that holds `requirements.txt`, compared the way pip compares package names (case, `-`, `_` and `.` are the same
+    letter), skipping the folders pipreqs ignores (`.git`, `.github`, `.venv`, `venv`, `env`, `.uv_env`,
+    `build`, `dist`, `__pycache__`, `tests`), hidden folders and tilde-prefixed files. The scanner lists a
+    sibling module as a dependency, and one name PyPI does not know fails the whole dependency install, so
+    pandas and everything else in the list would be left out (Item 88). Each skipped name is logged once in
+    the merge's output line.
   - Scope gate: only runs when `HP_ENV_MODE=uv` (v1, matching REQ-005.11's own scope decision).
   - Opt-out: `HP_SKIP_AUTOPEP_DISCOVERY=1` (suppression-only flag, see `[REQ-019]`).
-  - TESTED: `tests/test_autopep_merge.py`, `tests/selfapps_autopep_discovery.ps1`.
+  - TESTED: `tests/test_autopep_merge.py`, `tests/selfapps_autopep_discovery.ps1`,
+    `tests/selfapps_realapp_pandas_excel.ps1` (`self.realapp.local_modules`).
 
 ---
 
@@ -556,8 +599,11 @@ At completion:
 
 - If the app imports `pyvisa` or `visa`, attempt **NI-VISA** Windows driver install if not present (system install, not just a Python package).
 - Leave option to disable for debugging purposes: set `HP_SKIP_NIVISA=1` to skip the NI-VISA install even when `pyvisa`/`visa` is detected. Log contract: `[VISA] skipped (disabled)`.
-- Scan scope (documented behavior): the import scan covers every `.py` below the bootstrapper's folder, subfolders included (directories starting with `~` or `.`, and `.py` files whose names start with `~`, are skipped), not only the entry file or the files it imports. An `import pyvisa` or `import visa` in an archived or unrelated subfolder therefore counts and can start the driver install, which can take 30-45 minutes. The bootstrapper does not trace the entry file's import chain.
+- Scan scope (documented behavior): the import scan covers every `.py` below the bootstrapper's folder, subfolders included (directories starting with `~` or `.`, and `.py` files whose names start with `~`, are skipped), not only the entry file or the files it imports. An `import pyvisa` or `import visa` in an archived or unrelated subfolder therefore counts, and the driver install can take 30-45 minutes, so a match found only in a subfolder asks first (next bullet). The bootstrapper does not trace the entry file's import chain.
+- Subfolder-only match: when the only matches for a `pyvisa` or `visa` import are below a subfolder, with none in the folder that holds `run_setup.bat`, the bootstrapper **shall** ask whether to install the NI-VISA driver before it installs anything, **shall** name the file that triggered the question in the question and in `~setup.log`, and **shall** treat no answer within 30 seconds, and a run with `HP_CI_LANE`, `NOINPUT` or `HP_NONINTERACTIVE` set, as no. Log contract: `[VISA] skipped (subfolder_only)` when the answer is no; the Python `pyvisa` package is installed either way. A match in the folder that holds `run_setup.bat` installs the driver without asking, as before.
 - May require admin rights.
+- Elevation record: at the start of every run the bootstrapper **shall** write one setup-log line stating whether the process is elevated (`[INFO] Elevated: yes` or `[INFO] Elevated: no`), so a report of a failed driver install shows whether it ran with administrator rights.
+- Failure notice: when the NI-VISA driver cannot be downloaded or its install fails, the bootstrapper **shall** print a console `[WARN]` that says the driver was not installed, that the Python `pyvisa` package is installed anyway and that setup continues (the installer exit code is in `~setup.log`).
 
 ---
 
@@ -565,7 +611,8 @@ At completion:
 
 - Attempt to produce a **PyInstaller one-file EXE** after setup.
 - Name the EXE exactly the env name (equals the folder name).
-- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE. Fast path freshness is determined by comparing the EXE timestamp against non-helper *.py files under the working directory (recursively), ignoring infrastructure directories like .git, .github, dist, .venv, __pycache__, etc.
+- Fast path: if sources are unchanged since the last EXE build, detect early and run the existing EXE. Fast path freshness is determined by comparing a hash of the non-helper *.py files under the working directory (recursively) and of `requirements.txt`, `pyproject.toml` and `runtime.txt` with the hash recorded when the EXE was last built, ignoring infrastructure directories like .git, .github, dist, .venv, __pycache__, etc. A newer file timestamp alone changes nothing; an edit that changes the content does.
+- When a cached EXE exists but is not reused because its inputs changed or no build record exists, the bootstrapper **shall** print one line saying why before it rebuilds (`[INFO] Fast path: not reusing <exe> because your .py or requirements files changed since it was built, or no build record was found; it will be rebuilt.`). Covered by `self.wording.rebuild_notice` and, for a `requirements.txt` edit after a first run, `self.realapp.edit_rerun`.
 - **Graceful EXE-failure handling**: a packaged EXE that exits non-zero must never abort the bootstrapper. The environment and dependencies are already installed, so the bootstrap completes and the user is guided to run the app directly.
   - First-build path: the EXE smoke test logs the non-zero exit, emits hints, and continues (`self.exe.smokerun` records the result).
   - Fast path: a reused EXE that exits non-zero is **discarded** (the cached EXE may be stale or carry an unbundled runtime dependency, e.g. a DLL or data file the freshness check cannot see) and a full rebuild runs instead of aborting.
@@ -674,6 +721,12 @@ bootstrapper should therefore run the program once per invocation and should ask
 - **REQ-018.31** [major] The bootstrapper **shall not** ask the question of REQ-018.28 when the program ended by
   itself, including with exit code -1, or when the provider is not the Miniconda provider reached through a
   provider cascade.
+- **REQ-018.32** [minor] The bootstrapper **shall**, when the error output of a verification run contains
+  `DLL load failed` and `msvcp140.dll` or `vcruntime140_1.dll` is missing from the Windows System32 folder, print
+  one warning that names the missing file, says the Microsoft Visual C++ runtime may be missing and gives its
+  download address (`https://aka.ms/vc14/vc_redist.x64.exe`), and **shall not** install the runtime. It
+  **shall not** print that warning when both files are present or when the error is not a `DLL load failed`
+  error.
 
 > **Notes (non-normative).**
 > - Rationale: the bootstrapper cannot know whether the program is safe to run twice, so the run that verifies
@@ -703,6 +756,11 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   explicit yes lets the next run start with the remembered provider (REQ-009). The bootstrapper recognises a
 >   stopped silent run by a marker the smoke runner writes, not by exit code -1 alone, because a failed launch
 >   or a program that exits with -1 on its own also leaves -1.
+>
+> - REQ-018.32: a package such as PyMuPDF fails to import on a machine without the Visual C++ runtime, and the
+>   error alone does not say why. The warning is printed next to the offers that follow a failed run (the EXE
+>   verification, the interpreter run, and the interpreter run a user watching sees), and it needs no
+>   administrator rights because nothing is installed.
 
 ---
 
@@ -915,6 +973,7 @@ Operational knobs, not needed for normal double-click use:
 | `HP_VERBOSE_CONSOLE=1` | Opt-in: also echo `[DEBUG]`/`[TRACE]`/`[INSTALL]`-tagged lines to the live console (suppressed by default; always written to `~setup.log` either way) | -- |
 | `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
 | `PVW_PROVIDER=conda` | Super-user: use only the Miniconda provider for this run, no cascade after a failure, no read or write of `~provider.state.json`; any other value stops the run | REQ-009.15 |
+| `PVW_BUILDER=auto\|pyinstaller\|nuitka\|both` | Super-user: choose the build tool for the EXE (default `auto`: PyInstaller first, Nuitka as fallback and as the elective upgrade); an unrecognized value is ignored with one warning | REQ-009.17 |
 
 **This table is not exhaustive -- for awareness only.** More `HP_*` / `PVW_*` / `HP_TEST_*`
 variables exist (CI-only test-injection flags such as `HP_TEST_*`, `HP_CI_*`, and
