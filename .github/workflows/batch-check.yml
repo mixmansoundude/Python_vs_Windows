@@ -4686,35 +4686,20 @@ jobs:
           # this step's own exit code.
           exit 0
 
-      # derived requirement (CLAUDE.md Active Backlog Item 35): the precondition slice above
-      # (fail-closed per-lane set comparison, proven via tests/test_aggregate_selftest_
-      # verdicts.ps1's fixtures on every real CI run since) deliberately left this job's own
-      # conclusion always-success. This step is the actual gating step -- mirrors the identical,
-      # already-proven "Enforce NDJSON failures for gated lanes" 3-line pattern used per-lane for
-      # `real`/`conda-full` (this file, ~line 1430), just reading the AGGREGATE verdict instead of
-      # one lane's own. Re-verified before adding: contract-uv/contract-uv-fail/uv-dl-fallback
-      # (each intentionally simulates a failure/fallback scenario) have reported a clean, non-
-      # has_failures verdict on every real run observed to date -- their own simulated condition
-      # is a correctly-handled recovery, not a real failure, so this check does not turn them into
-      # permanent false blockers.
-      #
-      # derived requirement (2026-08-30, PR #471): reverted to advisory (continue-on-error) after
-      # this step's very first two real activations both hard-failed the job on a genuine,
-      # reproducible (not flaky) pre-existing condition -- byte-identical failure-detail payloads
-      # on two separate runs hours apart -- in the `cache` (self.exe.smokerun, exitCode 1) and
-      # `uv` (self.cascade.exec falling through to embed instead of stopping at conda;
-      # self.exe.warnfix.venv_repair's repair-install precondition never firing) lanes. Neither
-      # lane's own test script nor run_setup.bat was touched by this PR (a CI-YAML/docs-only
-      # diff), so the underlying condition predates this PR and is unrelated to it -- but because
-      # THIS gate is what first turned an already-non-gating lane's failure into a repo-wide merge
-      # blocker, leaving it hard-failing would block every PR until the underlying cascade/warnfix
-      # bug is separately root-caused and fixed (its own real investigation, out of scope here).
-      # continue-on-error keeps this step's own red result visible in the PR checks UI (so the
-      # regression is not silently lost) without failing the job. Re-remove continue-on-error once
-      # cache/uv are fixed and the mechanism has re-soaked per this item's own process discipline.
+      # derived requirement (CLAUDE.md Active Backlog Item 35, criterion C6): this is the gating step. It reads
+      # the AGGREGATE verdict that the step above builds from all eight lane_verdict.json files (fail-closed on a
+      # missing, unexpected or duplicate lane) and fails this job when any lane reported a row with pass:false, so
+      # "Aggregate self-test verdicts" (a required check) goes red for a red row in ANY lane, including the ones
+      # with no required check of their own. It has no continue-on-error: it was advisory from 2026-08-30 until
+      # 2026-10-24 because cache/uv carried two real reds (Item 35's history is in docs/agent-closed-backlog.md),
+      # and was made real after those were fixed and the step had been skipped on every one of eleven main push runs
+      # (10-17 to 10-24). tests/test_aggregate_gate.py pins this step (no continue-on-error, its `if`, the lane list
+      # equal to the matrix) and the jobs that must still run after it goes red: model-quick-fix and
+      # publish_diag keep `if: always()`, so a red gate never skips the iterate gate or the Pages publish.
+      # A row that records a finding and not a failure must write pass:true (self.nuitka.cachesafety does, with
+      # details.inconclusive); anything with pass:false is a failure here.
       - name: Enforce aggregate self-test verdict
         if: ${{ !cancelled() && steps.aggregate.outputs.has_failures == 'true' }}
-        continue-on-error: true
         shell: bash
         run: |
           echo "Aggregated self-test verdicts indicate a failure in one or more lanes; failing this check."
