@@ -365,7 +365,9 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
     after the change is a cold run (the union). The run that deletes a package from one input while another input the
     bootstrapper does not rewrite still lists it brings the package back, with the message above; that is the price of
     never removing something the user wrote elsewhere. Packages removed from every input stay installed in the
-    environment, which is harmless. Tests:
+    environment, which is harmless. `uv add --script` writes a lower bound into the header for a name given without one
+    (`toolz` becomes `toolz>=1.2.0`), so the first later run that changes nothing writes that bound into
+    `requirements.txt` too (a bare name never beats a constrained entry); runs after that touch nothing. Tests:
     `tests/test_dep_merge.py` (unit), `self.depsource.*` (cold runs), `self.depmerge.later.*` (later runs),
     `self.pep723.pyproject.merge`, `self.realapp.edit_rerun`.
 

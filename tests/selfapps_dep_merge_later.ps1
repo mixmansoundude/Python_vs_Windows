@@ -260,18 +260,27 @@ Write-DmRow -Id 'self.depmerge.later.add' -Pass ([bool]$pass) -Desc 'REQ-005.1: 
     requirementsOk = [bool]$reqOk3; headerOk = [bool]$hdrOk3; toolzInstalled = [bool]$toolzInstalled3; noRemovedLine = [bool]$noRemoved3
 })
 
-# A4: nothing changed; dist removed so the dependency flow runs instead of the EXE fast path
-$reqTextBefore4 = $a3.ReqText
-$hdrKeysBefore4 = @($a3.Hdr.Keys)
+# A3s: one unchanged run to settle. uv writes a lower bound into the header for a bare name (toolz becomes toolz>=x.y), and a run that
+# changes nothing then writes that bound into requirements.txt once (a bare name never beats a constrained entry). The run after this
+# one is the stable state the next row judges byte for byte; the settling run's own effect is recorded, not hidden.
+$reqTextBeforeSettle = $a3.ReqText
+$a3s = Invoke-Run -Dir $dirA -Label 'a3s' -ForceFlow
+$settleRewrote = ($a3s.ReqText -cne $reqTextBeforeSettle)
+$settleOk = ($a3s.Exit -eq 0) -and ($a3s.State -ceq 'ok') -and (Test-Keys $a3s.Req @('termcolor', 'toolz')) -and (Test-Keys $a3s.Hdr @('termcolor', 'toolz'))
+
+# A4: nothing changed since the settling run; dist removed so the dependency flow runs instead of the EXE fast path
+$reqTextBefore4 = $a3s.ReqText
+$hdrKeysBefore4 = @($a3s.Hdr.Keys)
 $a4 = Invoke-Run -Dir $dirA -Label 'a4' -ForceFlow
 $flowRan4 = $a4.Log -match 'DEP_SOURCE=|Dependency lists merged'
 $unchanged4 = ($a4.ReqText -ceq $reqTextBefore4) -and (Test-Keys $a4.Hdr $hdrKeysBefore4)
 $quiet4 = -not ($a4.Log -match 'you removed it from|Conflict for|still lists it|could not be merged')
-$pass = $preA -and ($a4.Exit -eq 0) -and ($a4.State -ceq 'ok') -and $flowRan4 -and $unchanged4 -and $quiet4
+$pass = $preA -and $settleOk -and ($a4.Exit -eq 0) -and ($a4.State -ceq 'ok') -and $flowRan4 -and $unchanged4 -and $quiet4
 if (-not $pass) { $anyRed = $true }
 Write-DmRow -Id 'self.depmerge.later.stable' -Pass ([bool]$pass) -Desc 'REQ-005.1: a later run with no change to any list leaves requirements.txt and the header as they were and prints no removal, conflict or merge-failure line' -Details ([ordered]@{
-    baselineOk = [bool]$preA; exitCode = $a4.Exit; state = $a4.State; dependencyFlowRan = [bool]$flowRan4; filesUnchanged = [bool]$unchanged4
-    quiet = [bool]$quiet4; requirementsNames = @($a4.Req.Keys); headerNames = @($a4.Hdr.Keys)
+    baselineOk = [bool]$preA; settleOk = [bool]$settleOk; settleRewroteRequirements = [bool]$settleRewrote; exitCode = $a4.Exit; state = $a4.State
+    dependencyFlowRan = [bool]$flowRan4; filesUnchanged = [bool]$unchanged4; quiet = [bool]$quiet4; requirementsNames = @($a4.Req.Keys); headerNames = @($a4.Hdr.Keys)
+    requirementsText = ($a4.ReqText -replace "`r?`n", '|')
 })
 
 # ---- B: pyproject.toml = iniconfig, requirements.txt = termcolor; the user deletes iniconfig from requirements.txt

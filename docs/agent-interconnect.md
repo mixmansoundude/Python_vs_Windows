@@ -771,6 +771,10 @@ for a conflict). The old behavior was winner takes all (`copy /y` of the highest
   the fresh entries decide (the user's change beats an older pin), otherwise all entries compete by rank header > pyproject
   > requirements.txt, and a bare name never beats a constrained entry. A removal vote (name in a record, gone from a list)
   removes the package everywhere unless pyproject.toml or a fresh entry still lists it (then it stays, with a message).
+  The snapshot of `requirements.txt` is taken as the merge wrote it, but `uv add --script` then adds a lower bound to a bare
+  name in the header (`toolz` to `toolz>=1.2.0`, uv 0.11), so the first unchanged run after a bare entry was written finds
+  nothing fresh, ranks the header's bounded entry above the bare one and rewrites `requirements.txt` once. A test that judges
+  an unchanged run byte for byte (`self.depmerge.later.stable`) therefore runs one settling run first.
 - **Header removal**: `uv add --script` cannot remove, so `:pep723_writeback` (trigger `fresh`, on `OK:`) calls
   `:dep_merge_header_remove`, one `uv remove --script` per name; a failure keeps the old records so the next run retries.
 - **Coupled strings**: the report lines `Dependency lists merged`, `Conflict for`, `Removed`, `was removed from ... still lists
