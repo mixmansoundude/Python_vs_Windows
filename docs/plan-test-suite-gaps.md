@@ -99,9 +99,9 @@ aggregate row `self.pytest.unit` in every lane.
 | 005.2, .3 | conda bulk retry, per-package fallback | `self.stub.conda_retry`, `self.stub.conda_perpkg` (all) | Strong | |
 | 005.4 | pipreqs scan | `pipreqs.flags` (harness), `self.pipreqs.encoding.*` x3, `self.pipreqs.output.*` x4 (R), `self.depcheck.*` (R,F) | Strong | |
 | 005.5 | requirements diff log | `batch.dep.diff.trace`, `self.dep.diff.trace` | Medium: log-line proxy | |
-| 005.6 | pipreqs-only fallback source | `self.env.smoke.*` (all): one file importing colorama, no source assertion; `pandas_excel.*` (F) | Medium | T2, Item 75a |
+| 005.6 | pipreqs-only fallback source | `self.env.smoke.*` (all): one file importing colorama, no source assertion; `pandas_excel.*` (F); `self.realapp.deps_discovered` (R, Item 75, shipped) | Medium to strong | T2 |
 | 005.7 | pip gap fill | `pipgap.conda.miss/.pip.fill/.import` (F) | Strong in conda-full | |
-| 005.8 | heuristic extras | `test_heuristics.py`, `pandas_excel.*`, `self.pandas.openpyxl.*` (F) | Strong on conda; none on uv | Item 75a |
+| 005.8 | heuristic extras | `test_heuristics.py`, `pandas_excel.*`, `self.pandas.openpyxl.*` (F); `self.realapp.deps_discovered` (R, Item 75, shipped) | Strong on conda and on the real lane (uv) | none |
 | 005.9, .10 | warnfix repair loop | `self.exe.warnfix.*`, `self.warnfix.noise.stdlib` (R,F), `self.warnfix.noise.library` (R), `self.parse_warn.table(.v6)` (all); `self.exe.warnfix.venv_repair` (u) **red** | Strong on conda, venv branch red | T4 |
 | 005.11 | PEP 723 write-back | 9 `self.pep723.writeback.*` rows (u) | Medium: strong rows, non-gating | Item 35 |
 | 005.12, .13 | autopep723 merge, execute-mode discovery | `self.autopep_discovery.merge`, `self.pvw_idempotent.discovery` (u) | Medium: one row each, non-gating | Item 35 |
@@ -295,7 +295,8 @@ get that far.
 
 **Overlap.** Item 75a is the multi-file pandas+Excel app without requirements.txt (the heuristics and
 the 63-65 discovery path); this matrix is the single-source semantics underneath it. Do the matrix
-first; Item 75a then needs fewer assertions of its own.
+first; Item 75a then needs fewer assertions of its own. (Shipped: Item 75 is `tests/selfapps_realapp_pandas_excel.ps1`,
+which asserts the installed set, the recorded source and the sibling-module rule on top of the matrix; it found Item 88.)
 
 ### T3. "No litter" allow-list for the app folder
 

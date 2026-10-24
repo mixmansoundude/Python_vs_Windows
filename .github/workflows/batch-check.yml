@@ -848,6 +848,18 @@ jobs:
         run: |
           & tests\selfapps_warnfix_library.ps1
 
+      # derived requirement: CLAUDE.md Item 75 (a) and (b) -- a multi-file pandas + Excel app with no dependency
+      # file, run three times in one folder: first run, unchanged re-run (fast path), re-run after a
+      # requirements.txt edit. No skip hook, so the whole default path runs (pipreqs, heuristics, autopep723
+      # merge, uv install, PEP 723 write-back, PyInstaller build, EXE verification). Gating on purpose (AGENTS.md
+      # "New tests gate immediately"), real lane only: it needs PyPI like the other real-lane scenarios and adds
+      # two pandas builds, so conda-full (the slowest lane) is not given it.
+      - name: "Self-test: real-app pandas + Excel, first run, re-run and edit (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_realapp_pandas_excel.ps1
+
       # derived requirement: CLAUDE.md Item 65 slice 1 (README REQ-018) -- a ModuleNotFoundError that
       # a program catches and prints (a GUI callback) while still exiting 0 must be reported by name.
       # Gating on purpose, real lane only: the scan reads the captured stderr after the EXE
@@ -2564,6 +2576,15 @@ jobs:
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt
+            tests/~selftest_realapp/~realapp_run*.log
+            tests/~selftest_realapp/~setup.log
+            tests/~selftest_realapp/requirements.txt
+            tests/~selftest_realapp/~requirements.autopep.txt
+            tests/~selftest_realapp/~dependency_installed.txt
+            tests/~selftest_realapp/~dependency_source.txt
+            tests/~selftest_realapp/~bootstrap.status.json
+            tests/~selftest_realapp/main.py
+            tests/~selftest_realapp/dist/~realapp_token.txt
             tests/~selftest_logrotate_over/~rotate_boot.log
             tests/~selftest_logrotate_over/~setup.log
             tests/~selftest_logrotate_under/~rotate_boot.log

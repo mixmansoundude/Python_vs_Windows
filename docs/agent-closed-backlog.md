@@ -3515,6 +3515,54 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   touched here. (2) A summary file that cannot be deleted (held open with `FileShare.Read`) let a script that exits 0
   without writing pass on the stale file; `.summary_locked` reproduces it and the batch now reports and fails.
 
+### Item 75 (closed 2026-10-23, PR #503; umbrella from the Aug-Sep 2026 field report)
+
+- **What the umbrella asked for.** Real-app end-to-end scenarios modelled on the maintainer's own runs, each asserting
+  on intermediate files and log lines and not only the exit code: (a) a multi-file pandas + Excel app with no
+  `requirements.txt`, (b) the same app run twice with a `requirements.txt` edit in between, (c) `%1` misuse. (c) already
+  shipped as Item 67 (`tests/selfapps_entryarg.ps1`); (a) and (b) are `tests/selfapps_realapp_pandas_excel.ps1`.
+- **What shipped.** One folder, three bootstraps, no skip hook, `real` lane only, gating from its first run (a new test
+  gates; the soak rule is for promoting an existing row). The app is `main.py`, a sibling module and a sibling package
+  (names no PyPI project uses); it writes an `.xlsx` next to the EXE, reads it back with pandas and writes a token file.
+  Rows `self.realapp.first_run`, `.deps_discovered`, `.local_modules`, `.fastpath_rerun`, `.edit_rerun`
+  (`docs/agent-ndjson.md`). Each row records its sub-checks by name, so a red row says which one failed. Three README
+  requirements were corrected from what the rows showed: REQ-007's freshness test is a content hash, not an EXE
+  timestamp, and the one-line "Fast path: not reusing" notice is now a shall; REQ-008 gained the elevation record and
+  the NI-VISA failure notice (Item 78 slice 1); REQ-005.12 gained the local-name rule below.
+- **Found on the first run: Item 88 (below).** The red-test run (`39972748549`, head `e66b22b`, planted wrong values)
+  turned up a real default-path failure, not only the planted reds. The red proof for the planted values is the same run:
+  each row's `details` shows the planted expectation next to what was read.
+
+### Item 88 (closed 2026-10-23, PR #503; filed 2026-10-23 from the Item 75 real-app run)
+
+- **A sibling module of the program was installed as a dependency, and one unknown name sank the whole install.**
+  `uvx autopep723 check main.py` listed the app's own sibling module and package (`pvw-realapp-sheetio`,
+  `pvw-realapp-report`) among the third-party imports, `tools/autopep_merge.py` appended them to `requirements.txt`, and
+  the single atomic `uv pip install -r requirements.txt` then failed on the first name PyPI does not have
+  (`uv pip install -r requirements.txt failed; some packages may be missing.`). Nothing in the list was installed,
+  including pandas, openpyxl and xlsxwriter that pipreqs and the heuristics had found correctly. Run 1 of the scenario
+  read: installed set without pandas, warnfix installing `pandas` alone, the EXE built without openpyxl and
+  `ModuleNotFoundError: No module named 'openpyxl'` from the verification run (exit 1, no token). pipreqs itself is not
+  at fault: it counts every `.py` basename and folder basename in the tree as local. The uv lane only; conda and the
+  other providers never run the autopep723 merge.
+- **Evidence (red run `39972748549`, `real` lane, pre-harness rows).** `self.realapp.local_modules`:
+  `autopepReportedLocal` and `localInRequirements` both `["pvw-realapp-sheetio","pvw-realapp-report"]`,
+  `localInstalled: []`, `installFailedWarn: true`; `self.realapp.deps_discovered`: pandas, openpyxl and xlsxwriter all
+  not installed, `repairBlockRan: true`, `attempted: ["pandas","pandas"]`; `first_run`: `smokeExit: 1`, empty token.
+- **Fix.** `tools/autopep_merge.py` collects the program's own names (every `.py` stem and folder name below the
+  requirements.txt folder, PEP 503 normalized, skipping the folders pipreqs ignores, hidden folders and tilde files) and
+  skips a discovered dependency whose name is in that set, writing `skipped local: a,b` to the setup log. Payload
+  `HP_AUTOPEP_MERGE` re-synced (line 6207 characters, margin 1984). README REQ-005.12 states the rule as a shall. Unit
+  tests `LocalNames` and `MainSkipsLocalModules` in `tests/test_autopep_merge.py` failed first (6 failures), the CI row
+  `self.realapp.local_modules` was read red for its real reason before the fix was pushed (early-push rule).
+- **Known and not fixed.** A program whose sibling module shares a name with a real PyPI package it also needs (a local
+  `requests.py` next to code that imports the real `requests`) loses that dependency; that program is already shadowed
+  at run time, so skipping the name matches what Python would import. The conda lane has no equivalent step.
+- **Decided, kept: the walk covers the whole tree below the `requirements.txt` folder, not only its top level** (CodeRabbit,
+  PR #503). A name that exists only in a nested folder (`utils/sheetio.py`) is skipped too. A missed skip can sink the
+  whole atomic install, while a wrong skip drops one dependency that the warnfix repair is expected to recover, and it
+  matches pipreqs, which also counts every nested file and folder name as local. Narrowing it is a new decision, not a fix.
+
 ### Item 73 (closed 2026-10-17; PR #488)
 
 - **A failed PEP 723 write-back now logs the reason uv gave.** Symptom (2026-08 field report): `~setup.log`
@@ -3686,6 +3734,57 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `self.lastchance.window_yes/_enter/_auto/_selfexit` (uv lane, non-gating), unit tests `tests/test_window_confirm.py`
   and the `KilledMarker` cases in `tests/test_exe_smokerun.py`. Item 66 receives the pass type (`exe_ok`,
   `interpreter_ok`, `user_confirmed`) as a field. Detail: `docs/agent-interconnect.md`'s "Last-chance offer" section.
+
+### Item 74 (closed 2026-10-24, PR #504; bundled with Item 87)
+
+- **What it asked for.** Curated example apps under `tests/fixtures/` that CI also uses, so a person has ready-made
+  programs to drop next to `run_setup.bat` and every scenario that runs one reads a file, not an inline copy.
+- **What shipped.** `tests/fixtures/examples/` holds `stdlib_single`, `pandas_excel`, `gui_exits` (a tkinter window that
+  closes itself after half a second) and `multifile_sibling` plus a `README.txt` a beginner can follow.
+  `tests/selfapps_example_apps.ps1` runs the first, third and fourth through the whole default path with no skip hook
+  (rows `self.examples.stdlib_single`, `.multifile_sibling`, `.gui_exits`, `real` lane, gating from the first run);
+  `tests/selfapps_pandas_excel.ps1` (conda-full) copies the second. A row passes only when the bootstrapper exited 0, the
+  status is `ok`, an EXE was built, the EXE's own verification run exited 0, the log chose the expected entry, the Python
+  file count is right and the program's own line is in `~run.out.txt`. `tests/test_example_fixtures.py` keeps the folder
+  honest (exact file list, ASCII, in-memory compile, imports limited to stdlib / sibling / declared package, README names
+  every folder) and pins the places that read it so a scenario cannot drift back to an inline copy.
+- **Red first.** Run `40009502514` (tests without the fixtures): every `self.examples.*` row red with `fixture folder
+  missing`, `self.pytest.unit` red for the folder test. The next run showed the three rows red although build and run were
+  fine: the entry check demanded a backslash in front of the name and the log prints the bare name (`Chosen entry:
+  solo.py`). Fixed with a pattern that takes an optional directory and a unit pin; found by reading the row's details,
+  not the lane colour.
+- **Decided, kept: Item 75's inline app stays inline.** `selfapps_realapp_pandas_excel.ps1` writes a multi-file app whose
+  module names are chosen so that no PyPI project uses them and whose token file is the test's evidence; it is a test
+  stand-in, not a program a beginner would try. Moving it into the examples folder would put those names and the
+  `~realapp_*` files in front of the people the folder is for. The other inline apps are failure stand-ins
+  (`selfapps_gui_timeout_hint.ps1`'s `time.sleep(600)`). A future example that shares a test's app is a new decision.
+
+### Item 87 (closed 2026-10-24, PR #504; filed 2026-10-23 from PR #499's red run)
+
+- **The problem.** A `dist\<env>.exe` that Windows cannot start (a text file, a zero-byte file, a cut-off copy after an
+  interrupted build or an antivirus quarantine) made `Process.Start()` throw inside `tools/exe_smokerun.ps1`,
+  `tools/failfast_probe.ps1` and `tools/exe_hint_rerun.ps1`. PowerShell carried on with a process object that has no
+  process, `-not $p.HasExited` errored and read as true, and the poll loop waited for output that could never arrive: the
+  step ran for over ten minutes until the next push cancelled the run (found when PR #499's first red commit seeded a text
+  file for the stale-EXE scenarios of Item 71). Reproduced locally with `pwsh` on all three helpers before the fix.
+- **The fix.** Each helper wraps `Start()` in `try/catch`, writes `~launch_failed.txt` (one printable-ASCII line, at most
+  200 characters), prints `[WARN] The program could not be started, so it was not run.` and returns the failed-run result
+  its caller already understands (`-1`; `0|-1` for the probe). The batch shows the reason with `type` (never `:log`: it is
+  arbitrary .NET text). A fresh stub is removed, `HP_FRESH_BUILD_OK` cleared and the program checked through the
+  interpreter; a cached stub goes through the existing discard-and-rebuild. Test hook `HP_TEST_CORRUPT_BUILT_EXE` turns the
+  freshly built EXE into a text file (absence changes nothing). Payload margins afterwards: `HP_EXE_SMOKERUN` 1093,
+  `HP_FAILFAST_PROBE` 1635, `HP_EXE_HINT_RERUN` 1875. Detail: `docs/agent-interconnect.md`'s "Launch failures" section.
+- **Red first.** Run `40016661511` (fixtures plus the red tests, no fix): `self.unlaunchable.smoke_stub` red with
+  `hookFired: true`, `timedOut: true`, `exitCode: -1`; `self.unlaunchable.fastpath_stub` red with the first run built (a
+  9.9 MB EXE), the stub seeded and the second run `timedOut: true`; `self.pytest.unit` red because the helper tests were
+  still running after their 25 seconds. The fix was pushed under the early-push rule once the real-lane rows were red for
+  that reason; the final run (`40043552353`, head `ac31a8b`, all eight lanes read from the artifacts) shows Windows' own
+  reason line, the stub removed, the interpreter run made, and the cached stub discarded and rebuilt into a real EXE.
+- **Tests.** Rows `self.unlaunchable.smoke_stub` and `.fastpath_stub` (`tests/selfapps_unlaunchable_exe.ps1`, `real`
+  lane, gating, a 15-minute watchdog per bootstrapper run so a regression is a red row and not a held job); unit tests
+  `tests/test_unlaunchable_exe.py` run each helper through real `pwsh` under a 25-second hard timeout with a text, empty,
+  cut-off and missing file. The lesson is in `docs/agent-lessons-learned.md` ("An unguarded `Process.Start()` before a
+  polling loop spins forever instead of failing").
 
 ## Known Findings (diagnosed, no action warranted)
 
