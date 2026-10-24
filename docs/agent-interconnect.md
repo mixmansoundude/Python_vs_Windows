@@ -777,6 +777,52 @@ gating) is its only user. The payload line is far under the 8191 limit (about 80
 `dep_check.py` runs for both `HP_ENV_MODE=conda` and `HP_ENV_MODE=uv` (skipped for venv/system --
 no lock written, no skip check). `~environment.lock.txt` is the cache key either way (conda: `conda
 list --export`; uv: copy of `~dependency_installed.txt`). `HP_DEP_SKIP` is honored in uv mode too.
+**The dep-check compares NAMES only** (`requirements.auto.txt` against the lock), so an edited pin or a package added since
+the last run can read "all satisfied". `:dep_merge_inputs` therefore sets `HP_DM_CHANGED` when any list, or an include or
+option line of `requirements.txt` (`-r`, `-e`, `--index-url`, kept as written), differs from its record, and the dep-check
+result `skip` is ignored then (log line `the dependency lists changed since the last run`). The content of a file that a
+`-r` line names is not tracked, only the line. A new skip or cache keyed on names alone must honor the same flag.
+
+### Dependency lists merged (`:dep_merge_inputs`, `tools/dep_merge.py`, Item 89)
+
+**Touch the requirements.txt detection, the pyproject helper call, the PEP 723 extraction, the dep-check, the PEP 723
+write-back, `:success` or the three list copies below, must understand this.** README REQ-005.1 (merged inputs, rank only
+for a conflict). The old behavior was winner takes all (`copy /y` of the highest ranked list over `requirements.txt`).
+- **Flow**: requirements.txt is detected as before; the pyproject helper writes `~requirements.pyproject.txt` and keeps
+  `HP_PYPROJ_ACTIVE` set (it used to copy the list over `requirements.txt` and clear the flag); the PEP 723 extractor
+  writes `%PEP723_REQ%` and `PEP723_ACTIVE`. `:dep_merge_inputs` (called once, right after the extraction and before the
+  pipreqs block) counts the inputs. Two or more, or one with records from an earlier run, go to `~dep_merge.py`
+  (`HP_DEP_MERGE`, run via `%HP_PY%`, which may be an old interpreter, so its grammar is 3.9-safe); the helper writes the merged
+  `requirements.txt` (temp file plus `os.replace`), `~dep_merge.report.txt` (shown with `type`, never `:log`: specs
+  hold `<>|&%^`), `~dep_merge.removed.txt` (names to remove from a header we wrote) and `~dep_merge.changed.txt` (a list
+  differs from its record). One input and no records: nothing to merge, the old single-list copy (`:dm_single`). Any helper
+  failure: `:dm_fallback` warns and uses the highest ranked list alone (exactly the old behavior), the run goes on.
+- **Records**: `~dep_base.requirements.txt`, `~dep_base.pyproject.txt`, `~dep_base.pep723.txt`, written by
+  `:dep_merge_snapshot` from `:success` (before `:release_lock`) only when the install fully succeeded
+  (`HP_DM_INSTALL_FAILED` is set at every install failure site), the state is not `error`, the provider is not system, and
+  the header, if we wrote it before, was brought up to date this run (`HP_DM_HAD_HDR_BASE` / `HP_DM_HDR_WRITTEN`). A header
+  the user wrote has no record, so it is only ever added to. `pyproject.toml` is never rewritten, so its record only tells
+  what the user removed from it. No record: a cold run (union). The records are tilde files, so the litter row ignores them.
+- **Rank and "fresh"**: a list entry is fresh when it is new or its normalized spec differs from the record. For one package
+  the fresh entries decide (the user's change beats an older pin), otherwise all entries compete by rank header > pyproject
+  > requirements.txt, and a bare name never beats a constrained entry. A removal vote (name in a record, gone from a list)
+  removes the package everywhere unless pyproject.toml or a fresh entry still lists it (then it stays, with a message).
+  The snapshot of `requirements.txt` is taken as the merge wrote it, but `uv add --script` then adds a lower bound to a bare
+  name in the header (`toolz` to `toolz>=1.2.0`, uv 0.11), so the first unchanged run after a bare entry was written finds
+  nothing fresh, ranks the header's bounded entry above the bare one and rewrites `requirements.txt` once. A test that judges
+  an unchanged run byte for byte (`self.depmerge.later.stable`) therefore runs one settling run first.
+- **Header removal**: `uv add --script` cannot remove, so `:pep723_writeback` (trigger `fresh`, on `OK:` and on
+  `SKIP:no_packages`) calls `:dep_merge_header_remove`, one `uv remove --script` per name; a failure keeps the old
+  records so the next run retries. `SKIP:no_packages` is what the helper answers when the merged list names nothing to
+  add, for example after the user removed the last package or left only a `-r other.txt` directive; it runs after the
+  same `HP_UV_INSTALL_OK` gate as `OK:`, so a failed install still removes nothing (`self.depmerge.later.delete_last`).
+  Every other `SKIP:`/`ERROR:` answer leaves the header and the old records alone.
+- **Coupled strings**: the report lines `Dependency lists merged`, `Conflict for`, `Removed`, `was removed from ... still lists
+  it, so it stays`, the INFO `Dependency lists recorded for the next run`, the WARN `could not be merged` are matched by
+  `self.depsource.*`, `self.pep723.pyproject.merge` and `self.depmerge.later.*`; the old `found; overrides requirements.txt`
+  wording is gone (`tests/test_dep_merge.py` pins it). Payload margin 560 characters.
+- **Not changed on purpose**: the fast path (an unchanged folder never reaches the merge), REQ-004 version precedence, the
+  pipreqs fallback (only when nothing is declared), and the Item 65 runtime-install offer's file-edit rule (`HP_RTI_EDITS`).
 
 ### `HP_TEST_FORCE_UV_FAIL` / `HP_TEST_CORRUPT_UV` interaction
 
@@ -1228,8 +1274,9 @@ toolkit catches an exception raised in a callback and keeps running), so the exi
   `:print_runtime_missing_reminder` before `:release_lock`, which also deletes the file.
 - **Which file the advice names**: `:rtm_where` sets `HP_RTM_WHERE` from `DEP_SOURCE` for both advice lines
   (the second `[WARN]` line and the closing reminder): `requirements.txt` by default, `the dependencies in
-  pyproject.toml` for `pyproject`, the PEP 723 header for `pep723`. Those two sources are copied over
-  `requirements.txt` on every run, so advice to edit `requirements.txt` would be lost (CodeRabbit, PR #487).
+  pyproject.toml` for `pyproject`, the PEP 723 header for `pep723`. Those two outrank `requirements.txt`
+  for a conflict about one package (Item 89; before it they were copied over `requirements.txt` on every run, so
+  the advice would have been lost, CodeRabbit PR #487), so the advice still names the file the run reported.
   A new place that tells the user to edit a dependency file must use the same variable.
 - **The scan itself is diagnostic only**: it installs nothing, edits no file and runs nothing. The install
   is slice 2, described next, and starts from this scan's state (`HP_RTM_FOUND`, the names file).
@@ -1257,8 +1304,9 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
   to `~runtime_install_ok.txt`; none succeeding stops with state `install_failed`. `--append` then adds each
   package to `requirements.txt` unless already declared (keeps CRLF/LF, creates the file if absent) -- but
   ONLY when `DEP_SOURCE` is neither `pyproject` nor `pep723` (`HP_RTI_EDITS`, set from `DEP_SOURCE`
-  just before the prompt, with `:rtm_where` naming the file): those two sources are copied over `requirements.txt` on every run, so the
-  appended line would vanish, and the prompt and a log line say which file the user must edit instead.
+  just before the prompt, with `:rtm_where` naming the file): before Item 89 those two sources were copied over `requirements.txt`
+  on every run, so an appended line would have vanished; an appended line now lasts (the merge keeps a list's change since the
+  last run), but the offer was not changed and the prompt and a log line still say which file the user must edit instead.
   Do not hand-edit TOML from batch or this helper (Item 79 is about TOML reading hygiene already).
 - **Rebuild** (`:rti_rebuild`, site `exe` only): `--hidden-import=X --collect-submodules=X` for each installed
   module, appended to `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT`, and the command threads all five

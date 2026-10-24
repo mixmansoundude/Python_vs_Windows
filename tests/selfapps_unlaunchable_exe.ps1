@@ -177,7 +177,7 @@ try {
     $d.error = $_.Exception.Message
 }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.unlaunchable.smoke_stub'; req = 'REQ-018.5'; pass = [bool]$passSmoke
+    id = 'self.unlaunchable.smoke_stub'; req = 'REQ-018.33'; pass = [bool]$passSmoke
     desc = 'README REQ-018.5: a freshly built EXE that cannot be started ends the verification run at once, says why, is removed and the program is checked through Python'
     details = $d
 })
@@ -224,7 +224,7 @@ try {
     $d.error = $_.Exception.Message
 }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.unlaunchable.fastpath_stub'; req = 'REQ-018.3'; pass = [bool]$passFast
+    id = 'self.unlaunchable.fastpath_stub'; req = 'REQ-018.34'; pass = [bool]$passFast
     desc = 'README REQ-018.3: a cached EXE that cannot be started ends the fail-fast probe at once, says why, is discarded and the program is rebuilt'
     details = $d
 })

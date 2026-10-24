@@ -2,36 +2,42 @@
 # selfapps_dep_source_matrix.ps1 - REQ-005.1 dependency source resolution, one bootstrap per cell
 # (docs/plan-test-suite-gaps.md gap T2).
 #
-# README "Source Resolution (authoritative order)": PEP 723 inline metadata, then pyproject.toml
-# [project].dependencies, then requirements.txt, then the pipreqs scan, then nothing. Existing rows prove two
-# pairs of that order; no row asserted which source a run really used together with what it really installed.
+# README REQ-005.1 (Item 89): the dependency lists in a PEP 723 header, pyproject.toml [project].dependencies and
+# requirements.txt are MERGED on a first run, not chosen between; when two lists name the same package differently the
+# rank decides (header, then pyproject.toml, then requirements.txt) and the console says so; then the pipreqs scan
+# (only when nothing is declared), then nothing. Until Item 89 the highest ranked list won outright and the packages
+# of the other two were silently dropped, while the console said each list was being used.
 # Each cell is a fresh folder holding a stdlib-only stub (so a scan cannot add anything, except in the two pipreqs
 # cells) plus one distinct tiny pure-Python package per source:
 #
 #     requirements.txt -> termcolor     pyproject.toml -> iniconfig     PEP 723 header -> toolz
 #     the pipreqs cells import six (found by the scan, declared nowhere)
 #
-# A cell passes only if the recorded dependency source (the one-line file the bootstrapper writes) names the
-# expected source, the winning package is in ~dependency_installed.txt (pip freeze of the environment), and every
-# package a LOSING source declared is absent. Both skip hooks are set, so no user code runs (the build still does);
+# A cell passes only if the recorded dependency source (the one-line file the bootstrapper writes; the highest ranked
+# list that contributed) names the expected source and exactly the expected packages are in ~dependency_installed.txt
+# (pip freeze of the environment). Both skip hooks are set, so no user code runs (the build still does);
 # the PEP 723 write-back and the autopep723 merge are off so the entry file and the declared lists stay as written.
 #
 #   1 pep723_only            PEP 723 header only                                      -> pep723, toolz
 #   2 requirements_only      requirements.txt only                                    -> requirements.txt, termcolor
-#   3 all_three              PEP 723 + pyproject + requirements.txt                   -> pep723, toolz only
+#   3 all_three              PEP 723 + pyproject + requirements.txt                   -> pep723, all three packages,
+#                                                                                       requirements.txt holds all three
 #   4 pep723_malformed       unclosed PEP 723 array + requirements.txt                -> requirements.txt, termcolor,
 #                                                                                       the documented WARN
 #   5 pyproject_nodeps       pyproject with no dependencies + requirements.txt        -> requirements.txt, termcolor
 #   6 requirements_empty     empty requirements.txt + a program importing six         -> pipreqs, six
 #   7 nothing_declared       nothing declared + a program importing six               -> pipreqs, six
+#   8 requirements_pyproject pyproject + requirements.txt                             -> pyproject, termcolor and iniconfig
+#   9 conflict               six pinned three ways in the three lists                 -> pep723, six at the header pin,
+#                                                                                       a conflict line naming the winner
 #
 # derived requirement: ids stay literal at each Write-DepRow call site (tools/check_ndjson_registry.py scans text,
 # and matches a literal -Id argument the same way as an id = '...' key).
 #
-# Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Seven bootstraps; every package
+# Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Nine bootstraps; every package
 # comes from PyPI, which the lane already depends on for pipreqs and PyInstaller.
 # Emits: self.depsource.pep723_only, .requirements_only, .all_three, .pep723_malformed, .pyproject_nodeps,
-#        .requirements_empty, .nothing_declared
+#        .requirements_empty, .nothing_declared, .requirements_pyproject, .conflict
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -63,7 +69,7 @@ function Write-DepRow {
 $allIds = @(
     'self.depsource.pep723_only', 'self.depsource.requirements_only', 'self.depsource.all_three',
     'self.depsource.pep723_malformed', 'self.depsource.pyproject_nodeps', 'self.depsource.requirements_empty',
-    'self.depsource.nothing_declared'
+    'self.depsource.nothing_declared', 'self.depsource.requirements_pyproject', 'self.depsource.conflict'
 )
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     foreach ($rowId in $allIds) {
@@ -111,6 +117,18 @@ function Get-InstalledNames {
         if ($m.Success) { [void]$names.Add((($m.Groups[1].Value.ToLowerInvariant()) -replace '[-_.]+', '-')) }
     }
     return $names.ToArray()
+}
+
+# The pinned version of one package in ~dependency_installed.txt (pip freeze), or ''.
+function Get-InstalledVersion {
+    param([string]$Dir, [string]$Name)
+    $path = Join-Path $Dir '~dependency_installed.txt'
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    foreach ($line in (Get-Content -LiteralPath $path -Encoding ASCII)) {
+        $m = [regex]::Match($line.Trim(), '^' + [regex]::Escape($Name) + '==(\S+)$', 'IgnoreCase')
+        if ($m.Success) { return $m.Groups[1].Value }
+    }
+    return ''
 }
 
 function Get-RecordedSource {
@@ -211,15 +229,22 @@ $pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran
 if (-not $pass) { $anyRed = $true }
 Write-DepRow -Id 'self.depsource.requirements_only' -Pass ([bool]$pass) -Desc 'REQ-005.1: requirements.txt alone is the dependency source and its package is installed' -Details $d
 
-# ---- 3: all three present; PEP 723 wins
+# ---- 3: all three present; the lists are merged, the header ranks first
 $expectedSource3 = 'pep723'
-$expectedWatched3 = @('toolz')
+$expectedWatched3 = @('termcolor', 'iniconfig', 'toolz')
 $c = Invoke-Cell -Name 'all_three' -Files @{ 'cell_app.py' = ($pep723Good + $stubPlain); 'pyproject.toml' = $pyprojectDeps; 'requirements.txt' = "termcolor`n" }
 $v = Get-CellVerdict -Cell $c -ExpectedSource $expectedSource3 -ExpectedWatched $expectedWatched3
 $d = Get-CellDetails -Cell $c -Verdict $v -ExpectedSource $expectedSource3 -ExpectedWatched $expectedWatched3
-$pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran
+$reqAfter3 = Read-Text (Join-Path $c.Dir 'requirements.txt')
+$reqHasAll3 = ($reqAfter3 -match '(?m)^termcolor\b') -and ($reqAfter3 -match '(?m)^iniconfig\b') -and ($reqAfter3 -match '(?m)^toolz\b')
+$mergeLine3 = $c.Log -match [regex]::Escape('Dependency lists merged')
+# The console must not claim that one list overrides another when all three were used.
+$noOverrideClaim3 = -not ($c.Log -match 'overrides requirements\.txt')
+$d['requirementsAfter'] = @(($reqAfter3 -split "`r?`n") | Where-Object { $_ })
+$d['requirementsHasAll'] = [bool]$reqHasAll3; $d['mergeLine'] = [bool]$mergeLine3; $d['noOverrideClaim'] = [bool]$noOverrideClaim3
+$pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and $reqHasAll3 -and $mergeLine3 -and $noOverrideClaim3
 if (-not $pass) { $anyRed = $true }
-Write-DepRow -Id 'self.depsource.all_three' -Pass ([bool]$pass) -Desc 'REQ-005.1: with PEP 723, pyproject.toml and requirements.txt all present the PEP 723 header wins and the other two lists are not installed' -Details $d
+Write-DepRow -Id 'self.depsource.all_three' -Pass ([bool]$pass) -Desc 'REQ-005.1: with PEP 723, pyproject.toml and requirements.txt all present their lists are merged, all three packages are installed, requirements.txt holds all three, the console reports the merge and does not claim an override' -Details $d
 
 # ---- 4: malformed PEP 723 header falls through to requirements.txt, with the documented WARN
 $c = Invoke-Cell -Name 'pep723_malformed' -Files @{ 'cell_app.py' = ($pep723Open + $stubPlain); 'requirements.txt' = "termcolor`n" }
@@ -254,6 +279,31 @@ $d = Get-CellDetails -Cell $c -Verdict $v -ExpectedSource 'pipreqs' -ExpectedWat
 $pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran
 if (-not $pass) { $anyRed = $true }
 Write-DepRow -Id 'self.depsource.nothing_declared' -Pass ([bool]$pass) -Desc 'REQ-005.1: with nothing declared the pipreqs scan is the dependency source' -Details $d
+
+# ---- 8: pyproject.toml and requirements.txt, no header: merged, pyproject.toml ranks first
+$c = Invoke-Cell -Name 'requirements_pyproject' -Files @{ 'cell_app.py' = $stubPlain; 'pyproject.toml' = $pyprojectDeps; 'requirements.txt' = "termcolor`n" }
+$v = Get-CellVerdict -Cell $c -ExpectedSource 'pyproject' -ExpectedWatched @('termcolor', 'iniconfig')
+$d = Get-CellDetails -Cell $c -Verdict $v -ExpectedSource 'pyproject' -ExpectedWatched @('termcolor', 'iniconfig')
+$mergeLine8 = $c.Log -match [regex]::Escape('Dependency lists merged')
+$noOverrideClaim8 = -not ($c.Log -match 'overrides requirements\.txt')
+$d['mergeLine'] = [bool]$mergeLine8; $d['noOverrideClaim'] = [bool]$noOverrideClaim8
+$pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and $mergeLine8 -and $noOverrideClaim8
+if (-not $pass) { $anyRed = $true }
+Write-DepRow -Id 'self.depsource.requirements_pyproject' -Pass ([bool]$pass) -Desc 'REQ-005.1: pyproject.toml and requirements.txt without a header are merged, both packages are installed and the console does not claim an override' -Details $d
+
+# ---- 9: one package pinned three ways; the header pin wins and the console names the conflict
+$pin723 = "# /// script`n# dependencies = [`n#     `"six==1.17.0`",`n# ]`n# ///`n"
+$c = Invoke-Cell -Name 'conflict' -Files @{ 'cell_app.py' = ($pin723 + $stubPlain); 'pyproject.toml' = "[project]`nname = `"depsrccell`"`nversion = `"0.1.0`"`ndependencies = [`"six==1.16.0`"]`n"; 'requirements.txt' = "six==1.15.0`n" }
+$v = Get-CellVerdict -Cell $c -ExpectedSource 'pep723' -ExpectedWatched @('six')
+$d = Get-CellDetails -Cell $c -Verdict $v -ExpectedSource 'pep723' -ExpectedWatched @('six')
+$sixVersion = Get-InstalledVersion -Dir $c.Dir -Name 'six'
+$reqAfter9 = Read-Text (Join-Path $c.Dir 'requirements.txt')
+$conflictLine = $c.Log -match 'Conflict for six: .*using six==1\.17\.0 from the PEP 723 header'
+$reqPinned = $reqAfter9 -match '(?m)^six==1\.17\.0\s*$'
+$d['installedSixVersion'] = $sixVersion; $d['conflictLine'] = [bool]$conflictLine; $d['requirementsHoldsWinner'] = [bool]$reqPinned
+$pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and ($sixVersion -eq '1.17.0') -and $conflictLine -and $reqPinned
+if (-not $pass) { $anyRed = $true }
+Write-DepRow -Id 'self.depsource.conflict' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package pinned differently in the three lists is installed at the header pin, requirements.txt then holds that pin, and the console names the conflict and the winner' -Details $d
 
 if ($anyRed) { exit 1 }
 exit 0

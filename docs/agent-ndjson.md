@@ -247,7 +247,7 @@ self.pipreqs.warn.gated,
 self.dep.diff.trace, self.litter.appfolder, self.elevation.logged,
 self.warn.onedrive, self.warn.path_negative, self.warn.sysdir,
 self.guardrail.g1, self.guardrail.g2, self.guardrail.g3,
-self.pep723.valid, self.pep723.uvformat, self.pep723.malformed, self.pep723.pyproject.override,
+self.pep723.valid, self.pep723.uvformat, self.pep723.malformed, self.pep723.pyproject.merge,
 self.pyproject.malformed,
 self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
@@ -860,8 +860,9 @@ self.noflag.default.rerun
 
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
 
-Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"). One
-fresh folder and one bootstrap per row. Each folder holds a stdlib-only stub (or one importing `six` in the two
+Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"; Item 89: the
+lists a program declares are merged on a first run, the rank only settles a conflict about one package, and the recorded
+source is the highest ranked list that contributed). One fresh folder and one bootstrap per row. Each folder holds a stdlib-only stub (or one importing `six` in the two
 pipreqs cells) and one distinct tiny package per declared source: requirements.txt `termcolor`, pyproject.toml
 `iniconfig`, PEP 723 header `toolz`. Both skip hooks are set (no user code runs; the build still does), and the
 PEP 723 write-back and autopep723 merge are off so the declared lists stay as written. A row passes only if the
@@ -870,10 +871,13 @@ return to the old non-tilde name leaves the cells without a record) names the ex
 in `~dependency_installed.txt` (so a losing source's package is absent) and the run exited 0. `.pep723_malformed`
 also needs the documented `PEP 723 block found but dependency list is empty or malformed` warning. Details carry the
 recorded source, the watched packages installed, and `sourceOk`/`watchedOk`/`ran`. Cells: `.pep723_only`,
-`.requirements_only`, `.all_three` (PEP 723 wins), `.pep723_malformed` (falls to requirements.txt),
-`.pyproject_nodeps` (falls to requirements.txt), `.requirements_empty` (an empty file is deleted, the scan decides)
-and `.nothing_declared` (the scan decides); the last two read `pipreqs` and so depend on Item 68's `DEP_SOURCE`
-fix. Limits: only the winner and the packages are asserted, not the console wording of every branch. Skips on
+`.requirements_only`, `.all_three` (all three packages installed and in requirements.txt, source `pep723`, the
+`Dependency lists merged` line and no `overrides requirements.txt` claim), `.pep723_malformed` (falls to
+requirements.txt), `.pyproject_nodeps` (falls to requirements.txt), `.requirements_empty` (an empty file is deleted, the
+scan decides), `.nothing_declared` (the scan decides; the last two read `pipreqs` and so depend on Item 68's
+`DEP_SOURCE` fix), `.requirements_pyproject` (source `pyproject`, both packages) and `.conflict` (`six` pinned 1.15.0,
+1.16.0 and 1.17.0 in the three lists: installed at the header's 1.17.0, requirements.txt holds that pin, and the log
+names the conflict and the winner). Limits: only the winner and the packages are asserted, not the console wording of every branch. Skips on
 non-Windows.
 
 ```
@@ -884,6 +888,45 @@ self.depsource.pep723_malformed
 self.depsource.pyproject_nodeps
 self.depsource.requirements_empty
 self.depsource.nothing_declared
+self.depsource.requirements_pyproject
+self.depsource.conflict
+```
+
+## selfapps-dep-merge-later NDJSON rows (selfapps_dep_merge_later.ps1, real lane only, gating)
+
+Item 89, README REQ-005.1: what a LATER run does with the dependency lists (the cold first run is the matrix above).
+After a run whose install fully succeeded, requirements.txt and the PEP 723 header hold the same list and each list is
+recorded (`~dep_base.requirements.txt`, `~dep_base.pyproject.txt`, `~dep_base.pep723.txt`); the next run treats a
+difference from those records as the user's change. Each folder holds a stdlib-only `app.py` (no user code runs: both
+skip hooks are set, the build still does; the header write-back is NOT skipped, it is the point) and tiny PyPI packages.
+Folder A: `.baseline` (first run of requirements.txt `termcolor` + `iniconfig`: both lists agree, both snapshots exist,
+the `Dependency lists recorded for the next run` line), `.delete` (iniconfig deleted from requirements.txt: gone from
+both lists, `Removed iniconfig: you removed it from requirements.txt` and `Removed iniconfig from the PEP 723 header`
+logged), `.add` (toolz appended: in both lists and installed, no removal line), `.stable` (nothing changed, dist removed so
+the dependency flow runs: requirements.txt byte-equal, header names equal, no removal, conflict, still-lists-it or
+merge-failure line). Folder B `.pyproject_keeps`: pyproject.toml lists `iniconfig`, the user deletes it from
+requirements.txt; it stays in both lists and the log says `iniconfig was removed from requirements.txt but pyproject.toml
+still lists it, so it stays`. Folder C `.pin_edit`: requirements.txt `six==1.16.0` edited to `six==1.17.0`: installed at
+1.17.0, both lists hold `six==1.17.0`, no `Conflict for six` line (an edit is not a conflict). Folder D `.header_add`:
+`toolz` added to the header by hand: in requirements.txt too and installed. Folder E `.delete_last`: requirements.txt `termcolor`,
+the only package, is moved into `deps.txt` and requirements.txt becomes `-r deps.txt` (a comment-only or empty file counts as
+absent and casts no vote, so a directive-only file is how a list ends up naming no package): the merged list is empty, the
+write-back helper answers `SKIP:no_packages`, and the header must still lose `termcolor` (`Removed termcolor from the PEP 723
+header` logged, header names empty); the next run (dist removed so the flow runs) must not report the removal again, which it
+would if the records were left as they were. Every later row also requires its folder's
+first run to have agreed (`baselineOk`), so a broken first run cannot hide behind a later pass. Packages removed from a
+list stay installed in the environment (documented, harmless), so the rows assert the lists and the log, not an absence
+from `~dependency_installed.txt`. Skips on non-Windows.
+
+```
+self.depmerge.later.baseline
+self.depmerge.later.delete
+self.depmerge.later.add
+self.depmerge.later.stable
+self.depmerge.later.pyproject_keeps
+self.depmerge.later.pin_edit
+self.depmerge.later.header_add
+self.depmerge.later.delete_last
 ```
 
 ## selfapps-log-rotate NDJSON rows (selfapps_log_rotate.ps1, real lane only, gating)
@@ -1329,9 +1372,8 @@ logged `skipped local:` (`skippedLocalLogged`), so a run where the filter never 
 name fails the whole atomic install). `.fastpath_rerun`:
 `Fast path: reusing` logged, no `Fast path: not reusing`, same EXE timestamp, token rewritten, no `UV_USED=1` (no
 reinstall) and no pipreqs command. `.edit_rerun`: `Fast path: not reusing` logged, EXE newer than after run 2, token
-rewritten, the run recorded a source, and `termcolor` is installed exactly when that source is `requirements.txt` (the
-first run's PEP 723 write-back puts a header in `main.py`, and a header outranks `requirements.txt`; the row asserts
-the run is consistent with the source it names, not that the edit wins, see `docs/open-questions.md`). Skips with
+rewritten, the run recorded a source, and `termcolor` is installed, still in `requirements.txt` and written into the PEP 723
+header run 1 left in `main.py`. Skips with
 `skip=true, reason=non-windows-host` off Windows. Real lane only on purpose: it needs PyPI like every real-lane
 scenario and adds two pandas builds, so conda-full (slowest lane) is not given it.
 
