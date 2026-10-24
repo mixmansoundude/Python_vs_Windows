@@ -67,7 +67,21 @@ function Write-BuilderRow {
         [Parameter(Mandatory)][string]$Desc,
         [Parameter(Mandatory)][hashtable]$Details
     )
-    Write-NdjsonRow ([ordered]@{ id = 'self.builder.override'; req = 'REQ-AV'; pass = $Pass; desc = $Desc; details = $Details })
+    # README REQ-009.17 to REQ-009.21: each scenario proves one shall of the PVW_BUILDER group. The tag has to stay
+    # a literal for tests/test_req_trace.py (it scans the text), so the lookup is a switch of literal hashtables.
+    $tag = switch ($scenario) {
+        'invalid'                { @{ req = 'REQ-009.21' } }
+        'pyinstaller'            { @{ req = 'REQ-009.17' } }
+        'pyinstaller_nofallback' { @{ req = 'REQ-009.17' } }
+        'nuitka'                 { @{ req = 'REQ-009.18' } }
+        'nuitka_forcefail'       { @{ req = 'REQ-009.18' } }
+        'nuitka_warnfile'        { @{ req = 'REQ-009.18' } }
+        'nuitka_stale'           { @{ req = 'REQ-009.19' } }
+        'both'                   { @{ req = 'REQ-009.20' } }
+        'both_forcefail'         { @{ req = 'REQ-009.20' } }
+        default                  { @{ req = 'REQ-009' } }
+    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.builder.override'; req = $tag.req; pass = $Pass; desc = $Desc; details = $Details })
 }
 
 # Non-Windows skip
