@@ -1052,6 +1052,18 @@ jobs:
         run: |
           & tests\selfapps_nuitka_tiera_hidden_skip.ps1
 
+      # Item 72 (b): experiment, not a regression gate. Builds a Nuitka --onefile EXE twice (default
+      # unpacking and --onefile-tempdir-spec) with the bootstrapper's own flags and records launch
+      # times plus the two safety facts (default folders are removed, a same-spec rebuild runs the
+      # NEW code). Non-gating for the same reason as the Tier A steps: three real Nuitka builds, and
+      # a compiler download is possible.
+      - name: "Self-test: Nuitka onefile launch cache experiment (uv lane, non-gating)"
+        if: ${{ matrix.mode == 'uv' }}
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & tests\selfapps_nuitka_launchcache.ps1
+
       # AV-Safe Build Path requirement 9 (P1): the elective "want an optimized build too?"
       # upsell after a normal successful PyInstaller build. Four scenarios in one file/lane
       # (uv, non-gating) -- 'accept'/'swapfail' depend on a real Nuitka build succeeding (same

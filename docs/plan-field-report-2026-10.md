@@ -580,6 +580,42 @@ not adopt the 3rd party's "signing is the only fix" claim. (c) Long C compiles o
 `scipy.stats` and similar are expected Nuitka behavior; record the observed hour as a data point
 in `docs/prd-av-safe-build-path.md` rather than "fixing" it.
 
+**Outcome so far (2026-10-17).** (a) Dropped: a heartbeat needs a background process or a new helper
+that owns the Nuitka process (orphans on Ctrl+C, a log read while Nuitka writes it), and Item 68's
+wording already tells the user to expect tens of minutes and where `~setup.log` is. (c) Done, as
+Finding 7 in `docs/prd-av-safe-build-path.md`. (b) The experiment is `tests/selfapps_nuitka_launchcache.ps1`
+(uv lane, non-gating, row `self.nuitka.launchcache`). It adds no `run_setup.bat` change. Facts already
+known from a local Nuitka 4.3.1 build on Linux: `--onefile-tempdir-spec={CACHE_DIR}/...` keeps the unpacked
+folder, the default build deletes its `onefile_*` folder on exit, a rebuild with the SAME spec and changed
+source ran the new code, and `--onefile-cache-mode=cached` alone refuses to build without `--company-name`
+(its default spec is `{CACHE_DIR}/{COMPANY}/{PRODUCT}/{VERSION}`), so an explicit spec is simpler. What the
+run must show on Windows before adopting: the same rebuild freshness, a launch that is faster after the
+first, and no leftover default folders. If it is adopted, the cache folder name must be unique per app
+(two apps built by this bootstrapper must never share one), the cache lives under the user's profile
+outside the app folder (say so in README Known Limitations), and it goes on exactly two lines: the
+`-m nuitka --onefile` command in `:try_nuitka_tier_a` and the one in `:offer_optimized_build`.
+
+**First Windows run (2026-10-23, uv lane, Nuitka 4.3.1, 40 MB data file, Defender real-time protection
+off so this cannot show the field's 60 s).** Default build: launches 481, 435 and 579 ms, its `onefile_*`
+folder removed after every launch. Static spec: first launch 347 ms (pays the extraction), later launches
+200 and 202 ms, the folder kept and the same on all three. A rebuild with the SAME spec from changed source
+ran the NEW code (`rebuildRanNewCode` true, `rebuildRanStaleCode` false) and its second launch took 202 ms.
+Builds took 53.1 s (default) and 41.8 s (cached): the flag does not change build time. So the mechanism
+holds on Windows; the saving here is about 280 ms per launch, and the field effect (Defender scanning a
+fresh unpack every launch) stays unmeasured. The row was red only because the test compared the folder
+name in the program's 8.3 form (`RUNNER~1\PVW_LA~1\PVWEXP~1`) against the long token; the script now
+converts with `GetLongPathName` first (also fixes the cleanup, which matched on the same name).
+
+**Clean run (2026-10-23, run `39941938491` on `cd02aae`, `self.nuitka.launchcache` green).** Default
+build: launches 801, 474 and 641 ms (median 641). Static spec: 333 ms for the first launch, then 174 and
+175 ms (about 3.7 times faster than the default median). Same-spec rebuild: new code again, first launch
+682 ms (re-extracts the changed payload), second 181 ms. Builds 43.7 s (default) and 34.7 s (cached).
+Reading: the mechanism is safe and the saving is real, so adopt in a follow-up after PR #499 merges, with a
+per-app folder name and a README Known Limitations line; the field effect stays unmeasured. A review of the
+script also found that `Build-App` repeated the production flags as literals instead of reading the
+`$prodFlags` text that the unit test pins to `run_setup.bat`; it now derives its arguments from `$prodFlags`
+(only the output folder differs), and a unit test pins that.
+
 ### Item 73 -- PEP 723 write-back failure hides uv's own error (Confirmed, tiny; shipped)
 
 `[WARN] REQ-005.11: PEP 723 header write-back failed (ERROR:uv_rc_1)` gives no reason because

@@ -3648,6 +3648,45 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   (`warn.count:0`) and green in `39044948167`; `.runtime_present` and `.unrelated_error` are guard rows that are green
   before and after by design (the warning is neither printed when the runtime is present nor for an unrelated error).
 
+### Item 66 (closed 2026-10-23; PR #497)
+
+- **A provider that produced a verified run after a cascade is remembered, so the next run does not redo uv first.**
+  Separate state file `~provider.state.json` (not `~env.state.json`), plus a super-user `PVW_PROVIDER=conda` switch
+  (decided 2026-10-09, Q3, option B). A failed forced solve stops; it does not cascade.
+- **Memory survives edits** (decided 2026-10-17, Q11, option A): `requirements.txt`, `pyproject.toml`, `runtime.txt` and
+  `.py` edits never clear it; it is cleared only when the remembered provider is gone (Miniconda uninstalled) or the user
+  deletes `~provider.state.json`, and every run that starts from memory says so and how to reset it.
+- **Built** (one PR with Item 82 slice 2, README wording in the PR body): switch check after the `Python file count`
+  log line, `:provider_memory_read` before the uv block, `:provider_memory_write` from `:success`,
+  `~runtime_writeback.txt` record so a stale exact pin is dropped when conda goes first. Rows `self.provider.*` (real
+  lane gating, the three uv rows non-gating because of the Miniconda download), unit tests
+  `tests/test_provider_memory.py`. Not covered, by design: the cached-EXE fast path runs first, a failed memory-start
+  conda run follows the existing conda-failure chain and uv is not retried, only conda is remembered. Detail:
+  `docs/agent-interconnect.md`'s "Provider memory" section.
+
+### Item 82 (closed 2026-10-23; slice 1 PR #495, slice 2 PR #497; filed 2026-10-11 from a maintainer brainstorm)
+
+- **The problem**: the early cascade prompt (30 s, default N) fires only when warnfix leaves an import unresolved AND a
+  repair install fails, so a missed prompt, or a failure that only shows at run time, got no later offer. Shape agreed
+  2026-10-11 (option A), plan in `docs/plan-field-report-2026-10.md`.
+- **Slice 1 (the W/C/N prompt)**: ONE untimed prompt after the verification run and the optional checkpoint, default
+  "neither": it shows the last error line and offers worked-anyway / try Miniconda (says it runs the program once more,
+  README REQ-018) / neither. uv to conda only; never on the fast path; auto-declines on
+  `HP_CI_LANE`/`NOINPUT`/`HP_NONINTERACTIVE`. Setting `HP_CASCADE_APPROVED` late reuses the existing cascade with no
+  change to it. `:last_chance_offer` is at the end of `:run_entry_smoke`, with its own helper `HP_LAST_ERROR_LINE`, the
+  checkpoint's interpreter result kept as `HP_LC_CKPT_RC`, and the `RUNTIME_MISMATCH` hint reworded so it no longer
+  rules out the environment. Rows `self.lastchance.*` (real lane gating; the silent-timeout and cascade scenarios on the
+  uv lane, non-gating because of the Miniconda download and the force-stopped EXE).
+- **Slice 2 (the window question)**, decided 2026-10-11 (was Q10, option a): on the cascade-reached conda tier only, a
+  window app's silent timeout asks once whether it opened and worked, and only an explicit yes (a bare Enter means no)
+  is recorded as `user_confirmed`. The gate is a marker the smoke runner writes when it stops a silent process
+  (`~smokerun_killed.txt`, written by `tools/exe_smokerun.ps1` only inside its `Kill()` branch, read into
+  `HP_EXE_KILLED_SILENT`), not `HP_EXE_EXIT=-1` alone, because a failed launch or a program exiting `-1` also leaves
+  `-1`. The prompt says the check stops the program after about 30 seconds; the CI fixture is a silent script. Rows
+  `self.lastchance.window_yes/_enter/_auto/_selfexit` (uv lane, non-gating), unit tests `tests/test_window_confirm.py`
+  and the `KilledMarker` cases in `tests/test_exe_smokerun.py`. Item 66 receives the pass type (`exe_ok`,
+  `interpreter_ok`, `user_confirmed`) as a field. Detail: `docs/agent-interconnect.md`'s "Last-chance offer" section.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
