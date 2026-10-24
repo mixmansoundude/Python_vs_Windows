@@ -1358,6 +1358,25 @@ jobs:
         run: |
           & tests\selfapps_longpath_near.ps1
 
+      # CLAUDE.md Item 74: three of the curated example apps in tests/fixtures/examples (stdlib only, two files with a
+      # sibling import, a tkinter window that closes itself) run through the bootstrapper with no argument and no skip
+      # hook, the way a beginner runs them. The fourth (pandas + Excel) is read by the conda-full pandas script. Real
+      # lane only, gating from its first run.
+      - name: "Self-test: curated example apps from tests/fixtures/examples (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_example_apps.ps1
+
+      # CLAUDE.md Item 87: a dist\<env>.exe that Windows cannot start (a text-file stub) must end the EXE verification
+      # run and the fail-fast probe, not hang them. Two bootstrapper runs of the stdlib_single fixture under a
+      # 15-minute watchdog each. Real lane only, gating from its first run.
+      - name: "Self-test: an EXE that cannot be started ends the check (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_unlaunchable_exe.ps1
+
       - name: "Self-test: early preflight branches -- line-ending + writable-CWD (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2580,6 +2599,38 @@ jobs:
             tests/~selftest_logrotate_over/~setup.log
             tests/~selftest_logrotate_under/~rotate_boot.log
             tests/~longpath_near_*.log
+            tests/~selftest_example_*/~example_launch.cmd
+            tests\~selftest_example_*\~example_launch.cmd
+            tests/~selftest_example_*/~example_boot.log
+            tests\~selftest_example_*\~example_boot.log
+            tests/~selftest_example_*/~setup.log
+            tests\~selftest_example_*\~setup.log
+            tests/~selftest_example_*/~run.out.txt
+            tests\~selftest_example_*\~run.out.txt
+            tests/~selftest_example_*/~run.err.txt
+            tests\~selftest_example_*\~run.err.txt
+            tests/~selftest_example_*/~bootstrap.status.json
+            tests\~selftest_example_*\~bootstrap.status.json
+            tests/~selftest_example_*/requirements.txt
+            tests\~selftest_example_*\requirements.txt
+            tests/~selftest_unlaunch_*/~unlaunch_launch.cmd
+            tests\~selftest_unlaunch_*\~unlaunch_launch.cmd
+            tests/~selftest_unlaunch_*/~unlaunch_boot.log
+            tests\~selftest_unlaunch_*\~unlaunch_boot.log
+            tests/~selftest_unlaunch_*/~unlaunch_run1.log
+            tests\~selftest_unlaunch_*\~unlaunch_run1.log
+            tests/~selftest_unlaunch_*/~unlaunch_run2.log
+            tests\~selftest_unlaunch_*\~unlaunch_run2.log
+            tests/~selftest_unlaunch_*/~setup.log
+            tests\~selftest_unlaunch_*\~setup.log
+            tests/~selftest_unlaunch_*/~bootstrap.status.json
+            tests\~selftest_unlaunch_*\~bootstrap.status.json
+            tests/~selftest_unlaunch_*/~launch_failed.txt
+            tests\~selftest_unlaunch_*\~launch_failed.txt
+            tests/~selftest_unlaunch_*/~run.out.txt
+            tests\~selftest_unlaunch_*\~run.out.txt
+            tests/~selftest_unlaunch_*/~run.err.txt
+            tests\~selftest_unlaunch_*\~run.err.txt
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

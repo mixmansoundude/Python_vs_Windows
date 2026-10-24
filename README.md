@@ -118,6 +118,8 @@ imports installed**.
 >   components, one with a space). The environment name, and so the EXE name, loses the accented letter
 >   (`Jos_.exe`). Characters outside the system code page, and the Miniconda location (REQ-003.2), are not
 >   covered by it.
+> - Small example programs that exercise REQ-001.1 are in `tests/fixtures/examples`; copy one folder's files next
+>   to `run_setup.bat` to try it. CI runs three of them (`self.examples.*`).
 
 ### [REQ-002] Entry selection (current behavior)
 - **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
@@ -761,6 +763,13 @@ bootstrapper should therefore run the program once per invocation and should ask
   download address (`https://aka.ms/vc14/vc_redist.x64.exe`), and **shall not** install the runtime. It
   **shall not** print that warning when both files are present or when the error is not a `DLL load failed`
   error.
+- **REQ-018.33** [major] The bootstrapper **shall**, when the EXE it has just built cannot be started by Windows
+  at all (for example a text-file stub, an empty file or a cut-off copy), end the verification run of REQ-018.5
+  at once, say that the program could not be started and show the reason Windows gave, not count that run as a
+  verification, remove that file, and check the program through the interpreter instead; that interpreter run
+  **shall** be the invocation's single run (REQ-018.1).
+- **REQ-018.34** [major] The bootstrapper **shall**, when the cached EXE of REQ-018.3 cannot be started by Windows
+  at all, discard it and rebuild it as for a stale EXE, without waiting for the file that could not be started.
 
 > **Notes (non-normative).**
 > - Rationale: the bootstrapper cannot know whether the program is safe to run twice, so the run that verifies
@@ -795,6 +804,11 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   error alone does not say why. The warning is printed next to the offers that follow a failed run (the EXE
 >   verification, the interpreter run, and the interpreter run a user watching sees), and it needs no
 >   administrator rights because nothing is installed.
+>
+> - REQ-018.33 and REQ-018.34: an interrupted build or an antivirus quarantine can leave a file with the EXE's name
+>   that Windows refuses to start; before this was handled the check waited for a process that never ran, and the
+>   step ran until the job was cancelled. The reason line is the one Windows reports (for example "The specified
+>   executable is not a valid application for this OS platform."), cut to one printable line.
 
 ---
 

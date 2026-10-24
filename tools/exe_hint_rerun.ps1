@@ -35,7 +35,9 @@ $si.RedirectStandardOutput = $true
 $si.RedirectStandardError = $true
 $p = New-Object System.Diagnostics.Process
 $p.StartInfo = $si
-$p.Start() | Out-Null
+# Item 87: a file Windows cannot start leaves an empty snapshot (the hint then falls through to the generic one); the
+# unbounded waits below would otherwise run against a process that never existed.
+try { $p.Start() | Out-Null } catch { '' | Set-Content -Path $outPath -Encoding ASCII; exit 0 }
 
 $outTask = $p.StandardOutput.ReadToEndAsync()
 $errTask = $p.StandardError.ReadToEndAsync()
