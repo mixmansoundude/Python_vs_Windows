@@ -1348,8 +1348,7 @@ name fails the whole atomic install). `.fastpath_rerun`:
 `Fast path: reusing` logged, no `Fast path: not reusing`, same EXE timestamp, token rewritten, no `UV_USED=1` (no
 reinstall) and no pipreqs command. `.edit_rerun`: `Fast path: not reusing` logged, EXE newer than after run 2, token
 rewritten, the run recorded a source, and `termcolor` is installed, still in `requirements.txt` and written into the PEP 723
-header run 1 left in `main.py` (Item 89: the lists are merged and a change since the last run is kept; before it the
-header outranked the edit and the row only asserted that the run agreed with the source it named). Skips with
+header run 1 left in `main.py`. Skips with
 `skip=true, reason=non-windows-host` off Windows. Real lane only on purpose: it needs PyPI like every real-lane
 scenario and adds two pandas builds, so conda-full (slowest lane) is not given it.
 
