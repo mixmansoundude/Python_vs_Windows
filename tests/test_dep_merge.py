@@ -362,6 +362,38 @@ class ChangedFlag(unittest.TestCase):
         self.assertEqual(c.run(), 1)
         self.assertFalse(c.changed)
 
+    def test_an_edited_include_line_is_a_change(self):
+        # lines that name no package (-r, -e, --index-url) are kept in requirements.txt, so editing one is the user's change too
+        c = self.case(req=lines("six", "-r more2.txt"), base_req=lines("six", "-r more.txt"))
+        self.assertEqual(c.run(), 0)
+        self.assertTrue(c.changed)
+
+    def test_an_edited_directive_only_requirements_file_is_a_change(self):
+        c = self.case(req=lines("-r b.txt"), base_req=lines("-r a.txt"))
+        self.assertEqual(c.run(), 0)
+        self.assertTrue(c.changed)
+
+    def test_an_added_option_line_is_a_change_next_to_another_list(self):
+        c = self.case(req=lines("six", "--extra-index-url https://example.invalid/simple"), pep723=lines("six"),
+                      base_req=lines("six"), base_pep723=lines("six"))
+        self.assertEqual(c.run(), 0)
+        self.assertTrue(c.changed)
+
+    def test_an_unchanged_include_line_is_not_a_change(self):
+        c = self.case(req=lines("six", "-r more.txt"), base_req=lines("six", "-r more.txt"))
+        self.assertEqual(c.run(), 0)
+        self.assertFalse(c.changed)
+
+    def test_the_second_run_over_an_include_line_asks_nothing(self):
+        # the include line moves to the end of the merged file; the snapshot of that file must then equal what the next run reads
+        c = self.case(req=lines("-r more.txt", "six"), pep723=lines("toolz"))
+        self.assertEqual(c.run(), 0)
+        self.assertTrue(c.changed)
+        c.snapshot()
+        (c.dir / "~dep_merge.changed.txt").unlink()
+        self.assertEqual(c.run(), 0)
+        self.assertFalse(c.changed)
+
 
 class InternalError(unittest.TestCase):
     def test_a_blocked_requirements_file_exits_3_and_leaves_no_temp_file(self):
