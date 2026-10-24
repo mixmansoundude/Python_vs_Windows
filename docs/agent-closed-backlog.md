@@ -3864,6 +3864,37 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   input, are in `docs/agent-cold-storage.md`. Detail: `docs/agent-interconnect.md`'s "Three TOML readers, one oracle"
   and `docs/plan-toml-reading-hygiene.md`.
 
+### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
+
+- **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
+  version '3.15' is not supported by Nuitka '4.2.2'`; the `uv` lane's `self.exe.build.tiera`, `self.exe.tiera.hidden_skip`
+  and two `self.optbuild.offer` scenarios went red. Not a regression of any PR.
+- **The cause went away by itself.** Nuitka 4.3 accepted 3.15 within a day. Run `40118071438` (uv lane) shows Python 3.15.1
+  with Nuitka 4.3.1 printing only `The Python version '3.15' is only experimentally supported by Nuitka '4.3.1'`, and the
+  three rows pass (read from the artifacts, zero red rows on all eight lanes). That settled the "confirm the Nuitka version
+  in a uv-lane setup log" step the 2026-10-11 note asked for.
+- **What was still wrong, and is fixed.** When Nuitka does refuse the Python, the user saw "Fallback build did not complete
+  successfully." and then a hint to install Visual Studio Build Tools, which cannot help. Both Nuitka command lines
+  (`:try_nuitka_tier_a`, `:offer_optimized_build`) now take a mark of the matching lines in `~setup.log` right before the
+  command and a check after a failure; if Nuitka's own "is not supported by Nuitka" line appeared in between, the run says
+  the fallback build system does not support this Python version yet and the Visual Studio hint is left out. Any other
+  failure keeps the hint. Detail: `docs/agent-interconnect.md`'s "Nuitka's unsupported Python answer" section.
+- **Decided: no version table, and Nuitka is still attempted.** The item's first wording asked for Nuitka to be skipped
+  without trying. That needs the batch to know which Pythons each Nuitka release supports, a list that goes stale exactly the
+  way this problem did (4.2.2 refused 3.15, 4.3 accepted it); Nuitka answers in about a second and its answer is the source
+  of truth. The other fix shape (a separate uv-managed 3.14 just for Nuitka) stays rejected: two interpreters cut against
+  the two-layer rule in `docs/agent-lessons-learned.md`.
+- **Red first.** Run `40129527496` (head `28cf021`, tests only): on the `real` lane `nuitka_unsupported` was red with
+  `stubRan: true`, `installFailed: false`, `vsHint: true`, `honestLine: false`, and `both_unsupported` red the same way with
+  `optFailed: true` (the original EXE untouched, status ok), while the negative control `nuitka_failother` passed (as it
+  should before the fix) and every other row of the lane, including all earlier `self.builder.override` scenarios, was
+  green. The fix was pushed under the early-push rule once those two rows were read red for that reason.
+- **Tests.** Rows `self.builder.override` scenarios `nuitka_unsupported`, `nuitka_failother` and `both_unsupported`
+  (`tests/selfapps_pvw_builder.ps1`; `real` and `conda-full`, gating from the first run: a stub `nuitka.py` stands in for
+  the package, nothing is compiled); unit tests `tests/test_nuitka_unsupported_hint.py`. `batch-check.yml` was held for
+  another lane's change when these were added, so the three scenarios run as child runs of the `nuitka_forcefail` step;
+  give each its own step and delete the block at the end of the script when the workflow is next edited.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
