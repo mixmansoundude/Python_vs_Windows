@@ -1752,6 +1752,16 @@ jobs:
         run: |
           & tests\selfapps_runtests_contract.ps1
 
+      # REQ-009 Tier 5: the embedded-Python tier honors the Python version a program asks for. Three bootstrapper runs
+      # (a minor other than the newest, below the table, above the table) of a one-line program that prints the version it
+      # runs under; the swap path (a second download, rd, move) was never run in CI before. Real lane only, gating from its
+      # first run. Kept as the last selfapps step so a merge with other new steps is a one-block conflict.
+      - name: "Self-test: embed tier honors the requested Python version (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_embed_version.ps1
+
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
         uses: actions/upload-artifact@v6
@@ -2621,6 +2631,18 @@ jobs:
             tests\~selftest_unlaunch_*\~run.out.txt
             tests/~selftest_unlaunch_*/~run.err.txt
             tests\~selftest_unlaunch_*\~run.err.txt
+            tests/~selftest_embed_ver_*/~embver_launch.cmd
+            tests\~selftest_embed_ver_*\~embver_launch.cmd
+            tests/~selftest_embed_ver_*/~embver_boot.log
+            tests\~selftest_embed_ver_*\~embver_boot.log
+            tests/~selftest_embed_ver_*/~setup.log
+            tests\~selftest_embed_ver_*\~setup.log
+            tests/~selftest_embed_ver_*/~run.out.txt
+            tests\~selftest_embed_ver_*\~run.out.txt
+            tests/~selftest_embed_ver_*/runtime.txt
+            tests\~selftest_embed_ver_*\runtime.txt
+            tests/~selftest_embed_ver_*/~bootstrap.status.json
+            tests\~selftest_embed_ver_*\~bootstrap.status.json
             tests/~selftest_collect/~collect_bootstrap.log
             tests\~selftest_collect\~collect_bootstrap.log
             tests/~selftest_collect/~setup.log

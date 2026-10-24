@@ -156,5 +156,74 @@ class PayloadSync(unittest.TestCase):
         )
 
 
+class EmbedVersionScenarioPins(unittest.TestCase):
+    """Static pins for tests/selfapps_embed_version.ps1 (rows self.embed.version.*): the scenario that
+    proves the swap path (a second download, rd, move) really runs. The script reads the table at run
+    time, so a refresh needs no edit there, but the swap scenario needs 3.12 strictly inside the table."""
+
+    SCRIPT = REPO / "tests" / "selfapps_embed_version.ps1"
+    WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
+    IDS = ("self.embed.version.swap", "self.embed.version.floor", "self.embed.version.ceiling")
+
+    @classmethod
+    def script_issues(cls, text):
+        issues = []
+        for row_id in cls.IDS:
+            # skip rows (2), inputs-missing rows (1) and the real row (1): the id stays literal at each call
+            if len(re.findall(r"id\s*=\s*'" + re.escape(row_id) + r"'", text)) < 4:
+                issues.append("literal id missing: " + row_id)
+        tail = [ln.strip() for ln in text.splitlines() if ln.strip()][-2:]
+        if tail != ["if (-not ($passSwap -and $passFloor -and $passCeiling)) { exit 1 }", "exit 0"]:
+            issues.append("script must end with its own exit 1 / exit 0")
+        if "taskkill" not in text:
+            issues.append("no watchdog")
+        if any(ord(c) > 127 for c in text):
+            issues.append("not ascii")
+        return issues
+
+    @classmethod
+    def step_issues(cls, workflow_text):
+        m = re.search(r"\n( +)- name: \"Self-test: embed tier honors[^\n]*\n(.*?)(?=\n\1- name:)", workflow_text, re.S)
+        if not m:
+            return ["workflow step missing"]
+        block = m.group(2)
+        issues = []
+        if "matrix.mode == 'real'" not in block:
+            issues.append("step is not real-lane only")
+        if "selfapps_embed_version.ps1" not in block:
+            issues.append("step does not run the script")
+        if "continue-on-error" in block:
+            issues.append("step must gate")
+        for ext in ("~embver_boot.log", "~setup.log", "~run.out.txt", "runtime.txt"):
+            if "tests/~selftest_embed_ver_*/" + ext not in workflow_text:
+                issues.append("artifact path missing: " + ext)
+        return issues
+
+    def test_script_is_wired_correctly(self):
+        self.assertEqual(self.script_issues(self.SCRIPT.read_text(encoding="utf-8")), [])
+
+    def test_workflow_step_gates_on_the_real_lane(self):
+        self.assertEqual(self.step_issues(self.WORKFLOW.read_text(encoding="utf-8")), [])
+
+    def test_swap_minor_sits_inside_the_table(self):
+        # the swap scenario asks for 3.12: it must be in the table and neither the newest (no swap
+        # happens) nor the oldest (it would be the floor scenario); the script fails its rows otherwise
+        self.assertIn("'3.12'", self.SCRIPT.read_text(encoding="utf-8"))
+        self.assertIn("3.12", EMBED_PYTHON_TABLE)
+        self.assertNotEqual("3.12", LATEST_MINOR)
+        self.assertNotEqual("3.12", FLOOR_MINOR)
+
+    def test_each_rule_can_fail(self):
+        good = self.SCRIPT.read_text(encoding="utf-8")
+        self.assertTrue(self.script_issues(good.replace("self.embed.version.floor", "self.embed.version.flor")))
+        self.assertTrue(self.script_issues(good.rstrip() + "\nexit 3\n"))
+        self.assertTrue(self.script_issues(good.replace("taskkill", "kill")))
+        wf = self.WORKFLOW.read_text(encoding="utf-8")
+        self.assertTrue(self.step_issues(wf.replace("selfapps_embed_version.ps1", "selfapps_other.ps1", 1)))
+        self.assertTrue(self.step_issues(wf.replace(
+            "if: ${{ !cancelled() && matrix.mode == 'real' }}\n        shell: pwsh\n        run: |\n          & tests\\selfapps_embed_version.ps1",
+            "continue-on-error: true\n        shell: pwsh\n        run: |\n          & tests\\selfapps_embed_version.ps1")))
+
+
 if __name__ == "__main__":
     unittest.main()
