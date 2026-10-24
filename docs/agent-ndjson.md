@@ -661,7 +661,7 @@ behaves as auto),
 kept and the optimized-build offer is not shown), `nuitka_forcefail` (PyInstaller is neither installed nor run,
 failure reported with `reason=builder_nuitka`), `nuitka_stale` (a `dist\<env>.exe` left by an earlier run is removed
 by a failed Nuitka-only build, so the verification run goes through the interpreter as the log says), `nuitka_warnfile` (a PyInstaller warn file the bootstrapper cannot delete, held open by the test, never starts the warnfix repair, an install or a PyInstaller rebuild), `both_forcefail` (the optimized build starts without a prompt
-and its failure leaves the verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
+and its failure leaves the verified EXE untouched), and the three Item 80 scenarios, which run as child runs of the `nuitka_forcefail` step until the workflow gives them their own: `nuitka_unsupported` (a stub `nuitka.py` printing Nuitka's "is not supported by Nuitka" line: the run says plainly that the fallback build system does not support this Python yet and does not send the user to Visual Studio), `nuitka_failother` (the negative control: any other failure keeps the Visual Studio hint, and an unsupported line left in `~setup.log` by an earlier run is not counted), `both_unsupported` (the same sentence from the optimized build, verified EXE untouched). Non-gating, uv lane only, because a real Nuitka
 build needs a compiler download that can fail for network reasons (same precedent as
 `self.exe.build.tiera`): `nuitka`, `both`.
 
