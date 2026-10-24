@@ -80,7 +80,7 @@ tests/
   selfapps_example_apps.ps1    Item 74: three curated example apps from fixtures/examples (stdlib only, two files with a sibling import, a tkinter window that closes itself) run through the bootstrapper with no skip hook (real lane, gating)
   fixtures/examples/           Item 74: the curated example apps a person can drop next to run_setup.bat (README.txt inside); CI scenarios read these files, nothing generates them inline
   selfapps_unlaunchable_exe.ps1 Item 87: a dist\<env>.exe that Windows cannot start (text-file stub) ends the EXE verification run and the fail-fast probe instead of hanging them (real lane, gating, 15-minute watchdog per run; HP_TEST_CORRUPT_BUILT_EXE hook)
-  selfapps_embed_version.ps1   REQ-009 Tier 5: the embed tier honors the Python version a program asks for (runtime.txt 3.12 is swapped in and is what the program runs under; 3.9 runs under the table floor with a WARN; 3.99 runs under the newest minor with a WARN; three full builds, real lane, gating, 30-minute watchdog per run)
+  selfapps_embed_version.ps1   REQ-009 Tier 5: the embed tier honors the Python version a program asks for (runtime.txt 3.12 is swapped in and is what the program runs under; 3.9 runs under the table floor with a WARN; 3.99 runs under the newest minor with a WARN; a pyproject.toml `>=3.11,<3.13` gets 3.12, the newest minor the range allows; four full builds, real lane, gating, 30-minute watchdog per run)
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -312,7 +312,7 @@ Test files and what they cover:
 | `test_example_fixtures.py` | Item 74: the example apps under `tests/fixtures/examples` stay plain examples (exactly the listed files, ASCII, compile in memory, every import is stdlib, a sibling file or a declared package, README.txt names every folder) and the places that read them (`selfapps_example_apps.ps1`, `selfapps_pandas_excel.ps1`, the real-lane workflow step and its artifact paths) cannot move back inline; synthetic trees prove each rule can fail |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
 | `test_autopep_merge.py` | REQ-005.12 / Item 88: autopep723 name extraction, dedup against `requirements.txt`, newline repair, `main()` dispatch, and the local-module filter (sibling `.py` files and folders in any spelling are skipped and logged, ignored and hidden folders are not walked, a real package is still added), HP_AUTOPEP_MERGE payload sync |
-| `test_embed_tier.py` | REQ-009 Tier 5: version-table resolution (floor/ceiling fallback), batch `HP_EMBED_LATEST_*` constants equal the table's `LATEST_MINOR` entry, HP_EMBED_EXTRACT / HP_EMBED_PYVER_CHECK payload sync, and static pins for `tests/selfapps_embed_version.ps1` (literal ids, own exit codes, watchdog, real-lane gating step, 3.12 strictly inside the table); synthetic cases prove each rule can fail |
+| `test_embed_tier.py` | REQ-009 Tier 5: version-table resolution (floor/ceiling fallback, the newest minor a range allows, the swap download with the network mocked), the batch step that reads the request when no earlier step did, batch `HP_EMBED_LATEST_*` constants equal the table's `LATEST_MINOR` entry, HP_EMBED_EXTRACT / HP_EMBED_PYVER_CHECK payload sync, and static pins for `tests/selfapps_embed_version.ps1` (literal ids, own exit codes, watchdog, real-lane gating step, 3.12 strictly inside the table); synthetic cases prove each rule can fail |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
@@ -959,15 +959,23 @@ are slower than pip/uv); as of 2026-10-24 it is `uv`.
 
 ### Embed version table (REQ-009 Tier 5, `tools/embed_pyver_check.py`)
 
-- **Last scanned**: 2026-07-10 (entry added this scan; first run of this specific check).
-- **Findings**: `EMBED_PYTHON_TABLE` currently spans 3.10 through 3.14 (`LATEST_MINOR="3.14"`,
-  `FLOOR_MINOR="3.10"`), pinned to patches 3.10.11 / 3.11.9 / 3.12.10 / 3.13.14 / 3.14.6 with
-  embedded SHA256 checksums, last refreshed 2026-07-09 per the file's own header comment. The
-  `"3.14"` entry's patch/sha256 must stay in sync with `HP_EMBED_LATEST_PATCH`/
-  `HP_EMBED_LATEST_SHA256` in `run_setup.bat`; `tests/test_embed_tier.py`'s
-  `BatchPythonConsistency` test enforces this automatically on every CI run, so a stale
-  cross-reference is caught in CI, not just at scan time. No CPython 3.15 has shipped yet as of
-  this scan (3.14 remains current stable), so the table's ceiling is still accurate.
+- **Last scanned**: 2026-10-24.
+- **Findings**: `EMBED_PYTHON_TABLE` now spans 3.10 through 3.15 (`LATEST_MINOR="3.15"`,
+  `FLOOR_MINOR="3.10"`), pinned to patches 3.10.11 / 3.11.9 / 3.12.10 / 3.13.17 / 3.14.9 / 3.15.1.
+  The SHA256 of each new or changed zip was recomputed on 2026-10-24 from a fresh direct download
+  of python.org's `python-<patch>-embed-amd64.zip` (3.15 is new, 3.13 and 3.14 moved to newer
+  patches; 3.10 to 3.12 are unchanged). The `"3.15"` entry's patch/sha256 must stay in sync with
+  `HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256` in `run_setup.bat`; `tests/test_embed_tier.py`'s
+  `BatchPythonConsistency` test enforces this on every CI run. `FLOOR_MINOR` stays 3.10 for now:
+  python.org's schedule ends 3.10 on 2026-10-31, so advance the floor to 3.11 (and drop the 3.10
+  entry) in the January scan, not before. **The swap path was not reachable before this scan**: the
+  new `self.embed.version.*` rows (`tests/selfapps_embed_version.ps1`, real lane, gating) went red on
+  all three first scenarios with the program under the newest minor and no WARN, because a chain
+  with neither uv nor Miniconda reaches the embed tier before `~detect_python.py` has run (the
+  conda.bat-not-found branch), so `PYSPEC` was empty and `runtime.txt` / `pyproject.toml` were
+  ignored in exactly the case README REQ-009 names for this tier. The tier now runs the helper under
+  its own fresh interpreter, and `embed_pyver_check.py` picks the newest table minor a range
+  allows (it used to take the range's first number, so `>=3.10` swapped down to 3.10).
 - **Going forward**: each scan, check python.org for (a) a new CPython minor release --
   add a table entry and bump `LATEST_MINOR`/`HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256`
   together (re-run `test_embed_tier.py` to confirm the sync); (b) any of the pinned patch

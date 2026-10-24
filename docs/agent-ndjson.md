@@ -963,13 +963,19 @@ leaves the table or becomes the newest or oldest minor, because the swap scenari
 interpreter in `~embed_python` (asked directly) both say 3.12, exactly one `python3NN.dll` (the requested one) is there, no
 `~embed_python_swap` is left and nothing is nested inside `~embed_python`. `floor` (`python-3.9`, below the table): the WARN
 `requested Python not in embed table` names the floor minor and the program runs under it. `ceiling` (`python-3.99`): the
-WARN names the newest minor, no swap download happens and the program runs under the newest minor. Skips on non-Windows and
-under `HP_FORCE_CONDA_ONLY=1`.
+WARN names the newest minor, no swap download happens and the program runs under the newest minor. `range` (`pyproject.toml`
+with `requires-python = ">=3.11,<3.13"`, no `runtime.txt`): the newest minor the range allows (3.12) is swapped in, not the
+range's lower bound. Every scenario also requires the log line `embed fallback: a Python version request was found in this
+folder.`: the first run of these rows (PR #507, run `40074772192`) showed all of them red with the program under the newest
+minor and no WARN, because a chain with neither uv nor Miniconda reaches the embed tier before `~detect_python.py` has run, so
+the tier saw no request; it now runs that helper under its own fresh interpreter. Skips on non-Windows and under
+`HP_FORCE_CONDA_ONLY=1`.
 
 ```
 self.embed.version.swap
 self.embed.version.floor
 self.embed.version.ceiling
+self.embed.version.range
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)

@@ -9,7 +9,7 @@
 # exits 1, the batch keeps the interpreter it has and logs nothing about the request), so only the version the program
 # really runs under can show that the swap worked.
 #
-# Three scenarios, each a real bootstrapper run (conda forced to fail, offline mode on, the embed download let through)
+# Four scenarios, each a real bootstrapper run (conda forced to fail, offline mode on, the embed download let through)
 # of a one-line program that prints the Python version it runs under. The EXE the bootstrapper builds carries the
 # interpreter it was built with, so the line the verification run captures in ~run.out.txt is the interpreter's own:
 #   swap     runtime.txt asks for 3.12: the log says the swap happened and the program runs under 3.12; the interpreter
@@ -19,16 +19,22 @@
 #            the floor, and the program runs under the floor minor.
 #   ceiling  runtime.txt asks for 3.99, above the table's ceiling: the WARN names the newest minor, no swap download
 #            happens, and the program runs under the newest minor.
+#   range    pyproject.toml asks for requires-python ">=3.11,<3.13" and there is no runtime.txt: the newest minor the
+#            range allows (3.12) is the one swapped in, not the range's lower bound.
+# All four first showed the same failure (run 40074772192, PR #507): the program ran under the newest minor with no WARN and
+# no swap, because this chain (no uv, no Miniconda) reaches the embed tier before ~detect_python.py ever ran, so the
+# tier saw no request at all. The tier now runs the helper under its own fresh interpreter and logs that it found a
+# request (the log line every scenario here requires); the value itself is never logged.
 # Expected minors come from tools/embed_pyver_check.py (LATEST_MINOR, FLOOR_MINOR, EMBED_PYTHON_TABLE), so a table
-# refresh does not need a change here; the test fails if 3.12 ever leaves the table or becomes the newest minor,
-# because the swap scenario would then prove nothing.
+# refresh does not need a change here; the test fails if 3.12 ever leaves the table or becomes the newest or oldest
+# minor, because the swap and range scenarios would then prove nothing.
 #
 # derived requirement: ids stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py scans text,
 # not PowerShell).
 #
-# Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Three full builds. Skipped under
+# Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Four full builds. Skipped under
 # HP_FORCE_CONDA_ONLY=1 like the other embed rows (that mode forbids every non-conda provider).
-# Emits: self.embed.version.swap, self.embed.version.floor, self.embed.version.ceiling
+# Emits: self.embed.version.swap, self.embed.version.floor, self.embed.version.ceiling, self.embed.version.range
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -51,6 +57,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.swap'; req = 'REQ-009'; pass = $true; desc = 'Embed version swap (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.floor'; req = 'REQ-009'; pass = $true; desc = 'Embed version floor (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = $true; desc = 'Embed version ceiling (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.range'; req = 'REQ-009'; pass = $true; desc = 'Embed version range (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     exit 0
 }
 if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
@@ -58,6 +65,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.swap'; req = 'REQ-009'; pass = $true; desc = 'Embed version swap (skipped in conda-only mode)'; details = $skip })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.floor'; req = 'REQ-009'; pass = $true; desc = 'Embed version floor (skipped in conda-only mode)'; details = $skip })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = $true; desc = 'Embed version ceiling (skipped in conda-only mode)'; details = $skip })
+    Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.range'; req = 'REQ-009'; pass = $true; desc = 'Embed version range (skipped in conda-only mode)'; details = $skip })
     exit 0
 }
 $batchPath  = Join-Path $repo 'run_setup.bat'
@@ -67,6 +75,7 @@ if (-not (Test-Path -LiteralPath $batchPath) -or -not (Test-Path -LiteralPath $h
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.swap'; req = 'REQ-009'; pass = $false; desc = 'Embed version swap: inputs missing'; details = $why })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.floor'; req = 'REQ-009'; pass = $false; desc = 'Embed version floor: inputs missing'; details = $why })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = $false; desc = 'Embed version ceiling: inputs missing'; details = $why })
+    Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.range'; req = 'REQ-009'; pass = $false; desc = 'Embed version range: inputs missing'; details = $why })
     exit 1
 }
 
@@ -148,13 +157,14 @@ function Invoke-Bootstrap {
 }
 
 function New-Scratch {
-    param([string]$Name, [string]$RuntimeTxt)
+    param([string]$Name, [string]$RuntimeTxt, [string]$Pyproject = '')
     $work = Join-Path $here ('~selftest_embed_ver_' + $Name)
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     Copy-Item -LiteralPath $batchPath -Destination $work -Force
     Set-Content -LiteralPath (Join-Path $work 'app.py') -Value 'import sys; print("embed-version-ok %d.%d" % sys.version_info[:2])' -Encoding Ascii
-    Set-Content -LiteralPath (Join-Path $work 'runtime.txt') -Value $RuntimeTxt -Encoding Ascii
+    if ($RuntimeTxt.Length -gt 0) { Set-Content -LiteralPath (Join-Path $work 'runtime.txt') -Value $RuntimeTxt -Encoding Ascii }
+    if ($Pyproject.Length -gt 0) { Set-Content -LiteralPath (Join-Path $work 'pyproject.toml') -Value $Pyproject -Encoding Ascii }
     return $work
 }
 
@@ -180,14 +190,14 @@ function Get-EmbedInterpreterMinor {
 
 # What every scenario shares: one bootstrap, then the facts about the folder and the program's own version line.
 function Get-EmbedFacts {
-    param([string]$Name, [string]$RuntimeTxt)
+    param([string]$Name, [string]$RuntimeTxt, [string]$Pyproject = '')
     $f = [ordered]@{
         timedOut = $false; exitCode = -1; statusState = ''; providerLine = $false; appLine = ''; interpreterMinor = ''
         embedDirExists = $false; swapDirLeft = $false; nested = $false; dlls = @(); swappedLog = $false; warnLine = ''
-        swapFailedLog = $false; error = $null; work = ''
+        swapFailedLog = $false; requestLog = $false; error = $null; work = ''
     }
     try {
-        $work = New-Scratch $Name $RuntimeTxt
+        $work = New-Scratch $Name $RuntimeTxt $Pyproject
         $f.work = $work
         $r = Invoke-Bootstrap -Work $work -LogName '~embver_boot.log'
         $f.timedOut = $r.timedOut
@@ -198,6 +208,7 @@ function Get-EmbedFacts {
         $f.providerLine = [bool]($combined -match [regex]::Escape('Selected Python provider: Embedded Python (python.org).'))
         $f.swappedLog = [bool]($combined -match 'embed fallback: swapped to requested Python')
         $f.swapFailedLog = [bool]($combined -match 'embed version swap failed')
+        $f.requestLog = [bool]($combined -match [regex]::Escape('[INFO] embed fallback: a Python version request was found in this folder.'))
         $mWarn = [regex]::Match($combined, '(?m)\[WARN\] REQ-009: requested Python not in embed table; using (\d+\.\d+) instead\.')
         if ($mWarn.Success) { $f.warnLine = $mWarn.Groups[1].Value }
         $mApp = [regex]::Match((Read-Text (Join-Path $work '~run.out.txt')), 'embed-version-ok (\d+\.\d+)')
@@ -228,7 +239,7 @@ $d['latestMinor'] = $latestMinor
 $d['floorMinor'] = $floorMinor
 $d['swapMinor'] = $swapMinor
 $d['dllExpected'] = $wantDll
-$passSwap = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.swappedLog -and (-not $d.swapFailedLog) -and
+$passSwap = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and $d.swappedLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
     ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
 Write-NdjsonRow ([ordered]@{
@@ -245,7 +256,7 @@ $d['tableOk'] = $tableOk
 $d['latestMinor'] = $latestMinor
 $d['floorMinor'] = $floorMinor
 $d['dllExpected'] = $wantDll
-$passFloor = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and (-not $d.swapFailedLog) -and
+$passFloor = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq $floorMinor) -and ($d.appLine -eq $floorMinor) -and ($d.interpreterMinor -eq $floorMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
     ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
 Write-NdjsonRow ([ordered]@{
@@ -262,7 +273,7 @@ $d['tableOk'] = $tableOk
 $d['latestMinor'] = $latestMinor
 $d['floorMinor'] = $floorMinor
 $d['dllExpected'] = $wantDll
-$passCeiling = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and (-not $d.swappedLog) -and (-not $d.swapFailedLog) -and
+$passCeiling = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swappedLog) -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq $latestMinor) -and ($d.appLine -eq $latestMinor) -and ($d.interpreterMinor -eq $latestMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
     ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
 Write-NdjsonRow ([ordered]@{
@@ -271,5 +282,23 @@ Write-NdjsonRow ([ordered]@{
     details = $d
 })
 
-if (-not ($passSwap -and $passFloor -and $passCeiling)) { exit 1 }
+# ---------------------------------------------------------------- range: pyproject.toml, newest minor the range allows
+$rangeToml = "[project]`r`nname = `"embver`"`r`nversion = `"0.0.1`"`r`nrequires-python = `">=3.11,<3.13`"`r`ndependencies = []`r`n"
+$d = Get-EmbedFacts 'range' '' $rangeToml
+$wantDll = Get-DllName $swapMinor
+$d['tableOk'] = $tableOk
+$d['latestMinor'] = $latestMinor
+$d['floorMinor'] = $floorMinor
+$d['swapMinor'] = $swapMinor
+$d['dllExpected'] = $wantDll
+$passRange = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and $d.swappedLog -and (-not $d.swapFailedLog) -and
+    ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.embed.version.range'; req = 'REQ-009'; pass = [bool]$passRange
+    desc = 'README REQ-009 Tier 5: a requires-python range in pyproject.toml gets the newest minor the range allows from the embed table, not the range lower bound'
+    details = $d
+})
+
+if (-not ($passSwap -and $passFloor -and $passCeiling -and $passRange)) { exit 1 }
 exit 0

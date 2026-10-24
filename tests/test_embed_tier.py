@@ -21,6 +21,7 @@ from tools.embed_pyver_check import (
     FLOOR_MINOR,
     LATEST_MINOR,
     main,
+    pick_minor,
     resolve_requested_minor,
     resolve_table_entry,
 )
@@ -44,6 +45,32 @@ class ResolveRequestedMinor(unittest.TestCase):
 
     def test_unparseable_pyspec_returns_none(self):
         self.assertIsNone(resolve_requested_minor("not-a-version-spec"))
+
+
+class PickMinor(unittest.TestCase):
+    # A range resolves to the newest table minor it allows (as uv and conda do), never to its lower bound;
+    # None means no table minor is allowed and main() falls back to the floor or the newest minor with a WARN.
+    def test_exact_requests_pick_that_minor(self):
+        for spec in ("python=3.12", "python==3.12", "python=3.12.4"):
+            self.assertEqual(pick_minor(spec), "3.12", spec)
+
+    def test_open_range_picks_the_newest_minor(self):
+        self.assertEqual(pick_minor("python>=3.10,<4.0"), LATEST_MINOR)
+        self.assertEqual(pick_minor("python>=3"), LATEST_MINOR)
+
+    def test_bounded_range_picks_the_newest_minor_inside_it(self):
+        self.assertEqual(pick_minor("python>=3.11,<3.13"), "3.12")
+        self.assertEqual(pick_minor("python<3.13"), "3.12")
+        self.assertEqual(pick_minor("python<=3.12"), "3.12")
+        self.assertEqual(pick_minor("python>3.10,<3.12"), "3.11")
+
+    def test_exclusion_skips_only_that_minor(self):
+        self.assertEqual(pick_minor("python!=" + LATEST_MINOR), sorted(
+            (m for m in EMBED_PYTHON_TABLE if m != LATEST_MINOR), key=lambda m: tuple(map(int, m.split("."))))[-1])
+
+    def test_unsatisfiable_or_empty_requests_pick_nothing(self):
+        for spec in ("python=3.99", "python>=3.99", "python=3.9", "python<3.9", "python>3.10,<3.11", "", None):
+            self.assertIsNone(pick_minor(spec), spec)
 
 
 class ResolveTableEntry(unittest.TestCase):
@@ -91,11 +118,10 @@ class BatchPythonConsistency(unittest.TestCase):
 
 
 class MainDispatch(unittest.TestCase):
-    # Exercises main()'s two early-return branches directly (no network I/O -- both return
-    # before download_and_verify/extract_and_patch are ever called). The actual swap path
-    # (exact in-table match or below-floor fallback) is untouched by this fix and already has
-    # real end-to-end CI coverage via self.embed.fallback.real (selfapps_ux_hardening.ps1), so
-    # it is not re-tested here with mocked network calls.
+    # Exercises main()'s early-return branches directly with no network I/O (both return before
+    # download_and_verify/extract_and_patch are ever called), and its swap branch with those two
+    # functions mocked. The real swap, its directory move and the floor/ceiling fallbacks run end to
+    # end in tests/selfapps_embed_version.ps1 (rows self.embed.version.*).
     def _run_main(self, argv, env):
         buf = io.StringIO()
         with patch.object(sys, "argv", argv), \
@@ -125,6 +151,35 @@ class MainDispatch(unittest.TestCase):
             ["embed_pyver_check.py", "/dest"], {"PYSPEC": "python>=3.99"})
         self.assertEqual(rc, 0)
         self.assertEqual(out, "fellback|{}".format(LATEST_MINOR))
+
+
+    def test_open_range_is_unchanged_not_a_swap_to_its_lower_bound(self):
+        # "python>=3.10,<4.0" used to resolve to its first number (3.10) and swap down to the floor.
+        rc, out = self._run_main(
+            ["embed_pyver_check.py", "/dest"], {"PYSPEC": "python>=3.10,<4.0"})
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "unchanged|{}".format(LATEST_MINOR))
+
+    def _run_swap(self, pyspec):
+        calls = []
+        with patch("tools.embed_pyver_check.download_and_verify", lambda url, sha, dest: calls.append((url, sha))), \
+             patch("tools.embed_pyver_check.extract_and_patch", lambda zip_path, dest: calls.append(("extract", dest))):
+            rc, out = self._run_main(["embed_pyver_check.py", "/dest"], {"PYSPEC": pyspec})
+        return rc, out, calls
+
+    def test_bounded_range_downloads_the_newest_minor_inside_it(self):
+        rc, out, calls = self._run_swap("python>=3.11,<3.13")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "swapped|3.12|/dest_swap")
+        self.assertEqual(calls[0], (
+            "https://www.python.org/ftp/python/{p}/python-{p}-embed-amd64.zip".format(p=EMBED_PYTHON_TABLE["3.12"][0]),
+            EMBED_PYTHON_TABLE["3.12"][1]))
+
+    def test_below_floor_request_downloads_the_floor_and_is_tagged_fellback(self):
+        rc, out, calls = self._run_swap("python=3.9")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "fellback|{}|/dest_swap".format(FLOOR_MINOR))
+        self.assertIn(EMBED_PYTHON_TABLE[FLOOR_MINOR][1], [c[1] for c in calls if len(c) == 2 and c[0] != "extract"])
 
 
 class PayloadSync(unittest.TestCase):
@@ -163,7 +218,7 @@ class EmbedVersionScenarioPins(unittest.TestCase):
 
     SCRIPT = REPO / "tests" / "selfapps_embed_version.ps1"
     WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
-    IDS = ("self.embed.version.swap", "self.embed.version.floor", "self.embed.version.ceiling")
+    IDS = ("self.embed.version.swap", "self.embed.version.floor", "self.embed.version.ceiling", "self.embed.version.range")
 
     @classmethod
     def script_issues(cls, text):
@@ -173,8 +228,10 @@ class EmbedVersionScenarioPins(unittest.TestCase):
             if len(re.findall(r"id\s*=\s*'" + re.escape(row_id) + r"'", text)) < 4:
                 issues.append("literal id missing: " + row_id)
         tail = [ln.strip() for ln in text.splitlines() if ln.strip()][-2:]
-        if tail != ["if (-not ($passSwap -and $passFloor -and $passCeiling)) { exit 1 }", "exit 0"]:
+        if tail != ["if (-not ($passSwap -and $passFloor -and $passCeiling -and $passRange)) { exit 1 }", "exit 0"]:
             issues.append("script must end with its own exit 1 / exit 0")
+        if text.count("$d.requestLog") < 4:
+            issues.append("every scenario must require the request log line")
         if "taskkill" not in text:
             issues.append("no watchdog")
         if any(ord(c) > 127 for c in text):
@@ -199,6 +256,25 @@ class EmbedVersionScenarioPins(unittest.TestCase):
                 issues.append("artifact path missing: " + ext)
         return issues
 
+    def test_the_tier_finds_the_request_before_the_version_check(self):
+        # A chain with neither uv nor Miniconda reaches the embed tier before ~detect_python.py ran, so PYSPEC was
+        # empty and runtime.txt / pyproject.toml were ignored (run 40074772192). The tier now runs the helper under
+        # its own fresh interpreter, after the extraction line and before it emits and runs ~embed_pyver_check.py.
+        bat = BAT.read_bytes().decode("ascii", "replace")
+        extracted = bat.index('call :log "[INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified."')
+        ready = bat.index("\r\n:embed_pyspec_ready\r\n", extracted)
+        emit = bat.index('call :emit_from_base64 "~embed_pyver_check.py"', extracted)
+        self.assertLess(extracted, ready)
+        self.assertLess(ready, emit)
+        block = bat[extracted:ready]
+        self.assertIn('"%HP_EMBED_PY%" "~detect_python.py" > "~py_spec.txt"', block)
+        self.assertIn("if defined PYSPEC goto :embed_pyspec_ready", block)
+        self.assertIn('set "PYSPEC=%PVW_TARGET_PY%"', block)
+        self.assertIn("a Python version request was found in this folder.", block)
+        # the value can hold angle brackets, so it is never echoed or logged
+        live = [ln for ln in block.splitlines() if not ln.lstrip().lower().startswith("rem ")]
+        self.assertFalse([ln for ln in live if "%PYSPEC%" in ln], live)
+
     def test_script_is_wired_correctly(self):
         self.assertEqual(self.script_issues(self.SCRIPT.read_text(encoding="utf-8")), [])
 
@@ -218,6 +294,7 @@ class EmbedVersionScenarioPins(unittest.TestCase):
         self.assertTrue(self.script_issues(good.replace("self.embed.version.floor", "self.embed.version.flor")))
         self.assertTrue(self.script_issues(good.rstrip() + "\nexit 3\n"))
         self.assertTrue(self.script_issues(good.replace("taskkill", "kill")))
+        self.assertTrue(self.script_issues(good.replace("$d.requestLog", "$d.swappedLog")))
         wf = self.WORKFLOW.read_text(encoding="utf-8")
         self.assertTrue(self.step_issues(wf.replace("selfapps_embed_version.ps1", "selfapps_other.ps1", 1)))
         self.assertTrue(self.step_issues(wf.replace(
