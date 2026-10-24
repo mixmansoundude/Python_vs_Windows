@@ -377,7 +377,8 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
     never removing something the user wrote elsewhere. Packages removed from every input stay installed in the
     environment, which is harmless. A `requirements.txt` that holds only directives such as `-r other.txt` names no
     package of its own, so a package removed from it also leaves the header; the merge does not read the files such a
-    directive includes. `uv add --script` writes a lower bound into the header for a name given without one
+    directive includes, so editing the directive line (or an `-e` or `--index-url` line) counts as a change to
+    `requirements.txt` (REQ-005.1.10) while an edit inside the included file alone does not. `uv add --script` writes a lower bound into the header for a name given without one
     (`toolz` becomes `toolz>=1.2.0`), so the first later run that changes nothing writes that bound into
     `requirements.txt` too (a bare name never beats a constrained entry); runs after that touch nothing. Tests:
     `tests/test_dep_merge.py` (unit), `self.depsource.*` (cold runs), `self.depmerge.later.*` (later runs),

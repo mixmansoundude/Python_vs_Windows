@@ -743,9 +743,10 @@ gating) is its only user. The payload line is far under the 8191 limit (about 80
 no lock written, no skip check). `~environment.lock.txt` is the cache key either way (conda: `conda
 list --export`; uv: copy of `~dependency_installed.txt`). `HP_DEP_SKIP` is honored in uv mode too.
 **The dep-check compares NAMES only** (`requirements.auto.txt` against the lock), so an edited pin or a package added since
-the last run can read "all satisfied". `:dep_merge_inputs` therefore sets `HP_DM_CHANGED` when any list differs from its
-record, and the dep-check result `skip` is ignored then (log line `the dependency lists changed since the last run`). A new
-skip or cache keyed on names alone must honor the same flag.
+the last run can read "all satisfied". `:dep_merge_inputs` therefore sets `HP_DM_CHANGED` when any list, or an include or
+option line of `requirements.txt` (`-r`, `-e`, `--index-url`, kept as written), differs from its record, and the dep-check
+result `skip` is ignored then (log line `the dependency lists changed since the last run`). The content of a file that a
+`-r` line names is not tracked, only the line. A new skip or cache keyed on names alone must honor the same flag.
 
 ### Dependency lists merged (`:dep_merge_inputs`, `tools/dep_merge.py`, Item 89)
 
@@ -784,7 +785,7 @@ for a conflict). The old behavior was winner takes all (`copy /y` of the highest
 - **Coupled strings**: the report lines `Dependency lists merged`, `Conflict for`, `Removed`, `was removed from ... still lists
   it, so it stays`, the INFO `Dependency lists recorded for the next run`, the WARN `could not be merged` are matched by
   `self.depsource.*`, `self.pep723.pyproject.merge` and `self.depmerge.later.*`; the old `found; overrides requirements.txt`
-  wording is gone (`tests/test_dep_merge.py` pins it). Payload margin 708 characters.
+  wording is gone (`tests/test_dep_merge.py` pins it). Payload margin 560 characters.
 - **Not changed on purpose**: the fast path (an unchanged folder never reaches the merge), REQ-004 version precedence, the
   pipreqs fallback (only when nothing is declared), and the Item 65 runtime-install offer's file-edit rule (`HP_RTI_EDITS`).
 

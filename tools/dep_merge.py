@@ -84,20 +84,20 @@ def merge(cur, base):
 
 
 def main():
-    cur, base, extras = {}, {}, []
+    cur, base, extras, old_extras = {}, {}, [], []
     for s in RANK:
         cur[s], more = parse(read(FILE[s]))
-        base[s] = parse(read(BASE[s]))[0]
+        base[s], old_more = parse(read(BASE[s]))
         if s == "req":
-            extras = more
+            extras, old_extras = more, old_more
     here = [s for s in RANK if cur[s] is not None]
     later = any(base[s] is not None for s in RANK)
     if not here or (len(here) < 2 and not later):
         return 1
     out, dropped, report = merge(cur, base)
-    # changed: a list differs from, or has no, snapshot, so the install must not be skipped as already satisfied
-    changed = any(base[s] is None or {k: v[1] for k, v in cur[s].items()} != {k: v[1] for k, v in base[s].items()}
-                  for s in here)
+    # changed: a list (or an include or option line of requirements.txt) differs from, or has no, snapshot, so the install must not be skipped as already satisfied
+    changed = extras != old_extras or any(
+        base[s] is None or {k: v[1] for k, v in cur[s].items()} != {k: v[1] for k, v in base[s].items()} for s in here)
     kept = list(out.values()) + [e for e in extras if e not in out.values()]
     parts = ["%s %d" % (LABEL[s], len(cur[s])) for s in here]
     if len(here) > 1:
