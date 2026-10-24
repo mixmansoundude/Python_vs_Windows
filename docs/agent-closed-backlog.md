@@ -3786,6 +3786,53 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   cut-off and missing file. The lesson is in `docs/agent-lessons-learned.md` ("An unguarded `Process.Start()` before a
   polling loop spins forever instead of failing").
 
+### Item 65 (closed 2026-10-24; slice 1 PR #487, slice 2 PR #493; filed 2026-10-08 from the Aug-Sep 2026 field report)
+
+- **The problem.** A program can print `ModuleNotFoundError: No module named X` to stderr and still exit 0 (a GUI toolkit
+  catches an exception raised in a callback and keeps running), so the exit code never showed a missing dependency and the
+  bootstrapper reported a clean run.
+- **Slice 1 (PR #487, merged 2026-10-16).** `:scan_runtime_missing_module` runs the embedded `~runtime_module_scan.py`
+  (`HP_RUNTIME_MODULE_SCAN`, `tools/runtime_module_scan.py`) over the stderr of the run that just finished and names each
+  module the interpreter does not have (stdlib names, modules next to the script and non-identifier text are not
+  reported). Call sites: the EXE verification run, the interpreter run and the fail-fast probe (which also covers the
+  post-execution checkpoint and the cached EXE). `:success` prints a closing reminder that names the file to edit for the
+  dependency source in use. Red run `38146234107`; green rows on `real` in runs `38157389535`, `38178273898` and
+  `38878638543`. Row `self.runtime.modnotfound` (`tests/selfapps_runtime_modnotfound.ps1`, real lane, gating).
+- **Slice 2 (PR #493, merged 2026-10-16), decided 2026-10-09 as option B.** Ask for consent once, in the CI-safe prompt
+  pattern, before any install, requirements edit or rebuild; a yes also covers exactly one verification run; a no changes
+  nothing. `:runtime_install_offer` installs through the provider's own installer, appends the package to `requirements.txt`
+  unless the dependency source is `pyproject` or `pep723` (those are copied over `requirements.txt` on every run, so the
+  prompt and a log line name the file to edit instead), rebuilds the EXE with `--hidden-import=X --collect-submodules=X`
+  and runs the check once. States: `declined`, `not_offered`, `install_failed`, `rebuild_failed`, `verified`,
+  `still_missing`, `not_verified`. Red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with
+  `prompted:false`, nothing else red there. Rows `self.runtime.install.accept`, `.decline`, `.pyproject`
+  (`tests/selfapps_runtime_install.ps1`, real lane, gating). `HP_RUNTIME_MODULE_SCAN` has 354 characters of payload room
+  left; the next feature for it needs its own payload (Item 82's last-error-line helper already got one).
+- **Not covered, recorded.** A native DLL a newly installed conda package needs is not bundled
+  (`:dll_bundle_recover` does not run again), and with a `pyproject.toml` or PEP 723 dependency source the package stays
+  installed but a later source change that triggers a rebuild goes back to building without the `--hidden-import` flags
+  until the user adds the package to that file. Detail: `docs/agent-interconnect.md`'s "Runtime missing-module scan" and
+  "Consented install of a runtime-missing package" sections.
+
+### Item 79 (closed 2026-10-24, PR #500 merged 2026-10-17; filed 2026-10-09 from a planning brainstorm)
+
+- **The problem.** The PEP 723 reader (`pep723_extract.py`) and the pyproject fallback (`pyproj_deps.py`, used below Python
+  3.11) are two hand-written TOML array walkers that had drifted apart, and `detect_python.py` read `requires-python` with
+  an unscoped regex. Two bugs were reproduced: the pyproject fallback kept backslashes in escaped markers and accepted an
+  unclosed array; `detect_python.py` matched a commented-out `requires-python` line and one under another table.
+- **What shipped (one PR by the bundle rule: slices 2 and 3 touch disjoint files and slice 1's tests are slice 2's red
+  tests).** (1) Oracle tests: tomllib is the oracle for both walkers over a PEP 508 corpus
+  (`tests/test_toml_oracle.py`, `tests/toml_oracle_check.py`, the `RequiresPythonTomlScope` class, the flipped pyproject
+  test) plus a uv-lane row, `self.toml.uvcorpus` (`tests/selfapps_toml_uvcorpus.ps1`, non-gating because it needs the
+  network), that feeds the extractor what real `uv add --script` writes. (2) `pyproj_deps.py` decodes the same escapes as
+  the extractor and refuses an unclosed array (exit 2, so the batch prints its usual "could not be parsed as valid TOML"
+  warning); `HP_PYPROJ_DEPS` margin 198 to 2826 characters. (3) `detect_python.py` reads `requires-python` through tomllib
+  and keeps the old pattern only when tomllib is missing or the file does not parse; `HP_DETECT_PY` margin 520.
+  Dependency source priority (REQ-005.1) and the requires-python precedence (REQ-004) were not touched.
+- **Parked, with triggers.** Payload headroom before any parser merge, and PEP 723 `requires-python` as a Python-version
+  input, are in `docs/agent-cold-storage.md`. Detail: `docs/agent-interconnect.md`'s "Three TOML readers, one oracle"
+  and `docs/plan-toml-reading-hygiene.md`.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
