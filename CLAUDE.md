@@ -66,7 +66,7 @@ tests/
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
   selfapps_entryarg.ps1        Item 67: first argument must be an existing .py in this folder (real lane, gating)
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
-  selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
+  selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt for every dependency source, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone; a second run of the same folder keeps the line, Item 91) (real lane, gating)
   selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
   selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
   selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
@@ -828,24 +828,6 @@ the original symptom (see that doc's "CI-first testing policy").
   re-read the GitHub Actions data-passing entry in `docs/agent-lessons-learned.md` (`merge-multiple`). Every open
   one touches `batch-check.yml`, which lane 1's aggregate-gate edit owns, so those wait for it to merge. Remove this
   item when every pin is on its latest major.
-
-### Item 91: the runtime-install offer edits requirements.txt for every dependency source (filed 2026-10-24; follow-up of Item 89, approved by the coordinator)
-
-- **Item 91 (small; red test first, one PR; claimed by the test-suite thread)**: `:runtime_install_offer`
-  (Item 65 slice 2) adds an installed package to `requirements.txt` only when `DEP_SOURCE` is neither `pyproject` nor
-  `pep723` (`HP_RTI_EDITS` in `run_setup.bat`), because before Item 89 those two sources were copied over `requirements.txt` on
-  every run and an appended line was lost. Since Item 89 a list's change since the last run is kept by the merge, so the
-  exception has no reason left: the user who says yes still has to add the package by hand to a file the bootstrapper
-  names. Shape: always append (drop `HP_RTI_EDITS`, the `:rti_not_edited` branch and the second prompt wording), say in the
-  prompt and the log that `requirements.txt` gets the package, and leave `pyproject.toml` and the header to the existing
-  merge (`pyproject.toml` is never rewritten). README REQ-018.18
-  loses its `pyproject.toml`/header exception. Rows: `self.runtime.install.pyproject` flips from "left untouched, user told"
-  to "requirements.txt gains the line, `pyproject.toml` unchanged, a second run in the same folder keeps the package and
-  asks nothing", plus the same for a PEP 723 header source (`tests/selfapps_runtime_install.ps1`, real lane, gating);
-  `tests/test_runtime_module_scan.py` lines that pin `HP_RTI_EDITS` change with it. Read first: `:dep_merge_snapshot`
-  copies `requirements.txt` as it stands at `:success`, so the appended line is part of the record and stays as an
-  ordinary entry; whether the header receives it on the next run through the merged-list write-back is what the new
-  rows must show, not assume. `HP_RUNTIME_MODULE_SCAN` has little payload headroom (354 characters).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

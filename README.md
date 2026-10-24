@@ -741,9 +741,8 @@ bootstrapper should therefore run the program once per invocation and should ask
 - **REQ-018.17** [major] The bootstrapper **shall**, on a yes under REQ-018.14, install each listed package into
   the program's own environment.
 - **REQ-018.18** [major] The bootstrapper **shall**, on a yes under REQ-018.14, add each installed package to
-  `requirements.txt` unless it is already listed; when the dependency source is `pyproject.toml` or a PEP 723
-  header, it **shall** edit no file and **shall** tell the user, in the prompt and in the log, which file to
-  edit.
+  `requirements.txt` unless it is already listed, whatever the dependency source of the run is, and **shall**
+  say in the prompt of REQ-018.14 and in the log that `requirements.txt` receives it.
 - **REQ-018.19** [major] The bootstrapper **shall**, on a yes under REQ-018.14 and when the run has an EXE,
   rebuild the EXE with `--hidden-import` and `--collect-submodules` for each installed module.
 - **REQ-018.20** [major] The bootstrapper **shall**, on a yes under REQ-018.14, run the program once more to
@@ -820,6 +819,11 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   `requirements.txt` for a conflict about one package (REQ-005.1), so the advice names the file the run reported as its source.
 > - REQ-018.14 to REQ-018.22: the answer prompt waits 30 seconds, and a quiet run, a CI run and a bare Enter all
 >   mean no. A native DLL that a newly installed conda package needs is not bundled by the rebuild.
+> - REQ-018.18: the added line lasts because the merge of the dependency lists (REQ-005.1) keeps a change to
+>   `requirements.txt` since the last good run. The offer edits no other file: `pyproject.toml` is never
+>   rewritten, and a PEP 723 header is brought up to date only by the usual write-back of a later run. Before that
+>   merge existed, a `pyproject.toml` or PEP 723 list was copied over `requirements.txt` on every run, so the
+>   offer edited nothing for those two sources and told the user which file to edit.
 > - REQ-018.23 to REQ-018.27: untimed on purpose, because it is a decision and not a timeout guard. A late
 >   approval reuses the provider cascade and does not change it. The question is not asked on the cached-EXE
 >   fast path because the offer sits at the end of a fresh build.

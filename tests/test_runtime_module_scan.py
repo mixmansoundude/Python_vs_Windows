@@ -238,16 +238,20 @@ class BatchCallSites(unittest.TestCase):
         self.assertIn('"%DEP_SOURCE%"=="pyproject"', body)
         self.assertIn('"%DEP_SOURCE%"=="pep723"', body)
 
-    def test_the_install_does_not_edit_requirements_when_another_file_is_the_source(self):
-        # Slice 2: a pyproject.toml or PEP 723 dependency source is copied over requirements.txt on every
-        # run, so an appended line would be lost. The edit is skipped and the user told which file to edit.
+    def test_the_install_edits_requirements_whatever_the_dependency_source(self):
+        # Item 91: before Item 89 a pyproject.toml or PEP 723 list was copied over requirements.txt on every run, so an
+        # appended line was lost and the offer edited nothing for those sources. The merge now keeps a list's change,
+        # so the append and the prompt that promises it no longer depend on DEP_SOURCE.
         i = re.search(r"(?m)^:runtime_install_offer", self.bat).start()
         block = self.bat[i:self.bat.index("\n:rti_install_one", i)]
-        self.assertIn('if /I "%DEP_SOURCE%"=="pyproject" set "HP_RTI_EDITS="', block)
-        self.assertIn('if /I "%DEP_SOURCE%"=="pep723" set "HP_RTI_EDITS="', block)
-        skip = block.index("if not defined HP_RTI_EDITS goto :rti_not_edited")
-        self.assertLess(skip, block.index('--append "requirements.txt"'))
-        self.assertIn("did not edit %HP_RTM_WHERE%", block)
+        for gone in ("HP_RTI_EDITS", "rti_not_edited", "did not edit", "but does not edit"):
+            self.assertNotIn(gone, block)
+        self.assertIn("adds them to this program's own environment and to requirements.txt", block)
+        accepted = block.index(":rti_accepted")
+        append = block.index('--append "requirements.txt"')
+        self.assertLess(accepted, append)
+        self.assertNotIn("DEP_SOURCE", block[accepted:append])
+        self.assertIn("Runtime install: added %%P to requirements.txt.", block)
         self.assertIn("depSource=[Environment]::GetEnvironmentVariable('DEP_SOURCE')", self.bat)
 
     def test_the_reminder_is_printed_before_the_lock_is_released(self):

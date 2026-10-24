@@ -1433,11 +1433,12 @@ edit`), the install, `Runtime install: added xlsxwriter to requirements.txt.`, `
 `requirements.txt`, `pyproject.toml` byte-identical afterwards, a verified clean check run and row `depSource`
 `pyproject`; then the second bootstrap must exit 0 with status `ok`, read the dependency lists again (a
 `DEP_SOURCE=` line in the bytes it appended to `~setup.log`), keep the `xlsxwriter` line, say no `Removed
-xlsxwriter` and leave `pyproject.toml` byte-identical. Since Item 89 the merge keeps a list's change, which is
+xlsxwriter`, not ask the install question again and leave `pyproject.toml` byte-identical. Since Item 89 the merge keeps a list's change, which is
 why the line lasts; before it requirements.txt was overwritten from pyproject on every run and the offer edited
 nothing (CodeRabbit, PR #487). `self.runtime.install.pep723` is the same with a PEP 723 header (`six`) in
 `app.py` as the source: `DEP_SOURCE=pep723`, the line in `requirements.txt`, the header still a header
-(`# /// script` fence and `six`) after both runs. The second-run program output is NOT asserted: a computed
+(`# /// script` fence and `six`) after both runs; `secondHeaderHasPackage` records, without asserting, whether
+the header received the package on the second run. The second-run program output is NOT asserted: a computed
 import is missing again in any later rebuild (no `--hidden-import` flag is kept across runs). All four skip
 with `skip=true, reason=non-windows-host` off Windows. Expected red for the last two on the commit that adds
 this wording (the offer edits no file for these sources) and green once `:runtime_install_offer` always edits

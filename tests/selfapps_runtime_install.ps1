@@ -14,9 +14,11 @@
 # Item 91 (README REQ-018.18): a yes adds the package to requirements.txt whatever the dependency source is.
 # Before Item 89 a pyproject.toml or PEP 723 list was copied over requirements.txt on every run, so an appended
 # line was lost and the offer left every file alone; since Item 89 the merge keeps a list's change, so the rows
-# require the line in requirements.txt, the source file itself untouched, and the line still there after a
+# require the line in requirements.txt, pyproject.toml untouched (a header stays a header), and the line still there after a
 # second run of the same folder (dist deleted so the dependency lists are read again; answer N, the rebuilt
-# EXE misses the dynamically imported module again, which is the known limit of a computed import).
+# EXE misses the dynamically imported module again, which is the known limit of a computed import). The second run
+# must not ask again either: the package is part of the environment now, so the runtime scan has nothing to report.
+# Whether the header receives the package on that run is recorded (secondHeaderHasPackage), not asserted.
 # The answer comes from HP_TEST_RTM_ANSWER, the test override of the prompt. Each row first proves
 # its precondition (the first run exited 0 and its stderr held the traceback), so a fixture that
 # stops reproducing the symptom cannot make a row pass or fail vacuously. HP_NDJSON points at a
@@ -226,6 +228,9 @@ function Invoke-SecondRun {
         Pop-Location
     }
 
+    $console = ''
+    $consolePath = Join-Path $WorkDir $bootstrapLog
+    if (Test-Path -LiteralPath $consolePath) { $console = Get-Content -LiteralPath $consolePath -Raw -Encoding ASCII }
     $newLog = ''
     if (Test-Path -LiteralPath $setupLog) {
         $bytes = [System.IO.File]::ReadAllBytes($setupLog)
@@ -245,6 +250,7 @@ function Invoke-SecondRun {
     }
     [pscustomobject]@{
         RunExit     = $runExit
+        Console     = $console
         NewLog      = $newLog
         ReqText     = $reqText
         Pyproject   = $pyprojText
@@ -350,12 +356,13 @@ $p2 = Invoke-SecondRun -Name 'pyproject' -WorkDir $p.WorkDir
 $p2Read         = $p2.NewLog -match 'DEP_SOURCE='
 $p2Kept         = ($p2.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($p2.ReqText -match '(?m)^\s*six\b')
 $p2NotRemoved   = $p2.NewLog -notmatch 'Removed xlsxwriter'
+$p2NoPrompt     = $p2.Console -notmatch 'asked for packages that are not installed'
 $p2Untouched    = ($p2.Pyproject -ceq $p.PyprojectBefore)
 $pPass = ($p.RunExit -eq 0) -and $pSource -and $pFirstRunTrace -and $pPromptNamesReq -and $pPromptNoSkip -and
          $pInstalled -and $p.EnvHasModule -and $pSaidAdded -and $pReqGotIt -and $pUntouched -and
          $pVerified -and $pCheckClean -and
          ($p.InstallState -eq 'verified') -and ($p.InstallDepSource -eq 'pyproject') -and ($p.StatusState -eq 'ok') -and
-         ($p2.RunExit -eq 0) -and ($p2.StatusState -eq 'ok') -and $p2Read -and $p2Kept -and $p2NotRemoved -and $p2Untouched
+         ($p2.RunExit -eq 0) -and ($p2.StatusState -eq 'ok') -and $p2Read -and $p2Kept -and $p2NotRemoved -and $p2NoPrompt -and $p2Untouched
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.pyproject'
     req     = 'REQ-018.18'
@@ -382,6 +389,8 @@ Write-NdjsonRow ([ordered]@{
         secondReadLists  = $p2Read
         secondKeptLine   = $p2Kept
         secondNoRemoved  = $p2NotRemoved
+        secondNoPrompt   = $p2NoPrompt
+        secondHeaderHasPackage = ($p2.AppText -match 'xlsxwriter')
         secondPyprojectUntouched = $p2Untouched
         firstLog         = (Get-LogExcerpt $p.SetupText)
         secondLog        = (Get-LogExcerpt $p2.NewLog)
@@ -405,12 +414,13 @@ $e2 = Invoke-SecondRun -Name 'pep723' -WorkDir $e.WorkDir
 $e2Read         = $e2.NewLog -match 'DEP_SOURCE='
 $e2Kept         = ($e2.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($e2.ReqText -match '(?m)^\s*six\b')
 $e2NotRemoved   = $e2.NewLog -notmatch 'Removed xlsxwriter'
+$e2NoPrompt     = $e2.Console -notmatch 'asked for packages that are not installed'
 $e2HeaderKept   = ($e2.AppText -match '(?m)^# /// script\s*$') -and ($e2.AppText -match '(?m)^#\s+"six')
 $ePass = ($e.RunExit -eq 0) -and $eSource -and $eFirstRunTrace -and $ePromptNamesReq -and $ePromptNoSkip -and
          $eInstalled -and $e.EnvHasModule -and $eSaidAdded -and $eReqGotIt -and $eHeaderKept -and
          $eVerified -and $eCheckClean -and
          ($e.InstallState -eq 'verified') -and ($e.InstallDepSource -eq 'pep723') -and ($e.StatusState -eq 'ok') -and
-         ($e2.RunExit -eq 0) -and ($e2.StatusState -eq 'ok') -and $e2Read -and $e2Kept -and $e2NotRemoved -and $e2HeaderKept
+         ($e2.RunExit -eq 0) -and ($e2.StatusState -eq 'ok') -and $e2Read -and $e2Kept -and $e2NotRemoved -and $e2NoPrompt -and $e2HeaderKept
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.pep723'
     req     = 'REQ-018.18'
@@ -437,6 +447,8 @@ Write-NdjsonRow ([ordered]@{
         secondReadLists  = $e2Read
         secondKeptLine   = $e2Kept
         secondNoRemoved  = $e2NotRemoved
+        secondNoPrompt   = $e2NoPrompt
+        secondHeaderHasPackage = ($e2.AppText -match 'xlsxwriter')
         secondHeaderKept = $e2HeaderKept
         firstLog         = (Get-LogExcerpt $e.SetupText)
         secondLog        = (Get-LogExcerpt $e2.NewLog)

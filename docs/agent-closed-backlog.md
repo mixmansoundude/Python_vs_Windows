@@ -3903,8 +3903,8 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `found; overrides requirements.txt` wording is gone from the batch and `tests/test_dep_merge.py` pins its absence.
 - **Consequences recorded in the README notes.** A folder last run before the change has no record, so its first run after is a
   cold run (the union). Packages removed from every input stay installed in the environment (harmless, as before).
-- **Follow-up filed, not built here.** The Item 65 runtime-install offer still edits no file for a `pyproject` or `pep723`
-  source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts: CLAUDE.md Item 91.
+- **Follow-up filed, not built here.** The Item 65 runtime-install offer still edited no file for a `pyproject` or `pep723`
+  source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts: built as Item 91 (PR #511).
 
 ## Known Findings (diagnosed, no action warranted)
 
