@@ -72,8 +72,9 @@ def script_problems(script_text):
     tail = script_text.rstrip().splitlines()[-4:]
     if not any(re.match(r"^\s*exit 0\s*$", ln) for ln in tail):
         found.append("the script does not end with exit 0")
-    if not re.search(r"^\s*if \(.*\)\s*\{\s*exit 1\s*\}\s*$", script_text, re.MULTILINE):
-        found.append("the script has no 'if (<any row red>) { exit 1 }'")
+    # The exact guard, not any `if (...) { exit 1 }`: `if ($false) { exit 1 }` would satisfy a looser pattern.
+    if not re.search(r"^\s*if \(-not \$safePass\)\s*\{\s*exit 1\s*\}\s*$", script_text, re.MULTILINE):
+        found.append("the script has no 'if (-not $safePass) { exit 1 }'")
     if PROD_FLAGS not in script_text:
         found.append("the script's $prodFlags is not the production flag text")
     if "--onefile-tempdir-spec=" not in script_text:
@@ -88,6 +89,8 @@ def script_problems(script_text):
         for recorded in ("coldConcurrentOk", "updateWhileRunningOk"):
             if recorded in safe:
                 found.append("$safePass asserts %s, which is a recorded finding (it would turn the row red on every run)" % recorded)
+    if not re.search(r"updateWhileRunningTested\s*=\s*\[bool\]\$dSafe\.updateOldStillRunningAfter", script_text):
+        found.append("the update scenario does not require the old build to still run after the new one finished")
     adopt = statement(script_text, "adoptable")
     if adopt is None:
         found.append("the script has no $dSafe.adoptable = [bool](...) statement")
@@ -108,7 +111,8 @@ def step_problems(workflow_text):
         start -= 1
     block = "\n".join(lines[start:idx[0] + 1])
     found = []
-    if "matrix.mode == 'uv'" not in block:
+    # An active `if:` line (not a comment, not another key's text) that tests the lane.
+    if not re.search(r"^\s+if:\s*\$\{\{\s*matrix\.mode == 'uv'\s*\}\}\s*$", block, re.MULTILINE):
         found.append("the step is not restricted to the uv lane")
     if not re.search(r"^\s+continue-on-error:\s*true\s*$", block, re.MULTILINE):
         found.append("the step is not non-gating (continue-on-error: true)")
@@ -141,6 +145,7 @@ Write-SafetyRow ([ordered]@{ id = 'self.nuitka.cachesafety'; pass = $safePass })
 $safePass = [bool]($dSafe.nuitkaUsable -and $built -and $dSafe.baselineOk -and
                    $dSafe.warmConcurrentOk -and $dSafe.afterColdOk -and
                    $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1))
+$dSafe.updateWhileRunningTested = [bool]$dSafe.updateOldStillRunningAfter
 $dSafe.adoptable = [bool]($safePass -and $dSafe.coldConcurrentOk -and $dSafe.updateWhileRunningOk)
 if (-not $safePass) { exit 1 }
 exit 0
@@ -198,6 +203,14 @@ class ScriptRules(unittest.TestCase):
     def test_a_missing_failure_exit_is_caught(self):
         self.assertTrue(any("exit 1" in p for p in script_problems(GOOD_SCRIPT.replace("if (-not $safePass) { exit 1 }\n", ""))))
 
+    def test_an_update_scenario_without_the_overlap_check_is_caught(self):
+        bad = GOOD_SCRIPT.replace("$dSafe.updateWhileRunningTested = [bool]$dSafe.updateOldStillRunningAfter\n", "$dSafe.updateWhileRunningTested = $true\n")
+        self.assertTrue(any("still run after" in p for p in script_problems(bad)), script_problems(bad))
+
+    def test_a_vacuous_failure_exit_is_caught(self):
+        bad = GOOD_SCRIPT.replace("if (-not $safePass) { exit 1 }", "if ($false) { exit 1 }")
+        self.assertTrue(any("exit 1" in p for p in script_problems(bad)), script_problems(bad))
+
     def test_drifted_flags_are_caught(self):
         self.assertTrue(any("prodFlags" in p for p in script_problems(GOOD_SCRIPT.replace("--remove-output ", ""))))
 
@@ -229,6 +242,14 @@ class StepAndDocs(unittest.TestCase):
 
     def test_a_step_on_every_lane_is_caught(self):
         self.assertEqual(step_problems(GOOD_STEP.replace("        if: ${{ matrix.mode == 'uv' }}\n", "")), ["the step is not restricted to the uv lane"])
+
+    def test_a_commented_out_condition_is_caught(self):
+        bad = GOOD_STEP.replace("        if: ${{ matrix.mode == 'uv' }}\n", "        # if: ${{ matrix.mode == 'uv' }}\n")
+        self.assertEqual(step_problems(bad), ["the step is not restricted to the uv lane"])
+
+    def test_a_condition_on_another_lane_is_caught(self):
+        bad = GOOD_STEP.replace("matrix.mode == 'uv'", "matrix.mode == 'real'")
+        self.assertEqual(step_problems(bad), ["the step is not restricted to the uv lane"])
 
     def test_a_missing_step_is_caught(self):
         self.assertIn("found 0", step_problems("      - name: other\n        run: echo hi\n")[0])

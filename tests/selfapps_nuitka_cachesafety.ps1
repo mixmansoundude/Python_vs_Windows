@@ -124,9 +124,12 @@ function Wait-App {
 }
 
 function Stop-AppTree {
+    # True only when the process is confirmed gone: a kill that did not take must not count as a kill that was tested.
     param($H)
     try { & taskkill /F /T /PID $H.Proc.Id 2>&1 | Out-Null } catch { }
-    try { $H.Proc.WaitForExit(10000) | Out-Null } catch { }
+    $gone = $false
+    try { $gone = [bool]$H.Proc.WaitForExit(10000) } catch { }
+    return $gone
 }
 
 $workDir = Join-Path $here '~selftest_nuitka_cachesafety'
@@ -325,8 +328,14 @@ print("safety done", flush=True)
                 }
             }
             if ($partial) {
-                Stop-AppTree $h
-                $partialKills++
+                if (Stop-AppTree $h) {
+                    $partialKills++
+                } else {
+                    # The launch could not be stopped, so no mid-unpack kill was tested in this attempt.
+                    $partial = $false
+                    $entry.stopFailed = $true
+                    $recoveryOk = $false
+                }
             } else {
                 Wait-App -H $h | Out-Null
             }
@@ -354,13 +363,15 @@ print("safety done", flush=True)
             while ($waited.ElapsedMilliseconds -lt 20000 -and -not $old.Proc.HasExited -and (Get-FolderBytes $safeFolder) -lt ($fullBytes - 1MB)) { Start-Sleep -Milliseconds 200 }
             $dSafe.updateOldStillRunning = (-not $old.Proc.HasExited)
             if ($dSafe.updateOldStillRunning) {
-                $dSafe.updateWhileRunningTested = $true
                 $r2 = Wait-App -H (Start-App -Exe $exe2)
+                # The old build must still be running after the new one has finished, or the two never overlapped.
+                $dSafe.updateOldStillRunningAfter = (-not $old.Proc.HasExited)
+                $dSafe.updateWhileRunningTested = [bool]$dSafe.updateOldStillRunningAfter
                 $dSafe.updateWhileRunningOk = [bool]((Test-Output $r2) -and $r2.out.Contains('safety version=2'))
                 $dSafe.updateWhileRunningExit = $r2.exit
                 if (-not $dSafe.updateWhileRunningOk) { $dSafe.updateWhileRunningSample = (Get-Sample $r2) }
             }
-            Stop-AppTree $old
+            [void](Stop-AppTree $old)
             $r3 = Wait-App -H (Start-App -Exe $exe2)
             $dSafe.updateAfterOldGoneOk = [bool]((Test-Output $r3) -and $r3.out.Contains('safety version=2'))
             if (-not $dSafe.updateAfterOldGoneOk) { $dSafe.updateAfterOldGoneSample = (Get-Sample $r3) }
