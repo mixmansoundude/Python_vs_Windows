@@ -1287,16 +1287,18 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($pypmtMalWarnFound -and $pypmtMalContinued) { $summary.Add('pyproject.toml malformed: PASS') } else { $summary.Add('pyproject.toml malformed: FAIL') }
 
-# --- PEP 723 priority over pyproject.toml test (REQ-005.1) ---
-# Arrange: script with PEP 723 metadata (packaging) + pyproject.toml with conflicting dep (colorama).
-# Assert:  bootstrap detects pyproject.toml first, then PEP 723 overrides it; DEP_SOURCE=pep723, exits 0.
-# derived requirement: REQ-005.1 states PEP 723 is authoritative over pyproject.toml; this test
-# guards the priority ordering from being silently reversed in a future refactor.
+# --- PEP 723 header and pyproject.toml are merged, not chosen between (REQ-005.1, Item 89) ---
+# Arrange: script with PEP 723 metadata (packaging) + pyproject.toml with a different dep (colorama), no requirements.txt.
+# Assert:  bootstrap detects both lists and merges them (a cold first run is a union); DEP_SOURCE=pep723 (the
+#          highest ranked input, which settles conflicts), requirements.txt holds both, exits 0.
+# derived requirement: REQ-005.1 ranks the header over pyproject.toml only for a CONFLICT about one package;
+# a package only one of them lists is still a dependency. Before Item 89 the row proved the header threw
+# the pyproject list away, which is the behavior the maintainer rejected.
 $pep723PrioDir = Join-Path $TestsDir '~selftest_pep723_prio'
 if (Test-Path $pep723PrioDir) { Remove-Item -Recurse -Force $pep723PrioDir }
 New-Item -ItemType Directory -Force -Path $pep723PrioDir | Out-Null
 Copy-Item -Path $BatchPath -Destination $pep723PrioDir -Force
-# PEP 723 dep: packaging. pyproject.toml dep: colorama. PEP 723 must win.
+# PEP 723 dep: packaging. pyproject.toml dep: colorama. Both must end up in requirements.txt.
 # Extract subroutine expects exactly "# " + quote (one space); extra spaces would break parsing.
 $pep723PrioScript = @'
 # /// script
@@ -1330,9 +1332,11 @@ if (Test-Path $pep723PrioLogPath) { $pep723PrioLines = Get-Content -LiteralPath 
 # Use .Contains() instead of -like because -like treats [project] as a char-class wildcard.
 $pep723PrioPyprojectTag = 'pyproject.toml [project].dependencies found'
 $pep723PrioPyprojectDetected = ($pep723PrioLines | Where-Object { $_.Contains($pep723PrioPyprojectTag) }).Count -gt 0
-# PEP 723 must have won (overrode pyproject)
+# The header is the highest ranked input, so it is the recorded source; the merge must have said so.
 $pep723PrioWinTag = 'Using PEP 723 inline dependency metadata'
 $pep723PrioWon = ($pep723PrioLines | Where-Object { $_ -like "*$pep723PrioWinTag*" }).Count -gt 0
+$pep723PrioMergeTag = 'Dependency lists merged'
+$pep723PrioMerged = ($pep723PrioLines | Where-Object { $_.Contains($pep723PrioMergeTag) }).Count -gt 0
 $pep723PrioStatusPath = Join-Path $pep723PrioDir '~bootstrap.status.json'
 $pep723PrioContinued = $false
 if (Test-Path $pep723PrioStatusPath) {
@@ -1341,35 +1345,34 @@ if (Test-Path $pep723PrioStatusPath) {
     $pep723PrioContinued = ($pep723PrioStatus.exitCode -eq 0)
   } catch { }
 }
-# Final-state check: requirements.txt must contain the PEP 723 dep (packaging) and must NOT
-# contain the pyproject dep (colorama).  A refactor that reverses priority would fail here
-# even if both log lines were still emitted.
-# derived requirement: run_setup.bat line 715 copies PEP723_REQ over requirements.txt when
-# PEP723_ACTIVE is set; the dep name is written verbatim by extract_pep723_requirements.
+# Final-state check: requirements.txt must contain the PEP 723 dep (packaging) AND the pyproject dep
+# (colorama). A refactor that goes back to copying one list over the other would fail here even if
+# both log lines were still emitted.
 $pep723PrioReqPath = Join-Path $pep723PrioDir 'requirements.txt'
 $pep723PrioReqHasPackaging = $false
-$pep723PrioReqNoColorama   = $false
+$pep723PrioReqHasColorama  = $false
 if (Test-Path -LiteralPath $pep723PrioReqPath) {
   $pep723PrioReqContent = Get-Content -LiteralPath $pep723PrioReqPath -Encoding ASCII -Raw
   $pep723PrioReqHasPackaging = $pep723PrioReqContent -match 'packaging'
-  $pep723PrioReqNoColorama   = -not ($pep723PrioReqContent -match 'colorama')
+  $pep723PrioReqHasColorama  = $pep723PrioReqContent -match 'colorama'
 }
-$pep723PrioPass = ($pep723PrioPyprojectDetected -and $pep723PrioWon -and $pep723PrioContinued -and $pep723PrioReqHasPackaging -and $pep723PrioReqNoColorama)
+$pep723PrioPass = ($pep723PrioPyprojectDetected -and $pep723PrioWon -and $pep723PrioMerged -and $pep723PrioContinued -and $pep723PrioReqHasPackaging -and $pep723PrioReqHasColorama)
 Write-NdjsonRow ([ordered]@{
-  id   = 'self.pep723.pyproject.override'
+  id   = 'self.pep723.pyproject.merge'
   req  = 'REQ-005.1'
   pass = $pep723PrioPass
-  desc = 'PEP 723 inline metadata overrides pyproject.toml [project].dependencies when both present (REQ-005.1 priority)'
+  desc = 'PEP 723 header and pyproject.toml [project].dependencies are merged on a first run: both lists end up in requirements.txt, the header is the recorded source (REQ-005.1)'
   details = [ordered]@{
     pyprojectDetected = $pep723PrioPyprojectDetected
     pep723Won         = $pep723PrioWon
+    merged            = $pep723PrioMerged
     continued         = $pep723PrioContinued
     exitCode          = $pep723PrioExit
     reqHasPackaging   = $pep723PrioReqHasPackaging
-    reqNoColorama     = $pep723PrioReqNoColorama
+    reqHasColorama    = $pep723PrioReqHasColorama
   }
 })
-if ($pep723PrioPass) { $summary.Add('PEP 723 priority over pyproject: PASS') } else { $summary.Add('PEP 723 priority over pyproject: FAIL') }
+if ($pep723PrioPass) { $summary.Add('PEP 723 and pyproject merged: PASS') } else { $summary.Add('PEP 723 and pyproject merged: FAIL') }
 
 # derived requirement: CONDA_BAT is set by :select_conda_bat only when
 # %PUBLIC%\Documents\Miniconda3\condabin\conda.bat exists on disk. In uv-first

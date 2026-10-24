@@ -118,6 +118,8 @@ imports installed**.
 >   components, one with a space). The environment name, and so the EXE name, loses the accented letter
 >   (`Jos_.exe`). Characters outside the system code page, and the Miniconda location (REQ-003.2), are not
 >   covered by it.
+> - Small example programs that exercise REQ-001.1 are in `tests/fixtures/examples`; copy one folder's files next
+>   to `run_setup.bat` to try it. CI runs three of them (`self.examples.*`).
 
 ### [REQ-002] Entry selection (current behavior)
 - **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
@@ -213,7 +215,7 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 - [REQ-009] Environment discovery hierarchy (priority order):
   1. **UV** -- if `uv.exe` is available (cached or downloadable), create a `.uv_env` virtual environment using UV for fast dependency installs.
   2. **Conda (Portable / Miniconda)** -- install or reuse Miniconda at `%PUBLIC%\Documents\Miniconda3` (non-admin) and create a named conda env.
-  3. **Embedded Python** (fresh-acquisition fallback) -- if Conda is unavailable or fails, download the official python.org embeddable zip (checksum-verified against an embedded SHA256), extract it to a private `~embed_python\` directory, and bootstrap pip into it. Honors a pinned `runtime.txt` / `pyproject.toml` version if one is set; no admin rights and no pre-existing Python required.
+  3. **Embedded Python** (fresh-acquisition fallback) -- if Conda is unavailable or fails, download the official python.org embeddable zip (checksum-verified against an embedded SHA256), extract it to a private `~embed_python\` directory, and bootstrap pip into it. Honors a pinned `runtime.txt` / `pyproject.toml` version if one is set: a `requires-python` range resolves to the newest minor in the tier's version table that the range allows, and a request the table cannot satisfy prints a `[WARN]` and uses the nearest end of the table (covered by `self.embed.version.*`); no admin rights and no pre-existing Python required.
   4. **Local venv** (environment-creation fallback) -- if Conda and the embedded-Python download are both unavailable or fail, create a `.venv` virtual environment using whatever `python` / `py` is found on PATH (`python -m venv`). Still isolated, but depends on a pre-existing Python installation to create the env.
   5. **System Python** (final degraded execution mode) -- if no isolated environment can be created, run the entry point directly under the first `python` / `py` on PATH with no env isolation. Dependencies may conflict with system packages. **This tier is reachable in the default (no-flag) run** and is gated **only** by the REQ-014 consent prompt -- never by an opt-in environment variable. The legacy `HP_ALLOW_SYSTEM_FALLBACK` flag is **deprecated as a gate** (accepted but ignored, mirroring `HP_ALLOW_VENV_FALLBACK`). The CI-only `HP_FORCE_CONDA_ONLY` lane still suppresses all non-conda tiers for conda diagnostics.
 
@@ -320,20 +322,78 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 #### Source Resolution (authoritative order)
 
-- REQ-005.1 -- Detect requirements source (priority order): Resolve dependencies using the following order:
+- REQ-005.1 -- Detect requirements sources (merged, with a fixed rank for conflicts): The three places a program can
+  declare its dependencies are one set of inputs, not three alternatives. Ranked from highest, they are:
   1. PEP 723 inline script metadata (`# /// script`)
-     - If present, valid, and non-empty -> authoritative
-     - Parsed before any file-based source
-     - If malformed or empty: `[WARN] PEP 723 block found but dependency list is empty or malformed; falling back` -> fall through
-  2. `pyproject.toml` `[project].dependencies`
-     - If present and non-empty -> authoritative; overrides `requirements.txt`
-  3. `requirements.txt`
-     - If present and non-empty -> authoritative
-  4. `requirements.auto.txt` (pipreqs output)
-     - Used only if no authoritative source exists
-     - Not authoritative (best-effort inference)
-  5. No dependencies
-     - Continue with empty set if all sources unavailable
+     - Used when present, valid and non-empty; parsed before any file-based source
+     - If malformed or empty: `[WARN] PEP 723 block found but dependency list is empty or malformed; falling back` -> not used
+  2. `pyproject.toml` `[project].dependencies` (used when present and non-empty)
+  3. `requirements.txt` (used when present and non-empty)
+  4. `requirements.auto.txt` (pipreqs output): used only when none of the three above is used; best-effort inference
+  5. No dependencies: continue with an empty set when everything above is unavailable
+
+  The bootstrapper **shall**, as the numbered rules below say, merge the inputs of items 1 to 3 into one dependency set,
+  install that set, and leave the same set in `requirements.txt` and in the PEP 723 header. The rank only decides a
+  conflict about one package. `DEP_SOURCE` in the setup log and `~dependency_source.txt` name the highest ranked input
+  that names a package of the merged set; the entry used for a package can come from a lower ranked input (REQ-005.1.2).
+  - **REQ-005.1.1** [critical] The bootstrapper **shall**, when a program folder has no record of an earlier run (no
+    `~dep_base.*.txt` file), install the union of the packages of every used input, so a package that only one input
+    names is installed too.
+  - **REQ-005.1.2** [major] The bootstrapper **shall**, when two inputs name the same package with different version
+    constraints, use the entry of the highest ranked of them. A bare name is not a conflict with a constrained entry: the
+    constrained entry is used.
+  - **REQ-005.1.3** [minor] The bootstrapper **shall**, when it resolves a conflict as REQ-005.1.2 describes, print one
+    `[WARN] Conflict for <package>` line that names each input's entry, the entry used and the input it came from.
+  - **REQ-005.1.4** [major] The bootstrapper **shall not** say on the console that an input is used, or that it overrides
+    another, unless that input's packages are part of the set the run installs. An input that is left out says why (the
+    malformed or empty case above).
+  - **REQ-005.1.5** [major] The bootstrapper **shall**, after a run in which every dependency installed, leave
+    `requirements.txt`, and with the uv provider the PEP 723 header of the entry file, holding the merged set.
+  - **REQ-005.1.6** [major] The bootstrapper **shall**, after a run in which every dependency installed, record each input
+    as it then stands (`~dep_base.requirements.txt`, `~dep_base.pyproject.txt`, `~dep_base.pep723.txt`) so the next run can
+    tell the user's changes from its own. A failed or partial install **shall** record nothing, so the next run sees the
+    same changes again.
+  - **REQ-005.1.7** [major] The bootstrapper **shall**, when a record exists, treat a difference between an input and its
+    record as the user's change and keep it.
+  - **REQ-005.1.8** [major] The bootstrapper **shall**, when the user has removed a package from `requirements.txt`, from
+    `pyproject.toml` or from a PEP 723 header that the bootstrapper wrote, and no input keeps it as REQ-005.1.11
+    describes, remove the package from the merged set.
+  - **REQ-005.1.9** [major] The bootstrapper **shall**, when the user has edited a pin, replace the older pins in the other
+    inputs with it and not report that as a conflict.
+  - **REQ-005.1.10** [major] The bootstrapper **shall**, when any input differs from its record, install the merged set and
+    not skip the install as already satisfied.
+  - **REQ-005.1.11** [minor] The bootstrapper **shall**, when a package was removed from one input while `pyproject.toml`,
+    or an input that is new or edited since its record, still lists it, keep the package in the merged set.
+  - **REQ-005.1.12** [major] The bootstrapper **shall** only ever add to a PEP 723 header that it did not write, never remove
+    from it.
+  - **REQ-005.1.13** [major] The bootstrapper **shall**, when the merge cannot run, use the highest ranked input alone,
+    exactly as it did before the merge existed, and say so with a `[WARN]`.
+  - **REQ-005.1.14** [major] The bootstrapper **shall not** stop the run because the merge could not run.
+  - **REQ-005.1.15** [major] The bootstrapper **shall**, when a package was added to any input since its record, add the
+    package to the outputs that REQ-005.1.5 names.
+  - **REQ-005.1.16** [major] The bootstrapper **shall**, when it removes a package from the merged set as REQ-005.1.8
+    describes, remove the package from the outputs that REQ-005.1.5 names.
+  - **REQ-005.1.17** [major] The bootstrapper **shall**, when it removes a package from the merged set as REQ-005.1.8
+    describes, say `Removed <package>` on the console with the input it was removed from.
+  - **REQ-005.1.18** [minor] The bootstrapper **shall**, when it keeps a package as REQ-005.1.11 describes, say
+    `<package> was removed from <input> but <input> still lists it, so it stays` on the console, where the second
+    `<input>` is the input that keeps the package.
+  - Notes (not requirements): a folder that was last run before the merge existed has no record, so its first run
+    after the change is a cold run (the union). The run that deletes a package from one input while `pyproject.toml`, which
+    the bootstrapper does not rewrite, or an input changed since its record still lists it brings the package back, with
+    the message of REQ-005.1.18; that is the price of never removing something the user wrote elsewhere. Packages removed from every input stay installed in the
+    environment, which is harmless. A `requirements.txt` that holds only directives such as `-r other.txt` names no
+    package of its own, so a package removed from it also leaves the header; the merge does not read the files such a
+    directive includes, so editing the directive line (or an `-e` or `--index-url` line) counts as a change to
+    `requirements.txt` (REQ-005.1.10) while an edit inside the included file alone does not. `uv add --script` writes a lower bound into the header for a name given without one
+    (`toolz` becomes `toolz>=1.2.0`), so the first later run that changes nothing writes that bound into
+    `requirements.txt` too (a bare name never beats a constrained entry); runs after that touch nothing. The bootstrapper
+    never rewrites `pyproject.toml`, so a package added to or removed from another input is not added to or removed
+    from it (REQ-005.1.15, REQ-005.1.16). The header is changed only after a run in which every dependency installed
+    (REQ-005.1.5), by `uv add --script` for additions and `uv remove --script`, one call per package, for removals; a
+    failed install changes nothing there and keeps the records (REQ-005.1.6). Tests:
+    `tests/test_dep_merge.py` (unit), `self.depsource.*` (cold runs), `self.depmerge.later.*` (later runs),
+    `self.pep723.pyproject.merge`, `self.realapp.edit_rerun`.
 
 ---
 
@@ -398,7 +458,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 ---
 
 - REQ-005.5 -- Diff tracking: Log differences between:
-  - Authoritative source (PEP 723, `pyproject.toml`, or `requirements.txt`)
+  - The merged dependency set (REQ-005.1: PEP 723, `pyproject.toml` and `requirements.txt` together)
   - `requirements.auto.txt`
 
 ---
@@ -514,7 +574,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 ### Design Principles
 
-- Authoritative hierarchy is deterministic: PEP 723 > requirements.txt > pipreqs > none
+- Declared inputs are merged and the rank settles conflicts deterministically: PEP 723 > pyproject.toml > requirements.txt; pipreqs only when nothing is declared; else none
 - pipreqs is discovery only: Never trusted for completeness or versions
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
@@ -546,10 +606,8 @@ This section describes the full runtime flow of dependency resolution, installat
 #### Execution Flow Summary
 
 1. Dependency Source Selection
-   - Check PEP 723 metadata first
-   - Else check `pyproject.toml` `[project].dependencies`
-   - Else fall back to `requirements.txt`
-   - Else use `requirements.auto.txt` (pipreqs inference)
+   - Read PEP 723 metadata, `pyproject.toml` `[project].dependencies` and `requirements.txt` and merge them (REQ-005.1)
+   - Else, when none of them is declared, use `requirements.auto.txt` (pipreqs inference)
    - Else empty dependency set
 
 2. Dependency Installation Phase
@@ -727,6 +785,13 @@ bootstrapper should therefore run the program once per invocation and should ask
   download address (`https://aka.ms/vc14/vc_redist.x64.exe`), and **shall not** install the runtime. It
   **shall not** print that warning when both files are present or when the error is not a `DLL load failed`
   error.
+- **REQ-018.33** [major] The bootstrapper **shall**, when the EXE it has just built cannot be started by Windows
+  at all (for example a text-file stub, an empty file or a cut-off copy), end the verification run of REQ-018.5
+  at once, say that the program could not be started and show the reason Windows gave, not count that run as a
+  verification, remove that file, and check the program through the interpreter instead; that interpreter run
+  **shall** be the invocation's single run (REQ-018.1).
+- **REQ-018.34** [major] The bootstrapper **shall**, when the cached EXE of REQ-018.3 cannot be started by Windows
+  at all, discard it and rebuild it as for a stale EXE, without waiting for the file that could not be started.
 
 > **Notes (non-normative).**
 > - Rationale: the bootstrapper cannot know whether the program is safe to run twice, so the run that verifies
@@ -745,8 +810,8 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   `docs/open-questions.md`); each is worded in its own requirement until that is settled.
 > - REQ-018.10: a program can print `ModuleNotFoundError` and still exit 0, because a window toolkit catches an
 >   error raised in a button handler, prints it and keeps running. The fast path skips the check because it
->   runs before any interpreter is chosen. `pyproject.toml` and a PEP 723 header are copied over
->   `requirements.txt` on every run, so advice to edit `requirements.txt` would not last for those two sources.
+>   runs before any interpreter is chosen. `pyproject.toml` and a PEP 723 header outrank
+>   `requirements.txt` for a conflict about one package (REQ-005.1), so the advice names the file the run reported as its source.
 > - REQ-018.14 to REQ-018.22: the answer prompt waits 30 seconds, and a quiet run, a CI run and a bare Enter all
 >   mean no. A native DLL that a newly installed conda package needs is not bundled by the rebuild.
 > - REQ-018.23 to REQ-018.27: untimed on purpose, because it is a decision and not a timeout guard. A late
@@ -761,6 +826,11 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   error alone does not say why. The warning is printed next to the offers that follow a failed run (the EXE
 >   verification, the interpreter run, and the interpreter run a user watching sees), and it needs no
 >   administrator rights because nothing is installed.
+>
+> - REQ-018.33 and REQ-018.34: an interrupted build or an antivirus quarantine can leave a file with the EXE's name
+>   that Windows refuses to start; before this was handled the check waited for a process that never ran, and the
+>   step ran until the job was cancelled. The reason line is the one Windows reports (for example "The specified
+>   executable is not a valid application for this OS platform."), cut to one printable line.
 
 ---
 
@@ -1295,7 +1365,7 @@ This repo: double-click `run_setup.bat`. It scans the script, builds an isolated
 Deno is built in Rust end to end. This repo uses [uv](https://github.com/astral-sh/uv) -- Astral's Rust-based Python toolchain -- as its preferred, fastest environment provider. Underneath that, it doesn't depend on any single mechanism working: if uv isn't available, it cascades through several independent fallback tiers -- Conda/Miniconda, a checksum-verified embedded Python download straight from python.org, a local `venv`, and, as a last resort with explicit user consent, an unmanaged system Python. No single one of these being blocked or missing takes the whole tool down with it.
 
 **3. Automatic dependency discovery**
-Deno parses import URLs directly from the source file. This repo resolves dependencies in priority order: PEP 723 inline script metadata, then `pyproject.toml`, then `requirements.txt`, and only if none of those exist, a best-effort static-analysis scan (`pipreqs`) to infer what the script imports.
+Deno parses import URLs directly from the source file. This repo merges the dependencies declared in PEP 723 inline script metadata, `pyproject.toml` and `requirements.txt` (the first of those wins a conflict about one package), and only if none of those exist, a best-effort static-analysis scan (`pipreqs`) to infer what the script imports.
 
 **4. Compiling to a standalone executable**
 `deno compile` packages a script into a single distributable binary. This repo does the same in spirit: after setup succeeds, it bundles the app and its environment into a single-file Windows EXE via PyInstaller, so it can be handed to someone else without asking them to set anything up.

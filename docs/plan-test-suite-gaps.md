@@ -95,7 +95,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 002 | Entry selection order | `self.entry.entry1/A/B/C/D/override/helper.invoke.absent/results/spaced-path` (all), `self.entry.picker/.overflow` (F), `test_find_entry.py` | Strong | |
 | 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R) | Medium | T8, T9 done |
 | 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin and range only `self.contract.uv.pyver*` (k) | Strong, with the uv exact-pin case non-gating | |
-| 005 / 005.1 | Dependency source order | `reqspec.*` x16 (all), `self.pep723.pyproject.override` (all), `self.pyproject.malformed` (all), `pyproject.dep.detect/.noproj` (R,F) | Medium: pairwise only | T2 |
+| 005 / 005.1 | Dependency source order | `reqspec.*` x16 (all), `self.pep723.pyproject.merge` (all), `self.pyproject.malformed` (all), `pyproject.dep.detect/.noproj` (R,F) | Medium: pairwise only | T2 |
 | 005.2, .3 | conda bulk retry, per-package fallback | `self.stub.conda_retry`, `self.stub.conda_perpkg` (all) | Strong | |
 | 005.4 | pipreqs scan | `pipreqs.flags` (harness), `self.pipreqs.encoding.*` x3, `self.pipreqs.output.*` x4 (R), `self.depcheck.*` (R,F) | Strong | |
 | 005.5 | requirements diff log | `batch.dep.diff.trace`, `self.dep.diff.trace` | Medium: log-line proxy | |
@@ -260,7 +260,7 @@ launch the program through other branches; they do not count launches.
 ### T2. Dependency-source matrix with lineage (REQ-005.1, .4, .6)
 
 **Missing.** README's "Source Resolution (authoritative order)" has five outcomes. Existing rows:
-PEP 723 beats pyproject (`self.pep723.pyproject.override`), malformed pyproject
+PEP 723 and pyproject merged on a first run (`self.pep723.pyproject.merge`, was `.override` before Item 89), malformed pyproject
 (`self.pyproject.malformed`), pyproject detection (`pyproject.dep.detect/.noproj`, conda-full and
 real). Not run: PEP 723 over requirements.txt without a pyproject; requirements.txt alone as an
 asserted source; an empty `requirements.txt` falling through ("present and non-empty"); a malformed
@@ -297,6 +297,10 @@ get that far.
 the 63-65 discovery path); this matrix is the single-source semantics underneath it. Do the matrix
 first; Item 75a then needs fewer assertions of its own. (Shipped: Item 75 is `tests/selfapps_realapp_pandas_excel.ps1`,
 which asserts the installed set, the recorded source and the sibling-module rule on top of the matrix; it found Item 88.)
+Item 89 (maintainer decision on open question 3): the inputs are merged, not chosen between, so cells 3 and 8 (pyproject plus
+requirements.txt) and 9 (one package pinned three ways) assert the union and the conflict line, and
+`tests/selfapps_dep_merge_later.ps1` covers what only a second run can show: delete, add, pin edit, header edit, a package
+`pyproject.toml` still lists, and an unchanged run.
 
 ### T3. "No litter" allow-list for the app folder
 
