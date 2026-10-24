@@ -832,6 +832,23 @@ requirements append) took most of it; check `tools/sync_payload.py`'s margin lin
 
 ---
 
+## An unguarded `Process.Start()` before a polling loop spins forever instead of failing (Item 87)
+
+PowerShell turns a `$p.Start()` that throws into a statement-terminating error and carries on. The loop that follows
+(`while (-not $p.HasExited -or ...)`) then evaluates `$p.HasExited` on a process object with no process, which errors,
+and an error inside `-not (...)` reads as true, so the loop waits for output that can never arrive. The visible symptom
+is a CI step that runs for ten minutes with no output (PR #499's first red commit seeded a text file as
+`dist\<env>.exe`), not an error message. **Rule: any helper that starts a process it then polls must wrap `Start()` in
+`try/catch`, write the reason to a file the caller can show, and return the failed-run result its caller already
+understands.** The reason is arbitrary text, so the batch shows it with `type`, never `:log`. A test for this class must
+run the helper under a hard timeout and report the hang as a failure (`tests/test_unlaunchable_exe.py::_run`), and a
+bootstrapper scenario needs a watchdog (`taskkill /F /T` after 15 minutes) so a regression is a red row and not a held
+job. Seed an unlaunchable program with a text file, a zero-byte file and a truncated copy of a real executable
+(`sys.executable[:64]`); on Windows all three fail in `CreateProcess` with a Win32Exception, on Linux with an exec-format
+error, which `pwsh` surfaces the same way.
+
+---
+
 ## Clearing an environment variable for a child process: do not trust `SetEnvironmentVariable($name, $null)`; ask the child what it sees
 
 A test that must start the bootstrapper with no `HP_*`/`PVW_*`/`NOINPUT` variable (`tests/selfapps_noflag_default.ps1`,

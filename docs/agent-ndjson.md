@@ -904,6 +904,49 @@ self.longpath.near.at
 self.longpath.near.over
 ```
 
+## selfapps-example-apps NDJSON rows (selfapps_example_apps.ps1, real lane only, gating)
+
+CLAUDE.md Item 74 (README REQ-001.1). `tests/fixtures/examples/` holds four small example programs a person can drop next
+to `run_setup.bat`: `stdlib_single` (`solo.py`), `multifile_sibling` (`main.py` imports `helper.py`), `gui_exits` (a
+tkinter window that closes itself after half a second) and `pandas_excel` (`app.py` plus `requirements.txt`, read by the
+conda-full `selfapps_pandas_excel.ps1`). This script copies the first three, one at a time, into
+`tests\~selftest_example_<name>` with a copy of the bootstrapper and starts it with no argument and no skip hook (only
+the skip variables a leaked environment could carry are cleared, `HP_CI_LANE` stays so prompts resolve), so the whole
+default path runs. A row passes only when every named detail holds: `fixtureFound` (the folder exists with the expected
+number of `.py` files), `timedOut` false (a run is stopped after 25 minutes), bootstrapper exit 0, `statusState` `ok`, an
+EXE in `dist`, `entrySmokeExit0` (the EXE's own verification run), `entryOk` (`Chosen entry:` names the expected file, so
+`main.py` and not `helper.py` for the two-file app), `fileCountOk` (`Python file count: N`) and `outputOk` (the program's
+own line is in `~run.out.txt`, the stdout of that verification run). `uvUsed`, `errorLines` and `runOutTail` are
+information for a red row. A missing fixture folder fails the row with `error` naming it. The two-file row is the
+realistic regression guard for Item 88 (a sibling module must not be installed as a dependency). Skips on non-Windows.
+
+```
+self.examples.stdlib_single
+self.examples.multifile_sibling
+self.examples.gui_exits
+```
+
+## selfapps-unlaunchable-exe NDJSON rows (selfapps_unlaunchable_exe.ps1, real lane only, gating)
+
+CLAUDE.md Item 87 (README REQ-018.3 and REQ-018.5). A `dist\<env>.exe` that Windows cannot start (a text file, a
+zero-byte file, a cut-off copy) used to hang the three bounded-launch helpers, because `Process.Start()` threw and the read
+loop waited for a process that never ran. Each scenario is a real bootstrapper run of the `stdlib_single` fixture in
+`tests\~selftest_unlaunch_<name>` under a 15-minute watchdog, so a hang is a red row (`timedOut`). `smoke_stub`: the hook
+`HP_TEST_CORRUPT_BUILT_EXE=1` turns the freshly built EXE into a text file right before its verification run; the row
+passes only when the run ends (exit 0, state `ok`), the hook fired, the console says the program `could not be started`
+and gives a reason line, the stub is gone from `dist`, `~launch_failed.txt` is consumed, the program was then checked
+through the interpreter (`Entry smoke exit=0`, `from-single` in `~run.out.txt`) and the log does not claim a timeout.
+`fastpath_stub`: run 1 builds (EXE over 1 MB, source hash file written), the EXE is replaced with a text file, run 2 forces
+the interactive fail-fast probe; the row passes only when the probe started the stub (`Launching your program now via the
+cached standalone EXE`), said it could not be started with a reason, discarded and rebuilt it (a real EXE over 1 MB again,
+`Entry smoke exit=0`) and never claimed the program was still running. The third helper (`~exe_hint_rerun.ps1`) has no
+bootstrapper scenario, only `tests/test_unlaunchable_exe.py`. Skips on non-Windows.
+
+```
+self.unlaunchable.smoke_stub
+self.unlaunchable.fastpath_stub
+```
+
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
 
 Closes CLAUDE.md's former Item 39: the EXE fast path's freshness check switched from mtime-only to
