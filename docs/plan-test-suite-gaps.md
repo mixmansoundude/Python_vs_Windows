@@ -29,7 +29,8 @@ those, the suite falls short on **six axes** (ranked list further down):
 
 1. **Rows that cannot block a merge** (Item 35). 48 row ids appear only in non-gating lanes, among them
    the whole uv-only feature set (PEP 723 write-back, cascade execution, optimized build, Tier A). The
-   aggregate gate is still advisory, so the 3 known red rows in the baseline block nothing.
+   aggregate gate was advisory when this plan was written (the 3 known red rows blocked nothing); the baseline reds
+   are fixed and the gate has been real since Item 35 C6.
 2. **Launch behavior is unobserved.** Nothing counts how many times the user's program runs (REQ-018),
    nothing checks that launch arguments arrive (REQ-026, which the maintainer used for real on
    2026-08-31), and the skip hooks are tested only in combination (REQ-012).
@@ -48,7 +49,7 @@ those, the suite falls short on **six axes** (ranked list further down):
 
 | Rank | Id | Gap | Field evidence | Smallest test | Lane to start in |
 |---|---|---|---|---|---|
-| 0 | (Item 35) | uv-only rows and the aggregate gate cannot block; 3 reds hidden | uv-first is the default path | fix the 2 uv red rows, then flip the gate | existing |
+| 0 | (Item 35) | uv-only rows and the aggregate gate cannot block; 3 reds hidden (done: reds fixed, gate real since C6) | uv-first is the default path | fix the 2 uv red rows, then flip the gate | existing |
 | 1 | T1 | launch ledger: REQ-026 args, REQ-018 run count, REQ-012 flags, REQ-010 decoy | args used 2026-08-31; hardware programs | one stub that appends one line per launch; 4 bootstraps | uv, then real |
 | 2 | T2 | dependency-source matrix and lineage (REQ-005.1/.4/.6) | requirements.txt "not obeyed" reports | 7 cells, assert `dependency_source=` and the installed set | uv, then real |
 | 3 | T3 | "no litter" allow-list for the app folder | Item 76 was found by eye | list non-tilde files after a default run | real |
@@ -165,7 +166,7 @@ This dominates the completeness number but is not a new test, so it stays with I
   stream (CLAUDE.md Item 35, read from run `38157663037`), fixed test-side.
 - Suggested order inside Item 35: fix the test-side venv_repair precondition, root-cause
   `self.cascade.exec`, then remove `continue-on-error` from "Enforce aggregate self-test verdict".
-  Until the last step, the baseline's 3 reds are invisible to merges.
+  Until the last step, the baseline's 3 reds are invisible to merges. All three steps have shipped.
 - **Update 2026-10-11, from reading the baseline `uv` job log in full (diagnosis; proven by run
   `38157663037`: `venv_repair` `attemptedXlrd:false`, `systemSkipWarn:false`, `preconditionOk:true`;
   `cascade.exec` `repairMarkers:3`, `installAttempts:2`, `repairWithoutAttempt:1`; fixed on the follow-up
@@ -496,7 +497,7 @@ AGENTS.md defines no threshold, so this is the default I picked; change it freel
   (`contract-uv`, `contract-uv-fail`, `uv-dl-fallback`).
 - **C4** Every `HP_TEST_*` hook in the batch is set by a test (T6 enforces it).
 - **C5** No known-vacuous row, and no row skipped in all lanes (T7, T9).
-- **C6** The three baseline reds are fixed and the aggregate gate is no longer advisory (Item 35).
+- **C6** The three baseline reds are fixed and the aggregate gate is no longer advisory (Item 35). Met.
 
 ---
 

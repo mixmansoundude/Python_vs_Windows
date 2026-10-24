@@ -88,6 +88,16 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
   `tests/`): the harness's `batch.*` rows plus whatever `selftest.ps1` and `selftests.ps1` append. It is read by "Gate on
   NDJSON results" (`core.setFailed` on any `pass:false`) and the iterate gate. The `batch.*` and `selftest.ps1` rows
   are NOT in the pre-harness artifact; to read one, open the `test-logs` artifact.
+- **The aggregate gate is real (Item 35 criterion C6).** `selftest-gate`'s step "Enforce aggregate self-test verdict"
+  has no `continue-on-error`: a `pass:false` row in the pre-harness snapshot of any of the eight lanes, or a missing,
+  unexpected or duplicate lane, fails the "Aggregate self-test verdicts" check (a required check). `model-quick-fix` and
+  `publish_diag` keep `if: ${{ always() }}`, so the iterate gate and the Pages publish still run when it fails
+  (run `40123300274`, with a throwaway red row in `contract-uv-fail`: the aggregate job failed at that step and the
+  Pages publish still succeeded). Only the pre-harness rows count there; the
+  post-harness `batch.*` and self-test rows are gated per lane by "Gate on NDJSON results". A row that records a
+  finding writes `pass:true` plus a `details` flag, because `pass:false` is the one thing the verdict reads.
+  `tests/test_aggregate_gate.py` pins the step, the lane list (equal to the matrix) and the `always()` jobs; do not
+  put `continue-on-error` back on the step, and re-prove with a throwaway red row if the job graph around it changes.
 - **A row exists only if its script ran, and an absent row cannot be red.** `run_tests.bat` therefore runs `selftest.ps1`
   and `selftests.ps1` even when the harness failed (it used to skip both, hiding every self-test row behind one red
   `batch.*` row), deletes their old summary files first, and counts a script that exits 0 without writing its summary

@@ -1718,29 +1718,6 @@ jobs:
           })
           if (-not $pass) { Write-Host $outStr; exit 1 }
 
-      # Item 35 (C6) gate proof, REMOVE BEFORE MERGE (tests/test_aggregate_gate.py fails while any step is named
-      # "TEMP PROBE ..."). One red row in a lane that has no required check of its own, so the run shows what a red
-      # row in a non-gating lane does to the aggregate check and to the diagnostics publish.
-      - name: "TEMP PROBE: one red row in contract-uv-fail (Item 35 gate proof)"
-        if: ${{ !cancelled() && matrix.mode == 'contract-uv-fail' }}
-        shell: pwsh
-        run: |
-          $nd   = "tests\~test-results.ndjson"
-          $ciNd = "ci_test_results.ndjson"
-          if (-not (Test-Path $nd))   { New-Item -ItemType File -Path $nd   -Force | Out-Null }
-          if (-not (Test-Path $ciNd)) { New-Item -ItemType File -Path $ciNd -Force | Out-Null }
-          $row = [ordered]@{
-            id      = 'diag.gate_probe.red'
-            pass    = $false
-            desc    = 'TEMP PROBE: deliberate red row in a non-gating lane (Item 35 aggregate gate proof)'
-            lane    = $env:HP_CI_LANE
-            details = [ordered]@{ purpose = 'prove the aggregate check goes red and the Pages publish still runs' }
-          }
-          $json = $row | ConvertTo-Json -Compress -Depth 8
-          Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
-          Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
-          exit 0
-
       - name: "Self-test: runtime.txt write-back (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
