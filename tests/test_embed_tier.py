@@ -3,7 +3,7 @@ tools/embed_pyver_check.py's version-table resolution logic, and byte-equality o
 tools/embed_extract.ps1 and tools/embed_pyver_check.py against their embedded HP_EMBED_EXTRACT /
 HP_EMBED_PYVER_CHECK base64 payloads in run_setup.bat (mirrors PayloadSync in
 test_collect_submodules.py / test_hidden_import_scan.py). Also asserts the batch-side
-HP_EMBED_LATEST_PATCH/HP_EMBED_LATEST_SHA256 constants agree with the Python table's "3.14"
+HP_EMBED_LATEST_PATCH/HP_EMBED_LATEST_SHA256 constants agree with the Python table's LATEST_MINOR
 entry -- a refresh that updates one but not the other must be caught here, not discovered live.
 """
 import base64
