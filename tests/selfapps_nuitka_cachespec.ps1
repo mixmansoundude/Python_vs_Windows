@@ -352,14 +352,16 @@ print("safety done", flush=True)
         $dSafe.afterColdOk = Test-Output $r
 
         # a second copy started while the first still runs (it holds files in the folder open)
-        $a = Start-App -Exe $exe -ArgText '10'
+        $a = Start-App -Exe $exe -ArgText '20'
         Start-Sleep -Milliseconds 2500
         $dSafe.firstStillRunning = (-not $a.Proc.HasExited)
         $rb = Wait-App -H (Start-App -Exe $exe)
         $rc = Wait-App -H (Start-App -Exe $exe)
         $dSafe.firstStillRunningAfter = (-not $a.Proc.HasExited)
         $ra = Wait-App -H $a
-        $dSafe.overlapOk = ((Test-Output $ra) -and (Test-Output $rb) -and (Test-Output $rc) -and $dSafe.firstStillRunning)
+        # Both checks are needed: the first copy must still be running when the second and third have finished, or
+        # nothing overlapped.
+        $dSafe.overlapOk = ((Test-Output $ra) -and (Test-Output $rb) -and (Test-Output $rc) -and $dSafe.firstStillRunning -and $dSafe.firstStillRunningAfter)
 
         # a launch killed in the middle of unpacking, then a normal launch
         $attempts = @()
@@ -368,6 +370,8 @@ print("safety done", flush=True)
         foreach ($i in 1..5) {
             $entry = [ordered]@{ attempt = $i }
             $entry.removed = Remove-Folder $safeFolder
+            # A folder that could not be removed means this launch would not unpack, so the attempt proves nothing.
+            if (-not $entry.removed) { $recoveryOk = $false }
             $h = Start-App -Exe $exe
             $partial = $false
             $watch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -403,7 +407,7 @@ print("safety done", flush=True)
     }
 
     $safePass = [bool]($dSafe.nuitkaUsable -and $built -and $dSafe.baselineOk -and $dSafe.folderKept -and
-                       $dSafe.warmConcurrentOk -and $dSafe.coldConcurrentOk -and $dSafe.afterColdOk -and
+                       $dSafe.warmConcurrentOk -and $dSafe.coldRemoved -and $dSafe.coldConcurrentOk -and $dSafe.afterColdOk -and
                        $dSafe.overlapOk -and $dSafe.killRecoveryOk -and ($dSafe.partialKills -ge 1))
     $dSafe.finding = "baseline=$($dSafe.baselineOk) warm=$($dSafe.warmConcurrentOk) cold=$($dSafe.coldConcurrentOk) overlap=$($dSafe.overlapOk) killRecovery=$($dSafe.killRecoveryOk) partialKills=$($dSafe.partialKills)"
     Write-SafetyRow -Pass $safePass -Desc 'Item 72: a static Nuitka unpack folder survives concurrent launches, an overlapping launch and a launch killed mid-unpack' -Details $dSafe

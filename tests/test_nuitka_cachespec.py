@@ -83,8 +83,10 @@ def subroutine_problems(batch_text):
     if snippet is None:
         found.append("the subroutine has no '%HP_PY%' -c \"...\" token command")
     else:
-        if "%" in snippet or '"' in snippet:
-            found.append("the Python snippet holds a percent sign or a double quote, which cmd would parse")
+        # The pattern above stops at the first double quote, so a snippet can never hold one; only a percent
+        # sign can reach this check (cmd pairs percent signs across the whole line).
+        if "%" in snippet:
+            found.append("the Python snippet holds a percent sign, which cmd would parse")
         for needle in ("os.getcwd()", ".lower()", "sha256", "[:12]"):
             if needle not in snippet:
                 found.append("the Python snippet does not use %s" % needle)
@@ -218,8 +220,8 @@ class Subroutine(unittest.TestCase):
         self.assertEqual(subroutine_problems("echo hi\n"), ["expected exactly one :nuitka_cache_arg label"])
 
     def test_a_percent_in_the_snippet_is_caught(self):
-        bad = GOOD_BATCH.replace("print(", "print(\"%CD%\", ")
-        self.assertTrue(any("snippet" in p for p in subroutine_problems(bad)))
+        bad = GOOD_BATCH.replace("print(", "print('%CD%', ")
+        self.assertTrue(any("percent sign" in p for p in subroutine_problems(bad)))
 
     def test_an_unvalidated_token_is_caught(self):
         bad = GOOD_BATCH.replace("findstr /r /x", "findstr /r")
