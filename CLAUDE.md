@@ -807,22 +807,6 @@ the original symptom (see that doc's "CI-first testing policy").
   row (Nuitka skipped cleanly on an unsupported Python) is still worth adding, since the next
   Python minor will repeat this.
 
-### Item 89: the dependency lists are merged, not chosen between (filed 2026-10-23 from the maintainer's answer to open question 3)
-
-- **Item 89 (in progress; README REQ-005.1 rewritten; red tests first, fix second, one PR)**: the maintainer decided that
-  PEP 723 header, `pyproject.toml` and `requirements.txt` are merged with the existing rank settling conflicts, and
-  that after a good run `requirements.txt` and the header both hold the merged list; a cold first run is a union and a
-  later run keeps the user's changes since the last good run (an add is added everywhere, a removal from a list the
-  bootstrapper wrote is removed everywhere, an edited pin beats the older pins without being called a conflict).
-  Built as `tools/dep_merge.py` (`HP_DEP_MERGE`), `:dep_merge_inputs` after the PEP 723 extraction, the removal through
-  `uv remove --script`, the records written by `:dep_merge_snapshot` from `:success`. Rows: `self.depsource.*`
-  (`all_three`, new `requirements_pyproject` and `conflict`), `self.pep723.pyproject.merge` (was `.override`),
-  `self.depmerge.later.*`, `self.realapp.edit_rerun`. Consequences recorded in the README notes: a folder with no record
-  is cold on its first run after the change; a package deleted from one list while `pyproject.toml` still lists it comes
-  back with a message. **Follow-up not built here**: the Item 65 runtime-install offer still edits no file for a
-  `pyproject` or `pep723` source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts; simplifying
-  that is a separate item (needs the coordinator's number).
-
 ### Item 90: bump the GitHub Actions pins by hand, one action per pull request (filed 2026-10-24)
 
 - **Item 90 (small each, mechanical; from the October 2026 scan, `docs/open-questions.md` Q5 still open)**:
@@ -844,6 +828,24 @@ the original symptom (see that doc's "CI-first testing policy").
   re-read the GitHub Actions data-passing entry in `docs/agent-lessons-learned.md` (`merge-multiple`). Every open
   one touches `batch-check.yml`, which lane 1's aggregate-gate edit owns, so those wait for it to merge. Remove this
   item when every pin is on its latest major.
+
+### Item 91: the runtime-install offer edits requirements.txt for every dependency source (filed 2026-10-24; follow-up of Item 89, approved by the coordinator)
+
+- **Item 91 (small; red test first, one PR; claimed by the test-suite thread)**: `:runtime_install_offer`
+  (Item 65 slice 2) adds an installed package to `requirements.txt` only when `DEP_SOURCE` is neither `pyproject` nor
+  `pep723` (`HP_RTI_EDITS` in `run_setup.bat`), because before Item 89 those two sources were copied over `requirements.txt` on
+  every run and an appended line was lost. Since Item 89 a list's change since the last run is kept by the merge, so the
+  exception has no reason left: the user who says yes still has to add the package by hand to a file the bootstrapper
+  names. Shape: always append (drop `HP_RTI_EDITS`, the `:rti_not_edited` branch and the second prompt wording), say in the
+  prompt and the log that `requirements.txt` gets the package, and leave `pyproject.toml` and the header to the existing
+  merge (`pyproject.toml` is never rewritten). README REQ-018.18
+  loses its `pyproject.toml`/header exception. Rows: `self.runtime.install.pyproject` flips from "left untouched, user told"
+  to "requirements.txt gains the line, `pyproject.toml` unchanged, a second run in the same folder keeps the package and
+  asks nothing", plus the same for a PEP 723 header source (`tests/selfapps_runtime_install.ps1`, real lane, gating);
+  `tests/test_runtime_module_scan.py` lines that pin `HP_RTI_EDITS` change with it. Read first: `:dep_merge_snapshot`
+  copies `requirements.txt` as it stands at `:success`, so the appended line is part of the record and stays as an
+  ordinary entry; whether the header receives it on the next run through the merged-list write-back is what the new
+  rows must show, not assume. `HP_RUNTIME_MODULE_SCAN` has little payload headroom (354 characters).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

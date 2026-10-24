@@ -378,7 +378,8 @@ using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever 
   `FileShare.Read` and requires that log line, which is only written when the surviving file was read and named a module).
 - `both`: PyInstaller builds and verifies as usual, then `:offer_optimized_build` skips the question
   (`goto :optbuild_both`; the override is the consent, same reasoning as `HP_PVW_KNOWN_IDEMPOTENT`, and the
-  log line says the program starts once more for up to 30 seconds) and continues into the unchanged
+  log line says the program starts once more for up to 30 seconds; README REQ-018.35 and REQ-018.36 state both, the
+  maintainer's answer of 2026-10-24, so a change to either needs the README shalls changed with it) and continues into the unchanged
   build-to-temp, verify, swap-on-success path, so a verified EXE is never replaced by an unverified one. It is
   skipped, with a log line, when the verification run did not exit 0.
 - System-Python consent: `:system_build_consent_gate` words its question by `HP_BUILDER` (`goto :sbcg_nuitka_text`

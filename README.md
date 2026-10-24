@@ -289,8 +289,8 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
   > - REQ-009.19: the interpreter verification is skipped whenever `dist\<name>.exe` exists, so an old EXE that
   >   survived a failed build would otherwise be started and reported as this build's verification.
   > - REQ-009.20: the setting is taken as the user's request for the optimized build, so the question that
-  >   otherwise comes first is not asked, and the log says the program starts once more for up to 30 seconds.
-  >   REQ-018.2 and REQ-018.9 do not yet say this (open question 4 in `docs/open-questions.md`).
+  >   otherwise comes first is not asked, and the log says the program starts once more for up to 30 seconds
+  >   (REQ-018.35 and REQ-018.36 state the consent and the log line).
   > - When the system-Python build consent of REQ-014 is asked under `nuitka`, its question names Nuitka, not
   >   PyInstaller, as the tool it would install.
 
@@ -695,7 +695,8 @@ bootstrapper should therefore run the program once per invocation and should ask
   through one launch method, except for a further run the user has consented to under REQ-018.2.
 - **REQ-018.2** [critical] The bootstrapper **shall** obtain the user's explicit consent, in a prompt that names
   the risk that the program may not be safe to run twice, before any run beyond the single automatic run,
-  whether a re-run or a run through the other launch method.
+  whether a re-run or a run through the other launch method, except a run that the user has requested with a
+  setting under REQ-018.35.
 - **REQ-018.3** [major] The bootstrapper **shall**, when a current, already-verified EXE exists (the sources are
   unchanged since it was built), start that EXE directly, with no prompt, no console interaction of its own and
   no time limit; this start is the invocation's single run.
@@ -714,7 +715,7 @@ bootstrapper should therefore run the program once per invocation and should ask
   idempotency risk, and declining **shall** leave the verified EXE and the post-flight guidance in place.
 - **REQ-018.9** [critical] The bootstrapper **shall**, in a non-interactive run, decline each elective offer
   (the post-execution checkpoint, the optimized build, the missing-package install and the last-chance offer)
-  without waiting for input.
+  without waiting for input, except a run that the user has requested with a setting under REQ-018.35.
 - **REQ-018.10** [major] The bootstrapper **shall** read the error output of each run it makes (the EXE
   verification run, the interpreter run and the optional second run) whatever the exit code, and **shall**, when
   that output shows `ModuleNotFoundError: No module named X` for an X that is not installed in the environment,
@@ -792,6 +793,11 @@ bootstrapper should therefore run the program once per invocation and should ask
   **shall** be the invocation's single run (REQ-018.1).
 - **REQ-018.34** [major] The bootstrapper **shall**, when the cached EXE of REQ-018.3 cannot be started by Windows
   at all, discard it and rebuild it as for a stale EXE, without waiting for the file that could not be started.
+- **REQ-018.35** [major] The bootstrapper **shall**, when a super-user setting whose documented purpose is a
+  further run of the program is set (`PVW_BUILDER=both`, REQ-009.20), take the setting as the user's explicit
+  consent under REQ-018.2 to that run, in a non-interactive run as in an interactive one.
+- **REQ-018.36** [minor] The bootstrapper **shall**, before a run that REQ-018.35 covers starts, say in the log
+  that the program starts once more and for how long at most.
 
 > **Notes (non-normative).**
 > - Rationale: the bootstrapper cannot know whether the program is safe to run twice, so the run that verifies
@@ -831,6 +837,13 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   that Windows refuses to start; before this was handled the check waited for a process that never ran, and the
 >   step ran until the job was cancelled. The reason line is the one Windows reports (for example "The specified
 >   executable is not a valid application for this OS platform."), cut to one printable line.
+> - REQ-018.35 and REQ-018.36: decided by the maintainer on 2026-10-24 (option A of what was open question 4). Setting
+>   `PVW_BUILDER=both` is the request for the optimized build, the same kind of consent as the name of
+>   `HP_PVW_KNOWN_IDEMPOTENT` (REQ-005.13), so the optimized-build question of REQ-018.2 is not asked and the offer of
+>   REQ-018.9 is not declined. The build still starts the program once more for up to 30 seconds to check the new
+>   EXE, and only a verified EXE replaces the old one (REQ-009.20). `PVW_BUILDER=both` is the only such setting
+>   today. Verified by `self.builder.override`, scenario `both_forcefail` (no question, the log line of
+>   REQ-018.36), which runs with the CI lane marker set, one of the three signals of a non-interactive run.
 
 ---
 
