@@ -25,8 +25,10 @@
 #   fastpath_rerun  the unchanged folder reuses the EXE (log line, same EXE timestamp, no reinstall, no pipreqs scan)
 #                   and the EXE really ran again (its token file was deleted first and is written again)
 #   edit_rerun      an edit to requirements.txt is noticed (the log says the cached EXE is not reused), the EXE is
-#                   rebuilt and runs, the run records the dependency source it used, and what was installed matches
-#                   that source (termcolor, the appended line, is installed exactly when the source is requirements.txt)
+#                   rebuilt and runs, and the appended line (termcolor) is installed, stays in requirements.txt and is
+#                   written into the PEP 723 header run 1 left, whatever dependency source the run records (README
+#                   REQ-005.1: the lists are merged, and a change since the last run is the user's and is kept; before
+#                   Item 89 the header outranked the edit and the row only checked that the run agreed with itself)
 #
 # derived requirement: ids stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py scans text).
 #
@@ -392,18 +394,21 @@ $notReusingOk = ($notReusing3 -eq $expectNotReusing)
 $rebuilt3 = ($exe3Ticks -gt $exe2Ticks)
 $termcolor3 = $installed3 -contains 'termcolor'
 $headerAfter3 = (Read-Text (Join-Path $workDir 'main.py')) -match '(?m)^#\s*///\s*script'
-$editConsistent = ($termcolor3 -eq ($source3 -ceq 'requirements.txt'))
 $reqNames3 = @(Get-ListedNames -Path $reqPath)
+$termcolorInReq3 = ($reqNames3 -contains 'termcolor')
+$termcolorInHeader3 = (Read-Text (Join-Path $workDir 'main.py')) -match '(?m)^#\s+"termcolor[\s">=<~!,;\[]'
+$editConsistent = ($termcolor3 -and $termcolorInReq3 -and $termcolorInHeader3)
 $pass = ($run3.Exit -eq 0) -and ($state3 -ceq 'ok') -and $notReusingOk -and $rebuilt3 -and ($smoke3 -eq 0) -and ($token3 -ceq 'realapp-ok total=32 rows=3') -and ($source3 -ne '') -and $editConsistent
 if (-not $pass) { $anyRed = $true }
 Write-NdjsonRow ([ordered]@{
     id = 'self.realapp.edit_rerun'; req = 'REQ-007'; pass = [bool]$pass
-    desc = 'After requirements.txt is edited the cached EXE is not reused, the EXE is rebuilt and runs, and what is installed matches the dependency source the run recorded'
+    desc = 'After requirements.txt is edited the cached EXE is not reused, the EXE is rebuilt and runs, and the added package is installed and kept in both requirements.txt and the PEP 723 header'
     details = [ordered]@{
         exitCode = $run3.Exit; seconds = $run3.Seconds; state = $state3; notReusingLogged = [bool]$notReusing3; expectNotReusing = $expectNotReusing
         rebuilt = [bool]$rebuilt3; smokeExit = $smoke3; token = $token3; recordedSource = $source3
         termcolorInstalled = [bool]$termcolor3; editConsistent = [bool]$editConsistent
-        termcolorInRequirementsAfter = [bool]($reqNames3 -contains 'termcolor'); headerPresentInMainPy = [bool]$headerAfter3
+        termcolorInRequirementsAfter = [bool]$termcolorInReq3; termcolorInHeaderAfter = [bool]$termcolorInHeader3
+        headerPresentInMainPy = [bool]$headerAfter3
     }
 })
 
