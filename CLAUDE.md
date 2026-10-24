@@ -872,96 +872,119 @@ rather than relying on manual memory.
 
 ### GitHub Actions / CI health (action pins, deprecations, lint)
 
-- **Last scanned**: 2026-07-07.
-- **Findings**: all action pins across `.github/workflows/*.yml` are on their latest majors
-  (`checkout@v5`, `cache@v5`, `upload-artifact@v6`, `download-artifact@v6`, `github-script@v8`,
-  `codeql-action@v3`, `configure-pages@v6`, `upload-pages-artifact@v5`, `deploy-pages@v5`) --
-  nothing to bump. Two informational, non-actionable GitHub-runner-side/action-internal notices
-  observed in CI logs, neither with any fix available on this repo's side: (1) "Node.js 20 is
-  deprecated... forced to run on Node.js 24" against `download-artifact@v6` (already latest --
-  upstream runner behavior); (2) a Node `[DEP0040] DeprecationWarning: The punycode module is
-  deprecated` emitted from inside `actions/deploy-pages@v5`'s own bundled JS during the "Publish
-  diagnostics to Pages" job -- originates inside the action's own execution, not this repo's
-  code, and resolves whenever the action's maintainers update their bundled dependencies.
-  `actionlint` and `yamllint` both clean. `.github/dependabot.yml` now exists (`github-actions`
-  ecosystem, weekly schedule) -- see Closed Backlog.
-- **Going forward**: confirm Dependabot is actually opening PRs against the `github-actions`
-  ecosystem (not just present but inert) at the next scan.
+- **Last scanned**: 2026-10-24.
+- **Findings**: the pins are no longer all on their latest majors (the 2026-07 sweep said they
+  were; `upload-artifact` v7 shipped in 2026-02, so that sweep may already have been wrong). Read
+  from each action's GitHub releases page (the page shows day and month, no year, so read these as
+  indicative): in use -> latest: `checkout` v5 -> v7, `cache` v5 -> v6, `upload-artifact` v6 -> v7,
+  `download-artifact` v6 -> v8, `github-script` v8 -> v9, `codeql-action` v3 -> v4 (v3 still gets
+  releases next to v4). Current: `configure-pages@v6`, `upload-pages-artifact@v5`,
+  `deploy-pages@v5`. No pin was edited in this scan: the artifact actions' majors change behavior
+  CI relies on (artifact naming, `merge-multiple`, hash checks), so each bump is its own CI-proven
+  PR, one action at a time. **Dependabot is inert**: `.github/dependabot.yml` landed 2026-08-17 and
+  not one Dependabot PR or `dependabot/*` branch has existed since (every PR checked by author and
+  head branch). The reason is not visible from a session (repository settings), so it is
+  `docs/open-questions.md` Q5. Notices unchanged: "Node.js 20 is deprecated ... forced to run on
+  Node.js 24" against `download-artifact@v6` (now also explained by the pin being behind); the
+  punycode notice was not seen in the sampled run. `actionlint` and `yamllint` clean.
+- **Going forward**: once Q5 is answered, either Dependabot's first PRs arrive or the pins are
+  bumped by hand. Re-read the latest majors every scan: from a session `gh` and `curl` cannot reach
+  other repositories, but `WebFetch` of `https://github.com/<owner>/<repo>/releases` works.
 
 ### Persisted CI run-page warnings
 
-- **Last scanned**: 2026-07-06.
-- **Findings**: reviewed the latest completed runs (through run #1523); no warnings recur across
-  multiple runs beyond the Node.js-20-deprecation notice already covered above.
+- **Last scanned**: 2026-10-24.
+- **Findings**: annotations of every job of the latest full `main` run (40055643200). (1) NEW on
+  all seven Windows matrix jobs: `Environment variable 'INPUT_PATH' exceeds the maximum supported
+  length` (53197 against 32766): the `test-logs` upload step's `path:` list, about 55k characters
+  today and two lines per file. Nothing is lost today: 160 of the 233 forward-slash patterns that
+  sit past character 32766 matched files in the `real` lane's `test-logs` artifact (the rest are
+  scenario-specific). If a late scenario's log ever goes missing from an artifact, suspect this
+  first, and prefer one directory pattern per scenario over per-file lines before the list doubles.
+  (2) Benign by design, shown as red "failure" annotations: the aggregate-verdict fixtures
+  (`expected lane(s) never reported a verdict`, `bogus-lane`) and the cache self-heal fixtures
+  (`Conda binary health check failed`) on the `real` job, and `Artifact not found for name:
+  iterate-logs-...` in "Publish diagnostics to Pages" (a `continue-on-error` download when the
+  model quick-fix did not run). (3) The `ubuntu-latest will migrate to Ubuntu 26` notice on the
+  Linux jobs: informational, but a Linux job that breaks in the next weeks should be checked
+  against it first.
 - **Going forward**: look for anything recurring across several runs, not one-off transient
   network blips (e.g. the `conda.anaconda.org` 403 already tracked separately as the
   conda-create transient-retry gap above).
 
 ### CI lane gating maturity
 
-- **Last scanned**: 2026-07-08 (added `ndjson-registry-check` to the watch list; see below).
-- **Findings**: only `real` and `conda-full` gate PR merges; `cache`, `justme-test`, `uv`,
-  `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` are deliberately non-gating (see AGENTS.md
-  policy and this file's Closed-Backlog history for why each was made so) -- not a bug. The
-  `ndjson-registry-check` job (a separate advisory job, not a matrix lane) is also
-  `continue-on-error: true` -- as of run #1555 it shows a clean PASS in real CI for the first
-  time after its Python-source-scanning gap closed (see Closed Backlog), but is being watched
-  for soak time before any gating discussion, same as the two lanes below.
-- **Going forward**: `uv` and `justme-test` are the two most mature/stable of the six non-gating
-  lanes -- re-assess each scan whether either has soaked long enough (no flakiness, no
-  lane-specific caveats left) to graduate to gating. Leave `contract-uv`/`contract-uv-fail`/
-  `uv-dl-fallback` non-gating indefinitely (their non-gating status is explicitly load-bearing,
-  not provisional). `ndjson-registry-check` needs several more real-CI runs at clean PASS before
-  even considering gating -- one green run is not a trend.
+- **Last scanned**: 2026-10-24.
+- **Findings**: policy unchanged: only `real` and `conda-full` gate PR merges on their own;
+  `cache`, `justme-test`, `uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` are
+  non-gating (see AGENTS.md and the Closed Backlog for why each was made so). Evidence for Item
+  35's soak rule: on the 11 most recent `main` push runs (2026-10-17 to 2026-10-24, run
+  38985194530 through 40055643200) the aggregate step succeeded and "Enforce aggregate self-test
+  verdict" was `skipped` every time, i.e. eleven consecutive complete matrices with no failing row
+  on any of the eight lanes by the aggregate's own verdict, and `ndjson-registry-check` succeeded
+  on all eleven. That is the "several consecutive complete green matrices" Item 35 asks for before
+  removing `continue-on-error: true` from the aggregate gate; it is a one-line change in a step
+  that belongs to the merge-gate owner, not made in this scan.
+- **Going forward**: `uv` is the slowest lane (see the wall-clock entry) and its rows depend on the
+  network (uv, Miniconda, python.org downloads), so a required check of its own would add flake
+  risk the aggregate gate already covers; do not promote it separately. Leave
+  `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` non-gating indefinitely (their non-gating
+  status is explicitly load-bearing, not provisional). `ndjson-registry-check` has now had a long
+  clean run; gate it only after the aggregate gate is, one change at a time.
 
-### CI wall-clock duration (conda-full lane growth)
+### CI wall-clock duration (slowest-lane growth)
 
 This tracks a genuine periodic-reassessment concern, not a one-time backlog item -- moved here
 2026-07-25 from Active Backlog (it was originally filed as a backlog item, but "worth periodic
 reassessment, no action planned" is exactly what this section exists for, and letting it grow
 stale as a single never-closed backlog entry was the wrong home for it).
 
-**What this tracks and why it matters**: `conda-full` (the lane that forces every dependency
-install through real conda, no fallbacks -- the slowest of the 8 matrix lanes, since conda's own
-dependency solver is materially slower than pip/uv) is the dominant single contributor to overall
-CI wall-clock time, which grew from ~20 min to ~1.5h historically. Since all 8 matrix lanes run in
-parallel, the WHOLE workflow's wall-clock is bounded by whichever lane is slowest -- almost always
-`conda-full` -- so this lane's own growth directly sets how long every contributor waits for a PR
-to go green. This matters for development velocity (a slower feedback loop costs real time on
-every single PR), not correctness -- nothing about the lane itself is broken.
+**What this tracks and why it matters**: all 8 matrix lanes run in parallel, so the WHOLE
+workflow's wall-clock is bounded by whichever lane is slowest, and that lane's growth directly sets
+how long every contributor waits for a PR to go green (development velocity, not correctness --
+nothing about the lanes is broken). Through 2026-07 that lane was `conda-full` (real conda solves
+are slower than pip/uv); as of 2026-10-24 it is `uv`.
 
-- **Last scanned**: 2026-07-25. Pulled created/updated timestamps for the 18 most recent
-  successful full-workflow runs on this branch via the GitHub API (`workflow_runs` list) --
-  overall wall-clock ranged 85-110 minutes, averaging ~92 minutes, consistent with the original
-  ~80 min observation and not showing runaway growth since. No single-lane breakdown gathered yet
-  (would need per-job, not per-run, timestamps to isolate `conda-full` specifically from the
-  other 7 lanes running alongside it).
-- **Findings**: likely accumulated feature/test-scenario growth over time (more selftest scripts
-  each doing a real `conda create`/`conda install`), not a regression traceable to any single
-  change -- no evidence of a single fixable root cause has surfaced across multiple scans.
-- **Going forward**: re-check the same 18-run wall-clock sample each scan; flag if the average
-  climbs meaningfully above ~92 minutes (would suggest either unchecked growth or an actual
-  regression, not just noise) rather than plateauing. If a real investigation is ever warranted,
-  it needs per-job (not per-run) timestamps to isolate `conda-full`'s own duration from the other
-  7 lanes -- not yet gathered, since no action has been planned either way.
+- **Last scanned**: 2026-10-24. The 18 most recent successful full runs on `main` (2026-10-11 to
+  2026-10-24, `workflow_runs` list, `run_started_at` to `updated_at`): 70-139 minutes, average
+  102 (2026-07-25: 85-110, average 92). Two regimes: 70-93 minutes through the middle of 2026-10-17,
+  125-139 minutes since. Per-job durations (the breakdown the July scan lacked), run 40055643200
+  (125 min): `uv` 122, `real` 97, `conda-full` 56, `justme-test` 37, `cache` 37, `contract-uv-fail`
+  28, `uv-dl-fallback` 27, `contract-uv` 19, Pages publish 2. For comparison, run 39032331726 (91
+  min): `uv` 91, `conda-full` 73, `real` 60.
+- **Findings**: the premise above changed. `conda-full` got faster (73 to 56), `real` grew from 60
+  to 97 minutes (the gating scenarios added to it since 2026-10-11), and `uv` (91 to 122) now sets
+  the wall-clock. Cause is accumulated scenarios on the `uv` lane (many non-gating rows build
+  EXEs, download Miniconda or run Nuitka), not one change. No single fixable root cause found.
+- **Going forward**: re-check the same 18-run sample and the per-job table each scan (`gh api
+  repos/.../actions/runs/<id>/jobs`). A new `real`-lane step only costs wall-clock once `real`
+  passes `uv`'s duration, so add heavy scenarios to the lane with the most headroom; the
+  embed-version scenario (three builds) was added to `real` for that reason in the 2026-10-24
+  scan. Flag if the average climbs above ~110 minutes outside a queueing spike, or if `uv`
+  passes 150 minutes.
 
 ### pipreqs ecosystem status
 
-- **Last scanned**: 2026-07-04.
-- **Findings**: pipreqs (bndr/pipreqs) still stagnant/maintenance-only as of this scan; no new
-  PyPI release since 0.5.0; still correctly pinned to 0.4.13 here (see "pipreqs pin rationale"
-  above); `self.stub.pipreqs_version_fail` (Closed Backlog) confirms the warnfix safety net
-  covers total pipreqs unavailability regardless of the exact failure mode.
+- **Last scanned**: 2026-10-24.
+- **Findings**: pipreqs (bndr/pipreqs) still stagnant/maintenance-only; PyPI's newest release is
+  still 0.5.0 (uploaded 2024-02-18, `Requires-Python >=3.8.1,<3.13`), none since; still correctly
+  pinned to 0.4.13 here (see "pipreqs pin rationale" above); `self.stub.pipreqs_version_fail`
+  (Closed Backlog) confirms the warnfix safety net covers total pipreqs unavailability regardless
+  of the exact failure mode.
 - **Going forward**: check whether pipreqs has a new maintainer/release that changes the
   `<3.13` Requires-Python situation, or whether it's been removed from PyPI (extremely unlikely)
   -- revisit the internalization decision above if either happens.
 - **Next-pin probe** (add to each scan going forward, see "Next-pin probe concept" below for the
   general idea this instantiates): under the CURRENT latest target Python (not an old ambient
-  one -- this matters, see the concept note), run an unpinned `pip install pipreqs` (or
-  `pip index versions pipreqs`) and check whether the resolved version is still 0.4.13. If a
-  newer version resolves cleanly, pipreqs's own `Requires-Python` ceiling has moved -- open a
-  dedicated loop to re-evaluate the pin (do not bump it inline during a routine scan; re-pinning
-  needs its own verification pass, mirroring how the original 0.4.13 pin was chosen).
+  one -- this matters, see the concept note), run an unpinned `python -m pip install --dry-run
+  pipreqs` and check whether the resolved version is still 0.4.13. If a newer version resolves
+  cleanly, pipreqs's own `Requires-Python` ceiling has moved -- open a dedicated loop to
+  re-evaluate the pin (do not bump it inline during a routine scan; re-pinning needs its own
+  verification pass, mirroring how the original 0.4.13 pin was chosen). **Use pip, not uv, for this
+  probe**: on 2026-10-24 `uv pip install --dry-run pipreqs` resolved 0.5.0 under both Python
+  3.13.16 and 3.15.0b4 although its metadata excludes both, so uv cannot answer the question; pip
+  under 3.15.0b4 resolved 0.4.13 (probe result: pin holds). `pip index versions pipreqs` is a valid
+  shortcut only on a Python 3.13 or newer, where it hides 0.5.0 for the same reason.
 
 ### Embed version table (REQ-009 Tier 5, `tools/embed_pyver_check.py`)
 
