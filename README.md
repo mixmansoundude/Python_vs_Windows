@@ -320,20 +320,54 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
 
 #### Source Resolution (authoritative order)
 
-- REQ-005.1 -- Detect requirements source (priority order): Resolve dependencies using the following order:
+- REQ-005.1 -- Detect requirements sources (merged, with a fixed rank for conflicts): The three places a program can
+  declare its dependencies are one set of inputs, not three alternatives. Ranked from highest, they are:
   1. PEP 723 inline script metadata (`# /// script`)
-     - If present, valid, and non-empty -> authoritative
-     - Parsed before any file-based source
-     - If malformed or empty: `[WARN] PEP 723 block found but dependency list is empty or malformed; falling back` -> fall through
-  2. `pyproject.toml` `[project].dependencies`
-     - If present and non-empty -> authoritative; overrides `requirements.txt`
-  3. `requirements.txt`
-     - If present and non-empty -> authoritative
-  4. `requirements.auto.txt` (pipreqs output)
-     - Used only if no authoritative source exists
-     - Not authoritative (best-effort inference)
-  5. No dependencies
-     - Continue with empty set if all sources unavailable
+     - Used when present, valid and non-empty; parsed before any file-based source
+     - If malformed or empty: `[WARN] PEP 723 block found but dependency list is empty or malformed; falling back` -> not used
+  2. `pyproject.toml` `[project].dependencies` (used when present and non-empty)
+  3. `requirements.txt` (used when present and non-empty)
+  4. `requirements.auto.txt` (pipreqs output): used only when none of the three above is used; best-effort inference
+  5. No dependencies: continue with an empty set when everything above is unavailable
+
+  The bootstrapper **shall**, as the numbered rules below say, merge the inputs of items 1 to 3 into one dependency set,
+  install that set, and leave the same set in `requirements.txt` and in the PEP 723 header. The rank only decides a
+  conflict about one package. `DEP_SOURCE` in the setup log and `~dependency_source.txt` name the highest ranked input
+  that contributed.
+  - REQ-005.1.1 -- Cold first run: when a program folder has no record of an earlier run (no `~dep_base.*.txt` file), the
+    bootstrapper **shall** install the union of the packages of every used input. A package that only one input names is
+    installed and kept in `requirements.txt`.
+  - REQ-005.1.2 -- Conflict: when two inputs name the same package with different version constraints, the
+    bootstrapper **shall** use the entry of the highest ranked of them and **shall** print one
+    `[WARN] Conflict for <package>` line that names each input's entry, the entry used and the input it came from. A bare name
+    is not a conflict with a constrained entry: the constrained entry is used.
+  - REQ-005.1.3 -- Honest wording: the bootstrapper **shall not** say on the console that an input is used, or that it
+    overrides another, unless that input's packages are part of the set the run installs. An input that is left out
+    says why (the malformed or empty case above).
+  - REQ-005.1.4 -- Agreement after a good run: after a run in which every dependency installed, the bootstrapper
+    **shall** leave `requirements.txt`, and with the uv provider the PEP 723 header of the entry file, holding the merged
+    set, and **shall** record each input as it then stands (`~dep_base.requirements.txt`, `~dep_base.pyproject.txt`,
+    `~dep_base.pep723.txt`) so the next run can tell the user's changes from its own. A failed or partial install records
+    nothing, so the next run sees the same changes again.
+  - REQ-005.1.5 -- Later runs: when a record exists, the bootstrapper **shall** treat a difference between an input and
+    its record as the user's change and **shall** keep it. A package added to any input is installed and added to the
+    others. A package removed from `requirements.txt` or from a PEP 723 header that the bootstrapper wrote is removed from
+    the others too, and from the header by `uv remove --script`; the console says `Removed <package>` with the input it was
+    removed from. A pin the user edited replaces the older pins in the other inputs and is not reported as a conflict. A
+    change to any input is installed, never skipped as already satisfied.
+  - REQ-005.1.6 -- Removal that cannot be applied: `pyproject.toml` is never rewritten by the bootstrapper, so a package
+    removed from another input while `pyproject.toml` still lists it stays everywhere, and the console says
+    `<package> was removed from <input> but pyproject.toml still lists it, so it stays` and names the file to edit. A header
+    that the bootstrapper did not write is only ever added to, never removed from.
+  - REQ-005.1.7 -- Failure of the merge: when the merge cannot run, the bootstrapper **shall** say so with a `[WARN]` and
+    use the highest ranked input alone, exactly as it did before the merge existed. It **shall** not stop the run.
+  - Notes (not requirements): a folder that was last run before the merge existed has no record, so its first run
+    after the change is a cold run (the union). The run that deletes a package from one input while another input the
+    bootstrapper does not rewrite still lists it brings the package back, with the message above; that is the price of
+    never removing something the user wrote elsewhere. Packages removed from every input stay installed in the
+    environment, which is harmless. Tests:
+    `tests/test_dep_merge.py` (unit), `self.depsource.*` (cold runs), `self.depmerge.later.*` (later runs),
+    `self.pep723.pyproject.merge`, `self.realapp.edit_rerun`.
 
 ---
 
@@ -398,7 +432,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 ---
 
 - REQ-005.5 -- Diff tracking: Log differences between:
-  - Authoritative source (PEP 723, `pyproject.toml`, or `requirements.txt`)
+  - The merged dependency set (REQ-005.1: PEP 723, `pyproject.toml` and `requirements.txt` together)
   - `requirements.auto.txt`
 
 ---
@@ -514,7 +548,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
 
 ### Design Principles
 
-- Authoritative hierarchy is deterministic: PEP 723 > requirements.txt > pipreqs > none
+- Declared inputs are merged and the rank settles conflicts deterministically: PEP 723 > pyproject.toml > requirements.txt; pipreqs only when nothing is declared; else none
 - pipreqs is discovery only: Never trusted for completeness or versions
 - No silent fallbacks: All degradations emit explicit warnings
 - Single resolved dependency set: Conda + pip operate on the same inputs
@@ -546,10 +580,8 @@ This section describes the full runtime flow of dependency resolution, installat
 #### Execution Flow Summary
 
 1. Dependency Source Selection
-   - Check PEP 723 metadata first
-   - Else check `pyproject.toml` `[project].dependencies`
-   - Else fall back to `requirements.txt`
-   - Else use `requirements.auto.txt` (pipreqs inference)
+   - Read PEP 723 metadata, `pyproject.toml` `[project].dependencies` and `requirements.txt` and merge them (REQ-005.1)
+   - Else, when none of them is declared, use `requirements.auto.txt` (pipreqs inference)
    - Else empty dependency set
 
 2. Dependency Installation Phase
@@ -745,8 +777,8 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   `docs/open-questions.md`); each is worded in its own requirement until that is settled.
 > - REQ-018.10: a program can print `ModuleNotFoundError` and still exit 0, because a window toolkit catches an
 >   error raised in a button handler, prints it and keeps running. The fast path skips the check because it
->   runs before any interpreter is chosen. `pyproject.toml` and a PEP 723 header are copied over
->   `requirements.txt` on every run, so advice to edit `requirements.txt` would not last for those two sources.
+>   runs before any interpreter is chosen. `pyproject.toml` and a PEP 723 header outrank
+>   `requirements.txt` for a conflict about one package (REQ-005.1), so the advice names the file the run reported as its source.
 > - REQ-018.14 to REQ-018.22: the answer prompt waits 30 seconds, and a quiet run, a CI run and a bare Enter all
 >   mean no. A native DLL that a newly installed conda package needs is not bundled by the rebuild.
 > - REQ-018.23 to REQ-018.27: untimed on purpose, because it is a decision and not a timeout guard. A late
@@ -1295,7 +1327,7 @@ This repo: double-click `run_setup.bat`. It scans the script, builds an isolated
 Deno is built in Rust end to end. This repo uses [uv](https://github.com/astral-sh/uv) -- Astral's Rust-based Python toolchain -- as its preferred, fastest environment provider. Underneath that, it doesn't depend on any single mechanism working: if uv isn't available, it cascades through several independent fallback tiers -- Conda/Miniconda, a checksum-verified embedded Python download straight from python.org, a local `venv`, and, as a last resort with explicit user consent, an unmanaged system Python. No single one of these being blocked or missing takes the whole tool down with it.
 
 **3. Automatic dependency discovery**
-Deno parses import URLs directly from the source file. This repo resolves dependencies in priority order: PEP 723 inline script metadata, then `pyproject.toml`, then `requirements.txt`, and only if none of those exist, a best-effort static-analysis scan (`pipreqs`) to infer what the script imports.
+Deno parses import URLs directly from the source file. This repo merges the dependencies declared in PEP 723 inline script metadata, `pyproject.toml` and `requirements.txt` (the first of those wins a conflict about one package), and only if none of those exist, a best-effort static-analysis scan (`pipreqs`) to infer what the script imports.
 
 **4. Compiling to a standalone executable**
 `deno compile` packages a script into a single distributable binary. This repo does the same in spirit: after setup succeeds, it bundles the app and its environment into a single-file Windows EXE via PyInstaller, so it can be handed to someone else without asking them to set anything up.

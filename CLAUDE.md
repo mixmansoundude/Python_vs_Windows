@@ -77,6 +77,7 @@ tests/
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
+  selfapps_dep_merge_later.ps1 Item 89: what a LATER run does with the dependency lists (delete, add, pin edit, header edit, a package pyproject.toml still lists, an unchanged run); seven `self.depmerge.later.*` rows (real lane, gating; needs the uv header write-back)
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
@@ -191,6 +192,7 @@ This is the deliverable. Treat changes carefully.
    | `HP_PEP723_EXTRACT` | `~pep723_extract.py` | Item 62: extracts the `dependencies` of a PEP 723 `# /// script` block, one per line; accepts the shapes real tools write (CRLF, any `#` spacing, quote style, trailing commas, one-line or multi-line arrays), decodes TOML escapes in double-quoted items, and rejects an array with no closing bracket; a nonzero result leaves no output file (the batch subroutine deletes it); exit 0/1/3 = written/nothing usable/internal error, with a one-line reason on stdout for the setup log; run via `%HP_PY%` from `:extract_pep723_requirements` | `tools/pep723_extract.py` |
    | `HP_RUNTIME_MODULE_SCAN` | `~runtime_module_scan.py` | Item 65 slice 1: reads the stderr of a run that just finished and prints, one per line, each module it names as missing (`No module named 'X'`, top-level name) that the interpreter does not have; skips stdlib names, modules found next to the script, and anything that is not a plain identifier (the batch echoes the names unquoted); exit 0 always except 3 for an internal error; run via `%HP_PY%` from `:scan_runtime_missing_module`; slice 2 adds `--packages` (module to package, conda gets `opencv` for `cv2`) and `--append` (adds to `requirements.txt` unless already declared) for `:runtime_install_offer`, about 354 characters of room left | `tools/runtime_module_scan.py` |
    | `HP_LAST_ERROR_LINE` | `~last_error_line.py` | Item 82 slice 1: writes the last non-blank line of a failed run's stderr to a file, two spaces in front, printable ASCII kept literally (`<`, `>`, `&`, `|`, `%`, `^` included, everything else becomes `?`, cut at 200 characters), so the last-chance offer can show it with `type`; exit 0 written, 1 nothing to show, 3 internal error; run via `%HP_PY%` from `:lc_last_line` | `tools/last_error_line.py` |
+   | `HP_DEP_MERGE` | `~dep_merge.py` | Item 89: merges the dependency lists of requirements.txt, pyproject.toml and a PEP 723 header (a cold run is a union, a later run keeps the user's changes since the `~dep_base.*.txt` records, the rank header > pyproject > requirements.txt settles a conflict about one package); writes the merged `requirements.txt`, `~dep_merge.report.txt`, `~dep_merge.removed.txt` and `~dep_merge.changed.txt`; exit 0 merged / 1 nothing to merge / 3 internal error (the batch then keeps the highest ranked list alone and warns); run via `%HP_PY%` from `:dep_merge_inputs`, about 708 characters of room left | `tools/dep_merge.py` |
 
    Each payload's canonical `tools/` source has a `PayloadSync` unit test asserting
    byte-equality between the embedded base64 and the source file (see the Testing section
@@ -305,6 +307,7 @@ Test files and what they cover:
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
 | `test_builder_override.py` | Item 71: the PVW_BUILDER override's parse lines, the fallback guard before the Nuitka install, the nuitka branch of the build block, the offer guards before the prompt, the fast-path note and the interconnect entry (static scans) |
 | `test_toml_oracle.py` | Item 79: tomllib as the oracle for the two hand-written TOML array readers: `pyproj_deps.py` (with and without tomllib, LF and CRLF) and `pep723_extract.py` (against the PEP's own regex plus tomllib in `tests/toml_oracle_check.py`) over a PEP 508 corpus (markers in both quote styles, escapes, URLs, comments); an unclosed array must be refused (exit 2 / exit 1), not read as a shorter list |
+| `test_dep_merge.py` | Item 89: dependency-list merge (cold run is a union, rank settles a conflict, bare name never beats a constrained entry, later runs keep the user's add / delete / pin edit, a package pyproject.toml still lists stays, the changed flag, a failing helper exits 3, the batch wiring and message wording, Python 3.9 grammar guard, HP_DEP_MERGE payload sync) |
 | `test_autopep_merge.py` | REQ-005.12 / Item 88: autopep723 name extraction, dedup against `requirements.txt`, newline repair, `main()` dispatch, and the local-module filter (sibling `.py` files and folders in any spelling are skipped and logged, ignored and hidden folders are not walked, a real package is still added), HP_AUTOPEP_MERGE payload sync |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 
@@ -852,6 +855,22 @@ the original symptom (see that doc's "CI-first testing policy").
   step time makes it non-gating), read where it waits, then make the launch failure end the check with a
   clear message and treat the EXE as unusable (rebuild or fall back to the interpreter run). Related: the
   `Process.Kill()` and bounded-wait notes in `docs/agent-lessons-learned.md`.
+
+### Item 89: the dependency lists are merged, not chosen between (filed 2026-10-23 from the maintainer's answer to open question 3)
+
+- **Item 89 (in progress; README REQ-005.1 rewritten; red tests first, fix second, one PR)**: the maintainer decided that
+  PEP 723 header, `pyproject.toml` and `requirements.txt` are merged with the existing rank settling conflicts, and
+  that after a good run `requirements.txt` and the header both hold the merged list; a cold first run is a union and a
+  later run keeps the user's changes since the last good run (an add is added everywhere, a removal from a list the
+  bootstrapper wrote is removed everywhere, an edited pin beats the older pins without being called a conflict).
+  Built as `tools/dep_merge.py` (`HP_DEP_MERGE`), `:dep_merge_inputs` after the PEP 723 extraction, the removal through
+  `uv remove --script`, the records written by `:dep_merge_snapshot` from `:success`. Rows: `self.depsource.*`
+  (`all_three`, new `requirements_pyproject` and `conflict`), `self.pep723.pyproject.merge` (was `.override`),
+  `self.depmerge.later.*`, `self.realapp.edit_rerun`. Consequences recorded in the README notes: a folder with no record
+  is cold on its first run after the change; a package deleted from one list while `pyproject.toml` still lists it comes
+  back with a message. **Follow-up not built here**: the Item 65 runtime-install offer still edits no file for a
+  `pyproject` or `pep723` source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts; simplifying
+  that is a separate item (needs the coordinator's number).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 

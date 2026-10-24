@@ -1147,3 +1147,21 @@ directory/glob mode -- passing a directory hits `IsADirectoryError`, caught and 
 EMPTY result with EXIT CODE 0 (not a failure). Any design invoking it against a directory rather
 than the specific resolved entry file will silently produce zero discovered dependencies with no
 error signal to branch on.
+
+---
+
+## Telling the user's edits from our own output needs a record of what we last wrote (Item 89)
+
+A file that both the user and the bootstrapper write (`requirements.txt`, the PEP 723 header) cannot be merged by rank
+alone: "the header outranks requirements.txt" threw away every later edit to `requirements.txt`, because the header was our
+own output from run 1. The fix is a three-way compare against a **record of the lists as the last good run left them**
+(`~dep_base.*.txt`): a difference is the user's change, and it wins. Rules that kept it safe: (1) take the record only
+after an install that fully succeeded, and keep the old records when a step that was supposed to bring a list up to date
+failed (a header removal that errored), so the next run sees the same change again instead of forgetting it; (2) record a
+list only when we wrote it, because a header the user wrote has no record and is therefore only ever added to; (3) a file
+we never rewrite (`pyproject.toml`) keeps a package alive, so a deletion elsewhere must say so and not silently lose; (4) a
+cache keyed on names (the dep-check) cannot see an edited pin, so the merge raises a changed flag that overrides it;
+(5) any failure of the merge falls back to the previous single-list behavior with a warning, never stops the run. The CI
+proof is a script that runs one folder several times (`tests/selfapps_dep_merge_later.ps1`), because one bootstrap per
+folder (the matrix) can only show a cold run. Removing from a PEP 723 header needs `uv remove --script` (`uv add --script`
+only adds); removing a name that is not in the header exits 2, so only names the merge saw in the header are removed.
