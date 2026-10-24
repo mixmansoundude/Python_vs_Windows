@@ -765,7 +765,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 66, 67, 68, 70, 71, 73, 74, 75, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 73, 74, 75, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -773,13 +773,6 @@ starting any of these. No maintainer decisions are open. Q1-Q11 are decided or r
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-- **Item 65 (Confirmed, medium)**: a runtime `ModuleNotFoundError` in captured stderr is ignored
-  when the run exits 0 (GUI callbacks do this). Slice 1 (name the missing package) is built on PR #487
-  (merged, PR #487; red run `38146234107`, green rows on `real` in runs `38157389535`, `38178273898` and
-  `38878638543`; `HP_RUNTIME_MODULE_SCAN` has little payload room left, see the interconnect doc). Slice 2
-  (auto-install + rebuild) is decided 2026-10-09 (option B): ask consent once before any install, requirements
-  edit, or rebuild; a yes also covers one verification run; a no changes nothing. Slice 2 is built on PR #493
-  (red run `38888167808`: the three `self.runtime.install.*` rows failed on `real` with `prompted:false`, nothing else red there).
 - **Item 72 (investigation, three parts)**: (a) the long-build heartbeat is considered and dropped
   (it needs a second process or a new helper that owns the Nuitka process, and Item 68's wording already
   tells the user to expect a long quiet step and where the log is); (c) the observed hour and the
@@ -792,28 +785,6 @@ the original symptom (see that doc's "CI-first testing policy").
   Open: decide whether to add the flag to the two Nuitka command lines (`:try_nuitka_tier_a`,
   `:offer_optimized_build`), (PR #499 has merged, so the lines are free); a shared cache path also needs a per-app folder name
   so two apps never share one. Detail: `docs/plan-field-report-2026-10.md`.
-
-### Item 79: TOML reading hygiene (filed 2026-10-09 from a planning brainstorm, not from the field report)
-
-- **Item 79 (low priority, three test-first slices, one per PR; plan and evidence in
-  `docs/plan-toml-reading-hygiene.md`)**: the PEP 723 reader and the pyproject fallback are two
-  hand-written TOML array walkers that have drifted apart, and `detect_python.py` reads
-  `requires-python` with an unscoped regex. Two live bugs, both reproduced: the pyproject
-  fallback (Python below 3.11) keeps backslashes in escaped markers and accepts an unclosed
-  array; `detect_python.py` matches a commented-out `requires-python` line and one under another
-  table. Slices: (1) oracle tests, tomllib as the oracle for both walkers over a PEP 508 corpus
-  plus a uv-lane row that round-trips a corpus written by real `uv add --script`; (2) port the
-  extractor's escape decoding and closed-array check into `pyproj_deps.py`'s fallback; (3) read
-  `requires-python` through tomllib in `detect_python.py`. **Nothing in this item may change
-  dependency source priority or REQ-004 precedence.** PR #475 (Item 62) has merged, so this can start.
-  **In progress (PR #500, all three slices in one PR by the bundle rule: slice 2 and 3 touch disjoint
-  files and slice 1's tests are slice 2's red tests)**: red tests first (`tests/test_toml_oracle.py`,
-  `tests/toml_oracle_check.py`, the `RequiresPythonTomlScope` class, the flipped pyproj test), then
-  `pyproj_deps.py` (escapes decoded, unclosed array exits 2, `HP_PYPROJ_DEPS` margin 198 to 2826) and
-  `detect_python.py` (tomllib, pattern kept for unparseable TOML, `HP_DETECT_PY` margin 520). Row
-  `self.toml.uvcorpus` is non-gating (needs the network). Detail: `docs/agent-interconnect.md`.
-  Parked ideas with triggers (payload headroom before any parser merge; PEP 723 `requires-python`
-  as a Python-version input) are in `docs/agent-cold-storage.md`.
 
 ### Item 80: Nuitka does not support the Python that uv now provisions (filed 2026-10-10 from reading PR #476's CI run)
 
