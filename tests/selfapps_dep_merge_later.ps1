@@ -23,6 +23,9 @@
 #        C2 pin_edit   edited to six==1.17.0                              -> installed at 1.17.0, header follows, no conflict line
 #   D  requirements.txt = termcolor
 #        D2 header_add toolz added to the header by hand                  -> in requirements.txt too, installed
+#   E  requirements.txt = termcolor, the only package
+#        E2 delete_last  moved into deps.txt, requirements.txt = -r deps.txt -> removed from the header too (nothing is left to add there)
+#        E3 (same row)   the run after it                                  -> does not report the removal again
 #
 # A row passes only on its named sub-checks (the files, the log line and the installed set), and each later row also
 # requires its own baseline run to have agreed, so a broken first run cannot hide behind a later pass.
@@ -31,8 +34,8 @@
 # matches a literal -Id argument the same way as an id = '...' key).
 #
 # Lane: real only (the header write-back is uv-only), gating from its first run (AGENTS.md "New tests gate
-# immediately"). Ten bootstraps with the build; every package comes from PyPI, which the lane already depends on.
-# Emits: self.depmerge.later.baseline, .delete, .add, .stable, .pyproject_keeps, .pin_edit, .header_add
+# immediately"). Fourteen bootstraps with the build; every package comes from PyPI, which the lane already depends on.
+# Emits: self.depmerge.later.baseline, .delete, .add, .stable, .pyproject_keeps, .pin_edit, .header_add, .delete_last
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -63,7 +66,7 @@ function Write-DmRow {
 
 $allIds = @(
     'self.depmerge.later.baseline', 'self.depmerge.later.delete', 'self.depmerge.later.add', 'self.depmerge.later.stable',
-    'self.depmerge.later.pyproject_keeps', 'self.depmerge.later.pin_edit', 'self.depmerge.later.header_add'
+    'self.depmerge.later.pyproject_keeps', 'self.depmerge.later.pin_edit', 'self.depmerge.later.header_add', 'self.depmerge.later.delete_last'
 )
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     foreach ($rowId in $allIds) {
@@ -335,6 +338,34 @@ if (-not $pass) { $anyRed = $true }
 Write-DmRow -Id 'self.depmerge.later.header_add' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user adds to the PEP 723 header after a run is installed and written into requirements.txt' -Details ([ordered]@{
     baselineOk = [bool]$baselineD; headerEditApplied = [bool]$headerEditApplied; exitCode = $d2.Exit; state = $d2.State
     requirementsNames = @($d2.Req.Keys); headerNames = @($d2.Hdr.Keys); requirementsOk = [bool]$reqOkD2; headerOk = [bool]$hdrOkD2; toolzInstalled = [bool]$toolzInstalledD2
+})
+
+# ---- E: requirements.txt = termcolor, the only package; the user moves it into an included file, so requirements.txt names no package
+# A comment-only or empty requirements.txt counts as absent (it casts no vote), so the way a list ends up with no package left is a
+# directive-only file such as "-r deps.txt". The merged list is then empty and the header write-back has nothing to add (the helper
+# answers SKIP:no_packages). The removal from the header must still run: before the fix it ran only after a write-back that added
+# something, so the package stayed in the header, the records were not updated and every later run reported the same removal again
+# (CodeRabbit, PR #506).
+$dirE = New-Folder -Name 'e' -Files @{ 'app.py' = $stub; 'requirements.txt' = "termcolor`n" }
+$e1 = Invoke-Run -Dir $dirE -Label 'e1'
+$baselineE = ($e1.Exit -eq 0) -and ($e1.State -ceq 'ok') -and (Test-Keys $e1.Req @('termcolor')) -and (Test-Keys $e1.Hdr @('termcolor'))
+[System.IO.File]::WriteAllText((Join-Path $dirE 'deps.txt'), "termcolor`n", $utf8)
+[System.IO.File]::WriteAllText((Join-Path $dirE 'requirements.txt'), "-r deps.txt`n", $utf8)
+$e2 = Invoke-Run -Dir $dirE -Label 'e2'
+$removedLineE2 = $e2.Log -match 'Removed termcolor: you removed it from requirements\.txt'
+$headerRemovedE2 = $e2.Log -match [regex]::Escape('Removed termcolor from the PEP 723 header')
+$hdrEmptyE2 = ($e2.Hdr.Count -eq 0)
+$reqEmptyE2 = ($e2.Req.Count -eq 0) -and ($e2.ReqText -match '(?m)^-r deps\.txt\s*$')
+# The run after it: nothing changed since, so the removal must not be reported again (it would be if the records were left as they were).
+$e3 = Invoke-Run -Dir $dirE -Label 'e3' -ForceFlow
+$quietE3 = -not ($e3.Log -match 'you removed it from|Conflict for|still lists it|could not be merged')
+$hdrEmptyE3 = ($e3.Hdr.Count -eq 0)
+$pass = $baselineE -and ($e2.Exit -eq 0) -and ($e2.State -ceq 'ok') -and $removedLineE2 -and $headerRemovedE2 -and $hdrEmptyE2 -and $reqEmptyE2 -and ($e3.Exit -eq 0) -and ($e3.State -ceq 'ok') -and $quietE3 -and $hdrEmptyE3
+if (-not $pass) { $anyRed = $true }
+Write-DmRow -Id 'self.depmerge.later.delete_last' -Pass ([bool]$pass) -Desc 'REQ-005.1: the last package the user removes from requirements.txt (it moves into an included file) also leaves the PEP 723 header, and the next run does not report the removal again' -Details ([ordered]@{
+    baselineOk = [bool]$baselineE; exitCode = $e2.Exit; state = $e2.State; requirementsNames = @($e2.Req.Keys); headerNames = @($e2.Hdr.Keys)
+    removedLine = [bool]$removedLineE2; headerRemovedLogged = [bool]$headerRemovedE2; headerEmpty = [bool]$hdrEmptyE2; requirementsEmpty = [bool]$reqEmptyE2
+    nextRunExit = $e3.Exit; nextRunState = $e3.State; nextRunQuiet = [bool]$quietE3; nextRunHeaderNames = @($e3.Hdr.Keys)
 })
 
 if ($anyRed) { exit 1 }

@@ -389,6 +389,14 @@ class BatchWiring(unittest.TestCase):
     def test_the_pyproject_message_no_longer_claims_an_override(self):
         self.assertNotIn("found; overrides requirements.txt", self.bat)
 
+    def test_a_write_back_with_no_packages_still_removes_what_the_user_removed(self):
+        # CodeRabbit, PR #506: removing the last package leaves the merged list empty, the write-back helper answers
+        # SKIP:no_packages, and the header removal that only followed OK: never ran, so the package stayed in the header and
+        # the records were never updated.
+        m = re.search(r'if "%HP_PEP723_RESULT%"=="SKIP:no_packages" \((.*?)\n\)', self.bat, re.S)
+        self.assertIsNotNone(m, "the SKIP:no_packages branch of :pep723_writeback is gone")
+        self.assertIn('if /I "%HP_PEP723_TRIGGER%"=="fresh" call :dep_merge_header_remove', m.group(1))
+
 
 class EmbeddedHelperBaseline(unittest.TestCase):
     def test_source_parses_as_python_39_grammar(self):

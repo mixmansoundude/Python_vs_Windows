@@ -335,34 +335,42 @@ Defines how dependencies are discovered, selected, installed, augmented, and rep
   The bootstrapper **shall**, as the numbered rules below say, merge the inputs of items 1 to 3 into one dependency set,
   install that set, and leave the same set in `requirements.txt` and in the PEP 723 header. The rank only decides a
   conflict about one package. `DEP_SOURCE` in the setup log and `~dependency_source.txt` name the highest ranked input
-  that contributed.
-  - REQ-005.1.1 -- Cold first run: when a program folder has no record of an earlier run (no `~dep_base.*.txt` file), the
-    bootstrapper **shall** install the union of the packages of every used input. A package that only one input names is
-    installed and kept in `requirements.txt`.
-  - REQ-005.1.2 -- Conflict: when two inputs name the same package with different version constraints, the
-    bootstrapper **shall** use the entry of the highest ranked of them and **shall** print one
-    `[WARN] Conflict for <package>` line that names each input's entry, the entry used and the input it came from. A bare name
-    is not a conflict with a constrained entry: the constrained entry is used.
-  - REQ-005.1.3 -- Honest wording: the bootstrapper **shall not** say on the console that an input is used, or that it
-    overrides another, unless that input's packages are part of the set the run installs. An input that is left out
-    says why (the malformed or empty case above).
-  - REQ-005.1.4 -- Agreement after a good run: after a run in which every dependency installed, the bootstrapper
-    **shall** leave `requirements.txt`, and with the uv provider the PEP 723 header of the entry file, holding the merged
-    set, and **shall** record each input as it then stands (`~dep_base.requirements.txt`, `~dep_base.pyproject.txt`,
-    `~dep_base.pep723.txt`) so the next run can tell the user's changes from its own. A failed or partial install records
-    nothing, so the next run sees the same changes again.
-  - REQ-005.1.5 -- Later runs: when a record exists, the bootstrapper **shall** treat a difference between an input and
-    its record as the user's change and **shall** keep it. A package added to any input is installed and added to the
-    others. A package removed from `requirements.txt` or from a PEP 723 header that the bootstrapper wrote is removed from
-    the others too, and from the header by `uv remove --script`; the console says `Removed <package>` with the input it was
-    removed from. A pin the user edited replaces the older pins in the other inputs and is not reported as a conflict. A
-    change to any input is installed, never skipped as already satisfied.
-  - REQ-005.1.6 -- Removal that cannot be applied: `pyproject.toml` is never rewritten by the bootstrapper, so a package
-    removed from another input while `pyproject.toml` still lists it stays everywhere, and the console says
-    `<package> was removed from <input> but pyproject.toml still lists it, so it stays` and names the file to edit. A header
-    that the bootstrapper did not write is only ever added to, never removed from.
-  - REQ-005.1.7 -- Failure of the merge: when the merge cannot run, the bootstrapper **shall** say so with a `[WARN]` and
-    use the highest ranked input alone, exactly as it did before the merge existed. It **shall** not stop the run.
+  that names a package of the merged set; the entry used for a package can come from a lower ranked input (REQ-005.1.2).
+  - **REQ-005.1.1** [critical] The bootstrapper **shall**, when a program folder has no record of an earlier run (no
+    `~dep_base.*.txt` file), install the union of the packages of every used input, so a package that only one input
+    names is installed too.
+  - **REQ-005.1.2** [major] The bootstrapper **shall**, when two inputs name the same package with different version
+    constraints, use the entry of the highest ranked of them. A bare name is not a conflict with a constrained entry: the
+    constrained entry is used.
+  - **REQ-005.1.3** [minor] The bootstrapper **shall**, when it resolves a conflict as REQ-005.1.2 describes, print one
+    `[WARN] Conflict for <package>` line that names each input's entry, the entry used and the input it came from.
+  - **REQ-005.1.4** [major] The bootstrapper **shall not** say on the console that an input is used, or that it overrides
+    another, unless that input's packages are part of the set the run installs. An input that is left out says why (the
+    malformed or empty case above).
+  - **REQ-005.1.5** [major] The bootstrapper **shall**, after a run in which every dependency installed, leave
+    `requirements.txt`, and with the uv provider the PEP 723 header of the entry file, holding the merged set.
+  - **REQ-005.1.6** [major] The bootstrapper **shall**, after a run in which every dependency installed, record each input
+    as it then stands (`~dep_base.requirements.txt`, `~dep_base.pyproject.txt`, `~dep_base.pep723.txt`) so the next run can
+    tell the user's changes from its own. A failed or partial install **shall** record nothing, so the next run sees the
+    same changes again.
+  - **REQ-005.1.7** [major] The bootstrapper **shall**, when a record exists, treat a difference between an input and its
+    record as the user's change and keep it. A package added to any input is installed and added to the others.
+  - **REQ-005.1.8** [major] The bootstrapper **shall**, when the user has removed a package from `requirements.txt` or from
+    a PEP 723 header that the bootstrapper wrote, remove it from the other inputs too (from the header by
+    `uv remove --script`) and say `Removed <package>` on the console with the input it was removed from.
+  - **REQ-005.1.9** [major] The bootstrapper **shall**, when the user has edited a pin, replace the older pins in the other
+    inputs with it and not report that as a conflict.
+  - **REQ-005.1.10** [major] The bootstrapper **shall**, when any input differs from its record, install the merged set and
+    not skip the install as already satisfied.
+  - **REQ-005.1.11** [minor] The bootstrapper **shall**, when a package was removed from another input while
+    `pyproject.toml` still lists it, keep the package in every input and say
+    `<package> was removed from <input> but pyproject.toml still lists it, so it stays`, naming the file to edit.
+    `pyproject.toml` is never rewritten by the bootstrapper.
+  - **REQ-005.1.12** [major] The bootstrapper **shall** only ever add to a PEP 723 header that it did not write, never remove
+    from it.
+  - **REQ-005.1.13** [major] The bootstrapper **shall**, when the merge cannot run, use the highest ranked input alone,
+    exactly as it did before the merge existed, and say so with a `[WARN]`.
+  - **REQ-005.1.14** [major] The bootstrapper **shall not** stop the run because the merge could not run.
   - Notes (not requirements): a folder that was last run before the merge existed has no record, so its first run
     after the change is a cold run (the union). The run that deletes a package from one input while another input the
     bootstrapper does not rewrite still lists it brings the package back, with the message above; that is the price of

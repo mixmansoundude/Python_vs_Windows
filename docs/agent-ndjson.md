@@ -883,7 +883,12 @@ merge-failure line). Folder B `.pyproject_keeps`: pyproject.toml lists `iniconfi
 requirements.txt; it stays in both lists and the log says `iniconfig was removed from requirements.txt but pyproject.toml
 still lists it, so it stays`. Folder C `.pin_edit`: requirements.txt `six==1.16.0` edited to `six==1.17.0`: installed at
 1.17.0, both lists hold `six==1.17.0`, no `Conflict for six` line (an edit is not a conflict). Folder D `.header_add`:
-`toolz` added to the header by hand: in requirements.txt too and installed. Every later row also requires its folder's
+`toolz` added to the header by hand: in requirements.txt too and installed. Folder E `.delete_last`: requirements.txt `termcolor`,
+the only package, is moved into `deps.txt` and requirements.txt becomes `-r deps.txt` (a comment-only or empty file counts as
+absent and casts no vote, so a directive-only file is how a list ends up naming no package): the merged list is empty, the
+write-back helper answers `SKIP:no_packages`, and the header must still lose `termcolor` (`Removed termcolor from the PEP 723
+header` logged, header names empty); the next run (dist removed so the flow runs) must not report the removal again, which it
+would if the records were left as they were. Every later row also requires its folder's
 first run to have agreed (`baselineOk`), so a broken first run cannot hide behind a later pass. Packages removed from a
 list stay installed in the environment (documented, harmless), so the rows assert the lists and the log, not an absence
 from `~dependency_installed.txt`. Skips on non-Windows.
@@ -896,6 +901,7 @@ self.depmerge.later.stable
 self.depmerge.later.pyproject_keeps
 self.depmerge.later.pin_edit
 self.depmerge.later.header_add
+self.depmerge.later.delete_last
 ```
 
 ## selfapps-log-rotate NDJSON rows (selfapps_log_rotate.ps1, real lane only, gating)

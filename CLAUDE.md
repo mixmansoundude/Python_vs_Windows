@@ -77,7 +77,7 @@ tests/
   selfapps_toml_uvcorpus.ps1   Item 79: the dependencies real `uv add --script` writes (bound, extra, two markers) are read back by pep723_extract.py exactly as tomllib reads them (uv lane, non-gating: needs the network; helper tests/toml_oracle_check.py)
   selfapps_isolation.ps1       REQ-010/REQ-011 behavioral tests (unconditional, HP_CI_SKIP_ENV=1)
   selfapps_pvw_builder.ps1     Item 71: PVW_BUILDER override (invalid/pyinstaller/nuitka/both; deterministic scenarios gate, real-Nuitka ones are uv lane)
-  selfapps_dep_merge_later.ps1 Item 89: what a LATER run does with the dependency lists (delete, add, pin edit, header edit, a package pyproject.toml still lists, an unchanged run); seven `self.depmerge.later.*` rows (real lane, gating; needs the uv header write-back)
+  selfapps_dep_merge_later.ps1 Item 89: what a LATER run does with the dependency lists (delete, add, pin edit, header edit, a package pyproject.toml still lists, an unchanged run); eight `self.depmerge.later.*` rows (real lane, gating; needs the uv header write-back)
   selfapps_example_apps.ps1    Item 74: three curated example apps from fixtures/examples (stdlib only, two files with a sibling import, a tkinter window that closes itself) run through the bootstrapper with no skip hook (real lane, gating)
   fixtures/examples/           Item 74: the curated example apps a person can drop next to run_setup.bat (README.txt inside); CI scenarios read these files, nothing generates them inline
   selfapps_unlaunchable_exe.ps1 Item 87: a dist\<env>.exe that Windows cannot start (text-file stub) ends the EXE verification run and the fail-fast probe instead of hanging them (real lane, gating, 15-minute watchdog per run; HP_TEST_CORRUPT_BUILT_EXE hook)
