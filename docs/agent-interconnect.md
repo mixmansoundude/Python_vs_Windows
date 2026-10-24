@@ -775,8 +775,12 @@ for a conflict). The old behavior was winner takes all (`copy /y` of the highest
   name in the header (`toolz` to `toolz>=1.2.0`, uv 0.11), so the first unchanged run after a bare entry was written finds
   nothing fresh, ranks the header's bounded entry above the bare one and rewrites `requirements.txt` once. A test that judges
   an unchanged run byte for byte (`self.depmerge.later.stable`) therefore runs one settling run first.
-- **Header removal**: `uv add --script` cannot remove, so `:pep723_writeback` (trigger `fresh`, on `OK:`) calls
-  `:dep_merge_header_remove`, one `uv remove --script` per name; a failure keeps the old records so the next run retries.
+- **Header removal**: `uv add --script` cannot remove, so `:pep723_writeback` (trigger `fresh`, on `OK:` and on
+  `SKIP:no_packages`) calls `:dep_merge_header_remove`, one `uv remove --script` per name; a failure keeps the old
+  records so the next run retries. `SKIP:no_packages` is what the helper answers when the merged list names nothing to
+  add, for example after the user removed the last package or left only a `-r other.txt` directive; it runs after the
+  same `HP_UV_INSTALL_OK` gate as `OK:`, so a failed install still removes nothing (`self.depmerge.later.delete_last`).
+  Every other `SKIP:`/`ERROR:` answer leaves the header and the old records alone.
 - **Coupled strings**: the report lines `Dependency lists merged`, `Conflict for`, `Removed`, `was removed from ... still lists
   it, so it stays`, the INFO `Dependency lists recorded for the next run`, the WARN `could not be merged` are matched by
   `self.depsource.*`, `self.pep723.pyproject.merge` and `self.depmerge.later.*`; the old `found; overrides requirements.txt`

@@ -4828,6 +4828,8 @@ if "%HP_PEP723_RESULT:~0,3%"=="OK:" (
 )
 if "%HP_PEP723_RESULT%"=="SKIP:no_packages" (
   call :log "[INFO] REQ-005.11: PEP 723 write-back skipped (no packages to write)."
+  rem Item 89: nothing is left to add, but a package the user removed still has to leave the header, and the install gate above already passed.
+  if /I "%HP_PEP723_TRIGGER%"=="fresh" call :dep_merge_header_remove
   goto :pep723_writeback_cleanup
 )
 if "%HP_PEP723_RESULT%"=="SKIP:non_utf8" (
