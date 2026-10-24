@@ -4,7 +4,10 @@ The "Enforce aggregate self-test verdict" step of the selftest-gate job turns an
 required check ("Aggregate self-test verdicts"). It was advisory (continue-on-error) from 2026-08-30 until the
 baseline reds were fixed (CLAUDE.md Item 35, PR #491). These rules keep it that way and keep the pieces it
 depends on in place:
-- the step exists once, has no continue-on-error, runs unless cancelled, and exits 1;
+- the step exists once, has no continue-on-error, runs on exactly `!cancelled() && has_failures == 'true'`
+  (an extra `&& false` would leave it skipped for ever), and exits 1;
+- the "Aggregate verdicts" step it reads has `id: aggregate` and writes `has_failures=` to $GITHUB_OUTPUT (without
+  either, the condition is always false and the gate never runs);
 - the lanes the aggregator expects are exactly the lanes in the selftest matrix (the list is written twice);
 - selftest-gate, model-quick-fix and publish_diag still run after a failure, so the diagnostics site is
   published even when the gate is red (Item 35's non-negotiable constraint);
@@ -21,6 +24,7 @@ REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
 
 GATE_STEP = "Enforce aggregate self-test verdict"
+GATE_CONDITION = "${{ !cancelled() && steps.aggregate.outputs.has_failures == 'true' }}"
 
 
 def live(text):
@@ -99,10 +103,20 @@ def problems(text):
         if re.search(r"^\s*continue-on-error:", block, re.MULTILINE):
             found.append("the aggregate gate step has continue-on-error: it would stay green with a red row")
         cond = re.search(r"^\s*if:\s*(.+)$", block, re.MULTILINE)
-        if not cond or "!cancelled()" not in cond.group(1) or "steps.aggregate.outputs.has_failures == 'true'" not in cond.group(1):
-            found.append("the aggregate gate step must run on !cancelled() and has_failures == 'true'")
+        if not cond or re.sub(r"\s+", " ", cond.group(1)).strip() != GATE_CONDITION:
+            found.append("the aggregate gate step must run on exactly %s" % GATE_CONDITION)
         if not re.search(r"^\s*exit 1\s*$", block, re.MULTILINE):
             found.append("the aggregate gate step never exits 1")
+
+    agg = [blk for name, blk in steps(gate) if name == "Aggregate verdicts"]
+    if len(agg) != 1:
+        found.append("selftest-gate must have exactly one Aggregate verdicts step (found %d)" % len(agg))
+    else:
+        agg_block = live(agg[0])
+        if not re.search(r"^\s*id:\s*aggregate\s*$", agg_block, re.MULTILINE):
+            found.append("the Aggregate verdicts step must have id: aggregate (the gate reads steps.aggregate.outputs)")
+        if not re.search(r"has_failures=.*\$env:GITHUB_OUTPUT", agg_block):
+            found.append("the Aggregate verdicts step must write has_failures= to $env:GITHUB_OUTPUT")
 
     modes = matrix_modes(text)
     lanes = expected_lanes(gate)
@@ -151,10 +165,12 @@ GOOD = """jobs_header_is_ignored: x
     if: ${{ always() }}
     steps:
       - name: Aggregate verdicts
+        id: aggregate
         run: |
           & .\\tools\\aggregate_selftest_verdicts.ps1 `
             -ExpectedLanes @('real', 'uv') `
             -ReportPath $reportPath
+          "has_failures=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
       - name: Enforce aggregate self-test verdict
         if: ${{ !cancelled() && steps.aggregate.outputs.has_failures == 'true' }}
@@ -208,6 +224,22 @@ class AggregateGateStaysReal(unittest.TestCase):
     def test_condition_without_not_cancelled_is_caught(self):
         bad = GOOD.replace("!cancelled() && ", "")
         self.assertTrue(any("must run on" in f for f in problems(bad)), problems(bad))
+
+    def test_extra_false_conjunction_is_caught(self):
+        bad = GOOD.replace("== 'true' }}", "== 'true' && false }}")
+        self.assertTrue(any("must run on exactly" in f for f in problems(bad)), problems(bad))
+
+    def test_condition_widened_with_or_is_caught(self):
+        bad = GOOD.replace("== 'true' }}", "== 'true' || always() }}")
+        self.assertTrue(any("must run on exactly" in f for f in problems(bad)), problems(bad))
+
+    def test_aggregate_step_without_id_is_caught(self):
+        bad = GOOD.replace("        id: aggregate\n", "")
+        self.assertTrue(any("id: aggregate" in f for f in problems(bad)), problems(bad))
+
+    def test_aggregate_step_without_output_write_is_caught(self):
+        bad = GOOD.replace('          "has_failures=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append\n', "")
+        self.assertTrue(any("GITHUB_OUTPUT" in f for f in problems(bad)), problems(bad))
 
     def test_lane_list_drift_is_caught(self):
         bad = GOOD.replace("-ExpectedLanes @('real', 'uv')", "-ExpectedLanes @('real')")

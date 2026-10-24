@@ -95,7 +95,8 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
   (run `40123300274`, with a throwaway red row in `contract-uv-fail`: the aggregate job failed at that step and the
   Pages publish still succeeded). Only the pre-harness rows count there; the
   post-harness `batch.*` and self-test rows are gated per lane by "Gate on NDJSON results". A row that records a
-  finding writes `pass:true` plus a `details` flag, because `pass:false` is the one thing the verdict reads.
+  finding writes `pass:true` plus a `details` flag, because `pass:false` is the row-level failure signal the verdict
+  reads (a missing, unexpected or duplicate lane fails it separately).
   `tests/test_aggregate_gate.py` pins the step, the lane list (equal to the matrix) and the `always()` jobs; do not
   put `continue-on-error` back on the step, and re-prove with a throwaway red row if the job graph around it changes.
 - **A row exists only if its script ran, and an absent row cannot be red.** `run_tests.bat` therefore runs `selftest.ps1`
