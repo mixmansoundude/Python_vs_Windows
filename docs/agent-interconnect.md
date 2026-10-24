@@ -99,6 +99,8 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
   reads (a missing, unexpected or duplicate lane fails it separately).
   `tests/test_aggregate_gate.py` pins the step, the lane list (equal to the matrix) and the `always()` jobs; do not
   put `continue-on-error` back on the step, and re-prove with a throwaway red row if the job graph around it changes.
+  A run cancelled by a newer push also ends with this check red on the superseded commit (its cancelled lanes wrote no
+  verdict, so the aggregator fails closed); only the check on the current head counts.
 - **A row exists only if its script ran, and an absent row cannot be red.** `run_tests.bat` therefore runs `selftest.ps1`
   and `selftests.ps1` even when the harness failed (it used to skip both, hiding every self-test row behind one red
   `batch.*` row), deletes their old summary files first, and counts a script that exits 0 without writing its summary
