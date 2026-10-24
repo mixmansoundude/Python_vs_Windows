@@ -222,6 +222,12 @@ class ScenariosReadTheFolder(unittest.TestCase):
         for rid in ("self.examples.stdlib_single", "self.examples.multifile_sibling", "self.examples.gui_exits"):
             self.assertRegex(text, r"id\s*=\s*'%s'" % re.escape(rid))
 
+    def test_example_script_accepts_a_bare_entry_name(self):
+        # The log prints "Chosen entry: <file>" (the bare name, HP_CRUMB), not a path; a pattern that demanded a
+        # leading backslash turned every row red on the first real run although the build and the run were fine.
+        text = self._text("tests/selfapps_example_apps.ps1")
+        self.assertIn("(^|[\\\\/])", text)
+
     def test_example_script_sets_its_own_exit_code(self):
         # The pwsh step appends exit $LASTEXITCODE, so a script that runs native commands must end with its own exit.
         text = self._text("tests/selfapps_example_apps.ps1").rstrip()

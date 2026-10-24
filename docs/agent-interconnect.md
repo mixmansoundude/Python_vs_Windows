@@ -805,7 +805,8 @@ must understand the others.** The four example programs are plain files a person
 (`README.txt` in the folder says how). Two scripts read them: `selfapps_example_apps.ps1` (real lane, gating) runs
 `stdlib_single`, `multifile_sibling` and `gui_exits` through the whole default path and compares the verification run's
 stdout (`~run.out.txt`) with the line each script passes as `-Expect`, so changing what a fixture prints means changing
-that string in the same commit; `selfapps_pandas_excel.ps1` (conda-full) copies `pandas_excel`'s `app.py` and
+that string in the same commit (the log line `Chosen entry: <file>` carries the bare file name, not a path, so the entry
+check matches a name with an optional directory in front); `selfapps_pandas_excel.ps1` (conda-full) copies `pandas_excel`'s `app.py` and
 `requirements.txt`. The unit test pins each folder's exact file list (a stray file changes the `Python file count` the
 scenarios assert), ASCII, in-memory compile, imports limited to stdlib / sibling files / declared packages, and the
 places that read the folder, so a scenario cannot drift back to an inline copy. A new example app needs an entry in

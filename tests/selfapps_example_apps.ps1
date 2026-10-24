@@ -19,7 +19,7 @@
 #   fixtureFound  the folder exists under tests/fixtures/examples and holds the expected number of .py files
 #   exit 0        the bootstrapper exited 0 and ~bootstrap.status.json says state ok
 #   exe built     dist\<env>.exe exists and the log says "Entry smoke exit=0" (the EXE's own verification run)
-#   entry         the log chose the expected file ("Chosen entry: ...\<file>") and counted the expected .py files
+#   entry         the log chose the expected file ("Chosen entry: <file>", a bare name) and counted the expected .py files
 #   output        the program's own line is in ~run.out.txt, which holds the stdout of that verification run
 # A run that does not finish inside 25 minutes is stopped and reported (timedOut) instead of holding the job.
 #
@@ -144,7 +144,7 @@ function Invoke-ExampleRun {
         $d.entrySmokeExit0 = [bool]($combined -match 'Entry smoke exit=0')
         $m = [regex]::Match($boot, '(?m)^Chosen entry: (.+?)\s*$')
         if ($m.Success) { $d.chosenEntry = $m.Groups[1].Value }
-        $d.entryOk = [bool]($d.chosenEntry -match ('(?i)\\' + [regex]::Escape($Entry) + '$'))
+        $d.entryOk = [bool]($d.chosenEntry -match ('(?i)(^|[\\/])' + [regex]::Escape($Entry) + '$'))
         $mc = [regex]::Match($setup, '(?m)\[INFO\] (Python file count: \d+)')
         if ($mc.Success) { $d.pythonFileCountLine = $mc.Groups[1].Value }
         $d.fileCountOk = ($d.pythonFileCountLine -eq ('Python file count: ' + $PyFiles))
