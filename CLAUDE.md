@@ -543,14 +543,10 @@ but several represent real gaps worth closing before calling the path fully rele
   failure/contract scenarios that intentionally diverge from a normal run -- re-verify that
   reasoning still holds before excluding them, don't just carry the text forward) still have no
   required-status-check of their OWN -- but since the "Enforce aggregate self-test verdict" gate
-  below aggregates all 8 lanes, a real failure in any of them (including a genuine one already
-  observed in `cache`/`uv`, unrelated to any of this item's own changes) is DESIGNED to block a
-  merge via the aggregate check even though the individual lane still shows non-required in the PR
-  checks UI -- currently, that enforcement step itself carries `continue-on-error: true` (see the
-  "Reverted to advisory" note below), so today it does NOT actually block; this is the intended
-  end-state once cache/uv are fixed and `continue-on-error` is removed. Do not read "non-gating"
-  below as "cannot ever block a merge" post-aggregate-gate; it means "has no required check of its
-  own." `ndjson-registry-check` (a separate
+  below aggregates all 8 lanes, a real failure in any of them blocks a merge via the aggregate
+  check even though the individual lane still shows non-required in the PR checks UI (the step is
+  real since 2026-10-24, see "Aggregate gate" below). "Non-gating" in this item means "has no
+  required check of its own", not "cannot block a merge." `ndjson-registry-check` (a separate
   advisory doc/code/log sync job, needs several more clean-PASS runs before even considering
   gating); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
   `docs/agent-ndjson.md` -- `self.dll_bundle.recover` (see Item 37), `self.failfast.probe`,
@@ -561,8 +557,7 @@ but several represent real gaps worth closing before calling the path fully rele
 
   **Row added 2026-10-09 (Item 62)**: `self.pep723.writeback.roundtrip` (`selfapps_pep723_writeback.ps1`,
   `uv` lane, real uv writes the header and the next run must read it back) was green on its first
-  full run (`37938844739`). Decision for now: leave it advisory and let it soak; promote it only
-  after several consecutive green full matrices, per the process discipline below.
+  full run (`37938844739`). It gates through the aggregate check like every other row now.
 
   **Non-negotiable constraint: the diagnostics-site-publish job must never be blocked or skipped
   by this work.** `publish_diag`'s `if: ${{ always() }}` / `needs: [selftest, selftest-gate,
@@ -623,92 +618,25 @@ but several represent real gaps worth closing before calling the path fully rele
   change (or make it directly, if the acting agent has that access) -- a YAML edit alone is never
   "done."
 
-  **Aggregate-check mechanism: implemented and now the primary path for closing the required-
-  checks maintenance treadmill (most lanes drifted non-gating simply because they were added AFTER
-  the original required-checks list was set and never retrofitted in, not by deliberate policy).**
-  `selftest-gate` ("Aggregate self-test verdicts") already downloads and aggregates every one of
-  the 8 matrix lanes' `lane_verdict.json` files unconditionally via `tools/aggregate_selftest_
-  verdicts.ps1`, comparing the SET of expected lane IDs against the SET of observed ones -- a
-  missing, unexpected, or duplicate lane counts as `has_failures=true` on its own, independent of
-  the overall job's own `success`/`failure` result (this fail-closed precondition was itself a
-  real fix: the original mechanism only caught a TOTAL absence of verdict files, missing a single
-  lane's silently-missing upload as long as the rest landed). Confirmed via
-  `tests/test_aggregate_selftest_verdicts.ps1`'s fixtures (8 scenarios covering missing/
-  unexpected/duplicate lanes, malformed JSON, and a missing `has_failures` field, none of which
-  depend on a real Windows host) and several consecutive green real `real`-lane runs.
-
-  **Actual gating step implemented 2026-08-30 (maintainer added the matching branch-protection
-  required check the same day): a new "Enforce aggregate self-test verdict" step `exit 1`s when
-  `steps.aggregate.outputs.has_failures == 'true'`**, mirroring the identical, already-proven
-  "Enforce NDJSON failures for gated lanes" per-lane pattern. Re-verified first that
-  `contract-uv`/`contract-uv-fail`/`uv-dl-fallback`'s own simulated-failure scenarios report a
-  clean (non-`has_failures`) verdict on every real run observed to date, so gating on the
-  aggregate does not turn them into permanent false blockers. Added ALONGSIDE the existing
-  per-lane `real`/`conda-full` required checks, not replacing them -- collapsing to one aggregate
-  check would lose today's per-lane visibility in the PR checks UI, and a bug in `selftest-gate`
-  itself would otherwise remove the only signal. Consolidate down to just the aggregate check
-  later, once its own reliability is separately proven across more runs.
-
-  **Reverted to advisory (`continue-on-error: true`) the same day, on PR #471, after its own
-  first two real activations both hard-failed on a genuine, reproducible, pre-existing condition
-  unrelated to that PR's diff.** The pre-gating re-verification above checked only that the three
-  simulated-failure lanes (`contract-uv`/`contract-uv-fail`/`uv-dl-fallback`) don't false-positive
-  -- it never checked whether `cache`/`uv` had a CURRENTLY-real failure of their own, which they
-  did: two separate runs, hours apart, produced byte-identical failing rows --
-  `self.exe.smokerun` (`cache`, `exitCode:1`) and `self.cascade.exec` +
-  `self.exe.warnfix.venv_repair` (`uv` -- cascade falls through to embed instead of stopping at
-  conda; the warnfix repair-install precondition never fires). Identical detail payloads twice
-  rules out flake. Neither PR touched `run_setup.bat`/any selfapps script, so this predates PR
-  #471 and is a genuine, currently-open regression in the bootstrapper or its test scripts, not a
-  CI-mechanism bug -- but since this gate is what first turned an already-non-gating lane's
-  failure into a repo-wide merge blocker, leaving it hard-failing would have blocked every PR
-  until someone separately root-causes and fixes it. `continue-on-error: true` keeps the step's
-  own red result visible in the PR checks UI without failing the job. **Re-remove
-  `continue-on-error` only after both root causes below are fixed and the mechanism has re-soaked
-  per the process discipline already stated below** (it was not, in fact, fully met before this
-  first gating attempt -- the sample only covered the 3 simulated-failure lanes, not all 8).
-
-  **New, still-open sub-item spun out of this finding**: root-cause and fix (a) `self.cascade.exec`
-  (`uv` lane) -- why the provider cascade currently falls through conda to embed
-  (`condaToEmbed:1`) instead of stopping at conda, and (b) `self.exe.warnfix.venv_repair` (`uv`
-  lane) -- why the forced-missing-xlrd precondition no longer triggers warnfix's repair-install
-  path (`installedXlrd:false`) under venv mode. Both reproduced identically on 2026-08-30 across
-  two separate `uv`-lane runs (workflow runs `33288809538` and `33293648911`); start there rather
-  than re-deriving reproduction steps from scratch. **Update 2026-10-09 (CI logs, run
-  `37733140007`)**: (b) is explained. `:venv_canary_ok` and the embed success path both reset
-  `HP_SKIP_PIPREQS` to empty, so the test's `HP_SKIP_PIPREQS=1` is discarded, pipreqs runs and
-  finds `xlrd`, and `requirements.txt` installs it up front (`~setup.log`: `Collecting xlrd~=2.0.2
-  (from -r requirements.txt (line 1))`); warnfix never has anything to repair. The test's
-  precondition is stale, not warnfix's venv branch, so the fix is test-side. (a) is NOT explained
-  by this and stays open. **Update 2026-10-11 (run `38157663037`, PR #490; both reds share one cause,
-  fixed on the follow-up PR)**: with the precondition fixed, `venv_repair` showed `warnInstallFired:true`,
-  `attemptedXlrd:false`, `systemSkipWarn:false`, `preconditionOk:true`, and `cascade.exec` showed
-  `repairMarkers:3`, `installAttempts:2`, `repairWithoutAttempt:1`. The warnfix repair dispatch in
-  `run_setup.bat` had a second `if` nested in the else-if chain (`else if conda if defined CONDA_BAT (`),
-  so cmd bound every later `else` to the inner `if defined` and the venv, embed and system branches never
-  ran outside conda mode: no install, no failure flag, no cascade candidate, the chain stopped at embed.
-  The conda test is now decided once into `HP_REPAIR_CONDA` before the chain. **Fixed by PR #491; green read
-  2026-10-16**: run `38179263133` (head `4651e86`, all eight lanes read from the artifacts by run id) has
-  zero failing rows on every lane and exactly three rows changed against the red run `38157663037`, each from
-  red to green (`uv` `self.exe.warnfix.venv_repair` and `self.cascade.exec`, `cache` `self.exe.smokerun`).
-  That run is the first complete green matrix of the re-soak; remove `continue-on-error` from the aggregate
-  gate only after several consecutive complete green matrices, per the discipline below.
-
-  **The `cache` lane's `self.exe.smokerun` red is explained (2026-10-11, run `38157663037`) and is a test
-  artifact, not a product failure.** `selfapps_layered_e2e.ps1` (cache lane only) points its sub-bootstrap
-  at the shared `HP_NDJSON` (Item 37). The uv tier of that chain builds an EXE that cannot import `pygrib`,
-  so its verification run exits 1 by design and `:smokerun_ndjson` emits `self.exe.smokerun` `pass:false`
-  before the cascade moves to conda; the conda tier's own `self.exe.smokerun` (`exitCode:0`) follows. The
-  cache NDJSON shows exactly that order: uv `env.mode`, `pass:false`/`exitCode:1`, conda `env.mode`, DLL
-  rows, `pass:true`/`exitCode:0`. It was the only red row on the lane for weeks. The test now gives the
-  sub-bootstrap a private stream and forwards every row except an earlier `self.exe.smokerun` that matches
-  the expected uv-tier failure on every point: `pass:false` with `exitCode:1`, the log shows the cascade
-  left uv, and the setup log before the uv to conda hop holds `[HINT][HIDDEN_IMPORT] Hidden import likely
-  missing: pygrib` (the bootstrapper's own read of the EXE's output, so the reason is checked, not just
-  the code). Anything else stays in the stream and stays red, the last verification row is always
-  forwarded, and `self.layered_e2e.chain` now also requires exactly one dropped row plus a passing last
-  row (`smokeSequencePass`), so an unexpected uv-tier failure or a missing conda-tier pass fails the chain.
-  The exit codes are kept as `smokerunExits`/`smokerunDropped` on that row.
+  **Aggregate gate: real since 2026-10-24 (criterion C6).** `selftest-gate` ("Aggregate self-test verdicts", a
+  required check) aggregates the eight lanes' `lane_verdict.json` files through `tools/aggregate_selftest_verdicts.ps1`,
+  fail-closed (a missing, unexpected or duplicate lane is `has_failures` on its own), and its "Enforce aggregate
+  self-test verdict" step now `exit 1`s on `has_failures == 'true'` with no `continue-on-error`. So ANY row with
+  `pass:false` in ANY lane (`cache`, `uv`, `justme-test`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback` included)
+  turns that check red and holds auto-merge; the Pages publish and the iterate gate still run (`publish_diag` and
+  `model-quick-fix` keep `if: always()`). A row that records a finding and not a failure must write `pass:true` plus a
+  `details` flag (`self.nuitka.cachesafety` uses `inconclusive`); the per-lane verdict ignores nothing else.
+  `tests/test_aggregate_gate.py` pins the step (no `continue-on-error`, its `if`, the lane list equal to the matrix,
+  the `always()` jobs). Proof, run `40123300274` (a throwaway red row in `contract-uv-fail`, since removed): the
+  aggregate job failed at that step while `model-quick-fix` and the Pages publish still ran and succeeded. All eight
+  lanes were red in that run (the guard test fails while the probe is in), so it shows the step fails the job and the
+  publish survives it; that a single failing lane is enough is shown by the fixtures in
+  `tests/test_aggregate_selftest_verdicts.ps1`.
+  **Consequence to know**: upstream drift on a provider-dependent `uv`-lane row (a new Python, uv or Nuitka release;
+  Item 80 was five such rows for two days) now holds every PR until the row is fixed or its pass condition is
+  corrected; do not skip or relax a row to get green (AGENTS.md). The history (the 2026-08-30 revert on PR #471, the
+  cascade and warnfix reds fixed by PR #491, the `cache` smokerun artifact, the soak evidence) is in
+  `docs/agent-closed-backlog.md`, "Item 35 aggregate gate history".
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
@@ -909,8 +837,9 @@ rather than relying on manual memory.
   verdict" was `skipped` every time, i.e. eleven consecutive complete matrices with no failing row
   on any of the eight lanes by the aggregate's own verdict, and `ndjson-registry-check` succeeded
   on all eleven. That is the "several consecutive complete green matrices" Item 35 asks for before
-  removing `continue-on-error: true` from the aggregate gate; it is a one-line change in a step
-  that belongs to the merge-gate owner, not made in this scan.
+  removing `continue-on-error: true` from the aggregate gate; the removal landed with PR #509 the
+  same day (criterion C6). Next scan: confirm "Enforce aggregate self-test verdict" is still
+  `skipped` on the `main` push runs since, and that no PR sat red on a row nobody owns.
 - **Going forward**: `uv` is the slowest lane (see the wall-clock entry) and its rows depend on the
   network (uv, Miniconda, python.org downloads), so a required check of its own would add flake
   risk the aggregate gate already covers; do not promote it separately. Leave

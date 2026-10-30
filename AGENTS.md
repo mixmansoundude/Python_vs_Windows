@@ -21,7 +21,10 @@ Operating policy for automated agents (Codex, Copilot, others).
   it in an existing lane -- isolation costs no extra wall-clock and keeps gating lanes fast and deterministic.
 - External/environmental failures (blocked downloads, third-party installer quirks) are **not** repo/test/CI
   bugs. Make them legible in logs/NDJSON (e.g. capture installer exit codes and emit a `reason=` token) so a
-  non-gating lane surfaces them without failing the run or being mistaken for a regression.
+  non-gating lane surfaces them without being mistaken for a regression. The lane's `continue-on-error` excuses
+  only the lane job: a `pass:false` row still fails the "Aggregate self-test verdicts" check (see the "Any
+  `pass:false` row" bullet below), so a failed download or installer error stays `pass:false` and holds the
+  merge until the row or the code is fixed; `pass:true` plus a `details` flag is for a finding that is not a failure.
 - Enforce the single-bootstrapper Prime Directive: `run_setup.bat` must work when dropped next to the app with no committed helper files.
 - The CI harness may use additional scripts or assets under `tests/` to inspect the bootstrapper, but those files cannot be required for the real bootstrap flow.
 
@@ -93,6 +96,14 @@ When adding a new branch or fallback:
   the row stays red.
 - Promoting an EXISTING non-gating lane or row (CLAUDE.md Item 35) still needs several consecutive
   complete green matrices first; that is a different question from how a new test starts.
+- Any `pass:false` row in ANY of the eight lanes holds auto-merge, including the lanes with no required
+  check of their own (`cache`, `uv`, `justme-test`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`):
+  the "Aggregate self-test verdicts" check, which branch protection requires, reads every lane's
+  pre-harness rows and fails on the first one (Item 35, criterion C6). A row that records a finding and
+  not a failure (a measurement that may come out either way) writes `pass:true` and a `details` flag, as
+  `self.nuitka.cachesafety` does with `inconclusive`. A provider-dependent `uv`-lane row can turn every
+  PR red when upstream moves (Item 80 was five rows for two days): fix the row or the code, never mute
+  the gate.
 
 ## Writing README requirements (mandatory)
 The README is the specification, so a requirement in it has to be something a test, a demonstration, an
