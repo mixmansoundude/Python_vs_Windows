@@ -1342,6 +1342,16 @@ jobs:
         run: |
           & tests\selfapps_dep_source_matrix.ps1
 
+      # Item 89 (REQ-005.1): what a LATER run does with the dependency lists. After a run that installed everything,
+      # requirements.txt and the PEP 723 header hold the same list and each is recorded; the next run treats a change
+      # since as the user's (delete, add, pin edit, header edit, a package pyproject.toml still lists). Needs the uv
+      # header write-back, so real lane only, gating from its first run.
+      - name: "Self-test: dependency lists on later runs (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_dep_merge_later.ps1
+
       # docs/plan-test-suite-gaps.md gap T7 (README "Maintenance, Logging"): a ~setup.log over 10 MB is moved to
       # ~setup.prev.log at start and a small fresh log begins; one under the limit is kept and appended to. Replaces
       # the harness's text-presence row log.rotate. Real lane only, gating from its first run.
