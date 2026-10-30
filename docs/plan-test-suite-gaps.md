@@ -72,7 +72,7 @@ keep their 2026-10-11 wording; where they disagree with this section, this secti
 |---|---|---|
 | Item 35, T4 (baseline red rows, aggregate gate) | done; the aggregate verdict is a required check (criterion C6) | #491, #509 |
 | T5 requirement-trace ratchet | done; README sections for REQ-022, REQ-024 and REQ-025 added and `NOT_IN_README` is empty | #490, and the docs-and-tags change after #511 |
-| T6 flag-inventory ratchet | done, except the decision on `HP_TEST_DISABLE_LOCK` (below) | #490 |
+| T6 flag-inventory ratchet | done; the one dead hook, `HP_TEST_DISABLE_LOCK`, was removed in the docs-and-tags change after #511 | #490 |
 | T1 A to D launch ledger | done | #494 |
 | T1 E single-flag skip hooks, T2 dependency-source matrix, T7 log rotation, T8 non-ASCII folder, T9 UNC launch, T12 no-flag default run | done | #498 |
 | T9 long path at its real boundary, T10 housekeeping, REQ-027 rows | done | #502 |
@@ -116,10 +116,9 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    run goes on; today `self.stub.lock_no_leak` also passes when no lock is ever created, so a stub that
    reports whether `~bootstrap.lock` exists is the missing half) and REQ-025.3 (no warning when the drive has
    enough space). Each is written first and read red.
-3. **Decision: `HP_TEST_DISABLE_LOCK`.** The hook in `:acquire_lock` is set by no test and no workflow
-   step (`tests/test_flag_inventory.py` lists it as an exception). Either use it (a row that proves a
-   disabled lock leaves no folder) or delete the line and the exception; deleting is smaller and removes a
-   switch no test exercises.
+3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
+   step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
+   exemption list is empty.
 4. **Convert the remaining sections** (REQ-007, 008, 013 to 017, 020, 023 and the requirements the last line of
    the table lists) to goal and shalls, each in the change that works on its tests.
 
@@ -442,7 +441,8 @@ the mechanical half enforced.
 **Lane.** pytest step, all lanes. Cost: none.
 
 **Status (2026-10-11): landed** as `tests/test_flag_inventory.py` with a third rule (every `PVW_*`
-override the batch reads is documented). `UNTESTED_HOOKS` holds `HP_TEST_DISABLE_LOCK` only.
+override the batch reads is documented). `UNTESTED_HOOKS` held `HP_TEST_DISABLE_LOCK` only, and is empty since
+the hook was removed.
 
 ### T7. Replace vacuous and false-pass rows
 

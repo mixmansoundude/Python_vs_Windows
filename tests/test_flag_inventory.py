@@ -5,7 +5,8 @@ behavior needs a human reading, but three mechanical halves can be enforced:
 
 1. every `HP_TEST_*` hook that run_setup.bat reads is set or named by at least one file under tests/
    or .github/workflows/ (AGENTS.md "Branch coverage policy": a hook with no test is an unproven
-   branch). HP_TEST_DISABLE_LOCK is the one known gap, listed in UNTESTED_HOOKS below;
+   branch). UNTESTED_HOOKS below lists the known gaps (none today; HP_TEST_DISABLE_LOCK, the last one, was
+   removed because no test ever set it);
 2. every exact `HP_*`/`PVW_*` name in the README's "Advanced Environment Variables" table exists
    in run_setup.bat or tools/ (a documented flag no code reads is a false promise);
 3. every `PVW_*` super-user override that run_setup.bat reads is documented in the README, AGENTS.md,
@@ -32,9 +33,7 @@ PVW = re.compile(r"\bPVW_[A-Z0-9_]*[A-Z0-9]\b")
 ENV_SECTION_HEADING = "## Advanced Environment Variables"
 
 # Hook name -> why no test sets it. Delete an entry when a test uses the hook (or the hook is removed).
-UNTESTED_HOOKS: Dict[str, str] = {
-    "HP_TEST_DISABLE_LOCK": "opt-out of the REQ-024 lock (run_setup.bat); no test or workflow step sets it. Use it or remove it",
-}
+UNTESTED_HOOKS: Dict[str, str] = {}
 
 
 def _read(path: Path) -> str:
