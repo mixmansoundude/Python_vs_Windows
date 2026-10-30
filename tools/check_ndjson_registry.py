@@ -28,7 +28,9 @@ BRACE_RE = re.compile(r'([A-Za-z0-9_.\-]*)\{([^{}]+)\}')
 DOC_TOKEN_RE = re.compile(r'([A-Za-z0-9][A-Za-z0-9_.~\-]*\.[A-Za-z0-9_.~\-]*)(?:\s*\(([^()]*)\))?')
 CODE_HASHTABLE_ID_RE = re.compile(r"""\bid\s*=\s*['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
 CODE_WRITERESULT_ID_RE = re.compile(r"""Write-Result\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
-CODE_NAMEDPARAM_ID_RE = re.compile(r"""-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
+# A registered row id always has a dot (DOC_TOKEN_RE needs one), so a dotless `-Id 'x'` is some other
+# command's parameter, not a row, and would read as "unregistered" in a check that now gates (Item 35).
+CODE_NAMEDPARAM_ID_RE = re.compile(r"""-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_\-]*\.[A-Za-z0-9_.\-]*)['"]""")
 CODE_JSONLITERAL_ID_RE = re.compile(r'"id"\s*:\s*"([A-Za-z0-9][A-Za-z0-9_.\-]*)"')
 
 

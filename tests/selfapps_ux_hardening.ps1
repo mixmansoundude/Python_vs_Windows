@@ -424,28 +424,47 @@ $connOnlineResp = Join-Path $connOnlineDir '~resp.txt'
 # Defensive stdin: if both ICMP and HTTPS unexpectedly fail, this answers the offline
 # prompt with N so the test fails fast (branch did not fire) instead of hanging.
 Set-Content -LiteralPath $connOnlineResp -Value "N`r`n" -Encoding Ascii
-Push-Location -LiteralPath $connOnlineDir
-try {
-    cmd /c "run_setup.bat < ~resp.txt > ~conn_online_test.log 2>&1"
-} finally {
-    Pop-Location
+# derived requirement: this row's premise is that the runner itself has internet. The product check already
+# retries its ping and its curl once, and a shared runner can still lose its network for longer than that
+# (run 41034407669, uv-dl-fallback: "no internet detected (ICMP and HTTPS check failed)" about a second after
+# the start, the row red, nothing in this repository changed). Under the aggregate gate that alone holds a PR,
+# so when the product's own "no internet detected" line is the reason, wait and run the scenario again, up to
+# three runs in all. Any other outcome (no reachable line and no offline line) is not retried: that is a real
+# failure. A network that stays down for all three runs stays red, with the attempt count in the row.
+$connAttempts = 0
+$connReachableFound = $false
+$connOnlineText = ''
+$connNoInternetSeen = $false
+while ($true) {
+    $connAttempts++
+    Remove-Item -LiteralPath $connOnlineLog -Force -ErrorAction SilentlyContinue
+    Push-Location -LiteralPath $connOnlineDir
+    try {
+        cmd /c "run_setup.bat < ~resp.txt > ~conn_online_test.log 2>&1"
+    } finally {
+        Pop-Location
+    }
+    $connOnlineText = ''
+    if (Test-Path -LiteralPath $connOnlineLog) {
+        $connOnlineText = Get-Content -LiteralPath $connOnlineLog -Raw -Encoding Ascii
+    }
+    # Match the common substring shared by both reachable lines (ICMP-direct and HTTPS-fallback).
+    $connReachableFound = $connOnlineText -match [regex]::Escape('REQ-013: Connectivity check: internet reachable')
+    $connNoInternetSeen = $connOnlineText -match [regex]::Escape('REQ-013: Connectivity check: no internet detected')
+    if ($connReachableFound -or -not $connNoInternetSeen -or $connAttempts -ge 3) { break }
+    Write-Host "[INFO] self.ux.connectivity.online: the runner reported no internet (attempt $connAttempts of 3); waiting 20 seconds and trying again."
+    Start-Sleep -Seconds 20
 }
 $env:HP_CI_LANE = $savedLaneOn
 $env:HP_TEST_OFFLINE = $savedOfflineOn
 $env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
 
-$connOnlineText = ''
-if (Test-Path -LiteralPath $connOnlineLog) {
-    $connOnlineText = Get-Content -LiteralPath $connOnlineLog -Raw -Encoding Ascii
-}
-# Match the common substring shared by both reachable lines (ICMP-direct and HTTPS-fallback).
-$connReachableFound = $connOnlineText -match [regex]::Escape('REQ-013: Connectivity check: internet reachable')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.online'
     req     = 'REQ-013'
     pass    = $connReachableFound
     desc    = 'Connectivity guard: reachable network cascades to fallback (internet reachable branch)'
-    details = [ordered]@{ reachableLogFound = $connReachableFound }
+    details = [ordered]@{ reachableLogFound = $connReachableFound; attempts = $connAttempts; noInternetSeen = $connNoInternetSeen }
 })
 
 # ===== REQ-013: Connectivity guard Y-RETRY re-prompt loop =====

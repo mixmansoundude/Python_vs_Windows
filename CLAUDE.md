@@ -319,6 +319,8 @@ Test files and what they cover:
 | `test_embed_tier.py` | REQ-009 Tier 5: version-table resolution (floor/ceiling fallback, the newest minor a range allows, the swap download with the network mocked), the batch step that reads the request when no earlier step did, batch `HP_EMBED_LATEST_*` constants equal the table's `LATEST_MINOR` entry, HP_EMBED_EXTRACT / HP_EMBED_PYVER_CHECK payload sync, and static pins for `tests/selfapps_embed_version.ps1` (literal ids, own exit codes, watchdog, real-lane gating step, 3.12 strictly inside the table); synthetic cases prove each rule can fail |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 | `test_nuitka_cachesafety.py` | Item 72 follow-up: `run_setup.bat` has exactly two Nuitka command lines, with the production flags and NO `--onefile-tempdir-spec`/`:nuitka_cache_arg` anywhere (a static unpack folder failed cold concurrent launches; the message names the cold-storage trigger); the safety script emits its row once, builds with the production flag text plus the spec, asserts warm/overlap/kill-recovery/post-cold-launch but only RECORDS the cold rounds and the update scenario (`adoptable` needs both), ends with its own exit codes, and its step is uv-only and non-gating; synthetic cases prove each rule can fail |
+| `test_aggregate_gate.py` | Item 35: the aggregate self-test step stays a gate (no `continue-on-error`, exact `if`, `exit 1`, `id: aggregate` and its output write, lane list equal to the matrix, `always()` jobs, no TEMP PROBE step) and the NDJSON registry job gates too (no `continue-on-error`, `pipefail`, no `|| true`/`|| :`/`|| exit 0`, `test_repo_rows_and_registry_agree` still runs the checker and asserts its result); synthetic cases prove each rule can fail |
+| `test_connectivity_online_retry.py` | `self.ux.connectivity.online` may run its scenario up to three times, only while the product printed its own `no internet detected` line (a runner network blip, run `41034407669`); a log with neither line is not retried, the row passes only on the last run's reachable line and records `attempts` and `noInternetSeen`; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -633,7 +635,8 @@ but several represent real gaps worth closing before calling the path fully rele
   `tests/test_aggregate_selftest_verdicts.ps1`.
   **Consequence to know**: upstream drift on a provider-dependent `uv`-lane row (a new Python, uv or Nuitka release;
   Item 80 was five such rows for two days) now holds every PR until the row is fixed or its pass condition is
-  corrected; do not skip or relax a row to get green (AGENTS.md). The history (the 2026-08-30 revert on PR #471, the
+  corrected; do not skip or relax a row to get green (AGENTS.md). First case seen: `self.ux.connectivity.online` (a live-network row) went red on `uv-dl-fallback` in run `41034407669` when the
+  runner had no internet for a moment; the scenario now repeats up to three times, only on the product's own offline line. The history (the 2026-08-30 revert on PR #471, the
   cascade and warnfix reds fixed by PR #491, the `cache` smokerun artifact, the soak evidence) is in
   `docs/agent-closed-backlog.md`, "Item 35 aggregate gate history".
 

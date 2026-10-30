@@ -41,6 +41,19 @@ def test_scan_code_ids_covers_all_four_emission_patterns(tmp_path):
     }
 
 
+def test_dotless_named_param_is_not_a_row_id(tmp_path):
+    # `-Id 'x'` of some other command can never be a registry row (a doc id needs a dot), so it must not
+    # be read as an unregistered row now that the check gates.
+    ps1 = tmp_path / "selfapps_other.ps1"
+    ps1.write_text(
+        "Get-Process -Id '4242'\n"
+        "Stop-Thing -Id \"plain\"\n"
+        "Write-EntryRow -Id 'self.example.kept' -Expected $x\n",
+        encoding="utf-8",
+    )
+    assert check_ndjson_registry.scan_code_ids([ps1]) == {"self.example.kept"}
+
+
 def test_scan_log_ids_reads_ndjson_lines(tmp_path):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()

@@ -173,10 +173,13 @@ def registry_problems(text, registry_test_text):
             found.append("the registry step does not run tools/check_ndjson_registry.py")
         if "set -o pipefail" not in block:
             found.append("the registry step needs set -o pipefail (the report is piped through tee, which would hide the exit code)")
-        if re.search(r"\|\|\s*(true|:)\b|continue-on-error:", block):
+        if re.search(r"\|\|\s*(?:true\b|:(?![A-Za-z0-9_])|exit\s+0\b)|continue-on-error:", block):
             found.append("the registry step hides the checker's exit code")
-    if "def test_repo_rows_and_registry_agree" not in registry_test_text:
+    m = re.search(r"^def test_repo_rows_and_registry_agree\b.*?(?=^def |\Z)", registry_test_text, re.MULTILINE | re.DOTALL)
+    if not m:
         found.append("tests/test_check_ndjson_registry.py lost test_repo_rows_and_registry_agree (the aggregate gate carries the check through it)")
+    elif "check_ndjson_registry.main(" not in m.group(0) or not re.search(r"assert\s+result\s*==\s*0", m.group(0)):
+        found.append("test_repo_rows_and_registry_agree no longer runs the checker and asserts its result is 0 (a test that only passes would carry nothing)")
     return found
 
 
@@ -247,7 +250,11 @@ GOOD_REGISTRY = """jobs_header_is_ignored: x
         if: ${{ always() }}
         run: y
 """
-GOOD_REGISTRY_TEST = "def test_repo_rows_and_registry_agree(capsys):\n    pass\n"
+GOOD_REGISTRY_TEST = (
+    "def test_repo_rows_and_registry_agree(capsys):\n"
+    "    result = check_ndjson_registry.main([\"--repo-root\", \".\"])\n"
+    "    assert result == 0\n"
+)
 
 
 class RegistryCheckGates(unittest.TestCase):
@@ -271,6 +278,11 @@ class RegistryCheckGates(unittest.TestCase):
         bad = GOOD_REGISTRY.replace("| tee report.txt", "| tee report.txt || true")
         self.assertTrue(any("hides" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
 
+    def test_colon_suppression_is_caught(self):
+        for tail in ("|| :", "|| : # keep going", "||:", "|| true", "|| exit 0"):
+            bad = GOOD_REGISTRY.replace("| tee report.txt", "| tee report.txt " + tail)
+            self.assertTrue(any("hides" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)), tail)
+
     def test_missing_pipefail_is_caught(self):
         bad = GOOD_REGISTRY.replace("          set -o pipefail\n", "")
         self.assertTrue(any("pipefail" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
@@ -281,6 +293,15 @@ class RegistryCheckGates(unittest.TestCase):
 
     def test_missing_job_is_caught(self):
         self.assertTrue(any("no ndjson-registry-check job" in f for f in registry_problems("x: y\n", GOOD_REGISTRY_TEST)))
+
+    def test_repo_test_that_only_passes_is_caught(self):
+        bad = registry_problems(GOOD_REGISTRY, "def test_repo_rows_and_registry_agree(capsys):\n    pass\n")
+        self.assertTrue(any("no longer runs the checker" in f for f in bad), bad)
+
+    def test_repo_test_that_does_not_assert_the_result_is_caught(self):
+        body = "def test_repo_rows_and_registry_agree(capsys):\n    result = check_ndjson_registry.main([])\n"
+        bad = registry_problems(GOOD_REGISTRY, body)
+        self.assertTrue(any("no longer runs the checker" in f for f in bad), bad)
 
     def test_lost_repo_test_is_caught(self):
         bad = registry_problems(GOOD_REGISTRY, "def test_something_else():\n    pass\n")
