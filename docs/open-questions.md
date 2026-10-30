@@ -25,19 +25,6 @@ chat one at a time; the later ones wait their turn.
    the gates that read fewer signals. Which gates should read all three? Default: no code change until the
    no-flag default-run scenario (T12) shows how much it matters; word each shall per gate until then.
 
-## From the build-tool override (Item 71, filed 2026-10-23)
-
-4. **`PVW_BUILDER=both` builds the optimized EXE without the question README REQ-018.2 requires.** With `both`, the
-   bootstrapper builds the Nuitka EXE straight after the PyInstaller EXE passes verification and asks nothing, because
-   the setting is the request. The new EXE's own verification starts the program once more for up to 30 seconds (the
-   log line says so), and it does so even when `HP_CI_LANE`, `NOINPUT` or `HP_NONINTERACTIVE` is set. README REQ-018.2
-   [critical] says every run beyond the single automatic one needs explicit consent in a prompt that names the risk, and
-   REQ-018.9 says every elective offer is declined without waiting in a non-interactive run. Same shape as
-   `HP_PVW_KNOWN_IDEMPOTENT`, whose name is its own consent. (A) Keep it and add one sentence to REQ-018.2: a super-user
-   setting whose documented purpose is that run counts as the consent. (B) Ask the question under `both` as well, so a
-   non-interactive run declines and `both` only builds the optimized EXE when someone answers. Default meanwhile: no code
-   change; README REQ-009.20 carries a note pointing here. A is reversible and is what gets written on a yes.
-
 ## From the October 2026 maintenance scan (CLAUDE.md "Periodic Maintenance Checks", filed 2026-10-24)
 
 5. **Dependabot has never opened a pull request here, while six of the nine pinned GitHub Actions are one to two

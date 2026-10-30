@@ -3864,6 +3864,73 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   input, are in `docs/agent-cold-storage.md`. Detail: `docs/agent-interconnect.md`'s "Three TOML readers, one oracle"
   and `docs/plan-toml-reading-hygiene.md`.
 
+### Item 89 (closed 2026-10-24, PR #506, merge commit 37fde25; filed 2026-10-23 from the maintainer's answer to open question 3)
+
+- **The problem.** A program that declared its dependencies in more than one place got only one of them: the highest ranked
+  input (PEP 723 header, then `pyproject.toml`, then `requirements.txt`) was copied over `requirements.txt` and the others
+  were ignored, while the console said the winner "overrides requirements.txt". After a good first run the header written back
+  outranked every later `requirements.txt` edit, so adding `termcolor` to `requirements.txt` did nothing and the file was
+  overwritten (found by `self.realapp.edit_rerun` in PR #503). The maintainer expected all inputs merged, the rank used only
+  for a conflict about one package, and both `requirements.txt` and the header rewritten after a run in which the environment
+  was set up, with the console saying an input is used only when it is.
+- **What shipped.** `tools/dep_merge.py` (`HP_DEP_MERGE`, 560 characters of payload room), called from `:dep_merge_inputs` right
+  after the PEP 723 extraction. A cold first run installs the union. After a run in which every dependency installed,
+  `:dep_merge_snapshot` (from `:success`) records the three lists (`~dep_base.requirements.txt`, `.pyproject.txt`,
+  `.pep723.txt`); a later run reads a difference from its record as the user's change: an add is added everywhere, a removal
+  from a list the bootstrapper wrote is removed everywhere (a header entry through `uv remove --script`), an edited pin beats
+  the older pins without being called a conflict. A package `pyproject.toml` still lists stays, with a message, because the
+  bootstrapper never rewrites that file. A change to any list, or to an include or option line of `requirements.txt`, bypasses
+  the dep-check "already satisfied" skip. A helper failure falls back to the highest ranked list alone, with a warning.
+  README REQ-005.1 is rewritten as REQ-005.1.1 to REQ-005.1.18 (one thought per shall, after two CodeRabbit rounds). Design
+  detail: `docs/agent-interconnect.md`'s "Dependency lists merged"; the reusable lesson (tell the user's edits from our own
+  output with a record of what we last wrote) is in `docs/agent-lessons-learned.md`.
+- **Rows.** `self.depsource.all_three` (changed), `.requirements_pyproject` and `.conflict` (new),
+  `self.pep723.pyproject.merge` (was `.override`, all eight lanes), `self.depmerge.later.*` (eight rows,
+  `tests/selfapps_dep_merge_later.ps1`, `real` lane, gating from the first run), `self.realapp.edit_rerun`. Red first: run
+  `40055807767` had nine red `real` rows, each for its own reason, plus `self.pep723.pyproject.merge` red on all eight lanes;
+  two negative controls (`self.depmerge.later.stable`, `.header_add`) passed on the old code on purpose. The fix run
+  `40065111924` was read on all eight lanes. Four fix rounds followed from review and from the rows themselves: the first
+  unchanged run after a bare entry was written settles once because `uv add --script` adds a lower bound to a bare name
+  (`toolz` becomes `toolz>=1.2.0`), so `.stable` runs one settling run first; a `requirements.txt` that holds only directives
+  names no package and the removal still has to run (`.delete_last`, run `40085545694`); an edited include line counts as a
+  change (three unit tests, run `40092164748`); and REQ-005.1.7, .8, .11 split into REQ-005.1.15 to .18 for the add and remove
+  write-back and the two console lines. Final read: run `40130386532` (head `0609b36`), all eight lanes pre and post harness,
+  zero red rows, the 64 rows of the dependency-source, merge, real-app and PEP 723 groups identical to run `40118067603`
+  apart from seconds.
+- **History dropped from the registry.** `self.realapp.edit_rerun` used to assert only that the run agreed with the source it
+  named, because the header outranked the edit before this item, so a `requirements.txt` edit could not matter; it now asserts
+  that termcolor is installed and in both lists. Its `docs/agent-ndjson.md` entry no longer carries that narrative. The old
+  `found; overrides requirements.txt` wording is gone from the batch and `tests/test_dep_merge.py` pins its absence.
+- **Consequences recorded in the README notes.** A folder last run before the change has no record, so its first run after is a
+  cold run (the union). Packages removed from every input stay installed in the environment (harmless, as before).
+- **Follow-up filed, not built here.** The Item 65 runtime-install offer still edited no file for a `pyproject` or `pep723`
+  source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts: built as Item 91 (PR #511).
+
+### Item 91 (closed 2026-10-30, PR #511; filed 2026-10-24 as the follow-up of Item 89, approved by the coordinator)
+
+- **The problem.** `:runtime_install_offer` (Item 65 slice 2) installed the package a run asked for and then appended it to
+  `requirements.txt` only when the dependency source was neither `pyproject` nor `pep723` (`HP_RTI_EDITS`), because before
+  Item 89 those two sources were copied over `requirements.txt` on every run and an appended line was lost. Since Item 89 a
+  list's change since the last run is kept by the merge, so the exception had no reason left: the user who said yes was told
+  to add the package by hand to a file the prompt named, and the next run of the same folder knew nothing of it.
+- **What shipped.** The offer always appends the package to `requirements.txt` (`--append`, unchanged helper) and says so in
+  the prompt (`adds them to this program's own environment and to requirements.txt`) and in the log
+  (`Runtime install: added <package> to requirements.txt.`). `HP_RTI_EDITS`, `:rti_not_edited`, `:rti_after_edit` and the
+  second prompt wording are gone; `pyproject.toml` is still never rewritten and the header is only brought up to date by the
+  usual write-back of a later run. README REQ-018.18 lost its `pyproject.toml`/header exception. `HP_RUNTIME_MODULE_SCAN` is
+  unchanged (no payload edit).
+- **Rows.** `self.runtime.install.pyproject` flipped from "left untouched, user told" to "requirements.txt gains the line,
+  `pyproject.toml` byte-identical, a second bootstrap of the same folder (EXE folder deleted, answer N) reads the lists, keeps
+  the line, removes nothing and asks nothing"; the new `self.runtime.install.pep723` requires the same for a header source and
+  records, without asserting it, whether the header received the package (`secondHeaderHasPackage`). `.accept` and `.decline`
+  stayed green. Both new scenarios run two bootstraps in `tests/selfapps_runtime_install.ps1` (`real` lane, gating); the cost
+  is two extra bootstraps on that lane. Red first: run `40142245618` (head `6af480f`) had exactly two red rows on `real`,
+  `.pyproject` and `.pep723`, for the predicted reasons (`promptNamesRequirements`, `saidAdded`, `requirementsGotIt` and
+  `secondKeptLine` all false, everything else true, `pyprojectUntouched`/`headerKept` true), and every other row of all eight
+  lanes identical to the Item 89 read `40130386532` except the one added row.
+- **Not covered.** The computed-name import of the test program is missing again in any later rebuild unless hidden-import
+  recovery fires, so the second bootstrap judges the lists and the log, not the program's output.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

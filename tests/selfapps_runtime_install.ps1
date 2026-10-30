@@ -9,10 +9,16 @@
 # pipreqs nor PyInstaller sees the import. After a yes, the rebuilt EXE only finds the package
 # because the rebuild passes --hidden-import, so the check run passing proves that flag was used.
 #
-# Rows: self.runtime.install.accept, self.runtime.install.decline and self.runtime.install.pyproject,
-# one real bootstrap each. The third proves that when pyproject.toml is the dependency source a yes still
-# installs and verifies, but leaves pyproject.toml alone and says so (pyproject dependencies are copied over
-# requirements.txt on every run, so an appended line would be lost; CodeRabbit finding on PR #487).
+# Rows: self.runtime.install.accept, self.runtime.install.decline, self.runtime.install.pyproject and
+# self.runtime.install.pep723, one real bootstrap each (the last two add a second bootstrap of the same folder).
+# Item 91 (README REQ-018.18): a yes adds the package to requirements.txt whatever the dependency source is.
+# Before Item 89 a pyproject.toml or PEP 723 list was copied over requirements.txt on every run, so an appended
+# line was lost and the offer left every file alone; since Item 89 the merge keeps a list's change, so the rows
+# require the line in requirements.txt, pyproject.toml untouched (a header stays a header), and the line still there after a
+# second run of the same folder (dist deleted so the dependency lists are read again; answer N, the rebuilt
+# EXE misses the dynamically imported module again, which is the known limit of a computed import). The second run
+# must not ask again either: the package is part of the environment now, so the runtime scan has nothing to report.
+# Whether the header receives the package on that run is recorded (secondHeaderHasPackage), not asserted.
 # The answer comes from HP_TEST_RTM_ANSWER, the test override of the prompt. Each row first proves
 # its precondition (the first run exited 0 and its stderr held the traceback), so a fixture that
 # stops reproducing the symptom cannot make a row pass or fail vacuously. HP_NDJSON points at a
@@ -55,9 +61,23 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     })
     Write-NdjsonRow ([ordered]@{
         id      = 'self.runtime.install.pyproject'
-        req     = 'REQ-018'
+        req     = 'REQ-018.18'
         pass    = $true
-        desc    = 'a pyproject.toml dependency source is left untouched (skipped on non-Windows)'
+        desc    = 'a pyproject.toml dependency source gets the package in requirements.txt (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.install.pep723'
+        req     = 'REQ-018.18'
+        pass    = $true
+        desc    = 'a PEP 723 header dependency source gets the package in requirements.txt (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.install.wording'
+        req     = 'REQ-018.37'
+        pass    = $true
+        desc    = 'the prompt and the log say requirements.txt receives the package (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
     exit 0
@@ -97,14 +117,19 @@ if __name__ == "__main__":
     print("runtime app ok")
 '@
 
+# The header the PEP 723 scenario starts with: the dependency source is the header alone (one package, six).
+$pep723Header = "# /// script`n# dependencies = [`n#     `"six`",`n# ]`n# ///`n"
+
 # Runs one bootstrap of the fixture with the given answer and returns everything the rows need.
 function Invoke-InstallScenario {
-    param([string]$Name, [string]$Answer, [switch]$Pyproject)
+    param([string]$Name, [string]$Answer, [switch]$Pyproject, [switch]$Pep723)
     $workDir = Join-Path $here ('~selftest_runtime_install_' + $Name)
     if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
     New-Item -ItemType Directory -Force -Path $workDir | Out-Null
     Copy-Item -Path $batchPath -Destination $workDir -Force
-    Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
+    $appText = $appCode
+    if ($Pep723) { $appText = $pep723Header + $appCode }
+    Set-Content -Path (Join-Path $workDir 'app.py') -Value $appText -Encoding ASCII
     $pyprojText = ''
     if ($Pyproject) {
         $pyprojText = "[project]`r`nname = `"runtimeapp`"`r`nversion = `"0.1.0`"`r`ndependencies = [`"six`"]`r`n"
@@ -164,6 +189,7 @@ function Invoke-InstallScenario {
 
     [pscustomobject]@{
         RunExit        = $runExit
+        WorkDir        = $workDir
         Console        = $console
         SetupText      = $setupText
         ErrText        = $errText
@@ -182,11 +208,94 @@ function Invoke-InstallScenario {
     }
 }
 
+# Runs the SAME folder once more (Item 91): the EXE folder is deleted so the cached-EXE fast path cannot skip the
+# dependency lists, and the answer is N so nothing is installed on the way. It returns only what this run wrote to
+# ~setup.log (the log is not rotated per run) plus the files the rows judge.
+function Invoke-SecondRun {
+    param([string]$Name, [string]$WorkDir)
+    $setupLog = Join-Path $WorkDir '~setup.log'
+    $before = 0
+    if (Test-Path -LiteralPath $setupLog) { $before = (Get-Item -LiteralPath $setupLog).Length }
+    $distDir = Join-Path $WorkDir 'dist'
+    if (Test-Path -LiteralPath $distDir) { Remove-Item -Recurse -Force -LiteralPath $distDir }
+
+    # derived requirement: the second run appends to the console log and the NDJSON file of the first run, because
+    # those are the names the test-logs upload of batch-check.yml already lists; a new name would not be uploaded.
+    $bootstrapLog = '~install_' + $Name + '_bootstrap.log'
+    $subNdjson    = Join-Path $WorkDir '~sub.ndjson'
+    $consoleBefore = 0
+    if (Test-Path -LiteralPath (Join-Path $WorkDir $bootstrapLog)) { $consoleBefore = (Get-Item -LiteralPath (Join-Path $WorkDir $bootstrapLog)).Length }
+    $savedNdjson  = [Environment]::GetEnvironmentVariable('HP_NDJSON')
+    $savedAnswer  = [Environment]::GetEnvironmentVariable('HP_TEST_RTM_ANSWER')
+    Push-Location $WorkDir
+    try {
+        [Environment]::SetEnvironmentVariable('HP_NDJSON', $subNdjson)
+        [Environment]::SetEnvironmentVariable('HP_TEST_RTM_ANSWER', 'N')
+        cmd /c "call run_setup.bat >> $bootstrapLog 2>&1"
+        $runExit = $LASTEXITCODE
+    } finally {
+        [Environment]::SetEnvironmentVariable('HP_NDJSON', $savedNdjson)
+        [Environment]::SetEnvironmentVariable('HP_TEST_RTM_ANSWER', $savedAnswer)
+        Pop-Location
+    }
+
+    $console = ''
+    $consolePath = Join-Path $WorkDir $bootstrapLog
+    if (Test-Path -LiteralPath $consolePath) {
+        $consoleBytes = [System.IO.File]::ReadAllBytes($consolePath)
+        if ($consoleBytes.Length -gt $consoleBefore) { $console = [System.Text.Encoding]::ASCII.GetString($consoleBytes, $consoleBefore, $consoleBytes.Length - $consoleBefore) }
+    }
+    $newLog = ''
+    if (Test-Path -LiteralPath $setupLog) {
+        $bytes = [System.IO.File]::ReadAllBytes($setupLog)
+        if ($bytes.Length -gt $before) { $newLog = [System.Text.Encoding]::ASCII.GetString($bytes, $before, $bytes.Length - $before) }
+    }
+    $reqPath = Join-Path $WorkDir 'requirements.txt'
+    $reqText = ''
+    if (Test-Path -LiteralPath $reqPath) { $reqText = Get-Content -LiteralPath $reqPath -Raw -Encoding ASCII }
+    $pyprojPath = Join-Path $WorkDir 'pyproject.toml'
+    $pyprojText = ''
+    if (Test-Path -LiteralPath $pyprojPath) { $pyprojText = [System.IO.File]::ReadAllText($pyprojPath) }
+    $appText = Get-Content -LiteralPath (Join-Path $WorkDir 'app.py') -Raw -Encoding ASCII
+    $statusState = $null
+    $statusPath = Join-Path $WorkDir '~bootstrap.status.json'
+    if (Test-Path -LiteralPath $statusPath) {
+        try { $statusState = (Get-Content -LiteralPath $statusPath -Raw -Encoding ASCII | ConvertFrom-Json).state } catch { $statusState = $null }
+    }
+    [pscustomobject]@{
+        RunExit     = $runExit
+        Console     = $console
+        NewLog      = $newLog
+        ReqText     = $reqText
+        Pyproject   = $pyprojText
+        AppText     = $appText
+        StatusState = $statusState
+    }
+}
+
+# The few log lines that explain a red row, printable ASCII only and cut short, so the row says WHY without the log files.
+function Get-LogExcerpt {
+    param([string]$Text, [int]$Max = 14)
+    $keep = @()
+    foreach ($l in ($Text -split "`r?`n")) {
+        if ($l -match 'DEP_SOURCE=|Dependency lists|Removed |still lists it|Runtime install|\[ERROR\]|\[WARN\]') {
+            $clean = ($l -replace '[^\x20-\x7E]', '?')
+            if ($clean.Length -gt 160) { $clean = $clean.Substring(0, 160) }
+            $keep += $clean
+            if ($keep.Count -ge $Max) { break }
+        }
+    }
+    return ,$keep
+}
+
 # ---- accept: a yes installs, adds to requirements.txt, rebuilds with --hidden-import, checks ----
 $a = Invoke-InstallScenario -Name 'accept' -Answer 'Y'
 $aFirstRunTrace = $a.SetupText -match 'Your program needed the module xlsxwriter'
 $aPrompted      = $a.Console -match 'asked for packages that are not installed'
+$aPromptNamesReq = $a.Console -match 'adds them to this program.s own environment and to requirements\.txt'
+$aPromptNoSkip  = $a.Console -notmatch 'but does not edit'
 $aInstalled     = $a.SetupText -match 'Runtime install: installed xlsxwriter'
+$aSaidAdded     = $a.SetupText -match 'Runtime install: added xlsxwriter to requirements\.txt\.'
 $aReqLine       = $a.ReqText -match '(?m)^\s*xlsxwriter\s*$'
 $aRebuilt       = $a.SetupText -match '\[REPAIR\] rebuild complete after runtime install'
 $aVerified      = $a.SetupText -match 'Runtime install: verified'
@@ -248,45 +357,138 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-# ---- pyproject: a yes installs and verifies, but pyproject.toml is not edited and the user is told ----
+# ---- pyproject: a yes adds the package to requirements.txt too (Item 91), pyproject.toml stays untouched ----
 $p = Invoke-InstallScenario -Name 'pyproject' -Answer 'Y' -Pyproject
 $pSource        = $p.SetupText -match 'DEP_SOURCE=pyproject'
 $pFirstRunTrace = $p.SetupText -match 'Your program needed the module xlsxwriter'
-$pPromptNamesIt = $p.Console -match 'does not edit \*+\s+\*+ the dependencies in pyproject\.toml'
-$pPromptNoReq   = $p.Console -notmatch 'adds them to this program.s own environment and to requirements\.txt'
+$pPromptNamesReq = $p.Console -match 'adds them to this program.s own environment and to requirements\.txt'
+$pPromptNoSkip  = $p.Console -notmatch 'but does not edit'
 $pInstalled     = $p.SetupText -match 'Runtime install: installed xlsxwriter'
-$pNotEdited     = $p.SetupText -match 'Runtime install: did not edit the dependencies in pyproject\.toml'
+$pSaidAdded     = $p.SetupText -match 'Runtime install: added xlsxwriter to requirements\.txt\.'
+$pReqGotIt      = ($p.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($p.ReqText -match '(?m)^\s*six\b')
 $pUntouched     = ($p.PyprojectAfter -ceq $p.PyprojectBefore) -and ($p.PyprojectAfter -notmatch 'xlsxwriter')
-$pReqNotAdded   = $p.ReqText -notmatch 'xlsxwriter'
 $pVerified      = $p.SetupText -match 'Runtime install: verified'
 $pCheckClean    = ($p.ErrText -notmatch 'No module named') -and ($p.OutText -match 'runtime app ok')
-$pPass = ($p.RunExit -eq 0) -and $pSource -and $pFirstRunTrace -and $pPromptNamesIt -and $pPromptNoReq -and
-         $pInstalled -and $p.EnvHasModule -and $pNotEdited -and $pUntouched -and $pReqNotAdded -and
+$p2 = Invoke-SecondRun -Name 'pyproject' -WorkDir $p.WorkDir
+$p2Read         = $p2.NewLog -match 'DEP_SOURCE='
+$p2Kept         = ($p2.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($p2.ReqText -match '(?m)^\s*six\b')
+$p2NotRemoved   = $p2.NewLog -notmatch 'Removed xlsxwriter'
+$p2NoPrompt     = $p2.Console -notmatch 'asked for packages that are not installed'
+$p2Untouched    = ($p2.Pyproject -ceq $p.PyprojectBefore)
+$pPass = ($p.RunExit -eq 0) -and $pSource -and $pFirstRunTrace -and
+         $pInstalled -and $p.EnvHasModule -and $pReqGotIt -and $pUntouched -and
          $pVerified -and $pCheckClean -and
-         ($p.InstallState -eq 'verified') -and ($p.InstallDepSource -eq 'pyproject') -and ($p.StatusState -eq 'ok')
+         ($p.InstallState -eq 'verified') -and ($p.InstallDepSource -eq 'pyproject') -and ($p.StatusState -eq 'ok') -and
+         ($p2.RunExit -eq 0) -and ($p2.StatusState -eq 'ok') -and $p2Read -and $p2Kept -and $p2NotRemoved -and $p2NoPrompt -and $p2Untouched
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.pyproject'
-    req     = 'REQ-018'
+    req     = 'REQ-018.18'
     pass    = $pPass
-    desc    = 'with pyproject.toml as the dependency source a yes installs and verifies, leaves pyproject.toml untouched and says so'
+    desc    = 'with pyproject.toml as the dependency source a yes adds the package to requirements.txt, leaves pyproject.toml untouched, and a second run keeps the line'
     details = [ordered]@{
         exitCode         = $p.RunExit
         sourceIsPyproject = $pSource
         firstRunTrace    = $pFirstRunTrace
-        promptNamesPyproject = $pPromptNamesIt
-        promptDoesNotPromiseRequirements = $pPromptNoReq
         installed        = $pInstalled
         envHasModule     = $p.EnvHasModule
-        saidNotEdited    = $pNotEdited
+        requirementsGotIt = $pReqGotIt
         pyprojectUntouched = $pUntouched
-        requirementsGotIt = (-not $pReqNotAdded)
         verified         = $pVerified
         checkRunClean    = $pCheckClean
         rowState         = $p.InstallState
         rowDepSource     = $p.InstallDepSource
         statusState      = $p.StatusState
+        secondExit       = $p2.RunExit
+        secondStatus     = $p2.StatusState
+        secondReadLists  = $p2Read
+        secondKeptLine   = $p2Kept
+        secondNoRemoved  = $p2NotRemoved
+        secondNoPrompt   = $p2NoPrompt
+        secondHeaderHasPackage = ($p2.AppText -match 'xlsxwriter')
+        secondPyprojectUntouched = $p2Untouched
+        firstLog         = (Get-LogExcerpt $p.SetupText)
+        secondLog        = (Get-LogExcerpt $p2.NewLog)
     }
 })
 
-if (-not ($aPass -and $dPass -and $pPass)) { exit 1 }
+# ---- pep723: the same for a PEP 723 header as the dependency source; the header stays a header ----
+$e = Invoke-InstallScenario -Name 'pep723' -Answer 'Y' -Pep723
+$eSource        = $e.SetupText -match 'DEP_SOURCE=pep723'
+$eFirstRunTrace = $e.SetupText -match 'Your program needed the module xlsxwriter'
+$ePromptNamesReq = $e.Console -match 'adds them to this program.s own environment and to requirements\.txt'
+$ePromptNoSkip  = $e.Console -notmatch 'but does not edit'
+$eInstalled     = $e.SetupText -match 'Runtime install: installed xlsxwriter'
+$eSaidAdded     = $e.SetupText -match 'Runtime install: added xlsxwriter to requirements\.txt\.'
+$eReqGotIt      = ($e.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($e.ReqText -match '(?m)^\s*six\b')
+$eAppText       = Get-Content -LiteralPath (Join-Path $e.WorkDir 'app.py') -Raw -Encoding ASCII
+$eHeaderKept    = ($eAppText -match '(?m)^# /// script\s*$') -and ($eAppText -match '(?m)^# ///\s*$') -and ($eAppText -match '(?m)^#\s+"six')
+$eVerified      = $e.SetupText -match 'Runtime install: verified'
+$eCheckClean    = ($e.ErrText -notmatch 'No module named') -and ($e.OutText -match 'runtime app ok')
+$e2 = Invoke-SecondRun -Name 'pep723' -WorkDir $e.WorkDir
+$e2Read         = $e2.NewLog -match 'DEP_SOURCE='
+$e2Kept         = ($e2.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($e2.ReqText -match '(?m)^\s*six\b')
+$e2NotRemoved   = $e2.NewLog -notmatch 'Removed xlsxwriter'
+$e2NoPrompt     = $e2.Console -notmatch 'asked for packages that are not installed'
+$e2HeaderKept   = ($e2.AppText -match '(?m)^# /// script\s*$') -and ($e2.AppText -match '(?m)^#\s+"six')
+$ePass = ($e.RunExit -eq 0) -and $eSource -and $eFirstRunTrace -and
+         $eInstalled -and $e.EnvHasModule -and $eReqGotIt -and $eHeaderKept -and
+         $eVerified -and $eCheckClean -and
+         ($e.InstallState -eq 'verified') -and ($e.InstallDepSource -eq 'pep723') -and ($e.StatusState -eq 'ok') -and
+         ($e2.RunExit -eq 0) -and ($e2.StatusState -eq 'ok') -and $e2Read -and $e2Kept -and $e2NotRemoved -and $e2NoPrompt -and $e2HeaderKept
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.runtime.install.pep723'
+    req     = 'REQ-018.18'
+    pass    = $ePass
+    desc    = 'with a PEP 723 header as the dependency source a yes adds the package to requirements.txt, keeps the header, and a second run keeps the line'
+    details = [ordered]@{
+        exitCode         = $e.RunExit
+        sourceIsPep723   = $eSource
+        firstRunTrace    = $eFirstRunTrace
+        installed        = $eInstalled
+        envHasModule     = $e.EnvHasModule
+        requirementsGotIt = $eReqGotIt
+        headerKept       = $eHeaderKept
+        verified         = $eVerified
+        checkRunClean    = $eCheckClean
+        rowState         = $e.InstallState
+        rowDepSource     = $e.InstallDepSource
+        statusState      = $e.StatusState
+        secondExit       = $e2.RunExit
+        secondStatus     = $e2.StatusState
+        secondReadLists  = $e2Read
+        secondKeptLine   = $e2Kept
+        secondNoRemoved  = $e2NotRemoved
+        secondNoPrompt   = $e2NoPrompt
+        secondHeaderHasPackage = ($e2.AppText -match 'xlsxwriter')
+        secondHeaderKept = $e2HeaderKept
+        firstLog         = (Get-LogExcerpt $e.SetupText)
+        secondLog        = (Get-LogExcerpt $e2.NewLog)
+    }
+})
+
+# ---- wording (REQ-018.37): prompt and log say that requirements.txt receives the package, for every dependency source ----
+# One verdict over the three yes runs (requirements.txt, pyproject.toml and PEP 723 header as the source), taken from the
+# console text the user saw and the setup log, so a source that quietly skips the sentence turns this row red.
+$wPass = $aPromptNamesReq -and $aPromptNoSkip -and $aSaidAdded -and
+         $pPromptNamesReq -and $pPromptNoSkip -and $pSaidAdded -and
+         $ePromptNamesReq -and $ePromptNoSkip -and $eSaidAdded
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.runtime.install.wording'
+    req     = 'REQ-018.37'
+    pass    = $wPass
+    desc    = 'on a yes the prompt says requirements.txt receives the package and the log says it was added, for each dependency source'
+    details = [ordered]@{
+        acceptPromptNamesRequirements    = $aPromptNamesReq
+        acceptPromptDoesNotSkipEdit      = $aPromptNoSkip
+        acceptSaidAdded                  = $aSaidAdded
+        pyprojectPromptNamesRequirements = $pPromptNamesReq
+        pyprojectPromptDoesNotSkipEdit   = $pPromptNoSkip
+        pyprojectSaidAdded               = $pSaidAdded
+        pep723PromptNamesRequirements    = $ePromptNamesReq
+        pep723PromptDoesNotSkipEdit      = $ePromptNoSkip
+        pep723SaidAdded                  = $eSaidAdded
+    }
+})
+
+if (-not ($aPass -and $dPass -and $pPass -and $ePass -and $wPass)) { exit 1 }
 exit 0
