@@ -356,6 +356,33 @@ option added after `--output-dir=dist` is caught too.
 
 ---
 
+## Nuitka's "unsupported Python" answer is read from `~setup.log` between a mark and a check (Item 80)
+
+**Touch either Nuitka command line (`:try_nuitka_tier_a`, `:offer_optimized_build`), the Visual Studio hint under it, or the
+Item 80 scenarios in `tests/selfapps_pvw_builder.ps1`, must understand this.** When uv's newest CPython outran Nuitka (3.15.0
+against Nuitka 4.2.2, one day in October 2026) the user saw "Fallback build did not complete successfully." followed by a hint
+to install Visual Studio Build Tools, which cannot help. The two sites now say what Nuitka itself said:
+- `call :nuitka_unsupported_mark` is the line directly before each command and stores, in `HP_NUI_BEFORE`, how many lines of
+  `~setup.log` match `The Python version .* is not supported by Nuitka` (`:nuitka_unsupported_count`, a `for /f` over `findstr` that
+  counts lines itself: no pipe, so no `^|` escaping). In the failure block `call :nuitka_unsupported_check` counts again; more
+  lines than at the mark sets `HP_NUI_UNSUPPORTED=1` and logs one plain sentence, and the Visual Studio hint line is
+  `if not defined HP_NUI_UNSUPPORTED call :log ...`. **The mark is the point**: `~setup.log` is appended to and only rotated past 10
+  MB, so "does the log contain it" would take an earlier run's answer for this one (`nuitka_failother` seeds exactly that line).
+  Without a mark nothing is claimed and the old hint shows.
+- Nuitka's "only experimentally supported" warning for a brand-new Python is a different line and is not counted: that build works.
+  The sentence must not repeat Nuitka's own wording, or the next run would count the bootstrapper's own line
+  (`tests/test_nuitka_unsupported_hint.py` pins all of this, including that the three stub lines of the scenarios agree with the
+  pattern).
+- **Decided: no version table in the batch.** Pre-checking the Python against a list of what Nuitka supports would go stale the way
+  the problem did (4.2.2 refused 3.15, 4.3 accepted it a day later); Nuitka answers in about a second and its answer is the source of truth.
+- The scenarios put a stub `nuitka.py` next to `app.py`: `python -m nuitka` finds the current folder first, so the real command
+  line runs and prints the line, with nothing compiled (the real package is still installed first). `app.py` wins entry selection
+  (REQ-002), so the stub is never the program. Each of the three has its own gating step in `batch-check.yml` (real and conda-full) and
+  its logs in the `test-logs` artifact; they started as child runs of the `nuitka_forcefail` step while the workflow was held, and
+  `tests/test_nuitka_unsupported_hint.py` now fails if a step goes missing, stops gating or leaves the two lanes.
+
+---
+
 ## `PVW_BUILDER` (Item 71): the build-tool choice touches four sites in two build paths
 
 **Touch the build block, `:try_nuitka_tier_a`, `:offer_optimized_build` or `:try_fast_exe`, must understand

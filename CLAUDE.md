@@ -319,6 +319,7 @@ Test files and what they cover:
 | `test_embed_tier.py` | REQ-009 Tier 5: version-table resolution (floor/ceiling fallback, the newest minor a range allows, the swap download with the network mocked), the batch step that reads the request when no earlier step did, batch `HP_EMBED_LATEST_*` constants equal the table's `LATEST_MINOR` entry, HP_EMBED_EXTRACT / HP_EMBED_PYVER_CHECK payload sync, and static pins for `tests/selfapps_embed_version.ps1` (literal ids, own exit codes, watchdog, real-lane gating step, 3.12 strictly inside the table); synthetic cases prove each rule can fail |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 | `test_nuitka_cachesafety.py` | Item 72 follow-up: `run_setup.bat` has exactly two Nuitka command lines, with the production flags and NO `--onefile-tempdir-spec`/`:nuitka_cache_arg` anywhere (a static unpack folder failed cold concurrent launches; the message names the cold-storage trigger); the safety script emits its row once, builds with the production flag text plus the spec, asserts warm/overlap/kill-recovery/post-cold-launch but only RECORDS the cold rounds and the update scenario (`adoptable` needs both), ends with its own exit codes, and its step is uv-only and non-gating; synthetic cases prove each rule can fail |
+| `test_nuitka_unsupported_hint.py` | Item 80: the mark/command/check order around each of the two Nuitka command lines, the count's `findstr` pattern against Nuitka's real "is not supported" line (matches) and its "only experimentally supported" warning, the bootstrapper's own sentence and a different failure (do not match), the sentence safe for `:log`, the check fail-safe without a mark, and the three `selfapps_pvw_builder.ps1` stub lines agreeing with the pattern; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -698,7 +699,7 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78 and 81 shipped, see `docs/agent-closed-backlog.md`)
+### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78, 80 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
 the "already fixed / do not add" list are in `docs/plan-field-report-2026-10.md`; read it before
@@ -706,34 +707,6 @@ starting any of these. No maintainer decisions are open. Q1-Q11 are decided or r
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-
-### Item 80: Nuitka does not support the Python that uv now provisions (filed 2026-10-10 from reading PR #476's CI run)
-
-- **Item 80 (Confirmed cause, small to medium; found while reading the Item 69 check's run)**: on
-  2026-10-09 uv's newest managed CPython became 3.15.0, and the `uv` lane's Nuitka paths started
-  failing: `self.exe.build.tiera`, `self.exe.tiera.hidden_skip` and `self.optbuild.offer` (the
-  `accept` and `swapfail` scenarios), with `FATAL: The Python version '3.15' is not supported by
-  Nuitka '4.2.2'` in the setup log. Nuitka 4.2.2 is the latest release on PyPI (checked
-  2026-10-10), so waiting does not fix it yet. Not caused by any PR: the same three rows fail on the
-  `main` push run `37995888342` (21:51Z, before the Item 69 check existed) and were clean on
-  `37973464775` (18:27Z, Python 3.14). `real` and `conda-full` (the gating lanes) have zero failing
-  rows in the current run; the `uv` lane now shows 5 failing rows instead of its 2 known ones
-  (Item 35's `self.cascade.exec` and `self.exe.warnfix.venv_repair`). User-visible effect: when
-  PyInstaller fails and uv provisioned 3.15.0, the Tier A Nuitka fallback cannot build, and the
-  optimized-build offer fails after the user said yes. PyInstaller builds are unaffected on 3.15.0.
-  Slices, test first: (1) a row that shows the intended behaviour on an unsupported Python (Nuitka
-  is skipped with one honest log line and the caveat panel, not attempted); (2) the fix. Two fix
-  shapes, not decided: skip Nuitka cleanly when it reports the Python as unsupported (recommended,
-  small), or build Nuitka under a separate uv-managed 3.14 (heavier; two interpreters, cuts against
-  the two-layer rule in `docs/agent-lessons-learned.md`). Related: the "Embed version table"
-  periodic check below (its table reaches 3.15 since the 2026-10-24 refresh).
-  **Update 2026-10-11 (CI rows, run `38098172664`)**: the three rows pass again on the `uv` lane
-  (`self.exe.build.tiera`, `self.exe.tiera.hidden_skip`, all four `self.optbuild.offer` scenarios)
-  while `self.uv.managed.interpreter` still reports `cpython-3.15`, and PyPI now lists Nuitka 4.3
-  (4.2.2 was the latest on 2026-10-10). Likely cause, inferred and not read from a log: 4.3
-  accepts 3.15. Confirm the Nuitka version in a `uv`-lane setup log before closing; the slice 1
-  row (Nuitka skipped cleanly on an unsupported Python) is still worth adding, since the next
-  Python minor will repeat this.
 
 ### Item 89: the dependency lists are merged, not chosen between (filed 2026-10-23 from the maintainer's answer to open question 3)
 
@@ -935,7 +908,9 @@ are slower than pip/uv); as of 2026-10-24 it is `uv`.
   conda.bat-not-found branch), so `PYSPEC` was empty and `runtime.txt` / `pyproject.toml` were
   ignored in exactly the case README REQ-009 names for this tier. The tier now runs the helper under
   its own fresh interpreter, and `embed_pyver_check.py` picks the newest table minor a range
-  allows (it used to take the range's first number, so `>=3.10` swapped down to 3.10).
+  allows (it used to take the range's first number, so `>=3.10` swapped down to 3.10). **Green read**: run
+  `40084822967` (PR #507 head `b3e034d`) has all four `self.embed.version.*` rows (`swap`, `floor`, `ceiling`,
+  `range`) true on the `real` lane, read from the pre-harness artifact, with no red row on that lane.
 - **Going forward**: each scan, check python.org for (a) a new CPython minor release --
   add a table entry and bump `LATEST_MINOR`/`HP_EMBED_LATEST_PATCH`/`HP_EMBED_LATEST_SHA256`
   together (re-run `test_embed_tier.py` to confirm the sync); (b) any of the pinned patch

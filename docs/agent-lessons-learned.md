@@ -903,6 +903,18 @@ with `[System.IO.File]::Open(path, 'Open', 'Read', 'Read')` and prove the lock w
 
 ---
 
+## A log that is only appended to answers "did this run say X" only against a mark taken before the command (Item 80)
+
+`~setup.log` keeps every earlier run's output (rotated past 10 MB, never reset), so `findstr` for Nuitka's "Python version is not
+supported" line would report an answer from an old run as this one's. Count the matching lines right before the command and again
+after it, and act on the difference (`:nuitka_unsupported_mark` / `:nuitka_unsupported_check`); a negative-control scenario that
+seeds an old matching line and fails for a different reason keeps this honest. Two smaller facts from the same change: a stub
+`nuitka.py` in the app folder shadows the installed package for `python -m nuitka` (the current folder comes first on `sys.path`; it
+would not if `PYTHONSAFEPATH` were set, so the scenario also requires the stub's own line in the log), and `for /f ... in ('findstr ...')`
+with `set /a` counts lines without a pipe, which avoids the `^|` escaping a `find /c /v ""` pipeline would need inside the quotes.
+
+---
+
 ## A static Nuitka `--onefile` unpack folder fails when two launches race on a cold folder
 
 `--onefile-tempdir-spec={CACHE_DIR}/...` keeps the unpacked files, so later launches are about 3.7 times faster, but
