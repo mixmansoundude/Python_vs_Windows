@@ -55,6 +55,7 @@ def row_tags(texts: Iterable[str]) -> Dict[str, Set[str]]:
                 continue
             # The row is the ordered hashtable around the tag: from the nearest `@{` above it to the nearest `})`
             # below it, so an id belonging to the previous or the next row is never picked up.
+            # The tag's own line comes first: a row written on one line holds its id beside its tag.
             lo = i
             while lo > max(i - WINDOW, 0) and "@{" not in lines[lo]:
                 lo -= 1
@@ -62,7 +63,7 @@ def row_tags(texts: Iterable[str]) -> Dict[str, Set[str]]:
             while hi < min(i + WINDOW, len(lines) - 1) and not lines[hi].lstrip().startswith("})"):
                 hi += 1
             row = "?"
-            for j in list(range(i - 1, lo - 1, -1)) + list(range(i + 1, hi + 1)):
+            for j in [i] + list(range(i - 1, lo - 1, -1)) + list(range(i + 1, hi + 1)):
                 found = ROW_ID.search(lines[j])
                 if found:
                     row = found.group(1)

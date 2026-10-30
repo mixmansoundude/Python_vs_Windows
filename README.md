@@ -1150,11 +1150,13 @@ time, and should not let an instance that ended abnormally keep later runs out o
 - **REQ-024.5** [major] The bootstrapper **shall**, when it stops under REQ-024.3, not write
   `~bootstrap.status.json`.
 - **REQ-024.6** [major] The bootstrapper **shall**, when the lock folder exists and was last changed 2 hours ago
-  or longer, replace it with its own lock folder and continue the run.
+  or longer, remove it, create its own lock folder in its place and continue the run.
 - **REQ-024.7** [major] The bootstrapper **shall**, when it cannot determine when an existing lock folder was
   last changed, continue the run and leave that lock folder in place.
 - **REQ-024.8** [major] The bootstrapper **shall**, when a run that created the lock folder reaches its end with
   a success or an error report, remove the lock folder.
+- **REQ-024.9** [major] The bootstrapper **shall**, when it cannot create its own lock folder after removing one
+  under REQ-024.6, continue the run without a lock and write a warning to the log.
 
 > **Notes (non-normative).**
 > - Rationale: two instances in one folder would write the same environment, logs and status file at the same
@@ -1167,9 +1169,11 @@ time, and should not let an instance that ended abnormally keep later runs out o
 >   reused. The lock is released by `:success`, by `:die` and by the early stops that run after it was taken. A run
 >   that is killed (Ctrl+C, a closed window, power loss) never releases it, which is what REQ-024.6 is for.
 > - Limits: the lock is not refreshed while a run goes on, so a run that has lasted more than 2 hours can have its
->   lock replaced by a new double click. When the replacement folder of REQ-024.6 cannot be created, the run
->   continues without a lock and logs a warning. A declined instance waits for a key press unless the CI marker
->   `HP_CI_LANE` is set, so a double-click window stays open long enough to read the message.
+>   lock replaced by a new double click. When the replacement folder of REQ-024.6 cannot be created (REQ-024.9),
+>   the run continues without a lock, so a second instance is not kept out; a run that stopped there would turn a
+>   stale lock that cannot be removed into a folder where nothing ever runs again. That run holds no lock, so it
+>   releases none and leaves whatever it could not remove in place. A declined instance waits for a key press
+>   unless the CI marker `HP_CI_LANE` is set, so a double-click window stays open long enough to read the message.
 > - Log contract: `[WARN] REQ-024: setup already running (lock held, not stale); this instance is exiting.`,
 >   `[INFO] REQ-024: stale lock evicted (older than the staleness threshold); proceeding.`,
 >   `[WARN] REQ-024: could not determine whether the existing lock is stale (indeterminate result); continuing without it.`

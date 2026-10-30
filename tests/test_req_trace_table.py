@@ -72,6 +72,21 @@ def test_tag_finds_the_row_id_before_or_after_it() -> None:
     assert tags["REQ-003"] == {"row.id.after"}
 
 
+def test_a_row_written_on_one_line_names_its_own_id() -> None:
+    # `id` and `req` on the tag's own line (the selfapps scripts write many rows this way): the neighbours' ids
+    # must not be taken, and the row must not be reported as unlocated.
+    one_line = (
+        "Write-NdjsonRow ([ordered]@{ id = 'row.prev'; req = 'REQ-005'; pass = $true })\n"
+        "Write-NdjsonRow ([ordered]@{ id = 'row.same'; req = 'REQ-001.2'; pass = $true })\n"
+        "Write-NdjsonRow ([ordered]@{ id = 'row.next'; req = 'REQ-001'; pass = $true })\n"
+    )
+    assert rtt.row_tags([one_line]) == {
+        "REQ-005": {"row.prev"},
+        "REQ-001.2": {"row.same"},
+        "REQ-001": {"row.next"},
+    }
+
+
 def test_a_tag_with_no_id_near_it_is_kept_as_unlocated() -> None:
     far = "req = 'REQ-009'\n" + "\n" * 20 + "id = 'too.far'\n"
     assert rtt.row_tags([far]) == {"REQ-009": {"?"}}
