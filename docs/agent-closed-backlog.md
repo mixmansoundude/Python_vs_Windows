@@ -3963,6 +3963,34 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   once the aggregate gate (#509) had merged, each got its own gating step (real and conda-full, logs in the `test-logs`
   artifact), the chain was deleted from the script, and the unit tests pin the steps.
 
+### Item 90 (closed 2026-10-30; `codeql-action` PR #508, the other five PR #513; filed 2026-10-24 from the October maintenance scan)
+
+- **The problem.** `.github/dependabot.yml` (`github-actions`, weekly, added 2026-08-17) never opened a pull request, while
+  six of the nine pinned actions had fallen one to two majors behind (`docs/open-questions.md` Q5 asks why, and stays open).
+  The run page carried "Node.js 20 is deprecated ... forced to run on Node.js 24" against `download-artifact@v6`.
+- **What shipped.** One commit per action, every use of that action changed, to the latest major of 2026-10-30:
+  `codeql-action` v3 to v4 (PR #508), `download-artifact` v6 to v7 to v8, `github-script` v8 to v9, `cache` (restore and
+  save) v5 to v6, `checkout` v5 to v7, `upload-artifact` v6 to v7. `.github/dependabot.yml`'s comment no longer lists
+  versions. The release notes of each new major were read first (WebFetch of the releases page); what mattered here:
+  `github-script` v9 removes `require('@actions/github')` and injects `getOctokit`, and no script here requires that module
+  or declares `getOctokit` (only `require('fs')`); `checkout` v7 blocks a fork PR checkout under `pull_request_target` and
+  `workflow_run`, which no workflow uses, and the model quick-fix job's plain `git push` is reached only when the iterate
+  gate has failures; `cache` v6 and `upload-artifact` v7 are ESM (`upload-artifact` v7 adds an `archive` input, default
+  unchanged); `download-artifact` v7 is the first to run on Node.js 24 by default, and v8 fails the step on a digest mismatch
+  by default (v7 only warned) and does not unzip a download that is not a zip. Every download here is a zip written by
+  `upload-artifact`, by name or by `pattern:` without `merge-multiple`, so each artifact still lands in its own folder.
+- **Why it was bundled.** The plan was two pull requests (the four lower-risk bumps first, then the artifact pair). The first
+  run of PR #513 (`41074512594`, head `1f9df96`) read clean for the pins and red for an unrelated reason, and re-running failed
+  jobs is not allowed on this workflow (see `docs/agent-lessons-learned.md`), so the second half was pushed to the same
+  branch as the fresh commit instead of waiting for a second pull request.
+- **First run, read.** No job carried the Node.js 20 notice (only the known `INPUT_PATH` length warning, now 56337 against
+  32766, and the benign fixture annotations); `selftest-gate` downloaded all eight verdict artifacts with the digest logged
+  and checked; every lane had the row count of the previous full run (real 259, conda-full 168, uv 138, cache 103,
+  justme-test 93, contract-uv 93, uv-dl-fallback 90, contract-uv-fail 89); the only red rows were the eight `reqspec.*` rows
+  of `justme-test`, because conda-forge answered `502 Bad Gateway` to its single `conda install --dry-run`.
+- **Not done on purpose.** Dependabot stays as it is (Q5). `configure-pages@v6`, `upload-pages-artifact@v5` and
+  `deploy-pages@v5` were current on 2026-10-24 and were not re-read.
+
 ### Item 35 aggregate gate history (moved from CLAUDE.md 2026-10-24 when the gate became real; Item 35 itself stays open)
 
   **Aggregate-check mechanism: implemented and now the primary path for closing the required-

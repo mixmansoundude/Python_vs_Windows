@@ -27,9 +27,9 @@ chat one at a time; the later ones wait their turn.
 
 ## From the October 2026 maintenance scan (CLAUDE.md "Periodic Maintenance Checks", filed 2026-10-24)
 
-5. **Dependabot has never opened a pull request here, while six of the nine pinned GitHub Actions are one to two
-   majors behind.** `.github/dependabot.yml` (the `github-actions` ecosystem, weekly) was added 2026-08-17. Since then no
-   pull request and no `dependabot/*` branch has existed, but the pins in `.github/workflows/*.yml` are behind
+5. **Dependabot has never opened a pull request here, although six of the nine pinned GitHub Actions had fallen one to
+   two majors behind.** `.github/dependabot.yml` (the `github-actions` ecosystem, weekly) was added 2026-08-17. Since then no
+   pull request and no `dependabot/*` branch has existed, but the pins in `.github/workflows/*.yml` were behind
    (`checkout` v5 against v7, `cache` v5 against v6, `upload-artifact` v6 against v7, `download-artifact` v6 against
    v8, `github-script` v8 against v9, `codeql-action` v3 against v4), so Dependabot should have had something to
    propose. A session cannot read the repository settings that say why. On github.com, under Settings, Code security
@@ -38,8 +38,10 @@ chat one at a time; the later ones wait their turn.
    pull requests arrive within a week; each is read in CI like any other. (B) If it is on and shows an error, paste the
    error (it names no secret) and the cause gets fixed in `dependabot.yml`. (C) If you would rather not run
    Dependabot, say so and a backlog item bumps the pins by hand, a few actions per pull request with one commit each.
-   Default meanwhile: the pins are bumped by hand that way (CLAUDE.md Item 90, started with `codeql-action`), which is
-   what C would do anyway; the runner forces the Node.js 20 actions onto Node.js 24, so nothing is urgent.
+   Default meanwhile: Item 90 bumped every pin by hand to the latest major of 2026-10-30 (`codeql-action` in PR #508,
+   the other five in PR #513), which is what C would do anyway, so nothing is urgent; the quarterly scan re-reads the
+   majors and bumps by hand until this is answered, and a switched-on Dependabot would only add pull requests for the
+   next drift.
 
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 

@@ -705,6 +705,11 @@ named github-pages" (PR #488, run `39004972181`). The red `Publish diagnostics t
 failure, not a code defect, and the next push publishes normally. To get a fresh answer for a flaky lane, push a
 new commit instead. The step conclusion alone also misleads on the `uv` lane: its interactive step is
 `continue-on-error`, so a re-run showed a green step while the artifact still held the same red row. Read the row.
+Since the aggregate gate became real, a provider hiccup in ANY lane holds the PR: on PR #513 (run `41074512594`)
+conda-forge answered `502 Bad Gateway` to the one `conda install --dry-run` of `tests/selfapps_reqspec.ps1` in the
+`justme-test` lane, eight rows and the aggregate went red, and every other lane had the row ids and counts of the
+previous full run. The answer is the next planned commit on the branch (or the merge of main), with one PR comment
+that names the check and the cause; never an empty commit and never a re-run.
 
 **A push that cancels the previous run of `batch-check.yml` leaves a red "Aggregate self-test verdicts" on the superseded
 commit** (since Item 35 C6 made the gate real; run `40143017186`, head `896a1b9`, superseded by `9136983`). The gate job
