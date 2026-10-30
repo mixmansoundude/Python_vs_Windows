@@ -57,7 +57,7 @@ jobs:
       HP_CI_LANE: ${{ matrix.mode }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Extract pipreqs version from bootstrapper
         if: ${{ matrix.mode == 'cache' }}
@@ -4622,7 +4622,7 @@ jobs:
       # being present on this runner that the job never had before; without this step, the
       # "Aggregate verdicts" step below would fail to find the script on every single run.
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Download lane verdicts
         uses: actions/download-artifact@v7
@@ -4794,7 +4794,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Check CRLF line endings on tracked .bat/.cmd files
         run: python3 tools/check_crlf.py
@@ -4813,7 +4813,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Download lane NDJSON artifacts (small files only, not the diag bundles)
         uses: actions/download-artifact@v7
@@ -4871,7 +4871,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Determine branch context
@@ -5177,7 +5177,7 @@ jobs:
         # later `!cancelled()` step outright if the WORKFLOW RUN itself is cancelled, instead of
         # `always()`'s risk of hanging a checkout mid-teardown until it times out.
         if: ${{ !cancelled() }}
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
