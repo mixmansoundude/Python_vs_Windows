@@ -675,7 +675,8 @@ all three by bypassing `set /p` before it reads the piped stdin.
 repo at ~168 KB base64 passed via `INVENTORY_B64`). Write to a file in `$GITHUB_WORKSPACE` and read
 from disk instead.
 
-**`download-artifact@v6`'s `merge-multiple: true` silently overwrites same-named files** when a
+**`download-artifact@v6`'s `merge-multiple: true` silently overwrites same-named files** (seen on v6;
+the v7 and v8 release notes list no change to it, so treat it as still true) when a
 step downloads MULTIPLE artifacts matching a `pattern:` and each zips a file with the SAME local
 filename -- only the LAST-downloaded artifact's content survives, no error anywhere. Bit this repo
 twice (an NDJSON cross-check silently degraded to 1 observed lane instead of 8+; `selftest-gate`'s

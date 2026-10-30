@@ -724,27 +724,31 @@ the original symptom (see that doc's "CI-first testing policy").
   `pyproject` or `pep723` source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts; simplifying
   that is a separate item (needs the coordinator's number).
 
-### Item 90: bump the GitHub Actions pins by hand, one action per pull request (filed 2026-10-24)
+### Item 90: bump the GitHub Actions pins by hand (filed 2026-10-24; re-planned 2026-10-30)
 
 - **Item 90 (small each, mechanical; from the October 2026 scan, `docs/open-questions.md` Q5 still open)**:
-  Dependabot has opened nothing, so the pins are bumped by hand, each action in its own PR that is read in CI
-  like any other (the maintainer's answer to Q5 can only switch this to Dependabot's PRs). Per bump: read the
-  action's release notes for the new major (WebFetch of `https://github.com/<owner>/<repo>/releases`), change
-  every use of that one action, and read the run, not only its colour. Status (in use -> latest as read on
-  2026-10-24): `codeql-action` v3 -> v4 done in `codeql.yml` (v4 runs on Node.js 24, v3 is deprecated in
-  December 2026; the run of PR #508 logged `CODEQL_ACTION_VERSION: 4.39.1` and uploaded its results without a
-  warning). Open, with what the release notes say and what this repo's use of each action means for the bump
-  (release notes read 2026-10-24; none says a Node.js or runner minimum beyond runner 2.327.1, which GitHub-hosted
-  runners exceed): `github-script` v8 -> v9 (6 uses in `pr-automerge.yml`, 3 in `batch-check.yml`): v9 removes
-  `require('@actions/github')` and injects `getOctokit`; no script here uses either (only `require('fs')`), so the
-  bump should be inert. `checkout` v5 -> v7 (every workflow): v7 blocks a fork PR checkout under `pull_request_target`
-  and `workflow_run`; no workflow here uses either trigger. `cache` v5 -> v6: ESM only. `upload-artifact` v6 -> v7: ESM,
-  new `archive: false` option, no breaking change listed (13 uses in `batch-check.yml`, 1 in `workflow-lint.yml`).
-  `download-artifact` v6 -> v8 is the one with a behavior change: v8 fails the step on a hash mismatch by default
-  (`digest-mismatch: error`; v7 only warned) and no longer unzips non-zip downloads, so bump to v7 first, then v8, and
-  re-read the GitHub Actions data-passing entry in `docs/agent-lessons-learned.md` (`merge-multiple`). Every open
-  one touches `batch-check.yml`, which lane 1's aggregate-gate edit owns, so those wait for it to merge. Remove this
-  item when every pin is on its latest major.
+  Dependabot has opened nothing, so the pins are bumped by hand (the maintainer's answer to Q5 can only switch
+  this to Dependabot's PRs). Per bump: read the action's release notes for the new major (WebFetch of
+  `https://github.com/<owner>/<repo>/releases`), change every use of that one action in its own commit, and read
+  the run, not only its colour: the annotations, the artifact downloads in `selftest-gate` and `publish_diag`,
+  the `pull_request` run of `pr-automerge.yml` (only that event runs the PR's own copy) and every lane's rows.
+  Done: `codeql-action` v3 -> v4 (PR #508; v4 runs on Node.js 24, v3 is deprecated in December 2026; the run
+  logged `CODEQL_ACTION_VERSION: 4.39.1` and uploaded its results without a warning). Release notes read
+  2026-10-24 and 2026-10-30; none names a Node.js or runner minimum beyond runner 2.327.1, which GitHub-hosted
+  runners exceed. Two pull requests for the rest, one commit per action. **PR 1**: `download-artifact` v6 -> v7
+  (v6 still ran on Node.js 20 by default, which is the "Node.js 20 is deprecated" notice on the run page),
+  `github-script` v8 -> v9 (v9 removes `require('@actions/github')` and injects `getOctokit`; no script here
+  requires that module or declares `getOctokit`, only `require('fs')`), `cache` v5 -> v6 (ESM only) and
+  `checkout` v5 -> v7 (v7 blocks a fork PR checkout under `pull_request_target` and `workflow_run`, which no
+  workflow here uses). **PR 2**: `upload-artifact` v6 -> v7 (ESM, new `archive: false` option, no breaking change
+  listed; 14 uses) together with `download-artifact` v7 -> v8, the one bump with a behavior change: v8 fails the
+  step on a hash mismatch by default (`digest-mismatch: error`; v7 only warned) and no longer unzips a download
+  that is not a zip, so read what `selftest-gate` does with a lane whose artifact did not download (the
+  aggregate gate fails closed on a missing lane) and re-read the GitHub Actions data-passing entry in
+  `docs/agent-lessons-learned.md` (`merge-multiple`). PR 2 also generalizes the version list in
+  `.github/dependabot.yml`'s comment (left alone until then: a change to that file may wake Dependabot, whose
+  first pull requests would overlap the bumps). Remove this item when every pin is on its latest major (it
+  moves to `docs/agent-closed-backlog.md` with its number).
 
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
@@ -775,20 +779,21 @@ rather than relying on manual memory.
 
 ### GitHub Actions / CI health (action pins, deprecations, lint)
 
-- **Last scanned**: 2026-10-24.
-- **Findings**: the pins are no longer all on their latest majors (the 2026-07 sweep said they
+- **Last scanned**: 2026-10-24 (the pins are bumped by hand since 2026-10-30, Item 90).
+- **Findings**: the pins were no longer all on their latest majors (the 2026-07 sweep said they
   were; `upload-artifact` v7 shipped in 2026-02, so that sweep may already have been wrong). Read
   from each action's GitHub releases page (the page shows day and month, no year, so read these as
-  indicative): in use -> latest: `checkout` v5 -> v7, `cache` v5 -> v6, `upload-artifact` v6 -> v7,
-  `download-artifact` v6 -> v8, `github-script` v8 -> v9, `codeql-action` v3 -> v4 (bumped by hand under
-  Item 90). Current: `configure-pages@v6`, `upload-pages-artifact@v5`,
-  `deploy-pages@v5`. No pin was edited in this scan: the artifact actions' majors change behavior
-  CI relies on (artifact naming, `merge-multiple`, hash checks), so each bump is its own CI-proven
-  PR, one action at a time. **Dependabot is inert**: `.github/dependabot.yml` landed 2026-08-17 and
-  not one Dependabot PR or `dependabot/*` branch has existed since (every PR checked by author and
-  head branch). The reason is not visible from a session (repository settings), so it is
-  `docs/open-questions.md` Q5. Notices unchanged: "Node.js 20 is deprecated ... forced to run on
-  Node.js 24" against `download-artifact@v6` (now also explained by the pin being behind); the
+  indicative): in use -> latest on 2026-10-24: `checkout` v5 -> v7, `cache` v5 -> v6, `upload-artifact` v6 -> v7,
+  `download-artifact` v6 -> v8, `github-script` v8 -> v9, `codeql-action` v3 -> v4. Item 90 bumps them by hand
+  (`codeql-action` in PR #508, then two pull requests: `download-artifact` v7, `github-script`, `cache` and
+  `checkout` first, `upload-artifact` with `download-artifact` v8 second). Current: `configure-pages@v6`,
+  `upload-pages-artifact@v5`, `deploy-pages@v5`. The artifact actions' majors change behavior CI relies on
+  (artifact naming, `merge-multiple`, hash checks), so those bumps are read in CI, not only merged.
+  **Dependabot is inert**: `.github/dependabot.yml` landed 2026-08-17 and not one Dependabot PR or
+  `dependabot/*` branch has existed since (every PR checked by author and head branch). The reason is not
+  visible from a session (repository settings), so it is `docs/open-questions.md` Q5. Notices unchanged on
+  2026-10-24: "Node.js 20 is deprecated ... forced to run on Node.js 24" against `download-artifact@v6`
+  (explained by that pin being behind: v7 is the first release that runs on Node.js 24 by default); the
   punycode notice was not seen in the sampled run. `actionlint` and `yamllint` clean.
 - **Going forward**: once Q5 is answered, either Dependabot's first PRs arrive or the pins are
   bumped by hand. Re-read the latest majors every scan: from a session `gh` and `curl` cannot reach
