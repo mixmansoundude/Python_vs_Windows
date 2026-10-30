@@ -80,7 +80,7 @@ jobs:
         if: ${{ matrix.mode == 'cache' }}
         id: conda_cache_restore
         continue-on-error: true
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: C:\Users\Public\Documents\Miniconda3
           key: win-${{ runner.os }}-py311b-conda-${{ hashFiles('run_setup.bat') }}-${{ steps.extract_version.outputs.pipreqs_version }}
@@ -3431,7 +3431,7 @@ jobs:
 
       - name: Save Miniconda cache
         if: ${{ matrix.mode == 'cache' && steps.conda_cache_restore.outputs.cache-hit != 'true' && env.HP_CACHE_CORRUPTED != '1' && steps.conda_validate.outputs.conda_ok == 'true' }}
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: C:\Users\Public\Documents\Miniconda3
           key: ${{ steps.conda_cache_restore.outputs.cache-primary-key }}
