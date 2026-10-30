@@ -89,7 +89,7 @@ several shalls of one scenario names one of them, so a shall can be checked and 
 | REQ-005 | 18 | 0 | 18 | 32 |
 | REQ-009 | 13 | 5 | 8 | 28 |
 | REQ-012 | 6 | 3 | 3 | 1 |
-| REQ-018 | 36 | 4 | 32 | 22 |
+| REQ-018 | 37 | 5 | 32 | 22 |
 | REQ-019 | 3 | 2 | 1 | 1 |
 | REQ-021 | 6 | 4 | 2 | 0 |
 | REQ-022 | 3 | 1 | 2 | 0 |
@@ -99,7 +99,7 @@ several shalls of one scenario names one of them, so a shall can be checked and 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-39 of 114 numbered shalls are named by at least one row tag.
+40 of 115 numbered shalls are named by at least one row tag.
 
 Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.1, REQ-005.1.2, REQ-005.1.3, REQ-005.1.4, REQ-005.1.5, REQ-005.1.6, REQ-005.1.7, REQ-005.1.8, REQ-005.1.9, REQ-005.1.10, REQ-005.1.11, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-005.1.15, REQ-005.1.16, REQ-005.1.17, REQ-005.1.18, REQ-009.9, REQ-009.10, REQ-009.11, REQ-009.12, REQ-009.13, REQ-009.14, REQ-009.15, REQ-009.16, REQ-012.1, REQ-012.3, REQ-012.5, REQ-018.1, REQ-018.2, REQ-018.3, REQ-018.4, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.8, REQ-018.9, REQ-018.10, REQ-018.11, REQ-018.12, REQ-018.13, REQ-018.14, REQ-018.15, REQ-018.16, REQ-018.17, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.23, REQ-018.24, REQ-018.25, REQ-018.26, REQ-018.27, REQ-018.28, REQ-018.29, REQ-018.30, REQ-018.31, REQ-018.35, REQ-018.36, REQ-019.2, REQ-021.1, REQ-021.3, REQ-022.2, REQ-022.3, REQ-024.1, REQ-024.2, REQ-024.4, REQ-024.5, REQ-025.2, REQ-025.3.
 
@@ -108,7 +108,7 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
 **What is left, in the order I would take it** (each is one pull request and one AGENTS.md loop):
 
 1. **Tag-only: move the rows tagged with the number alone to the sub-id they verify.** Largest: REQ-018 (22
-   rows, 32 of 36 shalls unnamed), then REQ-009, REQ-003 and REQ-012. No behavior changes, so no Windows cost
+   rows, 32 of 37 shalls unnamed), then REQ-009, REQ-003 and REQ-012. No behavior changes, so no Windows cost
    beyond the run. `tests/test_req_trace.py` accepts only a one-level sub-id (`REQ-005.1`), so the 18
    shalls numbered `REQ-005.1.n` cannot be named until its tag pattern accepts a dotted id.
 2. **Rows for shalls nothing checks:** REQ-022.3 (a failure without the four phrases is not retried; one
