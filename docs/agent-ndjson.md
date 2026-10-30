@@ -1416,7 +1416,7 @@ self.runtime.modnotfound.pyproject
 
 ## selfapps-runtime-install NDJSON rows (selfapps_runtime_install.ps1, real lane only, GATING)
 
-CLAUDE.md Item 65 slice 2 regression test, README REQ-018 (Item 91 changed the last two rows). The same fixture as
+CLAUDE.md Item 65 slice 2 regression test, README REQ-018 (Item 91 changed the last two rows and split the wording check out into a fifth). The same fixture as
 above, bootstrapped four times with `HP_TEST_RTM_ANSWER` set (the last two get a second bootstrap of the same folder
 with the EXE folder deleted and the answer N). `self.runtime.install.accept` (answer Y) requires the first run's report, the
 echoed prompt, `Runtime install: installed xlsxwriter`, `xlsxwriter` importable from `.uv_env`, a
@@ -1439,7 +1439,11 @@ nothing (CodeRabbit, PR #487). `self.runtime.install.pep723` is the same with a 
 `app.py` as the source: `DEP_SOURCE=pep723`, the line in `requirements.txt`, the header still a header
 (`# /// script` fence and `six`) after both runs; `secondHeaderHasPackage` records, without asserting, whether
 the header received the package on the second run. The second-run program output is NOT asserted: a computed
-import is missing again in any later rebuild (no `--hidden-import` flag is kept across runs). All four skip
+import is missing again in any later rebuild (no `--hidden-import` flag is kept across runs). The second runs append to the first
+run's `~install_<name>_bootstrap.log` and `~sub.ndjson`, the names the `test-logs` upload already lists (a new name would not
+be uploaded). `self.runtime.install.wording` (README REQ-018.37) is one verdict over the accept, pyproject and pep723 runs: the
+echoed prompt says `adds them to this program's own environment and to requirements.txt`, never `but does not edit`, and the
+setup log has `Runtime install: added xlsxwriter to requirements.txt.`; each run's three values are in `details`. All five skip
 with `skip=true, reason=non-windows-host` off Windows. Expected red for the last two on the commit that adds
 this wording (the offer edits no file for these sources) and green once `:runtime_install_offer` always edits
 `requirements.txt`.
@@ -1449,6 +1453,7 @@ self.runtime.install.accept
 self.runtime.install.decline
 self.runtime.install.pyproject
 self.runtime.install.pep723
+self.runtime.install.wording
 ```
 
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
@@ -1492,10 +1497,10 @@ self.runtime.module_missing
 CLAUDE.md Item 65 slice 2. `:rti_row` writes `self.runtime.install` once per bootstrap run when the offer
 reaches a state: `details.state` is `declined`, `not_offered`, `install_failed`, `rebuild_failed`,
 `verified`, `still_missing` or `not_verified`; `details.site` is `exe` or `interpreter`; `details.provider`
-is `HP_ENV_MODE`; `details.depSource` is `DEP_SOURCE` (what decides whether `requirements.txt` is edited);
+is `HP_ENV_MODE`; `details.depSource` is `DEP_SOURCE` (recorded to say which source the run had; since Item 91 it no longer decides whether `requirements.txt` is edited);
 `details.packages` lists what was installed (empty when nothing was). `pass` is always true. As with
 `self.runtime.module_missing`, no lane puts it in a shared artifact: `selfapps_runtime_install.ps1` reads it
-from a private file and judges it in its own three rows.
+from a private file and judges it in its own rows.
 
 ```
 self.runtime.install

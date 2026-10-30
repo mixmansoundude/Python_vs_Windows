@@ -5882,6 +5882,7 @@ for /f "usebackq tokens=1,2" %%A in ("~runtime_install_pkgs.txt") do call :rti_i
 if not exist "~runtime_install_ok.txt" goto :rti_install_failed
 if exist "~runtime_install_added.txt" del "~runtime_install_added.txt" >nul 2>&1
 "%HP_PY%" "~runtime_module_scan.py" --append "requirements.txt" "~runtime_install_ok.txt" > "~runtime_install_added.txt" 2>> "%LOG%"
+if errorlevel 1 call :log "[WARN] Runtime install: could not add the package to requirements.txt, so a later run may ask again."
 if exist "~runtime_install_added.txt" for /f "usebackq delims=" %%P in ("~runtime_install_added.txt") do call :log "[INFO] Runtime install: added %%P to requirements.txt."
 if /I not "%HP_RTI_SITE%"=="exe" goto :rti_verify
 call :rti_rebuild

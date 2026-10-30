@@ -741,8 +741,7 @@ bootstrapper should therefore run the program once per invocation and should ask
 - **REQ-018.17** [major] The bootstrapper **shall**, on a yes under REQ-018.14, install each listed package into
   the program's own environment.
 - **REQ-018.18** [major] The bootstrapper **shall**, on a yes under REQ-018.14, add each installed package to
-  `requirements.txt` unless it is already listed, whatever the dependency source of the run is, and **shall**
-  say in the prompt of REQ-018.14 and in the log that `requirements.txt` receives it.
+  `requirements.txt` unless it is already listed, whatever the dependency source of the run is.
 - **REQ-018.19** [major] The bootstrapper **shall**, on a yes under REQ-018.14 and when the run has an EXE,
   rebuild the EXE with `--hidden-import` and `--collect-submodules` for each installed module.
 - **REQ-018.20** [major] The bootstrapper **shall**, on a yes under REQ-018.14, run the program once more to
@@ -797,6 +796,8 @@ bootstrapper should therefore run the program once per invocation and should ask
   consent under REQ-018.2 to that run, in a non-interactive run as in an interactive one.
 - **REQ-018.36** [minor] The bootstrapper **shall**, before a run that REQ-018.35 covers starts, say in the log
   that the program starts once more and for how long at most.
+- **REQ-018.37** [major] The bootstrapper **shall**, on a yes under REQ-018.14, say in the prompt of REQ-018.14
+  and in the log that `requirements.txt` receives each installed package.
 
 > **Notes (non-normative).**
 > - Rationale: the bootstrapper cannot know whether the program is safe to run twice, so the run that verifies
@@ -817,9 +818,9 @@ bootstrapper should therefore run the program once per invocation and should ask
 >   error raised in a button handler, prints it and keeps running. The fast path skips the check because it
 >   runs before any interpreter is chosen. `pyproject.toml` and a PEP 723 header outrank
 >   `requirements.txt` for a conflict about one package (REQ-005.1), so the advice names the file the run reported as its source.
-> - REQ-018.14 to REQ-018.22: the answer prompt waits 30 seconds, and a quiet run, a CI run and a bare Enter all
+> - REQ-018.14 to REQ-018.22 and REQ-018.37: the answer prompt waits 30 seconds, and a quiet run, a CI run and a bare Enter all
 >   mean no. A native DLL that a newly installed conda package needs is not bundled by the rebuild.
-> - REQ-018.18: the added line lasts because the merge of the dependency lists (REQ-005.1) keeps a change to
+> - REQ-018.18 and REQ-018.37: the added line lasts because the merge of the dependency lists (REQ-005.1) keeps a change to
 >   `requirements.txt` since the last good run. The offer edits no other file: `pyproject.toml` is never
 >   rewritten, and a PEP 723 header is brought up to date only by the usual write-back of a later run. Before that
 >   merge existed, a `pyproject.toml` or PEP 723 list was copied over `requirements.txt` on every run, so the

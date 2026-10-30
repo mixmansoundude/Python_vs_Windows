@@ -73,6 +73,13 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         desc    = 'a PEP 723 header dependency source gets the package in requirements.txt (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.install.wording'
+        req     = 'REQ-018.37'
+        pass    = $true
+        desc    = 'the prompt and the log say requirements.txt receives the package (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
     exit 0
 }
 
@@ -212,15 +219,19 @@ function Invoke-SecondRun {
     $distDir = Join-Path $WorkDir 'dist'
     if (Test-Path -LiteralPath $distDir) { Remove-Item -Recurse -Force -LiteralPath $distDir }
 
-    $bootstrapLog = '~install_' + $Name + '_second_bootstrap.log'
-    $subNdjson    = Join-Path $WorkDir '~sub2.ndjson'
+    # derived requirement: the second run appends to the console log and the NDJSON file of the first run, because
+    # those are the names the test-logs upload of batch-check.yml already lists; a new name would not be uploaded.
+    $bootstrapLog = '~install_' + $Name + '_bootstrap.log'
+    $subNdjson    = Join-Path $WorkDir '~sub.ndjson'
+    $consoleBefore = 0
+    if (Test-Path -LiteralPath (Join-Path $WorkDir $bootstrapLog)) { $consoleBefore = (Get-Item -LiteralPath (Join-Path $WorkDir $bootstrapLog)).Length }
     $savedNdjson  = [Environment]::GetEnvironmentVariable('HP_NDJSON')
     $savedAnswer  = [Environment]::GetEnvironmentVariable('HP_TEST_RTM_ANSWER')
     Push-Location $WorkDir
     try {
         [Environment]::SetEnvironmentVariable('HP_NDJSON', $subNdjson)
         [Environment]::SetEnvironmentVariable('HP_TEST_RTM_ANSWER', 'N')
-        cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
+        cmd /c "call run_setup.bat >> $bootstrapLog 2>&1"
         $runExit = $LASTEXITCODE
     } finally {
         [Environment]::SetEnvironmentVariable('HP_NDJSON', $savedNdjson)
@@ -230,7 +241,10 @@ function Invoke-SecondRun {
 
     $console = ''
     $consolePath = Join-Path $WorkDir $bootstrapLog
-    if (Test-Path -LiteralPath $consolePath) { $console = Get-Content -LiteralPath $consolePath -Raw -Encoding ASCII }
+    if (Test-Path -LiteralPath $consolePath) {
+        $consoleBytes = [System.IO.File]::ReadAllBytes($consolePath)
+        if ($consoleBytes.Length -gt $consoleBefore) { $console = [System.Text.Encoding]::ASCII.GetString($consoleBytes, $consoleBefore, $consoleBytes.Length - $consoleBefore) }
+    }
     $newLog = ''
     if (Test-Path -LiteralPath $setupLog) {
         $bytes = [System.IO.File]::ReadAllBytes($setupLog)
@@ -278,7 +292,10 @@ function Get-LogExcerpt {
 $a = Invoke-InstallScenario -Name 'accept' -Answer 'Y'
 $aFirstRunTrace = $a.SetupText -match 'Your program needed the module xlsxwriter'
 $aPrompted      = $a.Console -match 'asked for packages that are not installed'
+$aPromptNamesReq = $a.Console -match 'adds them to this program.s own environment and to requirements\.txt'
+$aPromptNoSkip  = $a.Console -notmatch 'but does not edit'
 $aInstalled     = $a.SetupText -match 'Runtime install: installed xlsxwriter'
+$aSaidAdded     = $a.SetupText -match 'Runtime install: added xlsxwriter to requirements\.txt\.'
 $aReqLine       = $a.ReqText -match '(?m)^\s*xlsxwriter\s*$'
 $aRebuilt       = $a.SetupText -match '\[REPAIR\] rebuild complete after runtime install'
 $aVerified      = $a.SetupText -match 'Runtime install: verified'
@@ -358,8 +375,8 @@ $p2Kept         = ($p2.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($p2.ReqTex
 $p2NotRemoved   = $p2.NewLog -notmatch 'Removed xlsxwriter'
 $p2NoPrompt     = $p2.Console -notmatch 'asked for packages that are not installed'
 $p2Untouched    = ($p2.Pyproject -ceq $p.PyprojectBefore)
-$pPass = ($p.RunExit -eq 0) -and $pSource -and $pFirstRunTrace -and $pPromptNamesReq -and $pPromptNoSkip -and
-         $pInstalled -and $p.EnvHasModule -and $pSaidAdded -and $pReqGotIt -and $pUntouched -and
+$pPass = ($p.RunExit -eq 0) -and $pSource -and $pFirstRunTrace -and
+         $pInstalled -and $p.EnvHasModule -and $pReqGotIt -and $pUntouched -and
          $pVerified -and $pCheckClean -and
          ($p.InstallState -eq 'verified') -and ($p.InstallDepSource -eq 'pyproject') -and ($p.StatusState -eq 'ok') -and
          ($p2.RunExit -eq 0) -and ($p2.StatusState -eq 'ok') -and $p2Read -and $p2Kept -and $p2NotRemoved -and $p2NoPrompt -and $p2Untouched
@@ -372,11 +389,8 @@ Write-NdjsonRow ([ordered]@{
         exitCode         = $p.RunExit
         sourceIsPyproject = $pSource
         firstRunTrace    = $pFirstRunTrace
-        promptNamesRequirements = $pPromptNamesReq
-        promptDoesNotSkipEdit = $pPromptNoSkip
         installed        = $pInstalled
         envHasModule     = $p.EnvHasModule
-        saidAdded        = $pSaidAdded
         requirementsGotIt = $pReqGotIt
         pyprojectUntouched = $pUntouched
         verified         = $pVerified
@@ -416,8 +430,8 @@ $e2Kept         = ($e2.ReqText -match '(?m)^\s*xlsxwriter\s*$') -and ($e2.ReqTex
 $e2NotRemoved   = $e2.NewLog -notmatch 'Removed xlsxwriter'
 $e2NoPrompt     = $e2.Console -notmatch 'asked for packages that are not installed'
 $e2HeaderKept   = ($e2.AppText -match '(?m)^# /// script\s*$') -and ($e2.AppText -match '(?m)^#\s+"six')
-$ePass = ($e.RunExit -eq 0) -and $eSource -and $eFirstRunTrace -and $ePromptNamesReq -and $ePromptNoSkip -and
-         $eInstalled -and $e.EnvHasModule -and $eSaidAdded -and $eReqGotIt -and $eHeaderKept -and
+$ePass = ($e.RunExit -eq 0) -and $eSource -and $eFirstRunTrace -and
+         $eInstalled -and $e.EnvHasModule -and $eReqGotIt -and $eHeaderKept -and
          $eVerified -and $eCheckClean -and
          ($e.InstallState -eq 'verified') -and ($e.InstallDepSource -eq 'pep723') -and ($e.StatusState -eq 'ok') -and
          ($e2.RunExit -eq 0) -and ($e2.StatusState -eq 'ok') -and $e2Read -and $e2Kept -and $e2NotRemoved -and $e2NoPrompt -and $e2HeaderKept
@@ -430,11 +444,8 @@ Write-NdjsonRow ([ordered]@{
         exitCode         = $e.RunExit
         sourceIsPep723   = $eSource
         firstRunTrace    = $eFirstRunTrace
-        promptNamesRequirements = $ePromptNamesReq
-        promptDoesNotSkipEdit = $ePromptNoSkip
         installed        = $eInstalled
         envHasModule     = $e.EnvHasModule
-        saidAdded        = $eSaidAdded
         requirementsGotIt = $eReqGotIt
         headerKept       = $eHeaderKept
         verified         = $eVerified
@@ -455,5 +466,29 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not ($aPass -and $dPass -and $pPass -and $ePass)) { exit 1 }
+# ---- wording (REQ-018.37): prompt and log say that requirements.txt receives the package, for every dependency source ----
+# One verdict over the three yes runs (requirements.txt, pyproject.toml and PEP 723 header as the source), taken from the
+# console text the user saw and the setup log, so a source that quietly skips the sentence turns this row red.
+$wPass = $aPromptNamesReq -and $aPromptNoSkip -and $aSaidAdded -and
+         $pPromptNamesReq -and $pPromptNoSkip -and $pSaidAdded -and
+         $ePromptNamesReq -and $ePromptNoSkip -and $eSaidAdded
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.runtime.install.wording'
+    req     = 'REQ-018.37'
+    pass    = $wPass
+    desc    = 'on a yes the prompt says requirements.txt receives the package and the log says it was added, for each dependency source'
+    details = [ordered]@{
+        acceptPromptNamesRequirements    = $aPromptNamesReq
+        acceptPromptDoesNotSkipEdit      = $aPromptNoSkip
+        acceptSaidAdded                  = $aSaidAdded
+        pyprojectPromptNamesRequirements = $pPromptNamesReq
+        pyprojectPromptDoesNotSkipEdit   = $pPromptNoSkip
+        pyprojectSaidAdded               = $pSaidAdded
+        pep723PromptNamesRequirements    = $ePromptNamesReq
+        pep723PromptDoesNotSkipEdit      = $ePromptNoSkip
+        pep723SaidAdded                  = $eSaidAdded
+    }
+})
+
+if (-not ($aPass -and $dPass -and $pPass -and $ePass -and $wPass)) { exit 1 }
 exit 0
