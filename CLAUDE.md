@@ -66,7 +66,7 @@ tests/
   selfapps_pipreqs_output.ps1  Item 63 follow-up: stale/locked requirements.auto.txt never accepted, scan temp folder not shared (real lane, gating)
   selfapps_entryarg.ps1        Item 67: first argument must be an existing .py in this folder (real lane, gating)
   selfapps_runtime_modnotfound.ps1 Item 65 slice 1: a ModuleNotFoundError printed to stderr by a run that exits 0 is reported by name (real lane, gating)
-  selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone) (real lane, gating)
+  selfapps_runtime_install.ps1 Item 65 slice 2: the consented install of a package a run asked for (yes installs, adds to requirements.txt for every dependency source, rebuilds with --hidden-import, one check run; no changes nothing; pyproject.toml left alone; a second run of the same folder keeps the line, Item 91) (real lane, gating)
   selfapps_honest_wording.ps1  Item 68: dependency-source warning, stale-EXE rebuild notice, pipreqs diff placeholder (real lane, gating)
   selfapps_pep723_uverr.ps1    Item 73: a failed PEP 723 write-back logs uv's reason (real lane, gating; HP_TEST_PEP723_UV_ERR hook)
   selfapps_lastchance.ps1      Item 82: the last-chance offer after a failed uv run (W worked / C Miniconda / N neither; real lane gating) and the conda-tier window question (silent-timeout, cascade and window scenarios on the uv lane, non-gating)
@@ -717,22 +717,6 @@ starting any of these. No maintainer decisions are open. Q1-Q11 are decided or r
 The maintainer cannot hand-test, so every item ships with a Windows CI scenario that reproduces
 the original symptom (see that doc's "CI-first testing policy").
 
-
-### Item 89: the dependency lists are merged, not chosen between (filed 2026-10-23 from the maintainer's answer to open question 3)
-
-- **Item 89 (in progress; README REQ-005.1 rewritten; red tests first, fix second, one PR)**: the maintainer decided that
-  PEP 723 header, `pyproject.toml` and `requirements.txt` are merged with the existing rank settling conflicts, and
-  that after a good run `requirements.txt` and the header both hold the merged list; a cold first run is a union and a
-  later run keeps the user's changes since the last good run (an add is added everywhere, a removal from a list the
-  bootstrapper wrote is removed everywhere, an edited pin beats the older pins without being called a conflict).
-  Built as `tools/dep_merge.py` (`HP_DEP_MERGE`), `:dep_merge_inputs` after the PEP 723 extraction, the removal through
-  `uv remove --script`, the records written by `:dep_merge_snapshot` from `:success`. Rows: `self.depsource.*`
-  (`all_three`, new `requirements_pyproject` and `conflict`), `self.pep723.pyproject.merge` (was `.override`),
-  `self.depmerge.later.*`, `self.realapp.edit_rerun`. Consequences recorded in the README notes: a folder with no record
-  is cold on its first run after the change; a package deleted from one list while `pyproject.toml` still lists it comes
-  back with a message. **Follow-up not built here**: the Item 65 runtime-install offer still edits no file for a
-  `pyproject` or `pep723` source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts; simplifying
-  that is a separate item (needs the coordinator's number).
 
 ### Item 90: bump the GitHub Actions pins by hand, one action per pull request (filed 2026-10-24)
 

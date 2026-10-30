@@ -423,7 +423,8 @@ using auto.` and is NOT echoed (`:log` echoes unquoted and the text is whatever 
   `FileShare.Read` and requires that log line, which is only written when the surviving file was read and named a module).
 - `both`: PyInstaller builds and verifies as usual, then `:offer_optimized_build` skips the question
   (`goto :optbuild_both`; the override is the consent, same reasoning as `HP_PVW_KNOWN_IDEMPOTENT`, and the
-  log line says the program starts once more for up to 30 seconds) and continues into the unchanged
+  log line says the program starts once more for up to 30 seconds; README REQ-018.35 and REQ-018.36 state both, the
+  maintainer's answer of 2026-10-24, so a change to either needs the README shalls changed with it) and continues into the unchanged
   build-to-temp, verify, swap-on-success path, so a verified EXE is never replaced by an unverified one. It is
   skipped, with a log line, when the verification run did not exit 0.
 - System-Python consent: `:system_build_consent_gate` words its question by `HP_BUILDER` (`goto :sbcg_nuitka_text`
@@ -856,8 +857,10 @@ for a conflict). The old behavior was winner takes all (`copy /y` of the highest
   it, so it stays`, the INFO `Dependency lists recorded for the next run`, the WARN `could not be merged` are matched by
   `self.depsource.*`, `self.pep723.pyproject.merge` and `self.depmerge.later.*`; the old `found; overrides requirements.txt`
   wording is gone (`tests/test_dep_merge.py` pins it). Payload margin 560 characters.
-- **Not changed on purpose**: the fast path (an unchanged folder never reaches the merge), REQ-004 version precedence, the
-  pipreqs fallback (only when nothing is declared), and the Item 65 runtime-install offer's file-edit rule (`HP_RTI_EDITS`).
+- **Not changed on purpose**: the fast path (an unchanged folder never reaches the merge), REQ-004 version precedence, and the
+  pipreqs fallback (only when nothing is declared). **Item 91**: the Item 65 runtime-install offer appends its package to
+  `requirements.txt` for every dependency source; `:dep_merge_snapshot` records the file as it stands at `:success`, appended
+  line included, so the next run's merge keeps it as an ordinary entry.
 
 ### `HP_TEST_FORCE_UV_FAIL` / `HP_TEST_CORRUPT_UV` interaction
 
@@ -1337,12 +1340,14 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
 - **Install** (`:rti_install_one`): `uv pip install --python`, `conda install --override-channels -c
   conda-forge`, or `python -m pip install`, the same dispatch the warnfix repair uses. Successes are written
   to `~runtime_install_ok.txt`; none succeeding stops with state `install_failed`. `--append` then adds each
-  package to `requirements.txt` unless already declared (keeps CRLF/LF, creates the file if absent) -- but
-  ONLY when `DEP_SOURCE` is neither `pyproject` nor `pep723` (`HP_RTI_EDITS`, set from `DEP_SOURCE`
-  just before the prompt, with `:rtm_where` naming the file): before Item 89 those two sources were copied over `requirements.txt`
-  on every run, so an appended line would have vanished; an appended line now lasts (the merge keeps a list's change since the
-  last run), but the offer was not changed and the prompt and a log line still say which file the user must edit instead.
-  Do not hand-edit TOML from batch or this helper (Item 79 is about TOML reading hygiene already).
+  package to `requirements.txt` unless already declared (keeps CRLF/LF, creates the file if absent), for EVERY
+  dependency source (Item 91; the `HP_RTI_EDITS` flag and the second prompt wording are gone). Before Item 89 a
+  `pyproject.toml` or PEP 723 list was copied over `requirements.txt` on every run, so the append would have vanished and the
+  offer edited nothing for those sources; since Item 89 the merge keeps a list's change since the last run, and the line
+  lasts. The offer edits no other file: `pyproject.toml` is never rewritten and the header is only brought up to date by the
+  usual write-back of a later run. Do not hand-edit TOML from batch or this helper (Item 79 is about TOML reading hygiene already).
+  Rows `self.runtime.install.pyproject` / `.pep723` bootstrap the folder a second time (EXE folder deleted, answer N) and require
+  the line to survive it.
 - **Rebuild** (`:rti_rebuild`, site `exe` only): `--hidden-import=X --collect-submodules=X` for each installed
   module, appended to `HP_PYI_HIDDEN_IMPORTS`/`HP_PYI_HID_COLLECT`, and the command threads all five
   accumulators like every other rebuild in the lifecycle. A failure sets `HP_BOOTSTRAP_STATE=error`, clears
