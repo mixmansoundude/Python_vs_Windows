@@ -196,8 +196,8 @@ def test_main_reports_fail_on_undocumented_code_row(tmp_path, capsys):
 
 def _unbalanced_fence_sections(text):
     """Headings of the sections that hold an odd number of code-fence lines. parse_doc_registry pairs fences over the
-    whole file, so one unclosed fence turns every later prose block into "registered ids" and the advisory registry
-    job fails for a reason nobody can see from the row names (PR #498)."""
+    whole file, so one unclosed fence turns every later prose block into "registered ids" and the registry check
+    fails for a reason nobody can see from the row names (PR #498)."""
     section, counts = "(top)", {}
     for line in text.splitlines():
         if line.startswith("## "):

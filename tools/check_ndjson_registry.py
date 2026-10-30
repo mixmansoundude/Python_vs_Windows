@@ -5,7 +5,8 @@ run_setup.bat inline emissions, .github/workflows/*.yml inline PowerShell
 emissions, and tests/dynamic_tests.py's Python record({"id": ...}) calls), and
 observed NDJSON artifacts from a CI run (log, optional).
 
-Advisory tool: reports mismatches, does not attempt to be exhaustive.
+Reports doc/code mismatches (gating since Item 35: the exit code is static, the log part is report only);
+does not attempt to be exhaustive.
 Python scanning (tests/dynamic_tests.py only) uses `ast` to resolve id values
 that are string literals, f-strings templated from an enclosing `for` loop's
 literal iterable (e.g. f"pr.{_pkg}.{_target}"), or a bare loop variable used
@@ -326,8 +327,8 @@ def main(argv=None):
         print("PASS: no doc/code registry mismatches found.")
         return 0
     else:
-        print("FAIL: doc/code registry mismatches found (see above). This check is advisory")
-        print("(non-gating) -- it will not block PR merges, but should be addressed.")
+        print("FAIL: doc/code registry mismatches found (see above). Register the row in")
+        print("docs/agent-ndjson.md or remove the stale entry; this check gates (Item 35).")
         return 1
 
 

@@ -546,9 +546,8 @@ but several represent real gaps worth closing before calling the path fully rele
   below aggregates all 8 lanes, a real failure in any of them blocks a merge via the aggregate
   check even though the individual lane still shows non-required in the PR checks UI (the step is
   real since 2026-10-24, see "Aggregate gate" below). "Non-gating" in this item means "has no
-  required check of its own", not "cannot block a merge." `ndjson-registry-check` (a separate
-  advisory doc/code/log sync job, needs several more clean-PASS runs before even considering
-  gating); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
+  required check of its own", not "cannot block a merge." `ndjson-registry-check` (the doc/code sync
+  job; gates since the Item 35 registry slice, see "Registry check gate" below); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
   `docs/agent-ndjson.md` -- `self.dll_bundle.recover` (see Item 37), `self.failfast.probe`,
   `self.exe.smokerun` (audit for others, these three are only the confirmed set); the real
   interactive `set /p` prompts and `pause`/`HP_INTERACTIVE_RUN`'s natural un-forced state, neither
@@ -637,6 +636,14 @@ but several represent real gaps worth closing before calling the path fully rele
   corrected; do not skip or relax a row to get green (AGENTS.md). The history (the 2026-08-30 revert on PR #471, the
   cascade and warnfix reds fixed by PR #491, the `cache` smokerun artifact, the soak evidence) is in
   `docs/agent-closed-backlog.md`, "Item 35 aggregate gate history".
+
+  **Registry check gate (2026-10-30).** `ndjson-registry-check` compares `docs/agent-ndjson.md` with the row ids the
+  code emits; its exit code is that static comparison alone (the observed-row list in its report never affects it), so
+  it cannot fail from a network or provider problem and needed no further soak. The job lost `continue-on-error`, and
+  because its own check is not a required status check (a branch-protection setting, the maintainer's), the same
+  comparison also runs as a unit test of the real repository inside `self.pytest.unit`, which the aggregate gate
+  already holds a PR on in every lane. `tests/test_aggregate_gate.py` pins both halves. A new or removed row now needs
+  its `docs/agent-ndjson.md` line in the same PR, or `self.pytest.unit` and the registry job go red.
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
@@ -860,8 +867,9 @@ rather than relying on manual memory.
   network (uv, Miniconda, python.org downloads), so a required check of its own would add flake
   risk the aggregate gate already covers; do not promote it separately. Leave
   `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` non-gating indefinitely (their non-gating
-  status is explicitly load-bearing, not provisional). `ndjson-registry-check` has now had a long
-  clean run; gate it only after the aggregate gate is, one change at a time.
+  status is explicitly load-bearing, not provisional). `ndjson-registry-check` was gated after the
+  aggregate gate (2026-10-30, Item 35 registry slice): its job lost `continue-on-error`, and the same check is
+  `tests/test_check_ndjson_registry.py::test_repo_rows_and_registry_agree` inside `self.pytest.unit`.
 
 ### CI wall-clock duration (slowest-lane growth)
 

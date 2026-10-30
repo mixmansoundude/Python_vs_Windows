@@ -201,4 +201,3 @@ Write-NdjsonRow ([ordered]@{
 })
 if (-not $pass) { exit 1 }
 exit 0
-# TEMP PROBE (Item 35, registry check gating; removed in the next commit): id = 'probe.registry.unregistered'

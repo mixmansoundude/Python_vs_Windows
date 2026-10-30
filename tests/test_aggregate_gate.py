@@ -11,7 +11,9 @@ depends on in place:
 - the lanes the aggregator expects are exactly the lanes in the selftest matrix (the list is written twice);
 - selftest-gate, model-quick-fix and publish_diag still run after a failure, so the diagnostics site is
   published even when the gate is red (Item 35's non-negotiable constraint);
-- a throwaway probe step ("TEMP PROBE ...", used to prove the gate on a real run) never reaches main.
+- a throwaway probe step ("TEMP PROBE ...", used to prove the gate on a real run) never reaches main;
+- the NDJSON registry cross-check job gates too (no continue-on-error, the checker's exit code is not hidden), and the
+  same check stays a unit test over the real repository, which is what lets the aggregate gate hold a PR on it.
 
 The rules read batch-check.yml as plain text (no YAML dependency: the pytest step installs only pytest, pydantic
 and requests, same style as test_run_tests_step.py). Synthetic cases prove each rule can fail.
@@ -148,6 +150,36 @@ def problems(text):
     return found
 
 
+REGISTRY_JOB = "ndjson-registry-check"
+REGISTRY_STEP = "Run NDJSON registry cross-check"
+REGISTRY_TEST = REPO / "tests" / "test_check_ndjson_registry.py"
+
+
+def registry_problems(text, registry_test_text):
+    """The registry cross-check is a gate (Item 35): the job must be able to fail and the same check must also be a
+    unit test of the real repository, because the job's own check is not a required status check."""
+    found = []
+    reg = job(text, REGISTRY_JOB)
+    if reg is None:
+        return ["there is no %s job" % REGISTRY_JOB]
+    if re.search(r"^    continue-on-error:", live(reg), re.MULTILINE):
+        found.append("%s has continue-on-error: a mismatch would stay green" % REGISTRY_JOB)
+    blocks = [blk for name, blk in steps(reg) if name == REGISTRY_STEP]
+    if len(blocks) != 1:
+        found.append("%s must have exactly one step named %r (found %d)" % (REGISTRY_JOB, REGISTRY_STEP, len(blocks)))
+    else:
+        block = live(blocks[0])
+        if "tools/check_ndjson_registry.py" not in block:
+            found.append("the registry step does not run tools/check_ndjson_registry.py")
+        if "set -o pipefail" not in block:
+            found.append("the registry step needs set -o pipefail (the report is piped through tee, which would hide the exit code)")
+        if re.search(r"\|\|\s*(true|:)\b|continue-on-error:", block):
+            found.append("the registry step hides the checker's exit code")
+    if "def test_repo_rows_and_registry_agree" not in registry_test_text:
+        found.append("tests/test_check_ndjson_registry.py lost test_repo_rows_and_registry_agree (the aggregate gate carries the check through it)")
+    return found
+
+
 GOOD = """jobs_header_is_ignored: x
   selftest:
     strategy:
@@ -192,6 +224,67 @@ GOOD = """jobs_header_is_ignored: x
       - name: x
         run: y
 """
+
+
+GOOD_REGISTRY = """jobs_header_is_ignored: x
+  ndjson-registry-check:
+    name: NDJSON registry cross-check (doc vs code vs log)
+    # continue-on-error was removed on purpose
+    needs: [selftest]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Run NDJSON registry cross-check
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tools/check_ndjson_registry.py --repo-root . | tee report.txt
+
+      - name: Upload NDJSON registry report
+        if: ${{ always() }}
+        run: y
+"""
+GOOD_REGISTRY_TEST = "def test_repo_rows_and_registry_agree(capsys):\n    pass\n"
+
+
+class RegistryCheckGates(unittest.TestCase):
+    def test_workflow(self):
+        self.assertEqual(
+            registry_problems(WORKFLOW.read_text(encoding="utf-8"), REGISTRY_TEST.read_text(encoding="utf-8")), []
+        )
+
+    def test_good_shape_is_clean(self):
+        self.assertEqual(registry_problems(GOOD_REGISTRY, GOOD_REGISTRY_TEST), [])
+
+    def test_job_level_continue_on_error_is_caught(self):
+        bad = GOOD_REGISTRY.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n")
+        self.assertTrue(any("continue-on-error" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_step_level_continue_on_error_is_caught(self):
+        bad = GOOD_REGISTRY.replace("        shell: bash\n", "        shell: bash\n        continue-on-error: true\n")
+        self.assertTrue(any("hides" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_swallowed_exit_code_is_caught(self):
+        bad = GOOD_REGISTRY.replace("| tee report.txt", "| tee report.txt || true")
+        self.assertTrue(any("hides" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_missing_pipefail_is_caught(self):
+        bad = GOOD_REGISTRY.replace("          set -o pipefail\n", "")
+        self.assertTrue(any("pipefail" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_step_that_stops_running_the_checker_is_caught(self):
+        bad = GOOD_REGISTRY.replace("tools/check_ndjson_registry.py", "tools/other.py")
+        self.assertTrue(any("does not run" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_missing_job_is_caught(self):
+        self.assertTrue(any("no ndjson-registry-check job" in f for f in registry_problems("x: y\n", GOOD_REGISTRY_TEST)))
+
+    def test_lost_repo_test_is_caught(self):
+        bad = registry_problems(GOOD_REGISTRY, "def test_something_else():\n    pass\n")
+        self.assertTrue(any("test_repo_rows_and_registry_agree" in f for f in bad), bad)
 
 
 class AggregateGateStaysReal(unittest.TestCase):
