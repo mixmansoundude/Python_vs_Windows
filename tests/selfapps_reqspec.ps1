@@ -231,8 +231,7 @@ function Write-ReqspecIngestRows {
 # rows red on justme-test) or drops the connection. On the sharded repodata path conda then crashes with an unhandled
 # requests.exceptions.HTTPError whose text holds none of the words run_setup.bat's own REQ-022 detection looks for. The network
 # calls below go through Invoke-CondaCommand: one retry after a short wait, only when the output names a 5xx or a failed
-# connection, never for a solver answer (PackagesNotFoundError, a 404). Item 92 first lands without the retry so the
-# proof rows below are red for the right reason.
+# connection, never for a solver answer (PackagesNotFoundError, a 404), at most twice in total.
 $script:CondaTransientPattern = '(?i)(\b5\d\d Server Error|HTTPError:\s*5\d\d|CondaHTTPError:\s*HTTP\s*(5\d\d|000)|CONNECTION FAILED|ConnectionError|Connection (reset|aborted|broken)|Read timed out|ReadTimeout|ConnectTimeout)'
 
 function Invoke-CondaCommand {
@@ -243,7 +242,7 @@ function Invoke-CondaCommand {
         [int]$WaitSeconds = 15
     )
 
-    $maxAttempts = 1
+    $maxAttempts = 2
     $attempts = 0
     $retried = $false
     $text = ''
@@ -254,6 +253,14 @@ function Invoke-CondaCommand {
         $code = $LASTEXITCODE
         $text = $raw | Out-String
         if ($code -eq 0) { break }
+        if ($attempts -ge $maxAttempts) { break }
+        if ($text -notmatch $script:CondaTransientPattern) { break }
+        $retried = $true
+        if ($LogPath) {
+            Add-Content -LiteralPath $LogPath -Value ('[INFO] {0}: transient conda-forge failure (exit {1}); retrying once after {2}s. First answer:' -f $Label, $code, $WaitSeconds) -Encoding Ascii
+            Add-Content -LiteralPath $LogPath -Value $text -Encoding Ascii
+        }
+        Start-Sleep -Seconds $WaitSeconds
     }
     return [pscustomobject]@{ Output = $text; ExitCode = $code; Attempts = $attempts; Retried = $retried }
 }
