@@ -203,7 +203,7 @@ jobs:
 
       # Optional: keep tiny files for other jobs (e.g., your Pages job)
       - name: Upload mini outputs (optional)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: workflow-lint-summary-${{ github.run_attempt }}
           path: |

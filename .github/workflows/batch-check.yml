@@ -1815,7 +1815,7 @@ jobs:
 
       - name: Upload CI summary (on failure)
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ci_test_summary-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-summary.txt
@@ -1824,7 +1824,7 @@ jobs:
 
       - name: Upload CI NDJSON
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ci_test_results-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: tests/~test-results.ndjson
@@ -1932,7 +1932,7 @@ jobs:
 
       - name: Upload iterate gate verdict
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: selftest-verdict-${{ matrix.mode }}
           path: lane_verdict.json
@@ -2116,7 +2116,7 @@ jobs:
 
       - name: Upload bootstrapper tests artifact
         if: ${{ !cancelled() && matrix.mode == 'real' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: bootstrapper-tests
           path: _out/*
@@ -2206,7 +2206,7 @@ jobs:
         # the workflow tolerant so diagnostics jobs do not fail when the helper
         # intentionally skips packaging.
         continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: iterate-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _ctx/**
@@ -2265,7 +2265,7 @@ jobs:
 
       - name: Upload test logs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: test-logs-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -3850,7 +3850,7 @@ jobs:
 
       - name: Upload failing test IDs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: batchcheck-failures-${{ matrix.mode }}
           path: |
@@ -4246,7 +4246,7 @@ jobs:
 
       - name: Upload diagnostics bundle
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: diag-selftest-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.build_public.outputs.public_dir }}
@@ -4446,7 +4446,7 @@ jobs:
 
       - name: Upload self-test artifact
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: selftest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.mode }}
           path: selftest-diag-${{ matrix.mode }}
@@ -4754,7 +4754,7 @@ jobs:
       # (or a future automated consumer) the same durability the inputs to this step already have.
       - name: Upload gate report
         if: ${{ always() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: selftest-gate-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/selftest-gate.json
@@ -4769,7 +4769,7 @@ jobs:
       # a few jobs below in this same file.
       - name: Upload gate NDJSON row
         if: ${{ always() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ci_test_results-selftest-gate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ci_test_results.ndjson
@@ -4843,7 +4843,7 @@ jobs:
         # without a dedicated download step. See tools/diag/publish_index.py's
         # _collect_batch_ndjson_links() for the Quick Links entry that surfaces it by name.
         if: ${{ always() }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ci_test_results-ndjson-registry-${{ github.run_id }}-${{ github.run_attempt }}
           path: ~ndjson-registry-report.txt
@@ -5117,7 +5117,7 @@ jobs:
           fi
       - name: Upload iterate artifact
         if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: logs/iterate-${{ github.run_id }}-${{ github.run_attempt }}.zip
