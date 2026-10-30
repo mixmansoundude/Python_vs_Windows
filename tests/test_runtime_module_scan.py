@@ -199,6 +199,23 @@ class PackagesAndAppend(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(files["requirements.txt"], b"xlsxwriter\n")
 
+    def test_append_that_cannot_write_exits_three_and_prints_no_package(self):
+        # The batch warns on any nonzero result (CodeRabbit, PR #511), and the added-package list must stay empty then,
+        # or the log would say a line was added that never was. A folder in the file's place stands for a locked file.
+        d = Path(tempfile.mkdtemp())
+        try:
+            (d / "requirements.txt").mkdir()
+            (d / "ok.txt").write_bytes(b"xlsxwriter xlsxwriter\n")
+            r = subprocess.run([sys.executable, str(SOURCE), "--append", "requirements.txt", "ok.txt"], cwd=str(d),
+                               capture_output=True, text=True)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertEqual(r.returncode, 3)
+        self.assertEqual(r.stdout, "")
+        # Opening a folder for writing is IsADirectoryError on Linux and PermissionError on Windows; the exit code and the
+        # one-line reason are the contract, not which OSError subclass the platform picks (run 41034621526, justme-test).
+        self.assertRegex(r.stderr.strip(), r"^runtime_module_scan: (IsADirectoryError|PermissionError)$")
+
 
 class TableMatchesWarnfix(unittest.TestCase):
     def test_every_name_but_cv2_agrees_with_parse_warn(self):
@@ -238,16 +255,25 @@ class BatchCallSites(unittest.TestCase):
         self.assertIn('"%DEP_SOURCE%"=="pyproject"', body)
         self.assertIn('"%DEP_SOURCE%"=="pep723"', body)
 
-    def test_the_install_does_not_edit_requirements_when_another_file_is_the_source(self):
-        # Slice 2: a pyproject.toml or PEP 723 dependency source is copied over requirements.txt on every
-        # run, so an appended line would be lost. The edit is skipped and the user told which file to edit.
+    def test_the_install_edits_requirements_whatever_the_dependency_source(self):
+        # Item 91: before Item 89 a pyproject.toml or PEP 723 list was copied over requirements.txt on every run, so an
+        # appended line was lost and the offer edited nothing for those sources. The merge now keeps a list's change,
+        # so the append and the prompt that promises it no longer depend on DEP_SOURCE.
         i = re.search(r"(?m)^:runtime_install_offer", self.bat).start()
         block = self.bat[i:self.bat.index("\n:rti_install_one", i)]
-        self.assertIn('if /I "%DEP_SOURCE%"=="pyproject" set "HP_RTI_EDITS="', block)
-        self.assertIn('if /I "%DEP_SOURCE%"=="pep723" set "HP_RTI_EDITS="', block)
-        skip = block.index("if not defined HP_RTI_EDITS goto :rti_not_edited")
-        self.assertLess(skip, block.index('--append "requirements.txt"'))
-        self.assertIn("did not edit %HP_RTM_WHERE%", block)
+        for gone in ("HP_RTI_EDITS", "rti_not_edited", "did not edit", "but does not edit"):
+            self.assertNotIn(gone, block)
+        self.assertIn("adds them to this program's own environment and to requirements.txt", block)
+        accepted = block.index(":rti_accepted")
+        append = block.index('--append "requirements.txt"')
+        self.assertLess(accepted, append)
+        self.assertNotIn("DEP_SOURCE", block[accepted:append])
+        self.assertIn("Runtime install: added %%P to requirements.txt.", block)
+        # A failed append is said out loud, on the line right after the helper call and before the added list is read.
+        lines = block.splitlines()
+        call = next(n for n, ln in enumerate(lines) if '--append "requirements.txt"' in ln)
+        self.assertTrue(lines[call + 1].startswith('if errorlevel 1 call :log "[WARN] Runtime install: could not add the package to requirements.txt'), lines[call + 1])
+        self.assertIn("Runtime install: added", lines[call + 2])
         self.assertIn("depSource=[Environment]::GetEnvironmentVariable('DEP_SOURCE')", self.bat)
 
     def test_the_reminder_is_printed_before_the_lock_is_released(self):

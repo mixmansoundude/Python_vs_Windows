@@ -5844,16 +5844,10 @@ if errorlevel 1 goto :rti_cleanup
 set "HP_RTI_HAVE_PKG="
 if exist "~runtime_install_pkgs.txt" for /f "usebackq tokens=1,2" %%A in ("~runtime_install_pkgs.txt") do set "HP_RTI_HAVE_PKG=1"
 if not defined HP_RTI_HAVE_PKG goto :rti_cleanup
-call :rtm_where
-set "HP_RTI_EDITS=1"
-if /I "%DEP_SOURCE%"=="pyproject" set "HP_RTI_EDITS="
-if /I "%DEP_SOURCE%"=="pep723" set "HP_RTI_EDITS="
 echo.
 echo *** Your program asked for packages that are not installed: ***
 for /f "usebackq tokens=1,2" %%A in ("~runtime_install_pkgs.txt") do echo ***   %%B
-if defined HP_RTI_EDITS echo *** Install them now? That adds them to this program's own environment and to requirements.txt. ***
-if not defined HP_RTI_EDITS echo *** Install them now? That adds them to this program's own environment but does not edit ***
-if not defined HP_RTI_EDITS echo *** %HP_RTM_WHERE%, so add them there yourself afterwards. ***
+echo *** Install them now? That adds them to this program's own environment and to requirements.txt. ***
 echo *** It rebuilds the EXE if there is one, and runs your program one more time to check. ***
 set "HP_RTI_CHOICE="
 if defined HP_TEST_RTM_ANSWER goto :rti_gate_override
@@ -5888,16 +5882,10 @@ exit /b 0
 call :log "[INFO] Runtime install: accepted."
 for /f "usebackq tokens=1,2" %%A in ("~runtime_install_pkgs.txt") do call :rti_install_one "%%A" "%%B"
 if not exist "~runtime_install_ok.txt" goto :rti_install_failed
-if not defined HP_RTI_EDITS goto :rti_not_edited
 if exist "~runtime_install_added.txt" del "~runtime_install_added.txt" >nul 2>&1
 "%HP_PY%" "~runtime_module_scan.py" --append "requirements.txt" "~runtime_install_ok.txt" > "~runtime_install_added.txt" 2>> "%LOG%"
+if errorlevel 1 call :log "[WARN] Runtime install: could not add the package to requirements.txt, so a later run may ask again."
 if exist "~runtime_install_added.txt" for /f "usebackq delims=" %%P in ("~runtime_install_added.txt") do call :log "[INFO] Runtime install: added %%P to requirements.txt."
-goto :rti_after_edit
-:rti_not_edited
-rem pyproject.toml and a PEP 723 header overwrite requirements.txt on every run, so an appended line would be lost,
-rem and editing TOML by hand-written code is not worth the risk. Say so and let the user add the packages.
-call :log "[INFO] Runtime install: did not edit %HP_RTM_WHERE%. Add the packages there so a later setup keeps them."
-:rti_after_edit
 if /I not "%HP_RTI_SITE%"=="exe" goto :rti_verify
 call :rti_rebuild
 if defined HP_RTI_REBUILD_FAILED goto :rti_rebuild_failed
@@ -5941,7 +5929,6 @@ set "HP_RTI_PROVIDER_OK="
 set "HP_RTI_HAVE_PKG="
 set "HP_RTI_CHOICE="
 set "HP_RTI_RAW="
-set "HP_RTI_EDITS="
 set "HP_RTI_REBUILD_FAILED="
 exit /b 0
 :rti_install_one
