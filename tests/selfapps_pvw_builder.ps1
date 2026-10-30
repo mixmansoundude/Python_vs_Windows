@@ -38,6 +38,18 @@
 #                          download that can fail for network reasons, like selfapps_nuitka_tiera.ps1).
 #   both                 - PVW_BUILDER=both, REAL PyInstaller build then a REAL Nuitka build swapped in
 #                          after verification (uv lane, non-gating, same reason).
+#   nuitka_unsupported   - CLAUDE.md Item 80: PVW_BUILDER=nuitka where Nuitka answers that it does not support this Python
+#                          (uv's newest CPython outran Nuitka 4.2.2 for a day in October 2026). A stub nuitka.py in the app
+#                          folder stands in for the real package, because `python -m nuitka` finds the current folder first, and
+#                          prints that line the way Nuitka does. The real package is still installed first, so the step before the
+#                          build is the real one; nothing is compiled. The run must say, in its own words, that the fallback build
+#                          system does not support this Python yet, and must NOT send the user off to install Visual Studio.
+#   nuitka_failother     - the same stub failing for any other reason, with an "is not supported by Nuitka" line left in ~setup.log by an
+#                          EARLIER run: the Visual Studio hint still shows and the new sentence does not (the log persists across runs,
+#                          so only this run's lines may count; this row is the negative control for the one above).
+#   both_unsupported     - PVW_BUILDER=both with a real PyInstaller build, then the same stub for the optimized build: the optimized
+#                          build's failure says the same thing, the verified EXE stays untouched.
+#                          (Item 80's three scenarios are deterministic, so they gate on real and conda-full from the first run.)
 #
 # Emits: self.builder.override
 param()
@@ -76,6 +88,9 @@ function Write-BuilderRow {
         'nuitka'                 { @{ req = 'REQ-009.18' } }
         'nuitka_forcefail'       { @{ req = 'REQ-009.18' } }
         'nuitka_warnfile'        { @{ req = 'REQ-009.18' } }
+        'nuitka_unsupported'     { @{ req = 'REQ-009.18' } }
+        'nuitka_failother'       { @{ req = 'REQ-009.18' } }
+        'both_unsupported'       { @{ req = 'REQ-009.20' } }
         'nuitka_stale'           { @{ req = 'REQ-009.19' } }
         'both'                   { @{ req = 'REQ-009.20' } }
         'both_forcefail'         { @{ req = 'REQ-009.20' } }
@@ -119,6 +134,9 @@ switch ($scenario) {
     'nuitka_forcefail'       { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'nuitka_stale'           { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
     'nuitka_warnfile'        { $env:PVW_BUILDER = 'nuitka'; $env:HP_TEST_FORCE_NUITKA_FAIL = '1' }
+    'nuitka_unsupported'     { $env:PVW_BUILDER = 'nuitka' }
+    'nuitka_failother'       { $env:PVW_BUILDER = 'nuitka' }
+    'both_unsupported'       { $env:PVW_BUILDER = 'both' }
     'both_forcefail'         { $env:PVW_BUILDER = 'both'; $env:HP_TEST_FORCE_OPTBUILD_FAIL = '1' }
     'nuitka'                 { $env:PVW_BUILDER = 'nuitka' }
     'both'                   { $env:PVW_BUILDER = 'both' }
@@ -157,6 +175,26 @@ if ($scenario -eq 'nuitka_warnfile') {
         try { [System.IO.File]::Delete($warnPath) } catch { }
         $lockHeld = Test-Path -LiteralPath $warnPath
     }
+}
+
+# Item 80 scenarios: a stub nuitka.py next to app.py stands in for the package (cwd is first on sys.path for -m), and
+# prints what the real Nuitka prints for an unsupported Python, or a different failure for the negative control. app.py is
+# preferred by the entry selection (REQ-002), so the stub is never run as the program. nuitka_failother also leaves an
+# "is not supported by Nuitka" line from an earlier run in ~setup.log, which the bootstrapper appends to.
+$stubLine = $null
+$stubPath = Join-Path $workDir 'nuitka.py'
+$setupLogPath = Join-Path $workDir '~setup.log'
+$staleLine = "Nuitka:FATAL: The Python version '3.15' is not supported by Nuitka '4.2.2'."
+$staleSeededInLog = $false
+if ($scenario -eq 'nuitka_unsupported' -or $scenario -eq 'both_unsupported') {
+    $stubLine = "Nuitka:FATAL: The Python version '9.99' is not supported by Nuitka '0.0.0'."
+} elseif ($scenario -eq 'nuitka_failother') {
+    $stubLine = 'Nuitka:FATAL: no C compiler was found (test stub, any other reason).'
+    Set-Content -LiteralPath $setupLogPath -Value $staleLine -Encoding ASCII
+    $staleSeededInLog = [bool](Select-String -LiteralPath $setupLogPath -SimpleMatch 'is not supported by Nuitka' -Quiet)
+}
+if ($stubLine) {
+    Set-Content -LiteralPath $stubPath -Value @('import sys', ('print("' + $stubLine + '")'), 'sys.exit(1)') -Encoding ASCII
 }
 
 $pass = $false
@@ -199,6 +237,12 @@ try {
             } finally { Pop-Location }
         } catch { $exeRuns = $false }
     }
+
+    $setupLogText = if (Test-Path -LiteralPath $setupLogPath) { [System.IO.File]::ReadAllText($setupLogPath) } else { '' }
+    $stubRan = [bool]($stubLine -and $setupLogText.Contains($stubLine))
+    $installFailed = (Has 'could not install the fallback build tool') -or (Has 'could not install the build tool')
+    $honestLine = Has 'does not support this Python version yet'
+    $vsHint = Has 'Desktop development with C++'
 
     $overrideLogged   = Has 'Using super-user override for PVW_BUILDER:'
     $promptShown      = Has 'Want to build an optimized version too?'
@@ -270,6 +314,31 @@ try {
             $details.warnSeeded = [bool]$warnSeeded; $details.lockHeld = [bool]$lockHeld; $details.skipLogged = $skipLogged; $details.nuitkaHookFired = $nuitkaHookFired
             $details.skipNoted = $skipNoted; $details.repairStarted = $repairStarted; $details.installTried = $installTried; $details.pyiRebuild = $pyiRebuild
             $desc = 'PVW_BUILDER=nuitka: a PyInstaller warn file that survives the delete never starts the warnfix repair or a PyInstaller rebuild'
+        }
+        'nuitka_unsupported' {
+            $skipLogged = Has 'PVW_BUILDER=nuitka: skipping the standard PyInstaller build'
+            $reasonOk   = Has 'reason=builder_nuitka'
+            $failLogged = Has 'Fallback build did not complete successfully.'
+            $pass = $overrideLogged -and $skipLogged -and $stubRan -and (-not $installFailed) -and $failLogged -and $honestLine -and (-not $vsHint) -and (-not $exeExists) -and $reasonOk -and ($statusState -eq 'error')
+            $details.skipLogged = $skipLogged; $details.stubRan = $stubRan; $details.installFailed = $installFailed; $details.failLogged = $failLogged
+            $details.honestLine = $honestLine; $details.vsHint = $vsHint; $details.reasonOk = $reasonOk
+            $desc = 'PVW_BUILDER=nuitka: when Nuitka says it does not support this Python, the run says so in plain words and does not send the user to install Visual Studio'
+        }
+        'nuitka_failother' {
+            $skipLogged = Has 'PVW_BUILDER=nuitka: skipping the standard PyInstaller build'
+            $failLogged = Has 'Fallback build did not complete successfully.'
+            $pass = $staleSeededInLog -and $overrideLogged -and $skipLogged -and $stubRan -and (-not $installFailed) -and $failLogged -and $vsHint -and (-not $honestLine) -and (-not $exeExists) -and ($statusState -eq 'error')
+            $details.staleSeededInLog = $staleSeededInLog; $details.skipLogged = $skipLogged; $details.stubRan = $stubRan; $details.installFailed = $installFailed
+            $details.failLogged = $failLogged; $details.honestLine = $honestLine; $details.vsHint = $vsHint
+            $desc = 'PVW_BUILDER=nuitka: any other Nuitka failure still shows the Visual Studio hint, and an unsupported-Python line left by an earlier run is not counted'
+        }
+        'both_unsupported' {
+            $bothLogged = Has 'PVW_BUILDER=both: building the optimized version now without asking.'
+            $optFailed  = Has 'Optimized build did not complete; your app is still ready to use as-is.'
+            $pass = $overrideLogged -and $pyiProduced -and $bothLogged -and $stubRan -and (-not $installFailed) -and $optFailed -and $honestLine -and (-not $vsHint) -and (-not $optSucceeded) -and $exeExists -and $tmpExeGone -and $exeRuns -and ($statusState -eq 'ok')
+            $details.bothLogged = $bothLogged; $details.stubRan = $stubRan; $details.installFailed = $installFailed; $details.optFailed = $optFailed
+            $details.honestLine = $honestLine; $details.vsHint = $vsHint; $details.tmpExeGone = [bool]$tmpExeGone; $details.exeRuns = [bool]$exeRuns
+            $desc = 'PVW_BUILDER=both: when Nuitka says it does not support this Python, the optimized build says so plainly and the verified EXE is left untouched'
         }
         'both_forcefail' {
             $bothLogged = Has 'PVW_BUILDER=both: building the optimized version now without asking.'

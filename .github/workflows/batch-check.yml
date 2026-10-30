@@ -1265,6 +1265,35 @@ jobs:
         run: |
           & tests\selfapps_pvw_builder.ps1
 
+      # CLAUDE.md Item 80: when Nuitka answers that it does not support the Python in use, the run says so in plain words and does
+      # not send the user to install Visual Studio. A stub nuitka.py in the app folder stands in for the package (nothing is
+      # compiled), so the three scenarios are deterministic and gate from their first run. nuitka_failother is the negative control:
+      # any other Nuitka failure keeps the Visual Studio hint, and a matching line left in ~setup.log by an earlier run is not this
+      # run's answer.
+      - name: "Self-test: PVW_BUILDER nuitka choice says plainly that Nuitka does not support this Python (nuitka_unsupported, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka_unsupported
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER nuitka choice keeps the Visual Studio hint for any other Nuitka failure (nuitka_failother, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: nuitka_failother
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
+      - name: "Self-test: PVW_BUILDER both choice says plainly that Nuitka does not support this Python and keeps the verified EXE (both_unsupported, real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        env:
+          PVW_BUILDER_SCENARIO: both_unsupported
+        run: |
+          & tests\selfapps_pvw_builder.ps1
+
       - name: "Self-test: REQ-021 pre-flight syntax error (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2399,6 +2428,18 @@ jobs:
             tests\~selftest_pvw_builder_nuitka_warnfile\~pvw_builder_nuitka_warnfile_bootstrap.log
             tests/~selftest_pvw_builder_nuitka_warnfile/~setup.log
             tests\~selftest_pvw_builder_nuitka_warnfile\~setup.log
+            tests/~selftest_pvw_builder_nuitka_unsupported/~pvw_builder_nuitka_unsupported_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka_unsupported\~pvw_builder_nuitka_unsupported_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka_unsupported/~setup.log
+            tests\~selftest_pvw_builder_nuitka_unsupported\~setup.log
+            tests/~selftest_pvw_builder_nuitka_failother/~pvw_builder_nuitka_failother_bootstrap.log
+            tests\~selftest_pvw_builder_nuitka_failother\~pvw_builder_nuitka_failother_bootstrap.log
+            tests/~selftest_pvw_builder_nuitka_failother/~setup.log
+            tests\~selftest_pvw_builder_nuitka_failother\~setup.log
+            tests/~selftest_pvw_builder_both_unsupported/~pvw_builder_both_unsupported_bootstrap.log
+            tests\~selftest_pvw_builder_both_unsupported\~pvw_builder_both_unsupported_bootstrap.log
+            tests/~selftest_pvw_builder_both_unsupported/~setup.log
+            tests\~selftest_pvw_builder_both_unsupported\~setup.log
             tests/~selftest_sysbuild_nuitka/~sysbuild_test.log
             tests\~selftest_sysbuild_nuitka\~sysbuild_test.log
             tests/~selftest_pvw_builder_both_forcefail/~pvw_builder_both_forcefail_bootstrap.log
