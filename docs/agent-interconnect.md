@@ -377,8 +377,9 @@ to install Visual Studio Build Tools, which cannot help. The two sites now say w
   the problem did (4.2.2 refused 3.15, 4.3 accepted it a day later); Nuitka answers in about a second and its answer is the source of truth.
 - The scenarios put a stub `nuitka.py` next to `app.py`: `python -m nuitka` finds the current folder first, so the real command
   line runs and prints the line, with nothing compiled (the real package is still installed first). `app.py` wins entry selection
-  (REQ-002), so the stub is never the program. Until `batch-check.yml` gives the three scenarios their own steps they run as child
-  runs of the `nuitka_forcefail` step (the block at the end of the script; delete it when the steps exist).
+  (REQ-002), so the stub is never the program. Each of the three has its own gating step in `batch-check.yml` (real and conda-full) and
+  its logs in the `test-logs` artifact; they started as child runs of the `nuitka_forcefail` step while the workflow was held, and
+  `tests/test_nuitka_unsupported_hint.py` now fails if a step goes missing, stops gating or leaves the two lanes.
 
 ---
 

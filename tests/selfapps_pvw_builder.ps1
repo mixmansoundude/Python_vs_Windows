@@ -49,9 +49,7 @@
 #                          so only this run's lines may count; this row is the negative control for the one above).
 #   both_unsupported     - PVW_BUILDER=both with a real PyInstaller build, then the same stub for the optimized build: the optimized
 #                          build's failure says the same thing, the verified EXE stays untouched.
-#
-# Until the workflow gives the three Item 80 scenarios their own steps (batch-check.yml was held when they were added), the
-# nuitka_forcefail step runs them after its own scenario, each as a child run of this script; the step fails if any of them does.
+#                          (Item 80's three scenarios are deterministic, so they gate on real and conda-full from the first run.)
 #
 # Emits: self.builder.override
 param()
@@ -372,18 +370,5 @@ try {
     }
 }
 
-# Item 80: the three scenarios below ride on the nuitka_forcefail step (see the header). Each is a child run of this script, so
-# each gets its own work folder, its own environment clean-up and its own row; any non-zero exit fails this step too.
-$chained = $true
-if ($scenario -eq 'nuitka_forcefail') {
-    $self = (Get-Process -Id $PID).Path
-    foreach ($extra in @('nuitka_unsupported', 'nuitka_failother', 'both_unsupported')) {
-        $env:PVW_BUILDER_SCENARIO = $extra
-        & $self -NoProfile -File $PSCommandPath
-        if ($LASTEXITCODE -ne 0) { $chained = $false }
-    }
-    $env:PVW_BUILDER_SCENARIO = $scenario
-}
-
-if ((-not $pass) -or (-not $chained)) { exit 1 }
+if (-not $pass) { exit 1 }
 exit 0

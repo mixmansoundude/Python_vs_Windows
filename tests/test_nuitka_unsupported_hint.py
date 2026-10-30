@@ -3,7 +3,9 @@
 run_setup.bat cannot run on Linux, so these are static scans of the batch and of the scenarios that prove the behavior
 on Windows (tests/selfapps_pvw_builder.ps1: nuitka_unsupported, nuitka_failother, both_unsupported). The pieces that have
 to agree are the pattern the count looks for, the lines the stubs print, the sentence the run says, and the order of the
-mark, the Nuitka command and the check around each of the two Nuitka command lines. Synthetic text proves each rule can fail.
+mark, the Nuitka command and the check around each of the two Nuitka command lines. The workflow gives each scenario its
+own gating step on real and conda-full (they started as child runs of the nuitka_forcefail step while the workflow was
+held, and the script no longer chains them). Synthetic text proves each rule can fail.
 """
 from __future__ import annotations
 
@@ -13,6 +15,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BAT = (REPO_ROOT / "run_setup.bat").read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
 SCENARIOS = (REPO_ROOT / "tests" / "selfapps_pvw_builder.ps1").read_text(encoding="utf-8", errors="replace")
+WORKFLOW = (REPO_ROOT / ".github" / "workflows" / "batch-check.yml").read_text(encoding="utf-8", errors="replace")
+ITEM80_SCENARIOS = ("nuitka_unsupported", "nuitka_failother", "both_unsupported")
 
 SENTENCE_HEAD = "[WARN] The fallback build system says it does not support this Python version yet"
 VS_HINT_MARK = "Desktop development with C++"
@@ -157,3 +161,68 @@ def test_scenarios_use_lines_the_count_agrees_with():
     assert stale and _counts(pattern, stale.group(1)), "the stale line seeded by nuitka_failother must be one the count would take"
     assert "does not support this Python version yet" in SCENARIOS
     assert "does not support this Python version yet" in _sentence(BAT)
+
+
+def _steps_for(workflow: str, scenario: str) -> list[str]:
+    """The workflow steps (six-space `- name:` items) whose env sets PVW_BUILDER_SCENARIO to this scenario."""
+    parts = re.split(r"\n(?= {6}- name:)", workflow)
+    return [p for p in parts if re.search(r"PVW_BUILDER_SCENARIO: %s\s*\n" % re.escape(scenario), p)]
+
+
+def _step_issues(workflow: str, scenario: str) -> list[str]:
+    """Problems with the one workflow step that runs a scenario (an empty list is a pass)."""
+    steps = _steps_for(workflow, scenario)
+    if len(steps) != 1:
+        return ["expected exactly one step for %s, found %d" % (scenario, len(steps))]
+    block = steps[0]
+    issues = []
+    if "matrix.mode == 'real'" not in block or "matrix.mode == 'conda-full'" not in block:
+        issues.append("%s: the step must run on real and conda-full" % scenario)
+    if "matrix.mode == 'uv'" in block:
+        issues.append("%s: the step must not be uv-only (it is deterministic, so it gates)" % scenario)
+    if "continue-on-error" in block:
+        issues.append("%s: the step must gate" % scenario)
+    if "selfapps_pvw_builder.ps1" not in block:
+        issues.append("%s: the step must run selfapps_pvw_builder.ps1" % scenario)
+    for name in ("~pvw_builder_%s_bootstrap.log" % scenario, "~setup.log"):
+        if "tests/~selftest_pvw_builder_%s/%s" % (scenario, name) not in workflow:
+            issues.append("%s: artifact path missing: %s" % (scenario, name))
+    return issues
+
+
+def test_each_scenario_has_its_own_gating_step_on_real_and_conda_full():
+    for scenario in ITEM80_SCENARIOS:
+        assert _step_issues(WORKFLOW, scenario) == [], _step_issues(WORKFLOW, scenario)
+
+
+def test_the_script_no_longer_chains_child_runs():
+    # the three scenarios used to ride on the nuitka_forcefail step as child runs; each has its own step now, so the
+    # script runs exactly the scenario it was given and ends with its own exit codes
+    assert "PSCommandPath" not in SCENARIOS
+    assert "$chained" not in SCENARIOS
+    tail = [ln.strip() for ln in SCENARIOS.splitlines() if ln.strip()][-2:]
+    assert tail == ["if (-not $pass) { exit 1 }", "exit 0"], tail
+
+
+def test_step_check_can_fail():
+    good = WORKFLOW
+    assert _step_issues(good, "nuitka_failother") == []
+    # a scenario name nobody runs
+    assert _step_issues(good, "nuitka_unsupported_typo")
+    # a step turned non-gating
+    gated = good.replace(
+        "          PVW_BUILDER_SCENARIO: nuitka_failother\n",
+        "          PVW_BUILDER_SCENARIO: nuitka_failother\n        continue-on-error: true\n", 1)
+    assert gated != good and any("must gate" in p for p in _step_issues(gated, "nuitka_failother"))
+    # a step that moved to the uv lane only
+    start = good.index("PVW_BUILDER_SCENARIO: both_unsupported")
+    cond_at = good.rindex("        if: ", 0, start)
+    cond_end = good.index("\n", cond_at)
+    uv_only = good[:cond_at] + "        if: ${{ matrix.mode == 'uv' }}" + good[cond_end:]
+    assert any("real and conda-full" in p for p in _step_issues(uv_only, "both_unsupported"))
+    # a log path nobody collects
+    assert any("artifact path missing" in p for p in _step_issues(
+        good.replace("tests/~selftest_pvw_builder_nuitka_unsupported/~setup.log", "tests/~x/~setup.log"), "nuitka_unsupported"))
+    # a duplicated step would run the scenario twice and make the row ambiguous
+    dup = good + good[good.index("      - name: \"Self-test: PVW_BUILDER both choice says plainly"):good.index("      - name: \"Self-test: REQ-021 pre-flight syntax error")]
+    assert any("exactly one" in p for p in _step_issues(dup, "both_unsupported"))

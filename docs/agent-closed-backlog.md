@@ -3892,8 +3892,9 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Tests.** Rows `self.builder.override` scenarios `nuitka_unsupported`, `nuitka_failother` and `both_unsupported`
   (`tests/selfapps_pvw_builder.ps1`; `real` and `conda-full`, gating from the first run: a stub `nuitka.py` stands in for
   the package, nothing is compiled); unit tests `tests/test_nuitka_unsupported_hint.py`. `batch-check.yml` was held for
-  another lane's change when these were added, so the three scenarios run as child runs of the `nuitka_forcefail` step;
-  give each its own step and delete the block at the end of the script when the workflow is next edited.
+  another lane's change when these were added, so the scenarios first ran as child runs of the `nuitka_forcefail` step;
+  once the aggregate gate (#509) had merged, each got its own gating step (real and conda-full, logs in the `test-logs`
+  artifact), the chain was deleted from the script, and the unit tests pin the steps.
 
 ### Item 35 aggregate gate history (moved from CLAUDE.md 2026-10-24 when the gate became real; Item 35 itself stays open)
 
