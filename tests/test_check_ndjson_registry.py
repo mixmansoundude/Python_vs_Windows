@@ -217,3 +217,17 @@ def test_agent_ndjson_doc_has_balanced_code_fences():
 
     doc = Path(__file__).resolve().parent.parent / "docs" / "agent-ndjson.md"
     assert _unbalanced_fence_sections(doc.read_text(encoding="utf-8")) == []
+
+
+def test_repo_rows_and_registry_agree(capsys):
+    """The real repository, not a synthetic tree: a row emitted by tests/*.ps1, run_setup.bat, a workflow or
+    tests/dynamic_tests.py must be registered in docs/agent-ndjson.md, and a registered row must still have an
+    emission site. Running it as a unit test makes `self.pytest.unit` carry the check in every lane, which the
+    aggregate self-test gate turns into a merge hold (Item 35); the CI job of the same tool is the report with
+    the observed-row list. Static only: the observed-row part of the tool never affects its exit code."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parent.parent
+    result = check_ndjson_registry.main(["--repo-root", str(repo)])
+    out = capsys.readouterr().out
+    assert result == 0, out
