@@ -3906,6 +3906,31 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Follow-up filed, not built here.** The Item 65 runtime-install offer still edited no file for a `pyproject` or `pep723`
   source (`HP_RTI_EDITS`), although an appended `requirements.txt` line now lasts: built as Item 91 (PR #511).
 
+### Item 91 (closed 2026-10-30, PR #511; filed 2026-10-24 as the follow-up of Item 89, approved by the coordinator)
+
+- **The problem.** `:runtime_install_offer` (Item 65 slice 2) installed the package a run asked for and then appended it to
+  `requirements.txt` only when the dependency source was neither `pyproject` nor `pep723` (`HP_RTI_EDITS`), because before
+  Item 89 those two sources were copied over `requirements.txt` on every run and an appended line was lost. Since Item 89 a
+  list's change since the last run is kept by the merge, so the exception had no reason left: the user who said yes was told
+  to add the package by hand to a file the prompt named, and the next run of the same folder knew nothing of it.
+- **What shipped.** The offer always appends the package to `requirements.txt` (`--append`, unchanged helper) and says so in
+  the prompt (`adds them to this program's own environment and to requirements.txt`) and in the log
+  (`Runtime install: added <package> to requirements.txt.`). `HP_RTI_EDITS`, `:rti_not_edited`, `:rti_after_edit` and the
+  second prompt wording are gone; `pyproject.toml` is still never rewritten and the header is only brought up to date by the
+  usual write-back of a later run. README REQ-018.18 lost its `pyproject.toml`/header exception. `HP_RUNTIME_MODULE_SCAN` is
+  unchanged (no payload edit).
+- **Rows.** `self.runtime.install.pyproject` flipped from "left untouched, user told" to "requirements.txt gains the line,
+  `pyproject.toml` byte-identical, a second bootstrap of the same folder (EXE folder deleted, answer N) reads the lists, keeps
+  the line, removes nothing and asks nothing"; the new `self.runtime.install.pep723` requires the same for a header source and
+  records, without asserting it, whether the header received the package (`secondHeaderHasPackage`). `.accept` and `.decline`
+  stayed green. Both new scenarios run two bootstraps in `tests/selfapps_runtime_install.ps1` (`real` lane, gating); the cost
+  is two extra bootstraps on that lane. Red first: run `40142245618` (head `6af480f`) had exactly two red rows on `real`,
+  `.pyproject` and `.pep723`, for the predicted reasons (`promptNamesRequirements`, `saidAdded`, `requirementsGotIt` and
+  `secondKeptLine` all false, everything else true, `pyprojectUntouched`/`headerKept` true), and every other row of all eight
+  lanes identical to the Item 89 read `40130386532` except the one added row.
+- **Not covered.** The computed-name import of the test program is missing again in any later rebuild unless hidden-import
+  recovery fires, so the second bootstrap judges the lists and the log, not the program's output.
+
 ## Known Findings (diagnosed, no action warranted)
 
 - **Backlog item numbering: renumber-on-collision convention dropped, 2026-07-31 owner decision.**
