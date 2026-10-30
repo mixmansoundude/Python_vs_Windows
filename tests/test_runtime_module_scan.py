@@ -212,7 +212,9 @@ class PackagesAndAppend(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
         self.assertEqual(r.returncode, 3)
         self.assertEqual(r.stdout, "")
-        self.assertEqual(r.stderr.strip(), "runtime_module_scan: IsADirectoryError")
+        # Opening a folder for writing is IsADirectoryError on Linux and PermissionError on Windows; the exit code and the
+        # one-line reason are the contract, not which OSError subclass the platform picks (run 41034621526, justme-test).
+        self.assertRegex(r.stderr.strip(), r"^runtime_module_scan: (IsADirectoryError|PermissionError)$")
 
 
 class TableMatchesWarnfix(unittest.TestCase):
