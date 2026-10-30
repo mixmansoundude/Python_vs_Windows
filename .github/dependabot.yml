@@ -2,10 +2,10 @@
 version: 2
 updates:
   # This repo pins every action version explicitly in .github/workflows/*.yml
-  # (checkout@v5, cache@v5, upload-artifact@v6, etc.) with no automated signal
-  # when a pin falls behind. A 2026-07 manual audit found every pin already on
-  # its latest major -- nothing to bump at that time -- but that was a one-off
-  # manual sweep; this catches the next drift on its own.
+  # (checkout, cache, upload-artifact, etc.) with no automated signal when a
+  # pin falls behind. A 2026-07 manual audit said every pin was on its latest
+  # major, but several were not; Item 90 bumped them by hand on 2026-10-30.
+  # This file is what catches the next drift on its own.
   # github-actions is the only ecosystem configured here on purpose: this repo
   # has no committed requirements.txt/pyproject.toml (CI installs ad-hoc pip
   # packages inline in workflow YAML run: steps, which Dependabot's pip
