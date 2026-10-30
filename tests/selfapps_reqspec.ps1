@@ -227,6 +227,37 @@ function Write-ReqspecIngestRows {
     })
 }
 
+# Item 92: conda-forge now and then answers one request with a 5xx (run 41074512594: a 502 on a repodata shard turned nine
+# rows red on justme-test) or drops the connection. On the sharded repodata path conda then crashes with an unhandled
+# requests.exceptions.HTTPError whose text holds none of the words run_setup.bat's own REQ-022 detection looks for. The network
+# calls below go through Invoke-CondaCommand: one retry after a short wait, only when the output names a 5xx or a failed
+# connection, never for a solver answer (PackagesNotFoundError, a 404). Item 92 first lands without the retry so the
+# proof rows below are red for the right reason.
+$script:CondaTransientPattern = '(?i)(\b5\d\d Server Error|HTTPError:\s*5\d\d|CondaHTTPError:\s*HTTP\s*(5\d\d|000)|CONNECTION FAILED|ConnectionError|Connection (reset|aborted|broken)|Read timed out|ReadTimeout|ConnectTimeout)'
+
+function Invoke-CondaCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [string]$LogPath = '',
+        [int]$WaitSeconds = 15
+    )
+
+    $maxAttempts = 1
+    $attempts = 0
+    $retried = $false
+    $text = ''
+    $code = -1
+    while ($attempts -lt $maxAttempts) {
+        $attempts++
+        $raw = cmd /c $Command 2>&1
+        $code = $LASTEXITCODE
+        $text = $raw | Out-String
+        if ($code -eq 0) { break }
+    }
+    return [pscustomobject]@{ Output = $text; ExitCode = $code; Attempts = $attempts; Retried = $retried }
+}
+
 function Get-CondaBatPath {
     $publicRoot = [Environment]::GetEnvironmentVariable('PUBLIC')
     $publicRootClean = if ($publicRoot) { $publicRoot.Trim().Trim('"') } else { '' }
@@ -305,6 +336,100 @@ $work = Join-Path $here '~reqspec'
 $logPath = Join-Path $work '~reqspec_run.log'
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 if (Test-Path -LiteralPath $logPath) { Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue }
+
+# Item 92: prove Invoke-CondaCommand's rules with a stub command, no conda and no network. The stub prints the last line of the
+# real 502 crash (run 41074512594) or a real solver answer, so the pattern is checked against text conda wrote.
+$retryStub = Join-Path $work '~retry_stub.cmd'
+$retryMark = Join-Path $work '~retry_stub.mark'
+Set-Content -LiteralPath $retryStub -Encoding Ascii -Value @(
+    '@echo off',
+    'if "%~2"=="ok" goto ok',
+    'if "%~2"=="solver" goto solver',
+    'if "%~2"=="always" goto transient',
+    'if "%~2"=="once" if not exist "%~1" goto first',
+    'goto ok',
+    ':first',
+    'echo first> "%~1"',
+    ':transient',
+    'echo requests.exceptions.HTTPError: 502 Server Error: Bad Gateway for url: https://conda.anaconda.org/conda-forge/win-64/ce81bff8e89d422c0e4ef1ac471cc77422695c84a7d589c446d1e1a1d5ad2b7b.msgpack.zst 1>&2',
+    'exit /b 1',
+    ':solver',
+    'echo PackagesNotFoundError: The following packages are not available from current channels: 1>&2',
+    'exit /b 1',
+    ':ok',
+    'echo ok',
+    'exit /b 0'
+)
+function Invoke-RetryStub {
+    param([string]$Mode)
+    if (Test-Path -LiteralPath $retryMark) { Remove-Item -LiteralPath $retryMark -Force -ErrorAction SilentlyContinue }
+    return Invoke-CondaCommand -Command ('"{0}" "{1}" {2}' -f $retryStub, $retryMark, $Mode) -Label ('stub ' + $Mode) -LogPath $logPath -WaitSeconds 1
+}
+function Get-RetryDetails {
+    param($Run)
+    return [ordered]@{
+        exitCode = $Run.ExitCode
+        attempts = $Run.Attempts
+        retried = $Run.Retried
+        outputSnippet = ($Run.Output.Trim() -replace '[^\x20-\x7e]', '?').Substring(0, [Math]::Min(120, $Run.Output.Trim().Length))
+    }
+}
+
+$onceRun = Invoke-RetryStub -Mode 'once'
+$onceDetails = Get-RetryDetails -Run $onceRun
+Write-NdjsonRow ([ordered]@{
+    id = 'reqspec.retry.once'
+    req = 'N/A'
+    pass = (($onceRun.ExitCode -eq 0) -and ($onceRun.Attempts -eq 2) -and $onceRun.Retried)
+    desc = 'a conda command that fails once with a 502 is run a second time and the second answer counts'
+    details = $onceDetails
+})
+
+$alwaysRun = Invoke-RetryStub -Mode 'always'
+$alwaysDetails = Get-RetryDetails -Run $alwaysRun
+Write-NdjsonRow ([ordered]@{
+    id = 'reqspec.retry.bounded'
+    req = 'N/A'
+    pass = (($alwaysRun.ExitCode -eq 1) -and ($alwaysRun.Attempts -eq 2) -and $alwaysRun.Retried)
+    desc = 'a conda command that keeps failing with a 502 is run exactly twice and the failure is reported'
+    details = $alwaysDetails
+})
+
+$solverRun = Invoke-RetryStub -Mode 'solver'
+$okRun = Invoke-RetryStub -Mode 'ok'
+$solverDetails = Get-RetryDetails -Run $solverRun
+$solverDetails.okAttempts = $okRun.Attempts
+$solverDetails.okExitCode = $okRun.ExitCode
+Write-NdjsonRow ([ordered]@{
+    id = 'reqspec.retry.nontransient'
+    req = 'N/A'
+    pass = (($solverRun.ExitCode -eq 1) -and ($solverRun.Attempts -eq 1) -and (-not $solverRun.Retried) -and ($okRun.ExitCode -eq 0) -and ($okRun.Attempts -eq 1))
+    desc = 'a solver answer is never run twice, and a command that succeeds is run once'
+    details = $solverDetails
+})
+
+$classifyCases = @(
+    @{ transient = $true;  text = 'requests.exceptions.HTTPError: 502 Server Error: Bad Gateway for url: https://conda.anaconda.org/conda-forge/win-64/ce81bff8e89d422c0e4ef1ac471cc77422695c84a7d589c446d1e1a1d5ad2b7b.msgpack.zst' },
+    @{ transient = $true;  text = 'CondaHTTPError: HTTP 503 SERVICE UNAVAILABLE for url <https://conda.anaconda.org/conda-forge/noarch/repodata.json>' },
+    @{ transient = $true;  text = 'CondaHTTPError: HTTP 000 CONNECTION FAILED for url <https://conda.anaconda.org/conda-forge/win-64/current_repodata.json>' },
+    @{ transient = $true;  text = "requests.exceptions.ConnectionError: HTTPSConnectionPool(host='conda.anaconda.org', port=443): Max retries exceeded" },
+    @{ transient = $true;  text = "requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='conda.anaconda.org', port=443): Read timed out. (read timeout=9.15)" },
+    @{ transient = $false; text = 'PackagesNotFoundError: The following packages are not available from current channels:' },
+    @{ transient = $false; text = 'UnsatisfiableError: The following specifications were found to be incompatible with each other:' },
+    @{ transient = $false; text = 'CondaHTTPError: HTTP 404 NOT FOUND for url <https://conda.anaconda.org/conda-forge/win-64/nosuchpackage>' },
+    @{ transient = $false; text = 'requests.exceptions.HTTPError: 404 Client Error: Not Found for url: https://conda.anaconda.org/conda-forge/win-64/x.msgpack.zst' }
+)
+$classifyWrong = @()
+foreach ($case in $classifyCases) {
+    if (([bool]($case.text -match $script:CondaTransientPattern)) -ne $case.transient) { $classifyWrong += $case.text.Substring(0, [Math]::Min(60, $case.text.Length)) }
+}
+Write-NdjsonRow ([ordered]@{
+    id = 'reqspec.retry.classify'
+    req = 'N/A'
+    pass = ($classifyWrong.Count -eq 0)
+    desc = 'the transient pattern matches conda 5xx and connection failures and not solver answers or a 404'
+    details = [ordered]@{ cases = $classifyCases.Count; wrong = $classifyWrong }
+})
 
 $condaInfo = Get-CondaBatPath
 $condaBat = $condaInfo.path
@@ -478,14 +603,16 @@ foreach ($configCommand in $condaConfigCommands) {
     }
 }
 try {
-    $dryOutput = cmd /c $dryRunCommand 2>&1
-    $dryExit = $LASTEXITCODE
+    $dryRun = Invoke-CondaCommand -Command $dryRunCommand -Label 'conda dry-run' -LogPath $logPath
+    $dryOutput = $dryRun.Output
+    $dryExit = $dryRun.ExitCode
     $dryRunDetails.exitCode = $dryExit
+    $dryRunDetails.attempts = $dryRun.Attempts
     $channelPinDetails.exitCode = $dryExit
     if ($dryOutput) {
         Add-Content -LiteralPath $logPath -Value 'conda dry-run output:' -Encoding Ascii
-        Add-Content -LiteralPath $logPath -Value ($dryOutput | Out-String) -Encoding Ascii
-        $dryOutputText = $dryOutput | Out-String
+        Add-Content -LiteralPath $logPath -Value $dryOutput -Encoding Ascii
+        $dryOutputText = $dryOutput
         $drySnippet = $dryOutputText.Substring(0, [Math]::Min(200, $dryOutputText.Length))
         $dryRunDetails.solverOutputSnippet = $drySnippet
         $channelPinDetails.outputMatched = $dryOutputText.Contains('conda-forge')
@@ -546,12 +673,14 @@ if (-not (Test-Path -LiteralPath $smokeEnvPy)) {
 } else {
 $installCommand = "`"$condaBat`" install -y -n _envsmoke --override-channels -c conda-forge `"six>=1.16`""
 try {
-    $installOutput = cmd /c $installCommand 2>&1
-    $installExit = $LASTEXITCODE
+    $installRun = Invoke-CondaCommand -Command $installCommand -Label 'conda install' -LogPath $logPath
+    $installOutput = $installRun.Output
+    $installExit = $installRun.ExitCode
     $installDetails.installExitCode = $installExit
+    $installDetails.installAttempts = $installRun.Attempts
     if ($installOutput) {
         Add-Content -LiteralPath $logPath -Value 'conda install output:' -Encoding Ascii
-        Add-Content -LiteralPath $logPath -Value ($installOutput | Out-String) -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value $installOutput -Encoding Ascii
     }
     if ($installExit -ne 0) { $overallPass = $false }
 } catch {
@@ -608,12 +737,14 @@ if (Test-Path -LiteralPath $ingestCondaReqPath) {
 
 $ingestDryRunCommand = "`"$condaBat`" install --dry-run -n base --override-channels -c conda-forge --file `"$ingestCondaReqPath`""
 try {
-    $ingestDryRunOutput = cmd /c $ingestDryRunCommand 2>&1
-    $ingestDryRunExit = $LASTEXITCODE
+    $ingestDryRun = Invoke-CondaCommand -Command $ingestDryRunCommand -Label 'ingest conda dry-run' -LogPath $logPath
+    $ingestDryRunOutput = $ingestDryRun.Output
+    $ingestDryRunExit = $ingestDryRun.ExitCode
     $ingestDryRunDetails.exitCode = $ingestDryRunExit
+    $ingestDryRunDetails.attempts = $ingestDryRun.Attempts
     if ($ingestDryRunOutput) {
         Add-Content -LiteralPath $logPath -Value 'ingest conda dry-run output:' -Encoding Ascii
-        Add-Content -LiteralPath $logPath -Value ($ingestDryRunOutput | Out-String) -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value $ingestDryRunOutput -Encoding Ascii
     }
 } catch {
     $ingestDryRunDetails.exitCode = -1
@@ -638,12 +769,14 @@ if (-not (Test-Path -LiteralPath $smokeEnvPy)) {
 } else {
 $ingestInstallCommand = "`"$condaBat`" install -y -n _envsmoke --override-channels -c conda-forge `"six`""
 try {
-    $ingestInstallOutput = cmd /c $ingestInstallCommand 2>&1
-    $ingestInstallExit = $LASTEXITCODE
+    $ingestInstallRun = Invoke-CondaCommand -Command $ingestInstallCommand -Label 'ingest conda install' -LogPath $logPath
+    $ingestInstallOutput = $ingestInstallRun.Output
+    $ingestInstallExit = $ingestInstallRun.ExitCode
     $ingestImportDetails.installExitCode = $ingestInstallExit
+    $ingestImportDetails.installAttempts = $ingestInstallRun.Attempts
     if ($ingestInstallOutput) {
         Add-Content -LiteralPath $logPath -Value 'ingest conda install output:' -Encoding Ascii
-        Add-Content -LiteralPath $logPath -Value ($ingestInstallOutput | Out-String) -Encoding Ascii
+        Add-Content -LiteralPath $logPath -Value $ingestInstallOutput -Encoding Ascii
     }
 } catch {
     $ingestImportDetails.installExitCode = -1
