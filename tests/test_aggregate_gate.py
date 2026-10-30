@@ -164,6 +164,8 @@ def registry_problems(text, registry_test_text):
         return ["there is no %s job" % REGISTRY_JOB]
     if re.search(r"^    continue-on-error:", live(reg), re.MULTILINE):
         found.append("%s has continue-on-error: a mismatch would stay green" % REGISTRY_JOB)
+    if re.fullmatch(r"(?:\$\{\{\s*false\s*\}\}|false)", job_key(reg, "if") or ""):
+        found.append("%s is disabled by an always-false condition: no check would ever run" % REGISTRY_JOB)
     blocks = [blk for name, blk in steps(reg) if name == REGISTRY_STEP]
     if len(blocks) != 1:
         found.append("%s must have exactly one step named %r (found %d)" % (REGISTRY_JOB, REGISTRY_STEP, len(blocks)))
@@ -175,6 +177,8 @@ def registry_problems(text, registry_test_text):
             found.append("the registry step needs set -o pipefail (the report is piped through tee, which would hide the exit code)")
         if re.search(r"\|\|\s*(?:true\b|:(?![A-Za-z0-9_])|exit\s+0\b)|continue-on-error:", block):
             found.append("the registry step hides the checker's exit code")
+        if re.search(r"^\s*(?:-\s+)?if:\s*(?:\$\{\{\s*false\s*\}\}|false)\s*$", block, re.MULTILINE):
+            found.append("the registry step is disabled by an always-false condition: the checker would never run")
     m = re.search(r"^def test_repo_rows_and_registry_agree\b.*?(?=^def |\Z)", registry_test_text, re.MULTILINE | re.DOTALL)
     if not m:
         found.append("tests/test_check_ndjson_registry.py lost test_repo_rows_and_registry_agree (the aggregate gate carries the check through it)")
@@ -269,6 +273,16 @@ class RegistryCheckGates(unittest.TestCase):
     def test_job_level_continue_on_error_is_caught(self):
         bad = GOOD_REGISTRY.replace("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n")
         self.assertTrue(any("continue-on-error" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_job_level_false_condition_is_caught(self):
+        bad = GOOD_REGISTRY.replace("    if: ${{ always() }}\n    runs-on", "    if: ${{ false }}\n    runs-on")
+        self.assertNotEqual(bad, GOOD_REGISTRY)
+        self.assertTrue(any("always-false" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
+
+    def test_checker_step_false_condition_is_caught(self):
+        bad = GOOD_REGISTRY.replace("        shell: bash\n", "        shell: bash\n        if: ${{ false }}\n")
+        self.assertNotEqual(bad, GOOD_REGISTRY)
+        self.assertTrue(any("always-false" in f for f in registry_problems(bad, GOOD_REGISTRY_TEST)))
 
     def test_step_level_continue_on_error_is_caught(self):
         bad = GOOD_REGISTRY.replace("        shell: bash\n", "        shell: bash\n        continue-on-error: true\n")

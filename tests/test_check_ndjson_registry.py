@@ -54,6 +54,14 @@ def test_dotless_named_param_is_not_a_row_id(tmp_path):
     assert check_ndjson_registry.scan_code_ids([ps1]) == {"self.example.kept"}
 
 
+def test_dotless_entry_row_id_stays_visible(tmp_path):
+    # Write-EntryRow writes its -Id as the row id as is, so a dotless one must reach the comparison (where it
+    # can never be registered and fails) instead of being dropped with the other commands' -Id values.
+    ps1 = tmp_path / "selfapps_entry_like.ps1"
+    ps1.write_text("Write-EntryRow -Expected $x -Id 'newrow'\n", encoding="utf-8")
+    assert check_ndjson_registry.scan_code_ids([ps1]) == {"newrow"}
+
+
 def test_scan_log_ids_reads_ndjson_lines(tmp_path):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()

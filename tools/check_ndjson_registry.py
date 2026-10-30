@@ -31,6 +31,9 @@ CODE_WRITERESULT_ID_RE = re.compile(r"""Write-Result\s+['"]([A-Za-z0-9][A-Za-z0-
 # A registered row id always has a dot (DOC_TOKEN_RE needs one), so a dotless `-Id 'x'` is some other
 # command's parameter, not a row, and would read as "unregistered" in a check that now gates (Item 35).
 CODE_NAMEDPARAM_ID_RE = re.compile(r"""-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_\-]*\.[A-Za-z0-9_.\-]*)['"]""")
+# Write-EntryRow writes whatever -Id it is given as the row id, dotless or not (a dotless one can never be
+# registered, so it must stay visible to the comparison and fail it).
+CODE_ENTRYROW_ID_RE = re.compile(r"""Write-EntryRow\b[^\r\n]*-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
 CODE_JSONLITERAL_ID_RE = re.compile(r'"id"\s*:\s*"([A-Za-z0-9][A-Za-z0-9_.\-]*)"')
 
 
@@ -75,6 +78,8 @@ def scan_code_ids(paths):
         for m in CODE_WRITERESULT_ID_RE.finditer(text):
             ids.add(m.group(1))
         for m in CODE_NAMEDPARAM_ID_RE.finditer(text):
+            ids.add(m.group(1))
+        for m in CODE_ENTRYROW_ID_RE.finditer(text):
             ids.add(m.group(1))
         for m in CODE_JSONLITERAL_ID_RE.finditer(text):
             ids.add(m.group(1))
