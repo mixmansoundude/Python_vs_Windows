@@ -705,6 +705,13 @@ failure, not a code defect, and the next push publishes normally. To get a fresh
 new commit instead. The step conclusion alone also misleads on the `uv` lane: its interactive step is
 `continue-on-error`, so a re-run showed a green step while the artifact still held the same red row. Read the row.
 
+**A push that cancels the previous run of `batch-check.yml` leaves a red "Aggregate self-test verdicts" on the superseded
+commit** (since Item 35 C6 made the gate real; run `40143017186`, head `896a1b9`, superseded by `9136983`). The gate job
+is `if: always()` so it still starts, the cancelled lanes wrote no verdict, the aggregator fails closed, and the enforce
+step runs (it was not skipped by `!cancelled()` in that case). That red belongs to the old commit and is not a finding
+about the PR: the PR page shows the checks of its current head, so read the run of the head, never the check event of
+an older sha.
+
 ---
 
 ## pipreqs reads with the locale encoding; Python 3.15 hides that unless a test forces it off
