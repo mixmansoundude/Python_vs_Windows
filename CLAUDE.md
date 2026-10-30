@@ -95,6 +95,7 @@ tools/
   pipreqs_precheck.py          Item 63 pre-check/UTF-8 staging for pipreqs (canonical source for HP_PIPREQS_PRECHECK)
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
   check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
+  req_trace_table.py           Which numbered README shalls a row tag names (report only; docs/plan-test-suite-gaps.md keeps a dated copy)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
   sanitize_iterate_payload.py  NDJSON redaction, deduplication, truncation
@@ -307,6 +308,7 @@ Test files and what they cover:
 | `test_window_confirm.py` | Item 82 slice 2: the kill marker is cleared before the runner launches and read only from the file (never from the exit code), the window question's conditions and gate order, only an explicit yes records `user_confirmed`, the automated branch asks nothing |
 | `test_provider_memory.py` | Item 66: `PVW_PROVIDER` validation (compared with `findstr /x /l` on the `set` output, no line expands the variable, runs after the file count and before the cached-EXE fast path), uv skips tested before the `PVW_UV_EXE` branch, the memory read contract (conda only, Miniconda present, never cleared by input edits), write guards (verified pass, conda after uv, state ok, no switch), the `runtime.txt` record at all three write-back sites, the failed-forced-solve hint |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
+| `test_req_trace_table.py` | `tools/req_trace_table.py`: shalls grouped by their own number (a REQ-009 shall inside the REQ-003 section counts under REQ-009), the row id taken from the tag's own row, the gap list and counts; synthetic cases prove each report line |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
