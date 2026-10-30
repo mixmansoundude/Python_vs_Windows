@@ -43,7 +43,7 @@ jobs:
 
       - name: Resolve candidate PR numbers for this event
         id: prs
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |
@@ -79,7 +79,7 @@ jobs:
         # for the fallback step's own (unconditioned-on-this-step) `if:` to still evaluate and
         # run, while this step's own outcome/log still faithfully shows failure for troubleshooting.
         continue-on-error: true
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS }}
           script: |
@@ -161,7 +161,7 @@ jobs:
 
       - name: Enable Auto-merge via AUTOMERGE_TOKEN (legacy, admin-capable -- remove once AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS is confirmed working)
         if: ${{ steps.prs.outputs.numbers != '[]' && env.AUTOMERGE_TOKEN }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.AUTOMERGE_TOKEN }}
           script: |
@@ -227,7 +227,7 @@ jobs:
 
       - name: Enable Auto-merge via GITHUB_TOKEN
         if: ${{ steps.prs.outputs.numbers != '[]' && !env.AUTOMERGE_TOKEN_NONADMIN_NO_BYPASS && !env.AUTOMERGE_TOKEN }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |
@@ -272,7 +272,7 @@ jobs:
 
       - name: Auto-merge diagnostics (state + reason)
         if: always()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |
@@ -342,7 +342,7 @@ jobs:
 
       - name: Note auto-merge state in Summary
         if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |

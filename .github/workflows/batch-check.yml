@@ -3504,7 +3504,7 @@ jobs:
 
       - name: Summarize self-tests (NDJSON -> Job Summary)
         if: ${{ !cancelled() }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |
@@ -4255,7 +4255,7 @@ jobs:
 
       - name: Gate on NDJSON results
         if: ${{ !cancelled() }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ github.token }}
           script: |
@@ -4586,7 +4586,7 @@ jobs:
 
       - name: Distribute codex failure summary (PR comment)
         if: ${{ failure() && github.event_name == 'pull_request' && env.AUTOMERGE_TOKEN != '' }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           AUTOMERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
         with:
