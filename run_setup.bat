@@ -3890,10 +3890,12 @@ if errorlevel 1 (
 )
 rem Same --assume-yes-for-downloads rationale as :try_nuitka_tier_a: Nuitka must never prompt
 rem interactively here.
+call :nuitka_unsupported_mark
 "%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%HP_OPTBUILD_TMP%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
   call :log "[WARN] Optimized build did not complete; your app is still ready to use as-is."
-  call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help."
+  call :nuitka_unsupported_check
+  if not defined HP_NUI_UNSUPPORTED call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help."
   goto :optbuild_cleanup
 )
 if not exist "dist\%HP_OPTBUILD_TMP%" (
@@ -6625,10 +6627,12 @@ if errorlevel 1 (
 rem --assume-yes-for-downloads: Nuitka can otherwise prompt interactively to confirm its own
 rem dependency downloads (e.g. the MinGW64 compiler) -- fatal for both CI and a real
 rem non-interactive double-click user; the Prime Directive tolerates zero prompts here.
+call :nuitka_unsupported_mark
 "%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%ENVNAME%.exe" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
   call :log "[WARN] Fallback build did not complete successfully."
-  call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this fallback should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help this fallback succeed."
+  call :nuitka_unsupported_check
+  if not defined HP_NUI_UNSUPPORTED call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this fallback should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help this fallback succeed."
   exit /b 1
 )
 if not exist "dist\%ENVNAME%.exe" (
@@ -6637,6 +6641,35 @@ if not exist "dist\%ENVNAME%.exe" (
   exit /b 1
 )
 call :log "[INFO] Fallback build succeeded: dist\%ENVNAME%.exe was produced using the fallback build system."
+exit /b 0
+
+:nuitka_unsupported_mark
+rem CLAUDE.md Item 80: called right before each of the two Nuitka command lines. Remembers how many lines of the
+rem "Python version is not supported" kind ~setup.log already holds. The log is only ever appended to, so reading it
+rem without this mark would take an answer from an earlier run for this one.
+call :nuitka_unsupported_count
+set "HP_NUI_BEFORE=%HP_NUI_COUNT%"
+exit /b 0
+
+:nuitka_unsupported_check
+rem CLAUDE.md Item 80: called after a failed Nuitka command line. When Nuitka itself said, since the mark, that it does
+rem not support this Python version, sets HP_NUI_UNSUPPORTED and logs one plain sentence; both callers then leave out the
+rem Visual Studio hint, which cannot help here. Without a mark (or without such a line) nothing is claimed and the
+rem caller's usual hint shows. The sentence must not repeat Nuitka's own wording, or the next run would count it.
+set "HP_NUI_UNSUPPORTED="
+if not defined HP_NUI_BEFORE exit /b 0
+call :nuitka_unsupported_count
+if %HP_NUI_COUNT% LEQ %HP_NUI_BEFORE% exit /b 0
+set "HP_NUI_UNSUPPORTED=1"
+call :log "[WARN] The fallback build system says it does not support this Python version yet, so it cannot build here until a newer release of it does. Installing Visual Studio would not change that."
+exit /b 0
+
+:nuitka_unsupported_count
+rem Sets HP_NUI_COUNT to the number of ~setup.log lines that carry Nuitka's "The Python version X is not supported by
+rem Nuitka Y" answer. Its "only experimentally supported" warning for a brand-new Python is a different line and does
+rem not match, because that build still works. No pipe: findstr output is counted by the for loop itself.
+set "HP_NUI_COUNT=0"
+for /f "delims=" %%L in ('findstr /r /c:"The Python version .* is not supported by Nuitka" "%LOG%" 2^>nul') do set /a HP_NUI_COUNT+=1
 exit /b 0
 
 :die
