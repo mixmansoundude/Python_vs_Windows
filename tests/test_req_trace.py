@@ -233,6 +233,29 @@ def test_subtag_prefix_is_not_confused_with_longer_subrequirement() -> None:
     assert any("REQ-005.1" in p for p in problems)
 
 
+def test_a_comma_list_is_checked_part_by_part() -> None:
+    # Both parts are known: the list covers REQ-002 (through its sub-id's number) and REQ-005.11.
+    problems, _ = _check(tags=("req = 'REQ-001'\nreq = 'REQ-002, REQ-005.11'",))
+    assert problems == []
+    # One bad part is named alone; the good part still counts, so REQ-002 is not reported as untagged.
+    problems, _ = _check(tags=("req = 'REQ-001'\nreq = 'REQ-002, REQ-005.99'",))
+    assert any("'REQ-005.99'" in p for p in problems) and not any("'REQ-002, REQ-005.99'" in p for p in problems)
+    assert not any("REQ-002 is mentioned" in p for p in problems)
+    # A stray comma leaves an empty part, which names no requirement.
+    problems, _ = _check(tags=("req = 'REQ-001'\nreq = 'REQ-002,'\nreq = 'REQ-005.11'",))
+    assert any("''" in p for p in problems)
+
+
+def test_a_multi_level_subtag_must_exist_in_the_readme_and_is_exact() -> None:
+    readme = "## [REQ-005] x\nREQ-005.1.17 is a shall of the third level\n"
+    ok, _ = trace_problems(readme, "REQ-005\n", ("req = 'REQ-005.1.17'",), {}, {})
+    assert ok == []
+    # .1.1 must not pass just because .1.17 starts with it, and .1.99 is a typo.
+    for wrong in ("REQ-005.1.1", "REQ-005.1.99"):
+        problems, _ = trace_problems(readme, "REQ-005\n", ("req = '%s'" % wrong,), {}, {})
+        assert any(wrong in p for p in problems), wrong
+
+
 def test_free_tags_are_accepted() -> None:
     tags = ("req = 'REQ-001'\nreq = 'REQ-002'\nreq = 'REQ-005'\nreq = 'REQ-AV'\nreq = 'N/A'\nreq = 'CLAUDE.md-Item-48'",)
     problems, _ = _check(tags=tags)

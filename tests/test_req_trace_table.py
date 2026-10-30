@@ -87,6 +87,14 @@ def test_a_row_written_on_one_line_names_its_own_id() -> None:
     }
 
 
+def test_a_comma_list_names_the_row_under_every_part() -> None:
+    listed = "Write-NdjsonRow ([ordered]@{ id = 'row.many'; req = 'REQ-001.1, REQ-003'; pass = $true })\n"
+    assert rtt.row_tags([listed]) == {"REQ-001.1": {"row.many"}, "REQ-003": {"row.many"}}
+    report = rtt.build_report(README, [listed])
+    assert "| REQ-001 | 2 | 1 | 1 | 0 |" in report  # REQ-001.1 is named, nothing is tagged with the bare number
+    assert "| REQ-003 | 1 | 0 | 1 | 1 |" in report  # the bare number counts once, REQ-003.1 stays unnamed
+
+
 def test_a_tag_with_no_id_near_it_is_kept_as_unlocated() -> None:
     far = "req = 'REQ-009'\n" + "\n" * 20 + "id = 'too.far'\n"
     assert rtt.row_tags([far]) == {"REQ-009": {"?"}}
