@@ -4625,7 +4625,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download lane verdicts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: selftest-verdict-*
@@ -4816,7 +4816,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download lane NDJSON artifacts (small files only, not the diag bundles)
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: ci_test_results-selftest-*
@@ -4891,7 +4891,7 @@ jobs:
           echo "branch_slug=$slug" >> "$GITHUB_OUTPUT"
       - name: Download CI NDJSON for inline helper
         if: ${{ (needs['selftest-gate'].result == 'success' || needs['selftest-gate'].result == 'failure') && needs['selftest-gate'].outputs.has_failures == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: _artifacts/batch-check/_ci_artifacts
@@ -5240,7 +5240,7 @@ jobs:
       - name: Download iterate logs artifact (if present)
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: iterate-logs-${{ github.run_id }}-${{ github.run_attempt }}
           # derived requirement: match the inline helper's artifact name exactly so diagnostics always
@@ -5366,7 +5366,7 @@ jobs:
 
       - name: Download CI NDJSON artifacts
         if: ${{ always() }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: ci_test_results-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/_ci_artifacts
@@ -5374,7 +5374,7 @@ jobs:
       - name: Download CI test logs artifacts
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: test-logs-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.prep.outputs.ARTIFACTS }}/batch-check/test-logs
