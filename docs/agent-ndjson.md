@@ -864,6 +864,36 @@ self.noflag.default.once
 self.noflag.default.rerun
 ```
 
+## selfapps-offers-noninteractive NDJSON rows (selfapps_offers_noninteractive.ps1, real lane only, gating)
+
+Item 94b (README REQ-018.9: in a non-interactive run the bootstrapper declines each elective offer, the post-execution
+checkpoint, the optimized build, the missing-package install and the last-chance offer, without waiting for input; a
+non-interactive run has `NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` set). Every lane sets `HP_CI_LANE`, so a gate that
+read only that one passed every other row, and gap T12 runs with none of the three. One row per scenario, each with
+exactly ONE signal set (the control has none), and each scenario bootstraps two fresh folders, because no single program
+makes all four offers: `rti` (catches an ImportError for a package named at run time, exits 0: the install, the
+checkpoint and the optimized build) and `lc` (exits 3: the checkpoint and the last-chance offer). Flags are removed with
+the `Env:` drive plus a `set "NAME="` in the wrapper, and the row's `flagsSeen` is the wrapper's own listing AFTER the
+scenario's `set` line (see the T12 section for why two removals), so a row cannot pass with a different signal than it
+names. Standard input is closed (`< nul`), so a read that happened would return at once; "without waiting" is therefore
+judged on evidence: per offer, its heading reached, its interactive prompt text (`set /p` or `choice /M`, printed only
+by the interactive branch) ABSENT after the heading, and its decline line present (the last-chance offer logs
+`automated` when skipped and `neither` when asked). `rti` also needs exactly one launch in `~offers_ledger.jsonl` (the
+EXE run) and neither program may have been started through the interpreter. The total for `lc` is recorded, not
+asserted: the hint re-run of a failed EXE run starts that program a second time (CLAUDE.md Item 96). `.control`: with no
+signal the checkpoint, optimized-build and last-chance prompts are printed (the last-chance offer logs that it was
+asked); the missing-package prompt is a `choice` whose behavior with closed input is only recorded. Details carry, per
+program, the flags seen, finished, seconds, exit code, status state, ledger counts, the facts per offer (`reached`,
+`promptShown`, `declined`, `asked`) and, only when something is wrong, `problems` plus a log excerpt. Each run has a
+600 second limit. Skips on non-Windows.
+
+```
+self.offers.noinput
+self.offers.nonint
+self.offers.cilane
+self.offers.control
+```
+
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
 
 Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"; Item 89: the

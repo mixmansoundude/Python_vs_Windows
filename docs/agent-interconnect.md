@@ -1304,6 +1304,16 @@ zero-friction rule even on auto-decline, since the prompt still echoes in CI). O
 result. Cascade re-entry can offer this (and `:offer_optimized_build`'s prompt) more than once per
 bootstrap -- each cascade tier is a genuinely different build.
 
+**The four elective offers (this checkpoint, `:offer_optimized_build`, `:runtime_install_offer`, `:last_chance_offer`)
+decline without waiting when `NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` is set (README REQ-018.9, Item 94b).** Each
+gate has the same shape: the heading echo line, then three live `defined <SIGNAL>` lines, then the line that reads the
+answer (`set /p` or `choice`), and a decline `call :log` line. `tests/selfapps_offers_noninteractive.ps1` (real lane,
+gating, rows `self.offers.noinput`/`.nonint`/`.cilane` plus the no-signal control `self.offers.control`) runs each
+signal alone with closed standard input and reads the heading, the absence of the prompt text and the decline line from
+the console log; `tests/test_offers_noninteractive.py` pins the shape in the batch and the regexes against the real log
+lines. A new elective offer needs the same gate and an entry in the script's `$specs`, or the row for that offer does
+not exist. The other gates (cascade, system-build, corrupt-conda) still read only `HP_CI_LANE` (open question 2).
+
 **Cascade approval skips BOTH elective offers, but ONLY at the `exe` call site, ONLY when the
 CURRENT tier's cascade was just approved** -- asking about a build the user just opted away from
 wastes real time (the optimized-build offer alone can take a minute+). **The smoke run ITSELF is

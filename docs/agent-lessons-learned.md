@@ -955,6 +955,19 @@ batch clears it before the launch and reads it after. Test the negative controls
 earlier tier) as well as the positive case; a negative control passes before the fix for the wrong reason, so the
 red proof is the positive rows.
 
+**"Did not wait" is proven by what was not shown, and only next to a run that does wait** (Item 94b, REQ-018.9). The
+decline line of an elective offer is logged by the auto-decline branch and also by an interactive read that got end of
+file, so the line alone cannot tell them apart. `tests/selfapps_offers_noninteractive.ps1` closes standard input
+(`< nul`; an open, silent one would also hang the final `pause` of a run that sets only NOINPUT), takes one signal per
+scenario with the others scrubbed in the launched shell, and passes a run only when the offer's heading was reached, the
+interactive prompt text is absent after the heading and the decline line is present (the last-chance offer logs
+`automated` for a skipped read and `neither` for one that was asked). A fourth scenario with no signal must show the
+prompts, which is what stops the other three from passing because a prompt never appears. No single program triggers all
+four offers (the optimized build needs a program that exits 0, the last chance one that fails, the install offer a
+missing module), so two small programs share the scenarios. The launch ledger counts program starts, so the same script
+also shows that the missing-package program runs exactly once without consent; the failing program is not counted,
+because the hint re-run starts a failed EXE a second time (Item 96).
+
 ---
 
 ## A test that reads the redirected console log cannot see `[DEBUG]`/`[TRACE]` lines, and a delete is not a guard
