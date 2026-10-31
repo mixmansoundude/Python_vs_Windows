@@ -17,6 +17,9 @@
 #   self.lastchance.enter         interpreter site (HP_SKIP_EXE_SMOKERUN), the real set /p read answers with a bare
 #                                 Enter (default neither), and the error-line helper failing to emit
 #                                 (HP_TEST_FORCE_EMIT_FAIL) only costs the "last line" part of the prompt
+#   self.lastchance.risk          README REQ-018.2 and REQ-018.25: read from the console text of the worked and errline
+#                                 runs, the [C] choice says the program runs once more AND that running it twice could
+#                                 cause harm (the text between [C] and [N]); no extra bootstrap
 #   self.lastchance.checkpoint_ok the accepted post-execution checkpoint ran the program through the interpreter
 #                                 and it exited 0 (an EXE packaging problem, not the environment): no prompt
 #   self.lastchance.exit0         a run that exits 0 never gets the prompt and no row is written
@@ -63,6 +66,28 @@ function Test-AfterOffer {
     $at = $Console.IndexOf('Your program stopped with an error')
     if ($at -lt 0) { return $false }
     return ($Console.IndexOf($Text, $at, [System.StringComparison]::Ordinal) -ge 0)
+}
+
+# The prompt text between its heading and the first line that records the decision, whitespace flattened to single
+# spaces. Empty when either marker is missing, so a prompt that moved or changed its heading cannot pass.
+function Get-PromptBlock {
+    param([string]$Text, [string]$Heading, [string]$Decision)
+    if (-not $Text) { return '' }
+    $from = $Text.IndexOf($Heading, [System.StringComparison]::Ordinal)
+    if ($from -lt 0) { return '' }
+    $rest = $Text.Substring($from)
+    $m = [regex]::Match($rest, $Decision)
+    if (-not $m.Success) { return '' }
+    return ($rest.Substring(0, $m.Index) -replace '\s+', ' ').Trim()
+}
+
+# The text of the [C] choice: from "[C]" up to "[N]" in a prompt block. Empty when either is missing or out of order.
+function Get-ChoiceC {
+    param([string]$Block)
+    $c = $Block.IndexOf('[C]', [System.StringComparison]::Ordinal)
+    $n = $Block.IndexOf('[N]', [System.StringComparison]::Ordinal)
+    if ($c -lt 0 -or $n -le $c) { return '' }
+    return $Block.Substring($c, $n - $c)
 }
 
 $group = [Environment]::GetEnvironmentVariable('LASTCHANCE_GROUP')
@@ -326,6 +351,37 @@ if ($runReal) {
             promptCount  = $e.PromptCount
             rowState     = $e.State
             rowHasLine   = $e.HasLine
+        }
+    })
+
+    # ---- risk (README REQ-018.2 and REQ-018.25): the [C] choice says the program runs once more and names the risk ----
+    # Read from the console of the worked and errline runs above (the same prompt in both), so no extra bootstrap.
+    $riskMarker   = 'running it twice could cause harm'
+    $riskHeading  = 'Your program stopped with an error, exit code'
+    $riskDecision = 'Last chance: (you said it worked|automated run, no question asked|neither|cascade approved)'
+    $wChoice = Get-ChoiceC (Get-PromptBlock -Text $w.Console -Heading $riskHeading -Decision $riskDecision)
+    $eChoice = Get-ChoiceC (Get-PromptBlock -Text $e.Console -Heading $riskHeading -Decision $riskDecision)
+    $wSaysOnceMore = $wChoice.Contains('Try again with Miniconda') -and $wChoice.Contains('once more')
+    $eSaysOnceMore = $eChoice.Contains('Try again with Miniconda') -and $eChoice.Contains('once more')
+    $wNamesRisk = $wChoice.Contains($riskMarker)
+    $eNamesRisk = $eChoice.Contains($riskMarker)
+    $rPass = ($wChoice.Length -gt 0) -and ($eChoice.Length -gt 0) -and $wSaysOnceMore -and $eSaysOnceMore -and $wNamesRisk -and $eNamesRisk
+    if (-not $rPass) { $allPass = $false }
+    $rShown = $wChoice
+    if ($rShown.Length -gt 400) { $rShown = $rShown.Substring(0, 400) }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.lastchance.risk'
+        req     = 'REQ-018.2'
+        pass    = $rPass
+        desc    = 'the Miniconda choice of the last-chance offer says the program runs once more and that running it twice could cause harm'
+        details = [ordered]@{
+            workedChoiceFound  = ($wChoice.Length -gt 0)
+            errlineChoiceFound = ($eChoice.Length -gt 0)
+            workedSaysOnceMore = $wSaysOnceMore
+            errlineSaysOnceMore = $eSaysOnceMore
+            workedNamesRisk    = $wNamesRisk
+            errlineNamesRisk   = $eNamesRisk
+            choiceText         = $rShown
         }
     })
 

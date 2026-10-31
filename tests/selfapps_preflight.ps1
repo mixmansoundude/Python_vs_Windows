@@ -5,6 +5,10 @@
 # later as a confusing "[ERROR] PyInstaller execution failed". The check compiles the entry in memory
 # with the interpreter's own parser, so it has zero false positives for the entry file.
 #
+# self.preflight.syntax      the report is shown, the run stops gracefully, the doomed build is never reached
+# self.preflight.attribution README REQ-021.3: the report itself says the mistake is in the user's own program and
+#                            not in installing dependencies or building the EXE (read from the same run's console)
+#
 # Lane: real and conda-full only.
 param()
 $ErrorActionPreference = 'Continue'
@@ -34,6 +38,13 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         desc    = 'REQ-021 pre-flight: syntax error reported + graceful stop (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
     })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.preflight.attribution'
+        req     = 'REQ-021.3'
+        pass    = $true
+        desc    = 'REQ-021 pre-flight: the report says the mistake is in the own program (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
+    })
     exit 0
 }
 
@@ -42,6 +53,13 @@ if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.preflight.syntax'
         req     = 'REQ-021.2'
+        pass    = $false
+        desc    = 'REQ-021 pre-flight: run_setup.bat not found'
+        details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.preflight.attribution'
+        req     = 'REQ-021.3'
         pass    = $false
         desc    = 'REQ-021 pre-flight: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
@@ -122,5 +140,35 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not $pass) { exit 1 }
+# REQ-021.3: between the report's heading and its closing line (the SyntaxError text from the check sits in between) the
+# report says whose mistake it is. The block is taken from the console text the user sees; an empty block (heading or
+# closing line missing) fails the row.
+$attrBlock = ''
+$attrFrom = $combined.IndexOf('Your Python program has a syntax error and cannot run.', [System.StringComparison]::Ordinal)
+if ($attrFrom -ge 0) {
+    $attrRest = $combined.Substring($attrFrom)
+    $attrTo = $attrRest.IndexOf('Fix the syntax error shown above', [System.StringComparison]::Ordinal)
+    if ($attrTo -ge 0) { $attrBlock = ($attrRest.Substring(0, $attrTo) -replace '\s+', ' ').Trim() }
+}
+$attrOwn  = $attrBlock -match '(?i)own program'
+$attrDeps = $attrBlock -match '(?i)\bnot\b.{0,80}dependenc'
+$attrExe  = $attrBlock -match '(?i)dependenc.{0,80}\bEXE\b'
+$attrPass = ($attrBlock.Length -gt 0) -and $attrOwn -and $attrDeps -and $attrExe
+$attrShown = $attrBlock
+if ($attrShown.Length -gt 500) { $attrShown = $attrShown.Substring(0, 500) }
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.preflight.attribution'
+    req     = 'REQ-021.3'
+    pass    = $attrPass
+    desc    = 'REQ-021 pre-flight: the report says the mistake is in the own program and not in installing dependencies or building the EXE'
+    details = [ordered]@{
+        blockFound   = ($attrBlock.Length -gt 0)
+        namesOwnProgram = $attrOwn
+        ruleOutDependencies = $attrDeps
+        ruleOutExe   = $attrExe
+        reportText   = $attrShown
+    }
+})
+
+if (-not ($pass -and $attrPass)) { exit 1 }
 exit 0

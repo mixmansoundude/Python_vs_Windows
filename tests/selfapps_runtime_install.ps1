@@ -11,6 +11,9 @@
 #
 # Rows: self.runtime.install.accept, self.runtime.install.decline, self.runtime.install.pyproject and
 # self.runtime.install.pep723, one real bootstrap each (the last two add a second bootstrap of the same folder).
+# self.runtime.install.wording and self.runtime.install.risk are verdicts over the console text of those runs: the
+# second (README REQ-018.2) needs the prompt to say that running the program twice could cause harm, because a yes also
+# starts the program once more to check.
 # Item 91 (README REQ-018.18): a yes adds the package to requirements.txt whatever the dependency source is.
 # Before Item 89 a pyproject.toml or PEP 723 list was copied over requirements.txt on every run, so an appended
 # line was lost and the offer left every file alone; since Item 89 the merge keeps a list's change, so the rows
@@ -41,6 +44,19 @@ function Write-NdjsonRow {
     $json = $Row | ConvertTo-Json -Compress -Depth 8
     Add-Content -LiteralPath $nd   -Value $json -Encoding Ascii
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
+}
+
+# The prompt text between its heading and the first line that records the decision, whitespace flattened to single
+# spaces. Empty when either marker is missing, so a prompt that moved or changed its heading cannot pass.
+function Get-PromptBlock {
+    param([string]$Text, [string]$Heading, [string]$Decision)
+    if (-not $Text) { return '' }
+    $from = $Text.IndexOf($Heading, [System.StringComparison]::Ordinal)
+    if ($from -lt 0) { return '' }
+    $rest = $Text.Substring($from)
+    $m = [regex]::Match($rest, $Decision)
+    if (-not $m.Success) { return '' }
+    return ($rest.Substring(0, $m.Index) -replace '\s+', ' ').Trim()
 }
 
 # Non-Windows skip (parity with other selfapps tests).
@@ -78,6 +94,13 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         req     = 'REQ-018.37'
         pass    = $true
         desc    = 'the prompt and the log say requirements.txt receives the package (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.install.risk'
+        req     = 'REQ-018.2'
+        pass    = $true
+        desc    = 'the prompt tells the user that running the program twice could cause harm (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
     exit 0
@@ -490,5 +513,32 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not ($aPass -and $dPass -and $pPass -and $ePass -and $wPass)) { exit 1 }
+# ---- risk (README REQ-018.2): a yes also starts the program once more, so the prompt says running it twice could cause harm ----
+# One verdict over the accept and the decline runs: the prompt block (from its heading to the line that records the
+# decision) must exist in both consoles and say it in both. The text is the same in all four runs; two are enough.
+$riskMarker   = 'running it twice could cause harm'
+$riskHeading  = 'Your program asked for packages that are not installed:'
+$riskDecision = 'Runtime install: (accepted|declined)'
+$aBlock = Get-PromptBlock -Text $a.Console -Heading $riskHeading -Decision $riskDecision
+$dBlock = Get-PromptBlock -Text $d.Console -Heading $riskHeading -Decision $riskDecision
+$aNamesRisk = $aBlock.Contains($riskMarker)
+$dNamesRisk = $dBlock.Contains($riskMarker)
+$rPass = ($aBlock.Length -gt 0) -and ($dBlock.Length -gt 0) -and $aNamesRisk -and $dNamesRisk
+$rShown = $aBlock
+if ($rShown.Length -gt 500) { $rShown = $rShown.Substring(0, 500) }
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.runtime.install.risk'
+    req     = 'REQ-018.2'
+    pass    = $rPass
+    desc    = 'the install prompt tells the user that running the program twice could cause harm, because a yes also starts the program once more to check'
+    details = [ordered]@{
+        acceptBlockFound  = ($aBlock.Length -gt 0)
+        declineBlockFound = ($dBlock.Length -gt 0)
+        acceptNamesRisk   = $aNamesRisk
+        declineNamesRisk  = $dNamesRisk
+        promptText        = $rShown
+    }
+})
+
+if (-not ($aPass -and $dPass -and $pPass -and $ePass -and $wPass -and $rPass)) { exit 1 }
 exit 0
