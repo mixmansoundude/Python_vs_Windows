@@ -226,6 +226,22 @@ red on every lane. Use `> log 2>&1` inside a cmd string; `*>` is correct only in
 
 ---
 
+## A `try/catch` around a cmdlet does not catch its non-terminating errors, so an unmeasurable value reads as 0 (REQ-025.4)
+
+The free-space reading was `try { [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }`, meant to print
+nothing when the drive cannot be read. `Get-PSDrive` reports a drive it cannot find with `WriteError`, a NON-terminating
+error, so the `catch` never ran; `$null.Free / 1GB` is 0 and the line printed `0`, which the batch file took for "0 GB
+free". A program folder on a network share (no drive letter) would have been told "Only ~0 GB free disk space detected".
+The first run of `self.stub.low_disk_unreadable` showed it on Windows (run `41213903374`, `contract-uv`: `warningLines` 2,
+`unreadableLogged` false, run otherwise fine). Locally: `pwsh -Command "try { (Get-PSDrive -Name Q).Free } catch { 'CAUGHT' }"`
+prints the error and not `CAUGHT`. **Rule: when a `catch` is the "unknown" branch of a one-line helper, put
+`-ErrorAction Stop` on the cmdlet and emit a value only when the property exists (`if ($null -ne $d.Free)`); never let a
+missing property flow into arithmetic.** To test the branch, ask for something that does not exist through a hook
+(`HP_TEST_FORCE_DISK_READ_FAIL` swaps the drive name for `@`), because a CI runner's own drive can always be read, and give the
+row a positive line to find (the DEBUG line in `~setup.log`): "no warning" alone also passes when the check never ran.
+
+---
+
 ## A static "this text exists" row can pass on dead code -- test the behavior of both branches
 
 `batch.req005.warn_gate` checked that `run_setup.bat` contained `if not defined DEP_SOURCE (` and the
