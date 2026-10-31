@@ -3765,6 +3765,7 @@ set "HP_CHECKPOINT_SITE=%~1"
 echo.
 echo *** Verification finished -- see the Run Status above. ***
 echo *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
+echo *** A second run repeats whatever your program does, such as changing files or sending messages, so say no if running it twice could cause harm. ***
 set "HP_CHECKPOINT_RAW="
 if defined HP_TEST_CHECKPOINT_ANSWER (
   set "HP_CHECKPOINT_RAW=%HP_TEST_CHECKPOINT_ANSWER%"
@@ -4607,6 +4608,7 @@ if "%HP_PREFLIGHT_RC%"=="0" (
 if not "%HP_PREFLIGHT_RC%"=="1" goto :preflight_undecided
 echo.
 echo *** [ERROR] REQ-021: Your Python program has a syntax error and cannot run. ***
+echo *** The mistake is in your own program. It is not a problem with installing dependencies or with building the EXE. ***
 echo *** File: "%HP_ENTRY%" ***
 call :log "[ERROR] REQ-021: entry failed the syntax check: %HP_ENTRY%"
 if exist "~preflight.err.txt" type "~preflight.err.txt"
@@ -5857,6 +5859,7 @@ echo *** Your program asked for packages that are not installed: ***
 for /f "usebackq tokens=1,2" %%A in ("~runtime_install_pkgs.txt") do echo ***   %%B
 echo *** Install them now? That adds them to this program's own environment and to requirements.txt. ***
 echo *** It rebuilds the EXE if there is one, and runs your program one more time to check. ***
+echo *** That extra run repeats whatever your program does, so say no if running it twice could cause harm. ***
 set "HP_RTI_CHOICE="
 if defined HP_TEST_RTM_ANSWER goto :rti_gate_override
 if defined HP_CI_LANE goto :rti_gate_decline
@@ -6030,6 +6033,7 @@ if defined HP_LC_HAVE_LINE type "~last_error_line.txt" >> "%LOG%"
 echo *** It may still have worked, or it may need a different Python provider. ***
 echo ***   [W] It actually worked. Nothing needs to change. ***
 echo ***   [C] Try again with Miniconda. This downloads it if needed and runs your program once more. ***
+echo ***       Do not choose it if running it twice could cause harm. ***
 echo ***   [N] Neither. Keep this build. This is the default. ***
 set "HP_LC_CHOICE="
 if defined HP_TEST_LASTCHANCE_ANSWER goto :lc_gate_override

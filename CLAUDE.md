@@ -88,6 +88,7 @@ tests/
   selfapps_launch_ledger.ps1, selfapps_dep_source_matrix.ps1, selfapps_skiphooks_single.ps1, selfapps_log_rotate.ps1,
   selfapps_unicode_path.ps1, selfapps_unc.ps1, selfapps_noflag_default.ps1, selfapps_longpath_near.ps1   The gap-map scripts
                                (T1, T2, T7, T8, T9, T12; plan and row list in docs/plan-test-suite-gaps.md; real lane, gating)
+  selfapps_offers_noninteractive.ps1 Item 94b, REQ-018.9: with NOINPUT, HP_NONINTERACTIVE or HP_CI_LANE set (the others scrubbed) and standard input closed, the checkpoint, optimized-build, runtime-install and last-chance offers each reach their heading, show no prompt text and log the decline without waiting; a control run with no signal must show the prompts, so the signal rows cannot pass on prompts that never appear (real lane, gating, 600-second limit per run)
   dynamic_tests.py             Python-side entry detection and version precedence tests
   test_*.py                    Python unit tests (14 files, see Testing section)
 
@@ -99,6 +100,7 @@ tools/
   check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
   req_trace_table.py           Which numbered README shalls a row tag names (report only; docs/plan-test-suite-gaps.md keeps a dated copy)
   check_expected_rows.py       Item 98: fails the aggregate gate when a row listed in tests/expected_rows/<lane>.txt was never written (`check`), writes those lists from green runs (`generate`)
+  req_coverage.py              Pass/fail per requirement from the NDJSON `req` field (req_coverage.json on the diagnostics site; a comma list credits each id)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
   sanitize_iterate_payload.py  NDJSON redaction, deduplication, truncation
@@ -310,7 +312,9 @@ Test files and what they cover:
 | `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
 | `test_window_confirm.py` | Item 82 slice 2: the kill marker is cleared before the runner launches and read only from the file (never from the exit code), the window question's conditions and gate order, only an explicit yes records `user_confirmed`, the automated branch asks nothing |
 | `test_provider_memory.py` | Item 66: `PVW_PROVIDER` validation (compared with `findstr /x /l` on the `set` output, no line expands the variable, runs after the file count and before the cached-EXE fast path), uv skips tested before the `PVW_UV_EXE` branch, the memory read contract (conda only, Miniconda present, never cleared by input edits), write guards (verified pass, conda after uv, state ok, no switch), the `runtime.txt` record at all three write-back sites, the failed-forced-solve hint |
-| `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
+| `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; a tag names one id or several separated by commas, each checked on its own, and a sub-id may have three levels (`REQ-005.1.17`); synthetic cases prove each rule can fail |
+| `test_req_shall_trace.py` | Shall-level ratchet (T5, second half): every numbered README shall is named by a row's `req` tag or listed in `UNTRACED_SHALLS` with a reason (`gap:`, `unit:` with a checked test pointer, `inspection:` with a checked literal); an entry for a shall the README lacks, an unknown prefix, a dead pointer or an unordered list fails, a stale entry only warns; synthetic cases prove each rule can fail |
+| `test_req_coverage.py` | `tools/req_coverage.py`: a row's outcome is credited to each requirement its `req` field lists (comma separated), one failing row fails the requirement, rows without a tag and unreadable lines are skipped |
 | `test_req_trace_table.py` | `tools/req_trace_table.py`: shalls grouped by their own number (a REQ-009 shall inside the REQ-003 section counts under REQ-009), the row id taken from the tag's own row, the gap list and counts; synthetic cases prove each report line |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
@@ -331,6 +335,9 @@ Test files and what they cover:
 | `test_conda_transient_terms.py` | Item 93: the two conda retry sites (`:conda_bulk_install`, `:conda_create_check_transient`) search the same `findstr /i /c:` phrases, the original four plus `Server Error`, checked with findstr's rules (case blind, literal, OR) against real conda text (the 502 crash line of run `41074512594`, 503, CondaHTTPError, ConnectionError, ReadTimeout match; a solver answer, UnsatisfiableError and `404 Client Error` do not); the labels `tests/selfapps_conda_transient.ps1` cuts the two blocks at exist once and the blocks reach only names its driver defines; the five `self.conda.retry5xx.*` rows keep literal ids and tags; the workflow step gates on `real` and `justme-test`; synthetic cases prove each rule can fail |
 | `test_expected_rows.py` | Item 98: `tools/check_expected_rows.py` (a complete lane passes; a missing id, a lane with no results, an empty artifact, a bad or missing baseline fail with the lane and id named; unlisted rows and the gate's own artifact are fine; the cache lane's own infrastructure-skip rows waive only the cache list; `generate` keeps the ids present in every run), the lists in `tests/expected_rows` (one per matrix lane, sorted, ASCII/LF, every id registered in `docs/agent-ndjson.md`, so removing or renaming a row without the list fails locally), and the selftest-gate wiring read as text (download before check, no `merge-multiple`, this attempt's artifacts only, `$rowsRc` starts failing and `$LASTEXITCODE` is cleared, `$value` ANDs both exit codes, report upload); synthetic cases prove each rule can fail |
 | `test_dependabot_config.py` | Item 90 follow-up: Dependabot has to be able to read `.github/dependabot.yml` (read as text, the pytest step has no YAML library): `version: 2`, every top-level, update-entry and schedule option spelled as Dependabot's options reference spells it (a file with one unknown option is rejected, which is what the old `open-pull-request-limit` did for ten weeks), a package-ecosystem, a directory and a schedule interval per entry, a `github-actions` entry; synthetic cases prove each rule can fail |
+| `test_rerun_prompts.py` | Item 94a: each of the four prompts that offers another run of the program (post-execution checkpoint, optimized build, runtime install, the last-chance [C] choice) says "running it twice could cause harm" inside its own block (the [C] one between [C] and [N]); no echo line says "your program" runs again without that sentence within six lines; the syntax-error report says the mistake is in the user's own program and rules out dependency installation and the EXE build; what the user sees is the rows `self.checkpoint.risk`, `self.runtime.install.risk`, `self.lastchance.risk` and `self.preflight.attribution`; synthetic cases prove each rule can fail |
+| `test_cache_health_step.py` | Item 95: the cache lane's "Validate restored conda binary" step, run through real `pwsh` the way the runner runs it (`$ErrorActionPreference = 'stop'`) against a stub that has the real script's parameter block, hands `-ExactHit` to `tools/ci_cache_selfheal.ps1` only on an exact cache hit and writes the three `HP_CACHE_*` flags for exit codes 1, 2 and 3; no call of a .ps1 file in the workflows, `tools/` or `tests/` splats an array (a switch name in an array is a positional string, so the call failed on every exact hit and `continue-on-error` hid it); the old array shape is shown to fail with PowerShell's own message; synthetic cases prove each rule can fail |
+| `test_offers_noninteractive.py` | Item 94b, REQ-018.9: each of the four elective offers has its heading echo line, then three live `defined NOINPUT` / `defined HP_NONINTERACTIVE` / `defined HP_CI_LANE` lines, then the line that reads the answer (`set /p` or `choice`), and a decline `call :log` text that the script's regexes match; `tests/selfapps_offers_noninteractive.ps1` keeps literal row ids with `req = 'REQ-018.9'`, one signal per scenario and none for the control, closed standard input, a process-tree kill, the scrub of `HP_*`/`PVW_*`/`NOINPUT`, a program that exits 3 and one that raises a computed-name import error, and its own `exit 1` / `exit 0`; the real-lane-only gating step and its upload patterns; README Terms and the registry name the rows; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -346,6 +353,8 @@ or `tests/dynamic_tests.py` if present. See README.md section Dynamic test rules
 - Python unit tests: `tests/test_<topic>.py`
 - PowerShell scenario tests: `tests/selfapps_<scenario>.ps1`
 - Wire new PS scenarios into `tests/harness.ps1` (NDJSON rows) and `batch-check.yml` job steps.
+- A new numbered README shall: tag the row that proves it (`req = 'REQ-nnn.m'`, a literal at the call site), or add
+  an `UNTRACED_SHALLS` entry in `tests/test_req_shall_trace.py` that says what is missing.
 
 ---
 
@@ -726,6 +735,20 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
+- **Item 97: `:hidden_import_recover` starts the program again with a one-line warning and no question -- BLOCKED on the
+  maintainer's answer to open question 7 (`docs/open-questions.md`).** After a failed check run the repair loop starts
+  `dist\<env>.exe` a second time to read an error `~run.err.txt` already holds, then once after each repair rebuild (at most
+  three), so README REQ-018.1 (one automatic start) and REQ-018.2 (consent before any other) do not hold for it while REQ-018.7
+  accepts the check run; `tests/test_req_shall_trace.py` keeps REQ-018.2 as a `gap:` entry for this reason. Maintainer's lean
+  (2026-10-31): a first pass that leaves the loop as it is and asks ONE question before its first extra start (default No, 30
+  seconds, the gate shape of the other four elective offers; no question for `NOINPUT`, `HP_NONINTERACTIVE`, `HP_CI_LANE` or
+  `HP_PVW_KNOWN_IDEMPOTENT`; a test override so the CI scenarios can answer Yes), later reading `~run.err.txt` first and asking
+  only when a package can be added, and a "do not ask again for N runs" answer on the consent gates. The option A build (read
+  the saved output instead of a new start) is paused and unpushed. **Do not build until the maintainer confirms the first
+  pass**; then red rows first (the launch ledger counts a start made without consent), the question, and the README wording in
+  the PR body for lane 3. A third silent start, the failure-hint re-run in `:exe_smokerun_hints`, is Item 96 (its own pull
+  request). No-go for other threads: `:hidden_import_recover`, `~hidden_import_scan.py` and the repair loop.
+
 ### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78, 80 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and
@@ -790,11 +813,16 @@ rather than relying on manual memory.
 - **Going forward**: re-read the latest majors every scan. Dependabot (weekly) should now propose each bump by itself,
   so the scan first checks that it did: a `dependabot/*` branch or pull request and, when an action's latest major has
   been out for more than two weeks without one, the `.github/dependabot.yml` check run of the latest pull request that
-  touched the file, before anything else. Its pull requests carry `no-automerge` (set in the file; whether they may
-  merge themselves is `docs/open-questions.md` Q6): `pr-automerge.yml` has a `GITHUB_TOKEN` step that a
-  Dependabot-triggered run, which gets no repository secrets, would reach. Read the first one's runs in full like any
-  bump (a Dependabot run also has a restricted token, so the Pages publish and the pull request comments may differ)
-  and write here what happened. If Dependabot stops producing anything, bump by hand, one action per commit. From a
+  touched the file, before anything else. Its pull requests carry `no-automerge` (set in the file): `pr-automerge.yml`
+  has a `GITHUB_TOKEN` step that a Dependabot-triggered run, which gets no repository secrets, would reach. **Decided
+  by the maintainer 2026-10-31 (former open question 6)**: keep the label for now and read the runs of each of the first
+  few Dependabot pull requests in full like any bump before merging it (a Dependabot run also has a restricted token, so
+  the Pages publish and the pull request comments may differ), and write here what happened; once they have behaved,
+  delete `labels:` from `.github/dependabot.yml` so they merge themselves when "Aggregate self-test verdicts" is green.
+  The reason for that end state is the maintainer's goal that the repository runs without an AI agent in the critical
+  path: a bump that needs an agent to read it before every merge is a dependency on one, and the aggregate check plus
+  the fixes this repository has made to its own gates is what is meant to carry that. If Dependabot stops producing
+  anything, bump by hand, one action per commit. From a
   session `gh` and `curl` cannot reach other repositories, but `WebFetch` of
   `https://github.com/<owner>/<repo>/releases` works. Per bump, read the run and not only its colour: the annotations,
   the artifact downloads in `selftest-gate` and `publish_diag`, the `pull_request` run of `pr-automerge.yml` (only that

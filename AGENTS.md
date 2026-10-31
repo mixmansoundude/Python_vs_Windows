@@ -130,8 +130,13 @@ a case is unclear, read those and keep the intent of the existing text.
   row is a gap in the trace, which `tests/test_req_trace.py` and `docs/plan-test-suite-gaps.md` track. An
   absolute negative that no method can settle (for example "contains only the libraries the program uses")
   is a goal; keep a shall for the part that can be checked (which libraries are excluded, and when).
-- **Tests trace to shalls.** A row's `req` tag names the sub-id it verifies (`REQ-021.4`), and one shall may
-  have several rows. A new shall gets its row in the same change, written first and read red.
+- **Tests trace to shalls.** A row's `req` tag names the sub-id it verifies (`REQ-021.4`, or `REQ-005.1.17` at the
+  third level); a row that proves several shalls lists them with commas (`req = 'REQ-009, REQ-018.27'`), and one
+  shall may have several rows. A new shall gets its row in the same change, written first and read red.
+  `tests/test_req_shall_trace.py` fails a README shall that no row names unless `UNTRACED_SHALLS` lists it with
+  a reason: `gap:` for a clause nothing proves, `unit:` for a unit test that does, `inspection:` where the
+  README names inspection. Tag a row only when it, with the unit tests that run next to it, shows the shall's
+  response and no clause is left without proof; a tag that only shortens the list is a false green.
 - **Terms, flags and status.** Words such as "interactive run" are defined once in the Terms section, by the
   documented controls (`NOINPUT`, `HP_NONINTERACTIVE`, and the CI marker `HP_CI_LANE`); `HP_TEST_*` hooks
   never appear in a shall. Words about build status ("built", "planned", "decided, not yet built") do not

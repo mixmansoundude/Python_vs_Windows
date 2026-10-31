@@ -47,6 +47,9 @@ self.fastpath,
 self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
 self.honest.fastpath.note, self.honest.fastpath.outcome,
 self.checkpoint.accept, self.checkpoint.decline,
+self.checkpoint.risk (real and conda-full lanes -- selfapps_postexec_checkpoint.ps1; REQ-018.8, Item 94a, and the risk half of REQ-018.2, which stays untraced:
+one verdict over the accepted and the declined run, the prompt block from `Verification finished -- see the Run Status above.`
+to the line that records the decision says `running it twice could cause harm`; an empty block fails the row),
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
 self.entry.picker.overflow,
@@ -69,6 +72,9 @@ self.exe.warnfix.real_warnfix_delayed,
 self.collect.submodules,
 self.exe.hidden_import, self.exe.hidden_import.exhaust,
 self.preflight.syntax,
+self.preflight.attribution (real and conda-full lanes -- selfapps_preflight.ps1; REQ-021.3, Item 94a: the console text
+between the syntax-error heading and `Fix the syntax error shown above` says the mistake is in the own program and rules out
+dependencies and the EXE build; an empty block fails the row),
 self.preflight.pycache.unwritable, self.preflight.pycache.litter, self.preflight.syntax.compiler (real lane only --
 selfapps_preflight_pycache.ps1; REQ-021.4, REQ-021.5 and REQ-021.6, CLAUDE.md Item 83; the third row passes before
 and after the fix on purpose: a `return` outside a function is accepted by ast.parse and rejected only by the
@@ -868,6 +874,36 @@ self.noflag.default.once
 self.noflag.default.rerun
 ```
 
+## selfapps-offers-noninteractive NDJSON rows (selfapps_offers_noninteractive.ps1, real lane only, gating)
+
+Item 94b (README REQ-018.9: in a non-interactive run the bootstrapper declines each elective offer, the post-execution
+checkpoint, the optimized build, the missing-package install and the last-chance offer, without waiting for input; a
+non-interactive run has `NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` set). Every lane sets `HP_CI_LANE`, so a gate that
+read only that one passed every other row, and gap T12 runs with none of the three. One row per scenario, each with
+exactly ONE signal set (the control has none), and each scenario bootstraps two fresh folders, because no single program
+makes all four offers: `rti` (catches an ImportError for a package named at run time, exits 0: the install, the
+checkpoint and the optimized build) and `lc` (exits 3: the checkpoint and the last-chance offer). Flags are removed with
+the `Env:` drive plus a `set "NAME="` in the wrapper, and the row's `flagsSeen` is the wrapper's own listing AFTER the
+scenario's `set` line (see the T12 section for why two removals), so a row cannot pass with a different signal than it
+names. Standard input is closed (`< nul`), so a read that happened would return at once; "without waiting" is therefore
+judged on evidence: per offer, its heading reached, its interactive prompt text (`set /p` or `choice /M`, printed only
+by the interactive branch) ABSENT after the heading, and its decline line present (the last-chance offer logs
+`automated` when skipped and `neither` when asked). `rti` also needs exactly one launch in `~offers_ledger.jsonl` (the
+EXE run) and neither program may have been started through the interpreter. The total for `lc` is recorded, not
+asserted: the hint re-run of a failed EXE run starts that program a second time (CLAUDE.md Item 96). `.control`: with no
+signal the checkpoint, optimized-build and last-chance prompts are printed (the last-chance offer logs that it was
+asked); the missing-package prompt is a `choice` whose behavior with closed input is only recorded. Details carry, per
+program, the flags seen, finished, seconds, exit code, status state, ledger counts, the facts per offer (`reached`,
+`promptShown`, `declined`, `asked`) and, only when something is wrong, `problems` plus a log excerpt. Each run has a
+600 second limit. Skips on non-Windows.
+
+```
+self.offers.noinput
+self.offers.nonint
+self.offers.cilane
+self.offers.control
+```
+
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
 
 Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"; Item 89: the
@@ -1476,10 +1512,14 @@ import is missing again in any later rebuild (no `--hidden-import` flag is kept 
 run's `~install_<name>_bootstrap.log` and `~sub.ndjson`, the names the `test-logs` upload already lists (a new name would not
 be uploaded). `self.runtime.install.wording` (README REQ-018.37) is one verdict over the accept, pyproject and pep723 runs: the
 echoed prompt says `adds them to this program's own environment and to requirements.txt`, never `but does not edit`, and the
-setup log has `Runtime install: added xlsxwriter to requirements.txt.`; each run's three values are in `details`. All five skip
-with `skip=true, reason=non-windows-host` off Windows. Expected red for the last two on the commit that adds
+setup log has `Runtime install: added xlsxwriter to requirements.txt.`; each run's three values are in `details`.
+`self.runtime.install.risk` (the risk half of README REQ-018.2, tagged with the goal only because REQ-018.2 stays untraced; Item 94a) is a second verdict over the accept and decline consoles: the prompt block
+(from `Your program asked for packages that are not installed:` to the `Runtime install: accepted|declined` line) exists in both and
+says `running it twice could cause harm`, because a yes also starts the program once more to check; the block text is in `details`.
+All six skip with `skip=true, reason=non-windows-host` off Windows. Expected red for `pyproject` and `pep723` on the commit that adds
 this wording (the offer edits no file for these sources) and green once `:runtime_install_offer` always edits
-`requirements.txt`.
+`requirements.txt`; `risk` is red on the commit that adds it (the prompt says only that the program runs again) and green once the
+prompt names the risk.
 
 ```
 self.runtime.install.accept
@@ -1487,6 +1527,7 @@ self.runtime.install.decline
 self.runtime.install.pyproject
 self.runtime.install.pep723
 self.runtime.install.wording
+self.runtime.install.risk
 ```
 
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
@@ -1551,7 +1592,9 @@ normal uv bootstrap): `self.lastchance.worked` (answer W: the prompt, `Last chan
 EXE kept, row state `worked`, `passType` `user_confirmed`, site `exe`); `self.lastchance.errline` (no answer in an
 automated run resolves to `automated` with no wait, and the error line `Error: a<b>c&d|e%PATH%^f "q" end` is shown
 intact on the console and in the setup log, with the same non-tilde top-level names as the `worked` run and no
-file named after the operators); `self.lastchance.enter` (interpreter site via `HP_SKIP_EXE_SMOKERUN`, a bare Enter
+file named after the operators); `self.lastchance.risk` (README REQ-018.25 and the risk half of REQ-018.2, which stays untraced; Item 94a: read from the console of the
+`worked` and `errline` runs, the text between `[C]` and `[N]` says the program runs `once more` and that `running it twice could
+cause harm`, so the user is told before choosing; no extra bootstrap); `self.lastchance.enter` (interpreter site via `HP_SKIP_EXE_SMOKERUN`, a bare Enter
 at the real `set /p` means `neither`, and `HP_TEST_FORCE_EMIT_FAIL=HP_LAST_ERROR_LINE` only drops the last-line part:
 row `hasLine` false); `self.lastchance.checkpoint_ok` (the accepted checkpoint ran the interpreter and it exited 0:
 no prompt, row state `not_offered`, reason `checkpoint_ok`); `self.lastchance.exit0` (no prompt, no row).
@@ -1581,6 +1624,7 @@ apart.
 ```
 self.lastchance.worked
 self.lastchance.errline
+self.lastchance.risk
 self.lastchance.enter
 self.lastchance.checkpoint_ok
 self.lastchance.exit0

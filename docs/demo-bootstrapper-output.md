@@ -54,6 +54,17 @@ run has exercised that exact wording yet), or, for the composite walkthroughs in
 already cited in its own originating scenario). A source excerpt or a composite splice is never
 described as a job log or presented as a single real capture.
 
+**Wording added after a capture** is never edited into a captured block. Item 94a (2026-10-31) added
+one sentence to each of two prompts and one line to the syntax-error report, all source excerpts:
+`*** A second run repeats whatever your program does, such as changing files or sending messages, so say
+no if running it twice could cause harm. ***` (second line of the post-execution checkpoint prompt),
+`*** Building it starts your program once more for up to 30 seconds to check it works, so say no if
+running it twice could cause harm. ***` (last line of the optimized-build offer's text) and `*** The
+mistake is in your own program. It is not a problem with installing dependencies or with building the
+EXE. ***` (the line after the syntax-error report's heading). Scenario 5 shows both prompts with their
+sentence, and the extrapolated walkthroughs (Scenarios 32, 33 and 35) carry them too; the captured blocks of
+every other scenario were taken before the change and do not contain them.
+
 **Scope:** grouped by feature area, ordered roughly the way a real user would actually encounter
 each area -- the default happy path and its immediate variations first, narrower and more advanced
 topics last -- rather than the order each was originally reviewed. Nine Parts total; see the table
@@ -555,7 +566,8 @@ though the surrounding framing text is a real capture.
 **Source:** framing lines are REAL CI CAPTURE (run `30328748330`, job `90179708091`, "real" lane,
 same log as Scenario 4 above); the two `set /p` prompt lines themselves are
 `[Extrapolated Branch]`, cited from `:run_postexec_checkpoint` and `:offer_optimized_build`
-respectively.
+respectively. The one sentence in each prompt that names the risk of running the program twice is
+newer than that capture (Item 94a) and is a source excerpt, not part of it.
 
 **Relationship to README.md's `[REQ-018]` spec, since the two don't map 1:1 in an obvious way:**
 `:run_postexec_checkpoint`'s own log line is explicitly tagged `REQ-018` in source (`[INFO]
@@ -582,6 +594,7 @@ sees:
 ```
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
+*** A second run repeats whatever your program does, such as changing files or sending messages, so say no if running it twice could cause harm. ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -595,6 +608,7 @@ continues to the second prompt:
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
   Build the optimized version now? [Y/N] _
 ```
 
@@ -2165,7 +2179,9 @@ compiles the entry file in memory with the SAME parser the interpreter itself us
 
 followed by the real Python compiler's own traceback (captured to `~preflight.err.txt`, echoed to
 both console and log) and a closing `*** Fix the syntax error shown above, then run this batch
-again. ***`. `~bootstrap.status.json` correctly reads `state: error`; the dependency install and
+again. ***`. (Since the capture, Item 94a added one line right after the heading, from source and not
+part of the capture: `*** The mistake is in your own program. It is not a problem with installing
+dependencies or with building the EXE. ***`.) `~bootstrap.status.json` correctly reads `state: error`; the dependency install and
 environment creation that ran BEFORE this check are left intact (nothing is torn down), so a fixed
 file on the next run reuses them.
 
@@ -2454,11 +2470,13 @@ hello-from-stub
 
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
+*** A second run repeats whatever your program does, such as changing files or sending messages, so say no if running it twice could cause harm. ***
   Run again via the interpreter now? [Y/N] _
 ```
 
 (the checkpoint prompt line itself is `[Extrapolated Branch]`, same reasoning as Scenario 5 -- it
-lives inside an unbounded `set /p`, never visible in a CI log). Declining it (real capture, back to
+lives inside an unbounded `set /p`, never visible in a CI log; so are the two sentences naming the
+risk of a second run, which Item 94a added after the captures). Declining it (real capture, back to
 `hello_stub.py`'s own evidence, timestamps dropped for readability elsewhere in this panel but shown
 here to make clear this reconnects to a real, timestamped log), then the optimized-build offer, then
 the final panel:
@@ -2469,6 +2487,7 @@ the final panel:
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -2603,6 +2622,7 @@ Creating Python environment '<env>' -- this may take several minutes...
 
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
+*** A second run repeats whatever your program does, such as changing files or sending messages, so say no if running it twice could cause harm. ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -2615,6 +2635,7 @@ Branch]` for this specific re-entry, not a separate real capture) reaches the sa
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -2741,6 +2762,7 @@ final panel:
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -2848,6 +2870,7 @@ print('colorama via importlib ok:', _mod.__name__)
 
 *** Verification finished -- see the Run Status above. ***
 *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
+*** A second run repeats whatever your program does, such as changing files or sending messages, so say no if running it twice could cause harm. ***
   Run again via the interpreter now? [Y/N] _
 ```
 
@@ -2860,6 +2883,7 @@ Declining (same provider-agnostic building blocks as Scenario 32's own ending, s
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 [INFO] Optimized build: declined.
 
 ============================================================
@@ -3302,6 +3326,7 @@ since this scenario has passed on every run so far):
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 [INFO] Optimized build: accepted; building now (this may take a minute or two).
 [WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is.
 ```
