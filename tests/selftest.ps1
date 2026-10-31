@@ -664,13 +664,14 @@ if ($pipreqsFailAllPass) { $summary.Add('pipreqs version-forced-failure fallback
 # reuses that already-completed run instead of paying for a fourth full bootstrap just to prove
 # cleanup-on-success.
 $lockNoLeakPath = Join-Path $pipreqsFailDir '~bootstrap.lock'
-$lockNoLeak = -not (Test-Path $lockNoLeakPath)
+# The run must also have ended well (state ok, exit code 0): without that, no lock folder could mean the run stopped before it made one.
+$lockNoLeak = ($pipreqsFailBootstrapOk -and (-not (Test-Path $lockNoLeakPath)))
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_no_leak'
   req = 'REQ-024.8'
   pass = $lockNoLeak
   desc = 'REQ-024: the lock directory does not persist after a normal successful bootstrap'
-  details = [ordered]@{ lockDirPresent = (Test-Path $lockNoLeakPath) }
+  details = [ordered]@{ lockDirPresent = (Test-Path $lockNoLeakPath); bootstrapOk = $pipreqsFailBootstrapOk }
 })
 if ($lockNoLeak) { $summary.Add('lock cleanup after success: PASS') } else { $summary.Add('lock cleanup after success: FAIL') }
 
@@ -909,7 +910,8 @@ try {
 } finally {
   $env:HP_CI_LANE = $prevCILaneLockStart
   if ($null -ne $lockStartProc -and -not $lockStartProc.HasExited) {
-    & taskkill.exe /F /T /PID $lockStartProc.Id 2>&1 | Out-Null
+    # a child that already exited makes taskkill write to stderr; under ErrorActionPreference Stop that must not end the self-test
+    try { & taskkill.exe /F /T /PID $lockStartProc.Id 2>&1 | Out-Null } catch { }
     [void]$lockStartProc.WaitForExit(20000)
   }
 }

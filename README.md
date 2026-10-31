@@ -1224,7 +1224,7 @@ may free some after reading the warning.
 >   about freeing disk space; `self.stub.low_disk_continues` (REQ-025.2) requires that the same run ends with state
 >   `ok` and exit code 0; `self.stub.low_disk_absent` (REQ-025.3) reads the logs of three runs without the hook and
 >   requires no warning when the drive has 2 GB or more free (the row records that it proved nothing on a drive that
->   is short or cannot be read). REQ-025.4 has no row yet: it needs a hook that makes the reading fail.
+>   is short or cannot be read).
 
 ---
 
