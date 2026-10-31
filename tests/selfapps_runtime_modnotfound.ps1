@@ -192,7 +192,7 @@ $modPass = ($runExit -eq 0) -and $symptomReproduced -and $consoleNamesModule -an
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.modnotfound'
-    req     = 'REQ-018'
+    req     = 'REQ-018.10'
     pass    = $modPass
     desc    = 'a ModuleNotFoundError in the run''s stderr is reported by name although the program exits 0'
     details = [ordered]@{
@@ -235,7 +235,7 @@ $pPass = ($p.RunExit -eq 0) -and $pSymptomReproduced -and $pAdviceNamesPyproject
          ($p.StatusState -eq 'ok')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.modnotfound.pyproject'
-    req     = 'REQ-018'
+    req     = 'REQ-018.11'
     pass    = $pPass
     desc    = 'with pyproject.toml as the dependency source, the missing-module advice names pyproject.toml and not requirements.txt'
     details = [ordered]@{

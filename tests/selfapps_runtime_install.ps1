@@ -330,7 +330,7 @@ $aPass = ($a.RunExit -eq 0) -and $aFirstRunTrace -and $aPrompted -and $aInstalle
          ($a.StatusState -eq 'ok')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.accept'
-    req     = 'REQ-018'
+    req     = 'REQ-018.17, REQ-018.19'
     pass    = $aPass
     desc    = 'a yes installs the missing package, adds it to requirements.txt, rebuilds the EXE with it and the check run is clean'
     details = [ordered]@{
@@ -363,7 +363,7 @@ $dPass = ($d.RunExit -eq 0) -and $dFirstRunTrace -and $dPrompted -and $dDeclined
          $dOneRun -and $dStillWarned -and ($d.InstallState -eq 'declined') -and ($d.StatusState -eq 'ok')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.decline'
-    req     = 'REQ-018'
+    req     = 'REQ-018.12, REQ-018.15'
     pass    = $dPass
     desc    = 'a no installs nothing, edits no requirements file, does not run the program again and still reports the module'
     details = [ordered]@{

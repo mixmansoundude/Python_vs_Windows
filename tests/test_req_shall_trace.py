@@ -47,7 +47,40 @@ SHALL_ID = re.compile(r"^REQ-\d{3}[a-z]?\.\d+(?:\.\d+)*$")
 PREFIXES = ("gap:", "unit:", "inspection:")
 
 # Shall id -> reason it has no tagged row. Delete an entry when a row is tagged with the shall's id.
-UNTRACED_SHALLS: Dict[str, str] = {}
+UNTRACED_SHALLS: Dict[str, str] = {
+    "REQ-003.1": "gap: rows are tagged REQ-003 (selfapps_unc, selfapps_justme, selfapps_exefail) but none names this shall; the Windows 10 (1809) floor and the curl and PowerShell it relies on are shown only by the runners",
+    "REQ-003.2": "gap: selfapps_justme and the provider rows install Miniconda under %PUBLIC%\\Documents\\Miniconda3 and are tagged REQ-003; none asserts the install folder as this shall",
+    "REQ-003.3": "gap: self.litter.appfolder (selftest.ps1) proves what the bootstrapper leaves in the folder, but no row asserts that the working files and the build output are created in the folder where it was started",
+    "REQ-005.1.6": "gap: self.depmerge.later.baseline shows the requirements.txt and header records exist after a clean run; no row shows that a failed or partial install records nothing, so the next run sees the same changes again",
+    "REQ-005.1.12": "gap: tests/test_dep_merge.py LaterRun.test_a_header_we_did_not_write_keeps_a_package_alive pins the merge half (an unrecorded header keeps its package in the merged list); no row shows the header file itself is never removed from",
+    "REQ-005.1.13": "gap: tests/test_dep_merge.py InternalError pins the helper's exit 3; no row or test makes the merge fail and shows the highest ranked input used alone with the [WARN] (:dm_fallback)",
+    "REQ-005.1.14": "gap: same missing scenario as REQ-005.1.13; no row shows the run going on after a merge that could not run",
+    "REQ-012.5": "gap: no row reads the console panel; self.skiphooks.exe_only reads the setup log only, so the neutral note 'EXE verification was skipped by request' and the absence of the unverified caveat are never asserted",
+    "REQ-018.2": "gap: only the optimized-build prompt names the risk of running the program twice (run_setup.bat :offer_optimized_build); the post-execution checkpoint, the runtime-install offer and the last-chance prompt do not, and no row asserts the sentence on any prompt",
+    "REQ-018.5": "gap: the warning is :warn_user_code_launch; self.cascade.timed matches only its dependency-incomplete note and the harness row batch.smoke.kill_warn only the hidden-import wording, so no row asserts the throwaway-check warning before the verification run",
+    "REQ-018.6": "unit: tests/test_exe_smokerun.py::ActivityAwareStop output before the deadline keeps the run going past 30 seconds, with or without a trailing newline; KillTimeout in the same file shows a silent hang is stopped and 30000 ms is the default",
+    "REQ-018.7": "gap: the 30 second cap on the --hidden-import re-verification run is an inline PowerShell WaitForExit(30000) in :hidden_import_recover that no row or unit test reads",
+    "REQ-018.8": "gap: the post-execution checkpoint prompt ('You can run your program again now via the interpreter as an extra diagnostic check') does not name the side-effect and idempotency risk this shall requires; self.checkpoint.accept and .decline prove the consent and the decline only",
+    "REQ-018.9": "gap: the four offers auto-decline on HP_CI_LANE, NOINPUT and HP_NONINTERACTIVE in the code, but rows exercise HP_CI_LANE only (self.checkpoint.decline, self.lastchance.errline) or an unanswered prompt (self.noflag.default.once); the NOINPUT and HP_NONINTERACTIVE paths and the optimized-build offer have no row (docs/open-questions.md Q2)",
+    "REQ-018.13": "unit: tests/test_runtime_module_scan.py::WhatIsNotReported standard library names and a module next to the script are not reported; the cached-EXE skip is the scan's no-interpreter return",
+    "REQ-018.14": "gap: self.runtime.install.accept and .decline show the question comes before the install, the edit and the rebuild; no row shows it is asked once per invocation (HP_RTI_OFFERED across a cascade tier) or the 30 second limit (the CI gate answers or declines first)",
+    "REQ-018.16": "gap: no row runs a system Python, a missing interpreter or a fallback-built EXE through the offer; the 'Runtime install: not offered' line and the not_offered state are never asserted",
+    "REQ-018.20": "gap: self.runtime.install.accept shows the check run and the verified line; the other branch (the output still names the module, state still_missing) has no row",
+    "REQ-018.21": "gap: no row makes the install or the rebuild fail, so the install_failed and rebuild_failed states and the absence of a provider cascade after them are never asserted",
+    "REQ-018.22": "gap: tests/test_runtime_module_scan.py PackagesAndAppend pins the module-to-package table (cv2, PIL) and the unchanged-name rule; no row asserts that the prompt lists every package it would install",
+    "REQ-018.25": "unit: tests/test_last_error_line.py::BatchWiring the prompt text that says the Miniconda choice runs the program once more is echoed before the gate (static wording pin)",
+    "REQ-018.30": "unit: tests/test_window_confirm.py::WindowQuestionWiring the question says the check stops the program after about 30 seconds (static wording pin)",
+    "REQ-021.3": "gap: self.preflight.syntax matches 'REQ-021' and 'syntax error' only; no row asserts the sentence that blames the user's program ('Your Python program has a syntax error and cannot run'), and the message never says the fault is not in dependency installation or the EXE build",
+    "REQ-022.2": "gap: self.stub.conda_create_retry shows the retry and that the run then succeeds (REQ-022.1); no row makes the second conda create fail and shows the environment creation treated as failed",
+    "REQ-022.3": "gap: no row makes the first conda create fail without one of the four phrases and shows there is no second attempt",
+    "REQ-024.1": "gap: self.stub.lock_no_leak shows the lock is gone after a successful run (REQ-024.8); no row shows the lock folder exists while the run goes on, before any download or installation",
+    "REQ-024.2": "gap: self.stub.lock_held_decline matches the 'already running' message only; no row asserts the message names the lock folder to delete",
+    "REQ-024.4": "gap: self.stub.lock_held_decline asserts the existing lock folder is still there (lockPreserved) but is tagged REQ-024.3 only; the tag is in tests/selftest.ps1, so widen it there and delete this entry",
+    "REQ-024.5": "gap: self.stub.lock_held_decline asserts no ~bootstrap.status.json is written (noStatusWrite) but is tagged REQ-024.3 only; the tag is in tests/selftest.ps1, so widen it there and delete this entry",
+    "REQ-024.9": "gap: no row removes a stale lock folder that cannot be replaced and shows the run going on without a lock and a warning in the log (self.stub.lock_stale_evict covers REQ-024.6 only)",
+    "REQ-025.2": "gap: self.stub.low_disk_warn requires the bootstrap to finish with state ok after the warning (continues) but is tagged REQ-025.1 only; the tag is in tests/selftest.ps1, so widen it there and delete this entry",
+    "REQ-025.3": "gap: no row gives the drive 2 GB or more, or an unreadable free-space figure, and asserts the absence of the low-disk-space warning",
+}
 
 
 def _read(path: Path) -> str:

@@ -139,6 +139,22 @@ label from the file is the switch that lets Dependabot's pull requests merge the
 
 ---
 
+## Requirement tags on rows: four readers must agree on the format
+
+**Touch the `req` tag format, a README shall id, or any reader below, must understand the others.** A row's `req`
+value is a literal in the test script (`req = 'REQ-009, REQ-018.27'`, a `-Tag @{ req = '...' }` hashtable, or a switch
+entry's hashtable) and is written to the NDJSON row verbatim. It names one requirement (`REQ-018`, `REQ-018.27`,
+`REQ-005.1.17`) or several separated by commas. The readers: `tests/test_req_trace.py` (each part must be a known
+number or a sub-id the README contains, any depth), `tests/test_req_shall_trace.py` (each numbered README shall must be
+named by some part, or listed in `UNTRACED_SHALLS`), `tools/req_trace_table.py` (the plan doc's status table; a row
+counts under each part) and `tools/req_coverage.py` (`req_coverage.json`; each part gets the row's outcome). A new
+reader must split on commas. The scan is static text: `req = $variable`, a `-Req` parameter or a map such as
+`$reqOf` is invisible to all four, so the tag stays a literal at the row's call site (a helper that writes rows takes a
+`[hashtable]$Tag` parameter, see `Write-DmRow` in `tests/selfapps_dep_merge_later.ps1`), and a comment must not
+contain the `req = '...'` shape, which would count as a tag. The README ids themselves are not moved or reused (AGENTS.md).
+
+---
+
 ## Concurrent-instance lock (REQ-024) touches every exit path
 
 The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`) is released only at `:die` and

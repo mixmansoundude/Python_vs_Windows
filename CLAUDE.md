@@ -96,6 +96,7 @@ tools/
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
   check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
   req_trace_table.py           Which numbered README shalls a row tag names (report only; docs/plan-test-suite-gaps.md keeps a dated copy)
+  req_coverage.py              Pass/fail per requirement from the NDJSON `req` field (req_coverage.json on the diagnostics site; a comma list credits each id)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
   sanitize_iterate_payload.py  NDJSON redaction, deduplication, truncation
@@ -307,7 +308,9 @@ Test files and what they cover:
 | `test_last_error_line.py` | Item 82 slice 1: last-error-line helper (last non-blank line, CRLF and blank-tail handling, every shell operator kept, controls and non-ASCII become `?`, 200-character cut, tail-only read, exit codes 0/1/3, Python 3.9 grammar guard) and the batch wiring of `:last_chance_offer` (call site and order, each not-offered reason, gate order, prompt text before the gate, W/C/N resolution, error line shown with `type` and never through `:log`, input capture sites, per-attempt reset, reworded `RUNTIME_MISMATCH` hint, HP_LAST_ERROR_LINE payload sync) |
 | `test_window_confirm.py` | Item 82 slice 2: the kill marker is cleared before the runner launches and read only from the file (never from the exit code), the window question's conditions and gate order, only an explicit yes records `user_confirmed`, the automated branch asks nothing |
 | `test_provider_memory.py` | Item 66: `PVW_PROVIDER` validation (compared with `findstr /x /l` on the `set` output, no line expands the variable, runs after the file count and before the cached-EXE fast path), uv skips tested before the `PVW_UV_EXE` branch, the memory read contract (conda only, Miniconda present, never cleared by input edits), write guards (verified pass, conda after uv, state ok, no switch), the `runtime.txt` record at all three write-back sites, the failed-forced-solve hint |
-| `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
+| `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; a tag names one id or several separated by commas, each checked on its own, and a sub-id may have three levels (`REQ-005.1.17`); synthetic cases prove each rule can fail |
+| `test_req_shall_trace.py` | Shall-level ratchet (T5, second half): every numbered README shall is named by a row's `req` tag or listed in `UNTRACED_SHALLS` with a reason (`gap:`, `unit:` with a checked test pointer, `inspection:` with a checked literal); an entry for a shall the README lacks, an unknown prefix, a dead pointer or an unordered list fails, a stale entry only warns; synthetic cases prove each rule can fail |
+| `test_req_coverage.py` | `tools/req_coverage.py`: a row's outcome is credited to each requirement its `req` field lists (comma separated), one failing row fails the requirement, rows without a tag and unreadable lines are skipped |
 | `test_req_trace_table.py` | `tools/req_trace_table.py`: shalls grouped by their own number (a REQ-009 shall inside the REQ-003 section counts under REQ-009), the row id taken from the tag's own row, the gap list and counts; synthetic cases prove each report line |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
@@ -342,6 +345,8 @@ or `tests/dynamic_tests.py` if present. See README.md section Dynamic test rules
 - Python unit tests: `tests/test_<topic>.py`
 - PowerShell scenario tests: `tests/selfapps_<scenario>.ps1`
 - Wire new PS scenarios into `tests/harness.ps1` (NDJSON rows) and `batch-check.yml` job steps.
+- A new numbered README shall: tag the row that proves it (`req = 'REQ-nnn.m'`, a literal at the call site), or add
+  an `UNTRACED_SHALLS` entry in `tests/test_req_shall_trace.py` that says what is missing.
 
 ---
 

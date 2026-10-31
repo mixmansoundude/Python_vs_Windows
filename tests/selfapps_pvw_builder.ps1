@@ -79,7 +79,8 @@ function Write-BuilderRow {
         [Parameter(Mandatory)][string]$Desc,
         [Parameter(Mandatory)][hashtable]$Details
     )
-    # README REQ-009.17 to REQ-009.21: each scenario proves one shall of the PVW_BUILDER group. The tag has to stay
+    # README REQ-009.17 to REQ-009.21: each scenario proves one shall of the PVW_BUILDER group (the two both scenarios also
+    # prove REQ-018.35 and REQ-018.36, which count the setting as consent). The tag has to stay
     # a literal for tests/test_req_trace.py (it scans the text), so the lookup is a switch of literal hashtables.
     $tag = switch ($scenario) {
         'invalid'                { @{ req = 'REQ-009.21' } }
@@ -92,8 +93,8 @@ function Write-BuilderRow {
         'nuitka_failother'       { @{ req = 'REQ-009.18' } }
         'both_unsupported'       { @{ req = 'REQ-009.20' } }
         'nuitka_stale'           { @{ req = 'REQ-009.19' } }
-        'both'                   { @{ req = 'REQ-009.20' } }
-        'both_forcefail'         { @{ req = 'REQ-009.20' } }
+        'both'                   { @{ req = 'REQ-009.20, REQ-018.35' } }
+        'both_forcefail'         { @{ req = 'REQ-009.20, REQ-018.35, REQ-018.36' } }
         default                  { @{ req = 'REQ-009' } }
     }
     Write-NdjsonRow ([ordered]@{ id = 'self.builder.override'; req = $tag.req; pass = $Pass; desc = $Desc; details = $Details })

@@ -202,7 +202,7 @@ try {
     })
     $oncePass = $runF.Finished -and ($linesF.Count -eq $expectedLaunchesFresh) -and $checkpointDeclined -and $optbuildDeclined -and ($linesF.Count -ge 1) -and ($linesF[0].frozen -eq $true)
     Write-NdjsonRow ([ordered]@{
-        id = 'self.noflag.default.once'; req = 'REQ-018'; pass = [bool]$oncePass
+        id = 'self.noflag.default.once'; req = 'REQ-018.1'; pass = [bool]$oncePass
         desc = 'REQ-018: unanswered elective prompts decline, so the fresh run starts the program exactly once'
         details = [ordered]@{
             ledgerLines = $linesF.Count; expectedLaunches = $expectedLaunchesFresh
@@ -224,7 +224,7 @@ try {
     $g1 = if ($linesG.Count -ge 2) { $linesG[1] } else { $null }
     $rerunPass = $runG.EnvDumped -and ($runG.FlagsSeen.Count -eq 0) -and $runG.Finished -and ($runG.ExitCode -eq 0) -and ($linesG.Count -eq $expectedLaunchesAfterRerun) -and $probeBranch -and (-not $plainFastLine) -and ($null -ne $g1) -and ($g1.frozen -eq $true)
     Write-NdjsonRow ([ordered]@{
-        id = 'self.noflag.default.rerun'; req = 'REQ-019.3'; pass = [bool]$rerunPass
+        id = 'self.noflag.default.rerun'; req = 'REQ-019.3, REQ-018.3'; pass = [bool]$rerunPass
         desc = 'REQ-019: a repeat run with no flags reuses the EXE through the interactive probe and starts the program once more'
         details = [ordered]@{
             finished = $runG.Finished; seconds = $runG.Seconds; exitCode = $runG.ExitCode

@@ -126,7 +126,7 @@ $pass = $req021Fired -and $syntaxDetail -and $stateError -and $noPyiCrash
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.preflight.syntax'
-    req     = 'REQ-021.2'
+    req     = 'REQ-021.1, REQ-021.2'
     pass    = $pass
     desc    = 'REQ-021 pre-flight: SyntaxError reported clearly and run stops gracefully before the build'
     details = [ordered]@{
