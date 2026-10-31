@@ -25,21 +25,17 @@ chat one at a time; the later ones wait their turn.
    the gates that read fewer signals. Which gates should read all three? Default: no code change until the
    no-flag default-run scenario (T12) shows how much it matters; word each shall per gate until then.
 
-## From the October 2026 maintenance scan (CLAUDE.md "Periodic Maintenance Checks", filed 2026-10-24)
+## From the Item 90 follow-up (Dependabot, filed 2026-10-31)
 
-5. **Dependabot has never opened a pull request here, while six of the nine pinned GitHub Actions are one to two
-   majors behind.** `.github/dependabot.yml` (the `github-actions` ecosystem, weekly) was added 2026-08-17. Since then no
-   pull request and no `dependabot/*` branch has existed, but the pins in `.github/workflows/*.yml` are behind
-   (`checkout` v5 against v7, `cache` v5 against v6, `upload-artifact` v6 against v7, `download-artifact` v6 against
-   v8, `github-script` v8 against v9, `codeql-action` v3 against v4), so Dependabot should have had something to
-   propose. A session cannot read the repository settings that say why. On github.com, under Settings, Code security
-   (or Advanced Security), is "Dependabot version updates" switched on, and does Insights, Dependency graph,
-   Dependabot show an error or a last-checked time for `github-actions`? (A) If it is off, switch it on and the first
-   pull requests arrive within a week; each is read in CI like any other. (B) If it is on and shows an error, paste the
-   error (it names no secret) and the cause gets fixed in `dependabot.yml`. (C) If you would rather not run
-   Dependabot, say so and a backlog item bumps the pins by hand, one action per pull request. Default meanwhile: the
-   pins are bumped by hand, one action per pull request (CLAUDE.md Item 90, started with `codeql-action`), which is
-   what C would do anyway; the runner forces the Node.js 20 actions onto Node.js 24, so nothing is urgent.
+6. **Should Dependabot's pull requests merge themselves?** Dependabot could not read `.github/dependabot.yml` until
+   2026-10-31 (the option `open-pull-request-limit` is spelled `open-pull-requests-limit`, and a file with one unknown
+   option is rejected), which is why it opened no pull request in ten weeks; the first one arrives when an action
+   releases a major newer than its pin. `pr-automerge.yml` arms auto-merge for every same-repo pull request that does
+   not carry `no-automerge`, so a Dependabot pull request would merge itself once "Aggregate self-test verdicts" is
+   green (every row of every lane, but not the annotations Item 90 read before each bump). (A) Keep what the file sets
+   now: the label `no-automerge` on every Dependabot pull request, so each stays open until a session has read its runs
+   and merges it. (B) Delete `labels:` from the file, and they merge by themselves like any other pull request.
+   Default meanwhile: A.
 
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 
