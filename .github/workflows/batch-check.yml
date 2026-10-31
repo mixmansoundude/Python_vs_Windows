@@ -4801,16 +4801,18 @@ jobs:
 
   ndjson-registry-check:
     name: NDJSON registry cross-check (doc vs code vs log)
-    # derived requirement: advisory only -- cross-checks docs/agent-ndjson.md's row registry
-    # against PowerShell/run_setup.bat emission sites (code) and this run's own observed NDJSON
-    # artifacts (log). continue-on-error keeps this fully non-gating: a finding here is real and
-    # worth fixing, but must never block a PR merge on its own (this tool is new and advisory by
-    # design, matching how other non-mature lanes in this repo graduate to gating only after a
-    # soak period -- see AGENTS.md and CLAUDE.md's CI lane gating maturity notes).
+    # derived requirement: cross-checks docs/agent-ndjson.md's row registry against PowerShell/
+    # run_setup.bat emission sites (code) and lists this run's own observed NDJSON artifacts (log,
+    # report only). The exit code depends on doc vs code alone, a static comparison that cannot
+    # fail from a network or provider problem, so this job gates since Item 35 (no continue-on-error;
+    # the soak was eleven clean main runs, CLAUDE.md "CI lane gating maturity"). The same check also
+    # runs as tests/test_check_ndjson_registry.py::test_repo_rows_and_registry_agree inside
+    # self.pytest.unit, which the aggregate self-test gate turns into a merge hold in every lane, so a
+    # mismatch holds a PR even though this job's own check is not a required status check.
+    # tests/test_aggregate_gate.py pins the job (no continue-on-error, pipefail, nothing hides the exit).
     needs: [selftest]
     if: ${{ always() }}
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
