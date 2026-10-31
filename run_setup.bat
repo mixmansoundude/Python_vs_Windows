@@ -6720,7 +6720,6 @@ rem case, since CMD has no finally/trap to guarantee release on every exit path.
 rem docs/agent-lessons-learned.md "Concurrent-instance lock" for the full design rationale.
 set "HP_LOCK_DIR=%HP_SCRIPT_ROOT%~bootstrap.lock"
 set "HP_LOCK_OWNED="
-if defined HP_TEST_DISABLE_LOCK exit /b 0
 mkdir "%HP_LOCK_DIR%" 2>nul
 if not errorlevel 1 goto :lock_acquired
 call :lock_is_stale

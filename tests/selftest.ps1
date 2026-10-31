@@ -667,7 +667,7 @@ $lockNoLeakPath = Join-Path $pipreqsFailDir '~bootstrap.lock'
 $lockNoLeak = -not (Test-Path $lockNoLeakPath)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_no_leak'
-  req = 'REQ-024'
+  req = 'REQ-024.8'
   pass = $lockNoLeak
   desc = 'REQ-024: the lock directory does not persist after a normal successful bootstrap'
   details = [ordered]@{ lockDirPresent = (Test-Path $lockNoLeakPath) }
@@ -698,14 +698,14 @@ $lockHeldLogPath = Join-Path $lockHeldDir $lockHeldLogName
 $lockHeldLines = @()
 if (Test-Path $lockHeldLogPath) { $lockHeldLines = Get-Content -LiteralPath $lockHeldLogPath -Encoding ASCII }
 $lockHeldMsgFound = ($lockHeldLines | Where-Object { $_ -like '*already running*' }).Count -gt 0
-$lockHeldDeclined = ($lockHeldExit -ne 0)
+$lockHeldDeclined = ($lockHeldExit -eq 1)
 $lockHeldNotDeleted = Test-Path $lockHeldPreexisting
 $lockHeldStatusPath = Join-Path $lockHeldDir '~bootstrap.status.json'
 $lockHeldNoStatus = -not (Test-Path $lockHeldStatusPath)
 $lockHeldAllPass = ($lockHeldMsgFound -and $lockHeldDeclined -and $lockHeldNotDeleted -and $lockHeldNoStatus)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_decline'
-  req = 'REQ-024'
+  req = 'REQ-024.3'
   pass = $lockHeldAllPass
   desc = 'REQ-024: a fresh (non-stale) lock directory causes a second instance to decline gracefully without touching the lock it does not own'
   details = [ordered]@{
@@ -762,7 +762,7 @@ if (Test-Path $lockStaleStatusPath) {
 $lockStaleAllPass = ($lockStaleEvictedFound -and $lockStaleBootstrapOk)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_stale_evict'
-  req = 'REQ-024'
+  req = 'REQ-024.6'
   pass = $lockStaleAllPass
   desc = 'REQ-024: HP_TEST_FORCE_LOCK_STALE evicts a pre-existing lock directory and the bootstrap proceeds normally'
   details = [ordered]@{
@@ -821,7 +821,7 @@ $lockIndeterminatePreserved = Test-Path $lockIndeterminatePreexisting
 $lockIndeterminateAllPass = ($lockIndeterminateExit -eq 0 -and $lockIndeterminateWarnFound -and $lockIndeterminateBootstrapOk -and $lockIndeterminatePreserved)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_indeterminate'
-  req = 'REQ-024'
+  req = 'REQ-024.7'
   pass = $lockIndeterminateAllPass
   desc = 'REQ-024 (CLAUDE.md Item 49): an indeterminate lock-staleness result continues without the lock, without evicting the pre-existing lock directory'
   details = [ordered]@{
@@ -876,7 +876,7 @@ if (Test-Path $lowDiskStatusPath) {
 $lowDiskAllPass = ($lowDiskWarnFound -and $lowDiskBootstrapOk)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_warn'
-  req = 'REQ-025'
+  req = 'REQ-025.1'
   pass = $lowDiskAllPass
   desc = 'REQ-025: HP_TEST_FORCE_LOW_DISK forces the low-disk-space WARN and the bootstrap still completes normally (warn-only, never abort)'
   details = [ordered]@{
@@ -1711,7 +1711,7 @@ $createRetryLines = if (Test-Path $createRetryLogPath) { Get-Content -LiteralPat
 $createRetryMsgFound = ($createRetryLines | Where-Object { $_ -like '*conda create: transient failure detected*' }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.stub.conda_create_retry'
-  req     = 'REQ-022'
+  req     = 'REQ-022.1'
   pass    = ($createRetryExit -eq 0 -and $createRetryMsgFound)
   desc    = 'HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL=1: bootstrap retries conda env creation on transient failure'
   details = [ordered]@{ exitCode = $createRetryExit; retryMsgFound = $createRetryMsgFound }
