@@ -17,7 +17,7 @@
 #   self.lastchance.enter         interpreter site (HP_SKIP_EXE_SMOKERUN), the real set /p read answers with a bare
 #                                 Enter (default neither), and the error-line helper failing to emit
 #                                 (HP_TEST_FORCE_EMIT_FAIL) only costs the "last line" part of the prompt
-#   self.lastchance.risk          README REQ-018.2 and REQ-018.25: read from the console text of the worked and errline
+#   self.lastchance.risk          README REQ-018.25 (REQ-018.2 stays untraced, see UNTRACED_SHALLS): read from the console text of the worked and errline
 #                                 runs, the [C] choice says the program runs once more AND that running it twice could
 #                                 cause harm (the text between [C] and [N]); no extra bootstrap
 #   self.lastchance.checkpoint_ok the accepted post-execution checkpoint ran the program through the interpreter
@@ -371,7 +371,7 @@ if ($runReal) {
     if ($rShown.Length -gt 400) { $rShown = $rShown.Substring(0, 400) }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.risk'
-        req     = 'REQ-018.2, REQ-018.25'
+        req     = 'REQ-018.25'
         pass    = $rPass
         desc    = 'the Miniconda choice of the last-chance offer says the program runs once more and that running it twice could cause harm'
         details = [ordered]@{

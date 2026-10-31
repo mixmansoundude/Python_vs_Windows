@@ -150,9 +150,18 @@ if ($attrFrom -ge 0) {
     $attrTo = $attrRest.IndexOf('Fix the syntax error shown above', [System.StringComparison]::Ordinal)
     if ($attrTo -ge 0) { $attrBlock = ($attrRest.Substring(0, $attrTo) -replace '\s+', ' ').Trim() }
 }
-$attrOwn  = $attrBlock -match '(?i)own program'
-$attrDeps = $attrBlock -match '(?i)\bnot\b.{0,80}dependenc'
-$attrExe  = $attrBlock -match '(?i)dependenc.{0,80}\bEXE\b'
+# The positive claim is the exact phrase (a report that says the mistake is NOT in the own program must not pass), and
+# the two things ruled out are read from the clause that follows a 'not' and stops at punctuation or at but, so,
+# because, instead or rather: 'not a problem with installing dependencies, but building the EXE caused it' rules out the
+# dependencies only (CodeRabbit, PR 517).
+$attrOwn  = $attrBlock -match '(?i)\bmistake is in your own program\b'
+$attrDeps = $false
+$attrExe  = $false
+foreach ($nm in [regex]::Matches($attrBlock, '(?i)\bnot\b((?:(?!\b(?:but|so|because|instead|rather)\b)[^.,;])*)')) {
+    $clause = $nm.Groups[1].Value
+    if ($clause -match '(?i)dependenc') { $attrDeps = $true }
+    if ($clause -match '(?i)\bEXE\b') { $attrExe = $true }
+}
 $attrPass = ($attrBlock.Length -gt 0) -and $attrOwn -and $attrDeps -and $attrExe
 $attrShown = $attrBlock
 if ($attrShown.Length -gt 500) { $attrShown = $attrShown.Substring(0, 500) }

@@ -12,7 +12,7 @@
 # Rows: self.runtime.install.accept, self.runtime.install.decline, self.runtime.install.pyproject and
 # self.runtime.install.pep723, one real bootstrap each (the last two add a second bootstrap of the same folder).
 # self.runtime.install.wording and self.runtime.install.risk are verdicts over the console text of those runs: the
-# second (README REQ-018.2) needs the prompt to say that running the program twice could cause harm, because a yes also
+# second (the risk half of README REQ-018.2, which stays untraced) needs the prompt to say that running the program twice could cause harm, because a yes also
 # starts the program once more to check.
 # Item 91 (README REQ-018.18): a yes adds the package to requirements.txt whatever the dependency source is.
 # Before Item 89 a pyproject.toml or PEP 723 list was copied over requirements.txt on every run, so an appended
@@ -98,7 +98,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     })
     Write-NdjsonRow ([ordered]@{
         id      = 'self.runtime.install.risk'
-        req     = 'REQ-018.2'
+        req     = 'REQ-018'
         pass    = $true
         desc    = 'the prompt tells the user that running the program twice could cause harm (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
@@ -330,7 +330,7 @@ $aPass = ($a.RunExit -eq 0) -and $aFirstRunTrace -and $aPrompted -and $aInstalle
          ($a.StatusState -eq 'ok')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.accept'
-    req     = 'REQ-018.17, REQ-018.19'
+    req     = 'REQ-018.17'
     pass    = $aPass
     desc    = 'a yes installs the missing package, adds it to requirements.txt, rebuilds the EXE with it and the check run is clean'
     details = [ordered]@{
@@ -513,7 +513,7 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-# ---- risk (README REQ-018.2): a yes also starts the program once more, so the prompt says running it twice could cause harm ----
+# ---- risk (half of README REQ-018.2, tagged with the goal only): a yes also starts the program once more, so the prompt says running it twice could cause harm ----
 # One verdict over the accept and the decline runs: the prompt block (from its heading to the line that records the
 # decision) must exist in both consoles and say it in both. The text is the same in all four runs; two are enough.
 $riskMarker   = 'running it twice could cause harm'
@@ -528,7 +528,7 @@ $rShown = $aBlock
 if ($rShown.Length -gt 500) { $rShown = $rShown.Substring(0, 500) }
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.risk'
-    req     = 'REQ-018.2'
+    req     = 'REQ-018'
     pass    = $rPass
     desc    = 'the install prompt tells the user that running the program twice could cause harm, because a yes also starts the program once more to check'
     details = [ordered]@{

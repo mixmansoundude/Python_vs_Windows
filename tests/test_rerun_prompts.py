@@ -39,6 +39,13 @@ WINDOW = 6
 PREFLIGHT_HEADING = "Your Python program has a syntax error and cannot run."
 PREFLIGHT_END = "Fix the syntax error shown above"
 
+# REQ-021.3 wording. The positive claim is an exact phrase, so a report that says the mistake is NOT in the user's
+# program does not pass. What is ruled out is read from the clause that follows a "not" and stops at punctuation or at
+# but, so, because, instead or rather: "not a problem with installing dependencies, but building the EXE caused it"
+# rules out the dependencies only (CodeRabbit, PR 517).
+OWN_PROGRAM = re.compile(r"\bmistake is in your own program\b")
+NOT_CLAUSE = re.compile(r"\bnot\b((?:(?!\b(?:but|so|because|instead|rather)\b)[^.,;])*)")
+
 
 def is_echo(line):
     stripped = line.strip()
@@ -109,12 +116,13 @@ def preflight_problems(text):
     if end < 0:
         return ["preflight: the closing line %r was not found after the heading" % PREFLIGHT_END]
     block = " ".join(ln for ln in lines[head:end] if is_echo(ln)).lower()
+    clauses = [m.group(1) for m in NOT_CLAUSE.finditer(block)]
     found = []
-    if "own program" not in block:
+    if not OWN_PROGRAM.search(block):
         found.append("preflight: the report does not say the mistake is in the user's own program")
-    if "dependenc" not in block:
+    if not any("dependenc" in c for c in clauses):
         found.append("preflight: the report does not rule out dependency installation")
-    if " exe" not in block.replace("the exe", " exe"):
+    if not any(re.search(r"\bexe\b", c) for c in clauses):
         found.append("preflight: the report does not rule out the EXE build")
     return found
 
@@ -236,6 +244,16 @@ class EachRuleCanFail(unittest.TestCase):
                                  "installing dependencies")
         self.assertEqual(preflight_problems(only_deps),
                          ["preflight: the report does not rule out the EXE build"])
+
+    def test_a_report_that_blames_the_exe_build_is_not_accepted(self):
+        bad = GOOD.replace("It is not a problem with installing dependencies or with building the EXE.",
+                           "It is not a problem with installing dependencies, but building the EXE caused the error.")
+        self.assertEqual(preflight_problems(bad), ["preflight: the report does not rule out the EXE build"])
+
+    def test_a_report_that_denies_the_users_mistake_is_not_accepted(self):
+        bad = GOOD.replace("The mistake is in your own program.", "The mistake is not in your own program.")
+        self.assertEqual(preflight_problems(bad),
+                         ["preflight: the report does not say the mistake is in the user's own program"])
 
     def test_a_missing_preflight_block_is_reported(self):
         bad = GOOD.replace("Your Python program has a syntax error and cannot run.", "Something is wrong.")

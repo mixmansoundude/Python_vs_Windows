@@ -40,7 +40,7 @@ self.fastpath,
 self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
 self.honest.fastpath.note, self.honest.fastpath.outcome,
 self.checkpoint.accept, self.checkpoint.decline,
-self.checkpoint.risk (real and conda-full lanes -- selfapps_postexec_checkpoint.ps1; REQ-018.2 and REQ-018.8, Item 94a:
+self.checkpoint.risk (real and conda-full lanes -- selfapps_postexec_checkpoint.ps1; REQ-018.8, Item 94a, and the risk half of REQ-018.2, which stays untraced:
 one verdict over the accepted and the declined run, the prompt block from `Verification finished -- see the Run Status above.`
 to the line that records the decision says `running it twice could cause harm`; an empty block fails the row),
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
@@ -55,6 +55,7 @@ reqspec.conda.channelpin.req006, reqspec.conda.dryrun.req006,
 reqspec.gte.explicit,
 reqspec.install.import, reqspec.ingest.translate,
 reqspec.ingest.conda.dryrun, reqspec.ingest.install.import,
+reqspec.retry.{once,bounded,nontransient,classify},
 self.depcheck.install, self.depcheck.skip,
 pipreqs.install, pipreqs.run,
 self.parse_warn.table,
@@ -245,10 +246,12 @@ self.empty_repo.subfolder_hint_pct,
 self.harness.started,
 self.stub.fastpath, self.stub.rebuild, self.stub.state_skip,
 self.stub.conda_retry, self.stub.conda_create_retry, self.stub.conda_perpkg, self.stub.pip_warn,
+self.stub.conda_create_exhausted, self.stub.conda_create_nonretry,
 self.stub.pipreqs_version_fail,
-self.stub.lock_no_leak, self.stub.lock_held_decline, self.stub.lock_stale_evict,
-self.stub.lock_indeterminate,
-self.stub.low_disk_warn,
+self.stub.lock_start, self.stub.lock_no_leak,
+self.stub.lock_held_message, self.stub.lock_held_decline, self.stub.lock_held_kept, self.stub.lock_held_nostatus,
+self.stub.lock_stale_evict, self.stub.lock_indeterminate, self.stub.lock_evict_blocked,
+self.stub.low_disk_warn, self.stub.low_disk_continues, self.stub.low_disk_absent,
 self.pipreqs.warn.gated,
 self.dep.diff.trace, self.litter.appfolder, self.elevation.logged,
 self.warn.onedrive, self.warn.path_negative, self.warn.sysdir,
@@ -1315,6 +1318,24 @@ the first argument is validated before the fast path and every early stop releas
 self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.directory, self.entryarg.stops_release_lock
 ```
 
+## selfapps-conda-transient NDJSON rows (selfapps_conda_transient.ps1, real and justme-test lanes, GATING)
+
+Item 93 regression test (README REQ-005.2, REQ-022.1 to .3). No Miniconda and no network: the bulk-install subroutine
+and the create flow's transient check are cut out of `run_setup.bat`, wrapped in a driver batch file and run by cmd.exe
+against a stub `conda.bat` that prints a chosen text and counts its calls. `control` (the `CondaHTTPError` wording is
+retried at both sites: bulk makes two stub calls and returns 0, create makes the one retry call and ends done; proves the
+harness), `bulk` and `create` (the same sites on the 502 text conda printed in run 41074512594, `requests.exceptions.
+HTTPError: 502 Server Error: Bad Gateway for url: ...msgpack.zst`), `bounded` (a 502 that stays: exactly two bulk calls
+and one create retry, then the `retry after transient failure also failed` line and the failure), `nonretry` (a solver
+answer and the client-error form `404 Client Error` are run once, no retry line). Skips with `skip=true,
+reason=non-windows-host` off Windows. Expected red on the commit that adds it for `bulk`, `create` and `bounded` (the
+detection does not know the phrase `Server Error`), green for `control` and `nonretry` throughout.
+
+```
+self.conda.retry5xx.control, self.conda.retry5xx.bulk, self.conda.retry5xx.create,
+self.conda.retry5xx.bounded, self.conda.retry5xx.nonretry
+```
+
 ## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)
 
 CLAUDE.md Item 68 regression test (`docs/plan-field-report-2026-10.md`; README REQ-005, REQ-005.5, REQ-007).
@@ -1480,7 +1501,7 @@ run's `~install_<name>_bootstrap.log` and `~sub.ndjson`, the names the `test-log
 be uploaded). `self.runtime.install.wording` (README REQ-018.37) is one verdict over the accept, pyproject and pep723 runs: the
 echoed prompt says `adds them to this program's own environment and to requirements.txt`, never `but does not edit`, and the
 setup log has `Runtime install: added xlsxwriter to requirements.txt.`; each run's three values are in `details`.
-`self.runtime.install.risk` (README REQ-018.2, Item 94a) is a second verdict over the accept and decline consoles: the prompt block
+`self.runtime.install.risk` (the risk half of README REQ-018.2, tagged with the goal only because REQ-018.2 stays untraced; Item 94a) is a second verdict over the accept and decline consoles: the prompt block
 (from `Your program asked for packages that are not installed:` to the `Runtime install: accepted|declined` line) exists in both and
 says `running it twice could cause harm`, because a yes also starts the program once more to check; the block text is in `details`.
 All six skip with `skip=true, reason=non-windows-host` off Windows. Expected red for `pyproject` and `pep723` on the commit that adds
@@ -1559,7 +1580,7 @@ normal uv bootstrap): `self.lastchance.worked` (answer W: the prompt, `Last chan
 EXE kept, row state `worked`, `passType` `user_confirmed`, site `exe`); `self.lastchance.errline` (no answer in an
 automated run resolves to `automated` with no wait, and the error line `Error: a<b>c&d|e%PATH%^f "q" end` is shown
 intact on the console and in the setup log, with the same non-tilde top-level names as the `worked` run and no
-file named after the operators); `self.lastchance.risk` (README REQ-018.2 and REQ-018.25, Item 94a: read from the console of the
+file named after the operators); `self.lastchance.risk` (README REQ-018.25 and the risk half of REQ-018.2, which stays untraced; Item 94a: read from the console of the
 `worked` and `errline` runs, the text between `[C]` and `[N]` says the program runs `once more` and that `running it twice could
 cause harm`, so the user is told before choosing; no extra bootstrap); `self.lastchance.enter` (interpreter site via `HP_SKIP_EXE_SMOKERUN`, a bare Enter
 at the real `set /p` means `neither`, and `HP_TEST_FORCE_EMIT_FAIL=HP_LAST_ERROR_LINE` only drops the last-line part:

@@ -72,7 +72,7 @@ keep their 2026-10-11 wording; where they disagree with this section, this secti
 |---|---|---|
 | Item 35, T4 (baseline red rows, aggregate gate) | done; the aggregate verdict is a required check (criterion C6) | #491, #509 |
 | T5 requirement-trace ratchet | done; README sections for REQ-022, REQ-024 and REQ-025 added and `NOT_IN_README` is empty | #490, and the docs-and-tags change after #511 |
-| T5 shall-level ratchet (every numbered shall named by a row or listed with a reason) | done; 89 of 116 shalls are named by a row, the other 27 sit in `UNTRACED_SHALLS` (24 `gap:`, 3 `unit:`) | the shall-tracing change after #513 |
+| T5 shall-level ratchet (every numbered shall named by a row or listed with a reason) | done; 96 of 117 shalls are named by a row, the other 21 sit in `UNTRACED_SHALLS` (17 `gap:`, 4 `unit:`) | PR #517 (the shall-tracing change after #513) |
 | T6 flag-inventory ratchet | done; the one dead hook, `HP_TEST_DISABLE_LOCK`, was removed in the docs-and-tags change after #511 | #490 |
 | T1 A to D launch ledger | done | #494 |
 | T1 E single-flag skip hooks, T2 dependency-source matrix, T7 log rotation, T8 non-ASCII folder, T9 UNC launch, T12 no-flag default run | done | #498 |
@@ -92,19 +92,19 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-009 | 13 | 13 | 0 | 21 |
 | REQ-012 | 6 | 5 | 1 | 1 |
-| REQ-018 | 37 | 27 | 10 | 13 |
+| REQ-018 | 37 | 25 | 12 | 14 |
 | REQ-019 | 3 | 3 | 0 | 0 |
 | REQ-021 | 6 | 6 | 0 | 0 |
-| REQ-022 | 3 | 1 | 2 | 0 |
-| REQ-024 | 9 | 4 | 5 | 0 |
-| REQ-025 | 3 | 1 | 2 | 0 |
+| REQ-022 | 3 | 3 | 0 | 0 |
+| REQ-024 | 9 | 9 | 0 | 0 |
+| REQ-025 | 4 | 3 | 1 | 0 |
 | REQ-026 | 6 | 6 | 0 | 0 |
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-89 of 116 numbered shalls are named by at least one row tag.
+96 of 117 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-022.2, REQ-022.3, REQ-024.1, REQ-024.2, REQ-024.4, REQ-024.5, REQ-024.9, REQ-025.2, REQ-025.3.
+Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-018.2, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-025.4.
 
 Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011, REQ-013, REQ-014, REQ-015, REQ-016, REQ-017, REQ-020, REQ-023.
 
@@ -113,29 +113,37 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
 1. **Done (2026-10-31): the tag-only moves for the shalls a row already shows.** The tag readers accept dotted ids of
    any depth and comma lists, `tests/test_req_shall_trace.py` holds every shall to a row or a reason, and 44 shalls
    (14 of REQ-005.1.n, REQ-009.9 to .16, REQ-012.1 and .3, 18 of REQ-018, REQ-019.2 and REQ-021.1) were named by
-   tagging existing rows, no behavior changed. Two entries wait for a tag in `tests/selftest.ps1`:
-   `self.stub.lock_held_decline` should name REQ-024.3, REQ-024.4 and REQ-024.5, and `self.stub.low_disk_warn`
-   REQ-025.2; each deletes its `UNTRACED_SHALLS` entry (a stale entry only warns, so either order lands green).
-2. **Rows for shalls nothing checks** (the `gap:` entries of `UNTRACED_SHALLS`, each written first and read red).
-   Done 2026-10-31 (Item 94a): REQ-018.2, .8 and .25 and REQ-021.3. The post-execution checkpoint, the runtime-install
-   offer and the Miniconda choice of the last-chance offer now say that running the program twice could cause
-   harm (the optimized-build prompt already did), the syntax-error report says the mistake is in the user's own
-   program and not in dependency installation or the EXE build, and four rows read the console text of real runs
-   (`self.checkpoint.risk`, `self.runtime.install.risk`, `self.lastchance.risk`, `self.preflight.attribution`);
-   `tests/test_rerun_prompts.py` holds the wording of all four prompts as text. Done 2026-10-31 (Item 94b): REQ-018.9,
-   the four offers decline without reading the console when only `NOINPUT`, only `HP_NONINTERACTIVE` or only
-   `HP_CI_LANE` is set (`self.offers.noinput`, `.nonint`, `.cilane`, plus `self.offers.control`, the same offers
-   reaching their prompts with none of the three set; `tests/selfapps_offers_noninteractive.ps1`, real lane,
-   `tests/test_offers_noninteractive.py` pins the gates as text). What is left, by size of the
-   user-visible risk: REQ-018.14, .16, .20, .21 and .22 (the runtime-install offer: asked once, not offered for system Python,
-   still-missing result, failed install or rebuild, package list in the prompt), REQ-018.5 and .7 (the
-   throwaway-check warning and the 30 second cap on the re-verification run), REQ-012.5 (the neutral note when EXE
-   verification is skipped), REQ-022.2 and .3 (the second conda create fails; a failure without the four phrases
-   is not retried), REQ-024.1, .2 and .9 (the lock exists while the run goes on; the message names the folder; a
-   stale lock that cannot be removed), REQ-025.3 (no warning when the drive has enough space), REQ-005.1.6, .12,
-   .13 and .14 (a failed install records nothing; the header is never removed from; a merge that cannot run falls
-   back with a warning) and REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the working files go).
-   REQ-018.6, .13 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
+   tagging existing rows, no behavior changed.
+2. **Rows for shalls nothing checks (the `gap:` entries of `UNTRACED_SHALLS`, each written first and read red).**
+   Done 2026-10-31 (the test-suite gap map): REQ-022.2 and .3 (`self.stub.conda_create_exhausted`,
+   `.conda_create_nonretry`, the second through the hook `HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL`), REQ-024.1
+   (`self.stub.lock_start` watches the lock folder while a background run is at its start), REQ-024.2, .4 and .5
+   (one row each, read from the declined run that already named REQ-024.3), REQ-024.9
+   (`self.stub.lock_evict_blocked`, a file held open inside the stale lock folder), and REQ-025.1 to .3
+   (`low_disk_warn` also requires the whole-gigabyte figure and the wording, `low_disk_continues`,
+   `low_disk_absent`). REQ-025.3 was split: its unreadable-drive half is the new REQ-025.4, which needs a hook that
+   makes the free-space reading fail (not built; the batch's `catch` leaves the figure empty, which is the branch
+   to reach). Done 2026-10-31 (Item 94a): REQ-018.8 and .25 and REQ-021.3 (REQ-018.2 stays a `gap:` entry: each
+   prompt now names the risk, but the failure-hint re-run and the repair loop still start the program again without
+   a prompt, see Items 96 and 97). The post-execution checkpoint, the runtime-install offer and the Miniconda choice
+   of the last-chance offer now say that running the program twice could cause harm (the optimized-build prompt
+   already did), the syntax-error report says the mistake is in the
+   user's own program and not in dependency installation or the EXE build, and four rows read the console text of
+   real runs (`self.checkpoint.risk`, `self.runtime.install.risk`, `self.lastchance.risk`,
+   `self.preflight.attribution`); `tests/test_rerun_prompts.py` holds the wording of all four prompts as text. Done
+   2026-10-31 (Item 94b): REQ-018.9, the four offers decline without reading the console when only `NOINPUT`, only
+   `HP_NONINTERACTIVE` or only `HP_CI_LANE` is set (`self.offers.noinput`, `.nonint`, `.cilane`, plus
+   `self.offers.control`, the same offers reaching their prompts with none of the three set;
+   `tests/selfapps_offers_noninteractive.ps1`, real lane, `tests/test_offers_noninteractive.py` pins the gates as
+   text). What is left, by size of the user-visible risk: REQ-018.2 (no start without a prompt: Items 96 and 97),
+   REQ-018.14, .16, .20, .21 and .22 (the runtime-install
+   offer: asked once, not offered for system Python, still-missing result, failed install or rebuild, package list
+   in the prompt), REQ-018.5 and .7 (the throwaway-check warning and the 30 second cap on the re-verification run),
+   REQ-012.5 (the neutral note when EXE verification is skipped), REQ-025.4 (an unreadable free-space figure),
+   REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the header is never removed from; a merge that
+   cannot run falls back with a warning) and REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the
+   working files go). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
+   optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
@@ -203,10 +211,10 @@ aggregate row `self.pytest.unit` in every lane.
 | 019 | Flags are scaffolding | none; a manual standing directive in `docs/agent-lessons-learned.md` | None | T6 |
 | 020 | Cache corruption | `self.corrupt.conda.*`, `self.corrupt.uv.detect` x5 (all) | Strong | |
 | 021 | Static pre-flight | `self.preflight.*` (R,F), `batch.preflight.compile` | Strong | |
-| 022 | conda create retry | `self.stub.conda_create_retry` (all, `REQ-022.1`); README section REQ-022 (three shalls); the retry-exhausted path through `self.cascade.conda_create_fail` (u, tagged REQ-009) | Strong for .1; .2 and .3 have no row of their own | row for REQ-022.3 |
+| 022 | conda create retry | `self.stub.conda_create_retry/.conda_create_exhausted/.conda_create_nonretry` (all, tagged `REQ-022.1/.2/.3`); README section REQ-022 (three shalls); the retry-exhausted path inside a cascade through `self.cascade.conda_create_fail` (u, tagged REQ-009) | Strong; the non-retry case uses a test hook, not a real conda failure | |
 | 023, 023b | venv canary, no-pip retry | `self.venv.canary_fail`, `self.venv.nopip_retry` (all) | Strong | |
-| 024 | concurrent-instance lock | `self.stub.lock_no_leak/.held_decline/.stale_evict/.indeterminate` (all, tagged `REQ-024.8/.3/.6/.7`); README section REQ-024 (nine shalls) | Strong for the decline, stale, indeterminate and release cases; .1 (the lock exists during the run) and .9 (the replacement folder cannot be created) have no row | rows for REQ-024.1 and REQ-024.9 |
-| 025 | low disk warning | `self.stub.low_disk_warn` (all, tagged `REQ-025.1`, forced by `HP_TEST_FORCE_LOW_DISK`; it also checks .2); README section REQ-025 (three shalls) | Strong for .1 and .2; .3 (no warning with enough space) has no row | row for REQ-025.3 |
+| 024 | concurrent-instance lock | `self.stub.lock_start/.lock_held_message/.lock_held_decline/.lock_held_kept/.lock_held_nostatus/.lock_stale_evict/.lock_indeterminate/.lock_evict_blocked/.lock_no_leak` (all, tagged `REQ-024.1` to `.9`); README section REQ-024 (nine shalls) | Strong; the lock-start row stops a background run, so it depends on the lock appearing before the first download | |
+| 025 | low disk warning | `self.stub.low_disk_warn/.low_disk_continues/.low_disk_absent` (all, tagged `REQ-025.1/.2/.3`, the first two forced by `HP_TEST_FORCE_LOW_DISK`); README section REQ-025 (four shalls) | Strong for .1 to .3 (.3 needs a drive with 2 GB or more free, which every CI runner has; on a shorter drive the row passes with its `inconclusive` flag set); .4 (free space cannot be read) has no row | row for REQ-025.4 (needs a hook that makes the reading fail) |
 | 026 | argv passthrough | helper-level only: `test_exe_smokerun.py`, `test_failfast_probe.py`; Item 67 will cover the bad `%1` | Weak: nothing at batch level | T1 |
 | 027 | honest ambiguous exit | no-EXE branch via `self.exe.build.xfail` (scenario `execfail_runtimefail`, tagged REQ-003); fast-path note via `selfapps_failfast_probe.ps1` `ambiguousNoteFound` | Strong, untagged | T5 |
 | AV | Tier A and optimized build | `self.exe.build.tiera`, `self.exe.tiera.hidden_skip`, `self.optbuild.offer` x4 (u) | Medium: non-gating; Item 80 | Item 35 |

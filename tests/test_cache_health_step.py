@@ -136,7 +136,9 @@ def run_step(run, exact_hit, rc, stub=None):
         env = os.environ.copy()
         env.update({"GITHUB_ENV": str(d / "github_env.txt"), "HP_CACHE_EXACT_HIT": exact_hit,
                     "HP_TEST_STUB_RC": str(rc)})
-        proc = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-Command", ". '%s'" % script],
+        # A single-quoted PowerShell string doubles its apostrophes, so a temp folder with one still reaches the stub.
+        proc = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-Command",
+                               ". '%s'" % str(script).replace("'", "''")],
                               cwd=str(d), env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=HARD_TIMEOUT)
         record = d / "tools" / "record.txt"

@@ -778,6 +778,26 @@ reports the premise failing** (here the offline line; up to three runs, 20 secon
 run's real result so a network that stays down stays red, never retry an outcome with neither line (a real failure), and record
 `attempts` in the row. Do not "fix" it with `pass:true` plus a flag, and do not use "Re-run failed jobs" (duplicate Pages
 artifact, see the GitHub Actions entry): the fix is a new commit. `tests/test_connectivity_online_retry.py` pins the shape.
+---
+
+## A conda call that talks to conda-forge needs one bounded retry, and a 502 on the sharded repodata path does not look like a conda error (Item 92)
+
+Run `41074512594` (PR #513): the first conda dry run in `tests/selfapps_reqspec.ps1` (justme-test) exited 1 on one
+`502 Server Error: Bad Gateway` for a repodata shard, the install and the other dry run in the same run worked, and nine
+`reqspec.*` rows plus the required aggregate check went red for a provider blip. conda's sharded repodata path does not
+wrap the failure: the crash ends in `requests.exceptions.HTTPError: 502 Server Error: Bad Gateway for url: ...msgpack.zst`,
+which holds none of `CondaHTTPError`, `Failed to fetch`, `timed out` or `ConnectionError`. **Rule: a script that runs a
+conda command against conda-forge goes through `Invoke-CondaCommand`** (one more attempt after a short wait, only when
+the output matches `$script:CondaTransientPattern`, never for a solver answer or a 404, at most two attempts, the first
+answer and a one-line notice appended to the log), and the pattern is tested against real conda text in both directions
+(`reqspec.retry.classify`, `tests/test_reqspec_retry.py`). The helper is proven with a stub command that prints the real
+502 line (`reqspec.retry.once`, `.bounded`, `.nontransient`), because a live network can never be made to fail on demand.
+Locally, the same helper runs under `pwsh` on Linux with a PowerShell function named `cmd` standing in for the native
+command (a function shadows an external command), which is how the unit test checks the loop without Windows. A new raw
+`cmd /c $...Command` that reaches the network must go through the helper; the unit test keeps a short allow list for the
+local ones. Not covered by this: the product's own REQ-022 / `:conda_bulk_install` retry detection matches those four
+terms with `findstr`, so the same sharded-path 502 would not be recognised as transient there; that is a product question,
+not a test one.
 
 ---
 
@@ -832,6 +852,23 @@ bytes to `compile` honours a coding cookie and a BOM exactly as the interpreter 
 one in the report:** the first CI run of the regression test failed at a second `py_compile` (the bootstrapper's own
 `~find_entry.py` check), earlier than the entry check, and the row had no field that said so; rows for a bug class
 should record which stage stopped the run, not only that it stopped.
+
+---
+
+## A retry that keys on error text only works for the texts it was written against; test it with the real text and a stub, not a simulated hook (Item 93)
+
+`:conda_bulk_install` and the create flow search conda's output with `findstr` for four phrases. The 502 of run
+`41074512594` printed `requests.exceptions.HTTPError: 502 Server Error: Bad Gateway`, which holds none of them, so the product
+would not have waited and retried for a real user either. The existing hooks (`HP_TEST_FORCE_CONDA_NETWORK_FAIL`) could never
+have shown it: they write the CondaHTTPError text themselves, so they prove the flow and not the detection. **Rule: a test of
+text-keyed detection feeds it the text a real failure produced**, here by running the real code block from `run_setup.bat`
+against a stub program that prints that text and counts its calls (`tests/selfapps_conda_transient.ps1`), with a control
+scenario that uses the old wording so a broken harness is told apart from a missing phrase. Cutting a block out of the batch
+file is cheap to keep honest: the unit test checks the cut labels exist once and that the block reaches only names the driver
+defines. Two batch details from writing the driver: write `echo RC=%X% > file` with a space before the `>` (a digit directly
+before `>` can be read as a handle number), and escape `<` and `>` as `^<` `^>` in an `echo` that prints a URL in angle
+brackets. The phrase list now also holds `Server Error`; a 404 says `Client Error`, so it is not retried, and a 429 (Too Many
+Requests, also `Client Error`) still is not: add it only with its own evidence.
 
 ---
 

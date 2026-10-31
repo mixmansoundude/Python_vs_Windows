@@ -1513,6 +1513,17 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_entryarg.ps1
+
+      # derived requirement: Item 93 -- a conda HTTP 5xx in the unwrapped requests form ("502 Server Error: Bad Gateway",
+      # run 41074512594) must be retried once at the conda bulk install (REQ-005.2) and at the conda create check
+      # (REQ-022.1) like the CondaHTTPError wording. The two code blocks are cut out of run_setup.bat and run against a
+      # stub conda.bat, so no Miniconda and no network are needed. Gating on purpose (aggregate check); real and
+      # justme-test only, because nothing here depends on a provider and justme-test reports first.
+      - name: "Self-test: conda 5xx retry (real and justme-test)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || matrix.mode == 'justme-test') }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_conda_transient.ps1
       # derived requirement: CLAUDE.md Item 73 -- a failed PEP 723 write-back must log the reason uv
       # gave, not only ERROR:uv_rc_1. Gating on purpose (real lane, uv-first); the row is the
       # regression test the fix must turn green. Uses the helper's HP_TEST_PEP723_UV_ERR hook.
@@ -2389,6 +2400,7 @@ jobs:
             tests\~selftest_entryarg\~run.out.txt
             tests/~selftest_entryarg/~bootstrap.status.json
             tests\~selftest_entryarg\~bootstrap.status.json
+            tests/~selftest_conda5xx/**
             tests/~selftest_pep723_uverr/~uverr_bootstrap.log
             tests\~selftest_pep723_uverr\~uverr_bootstrap.log
             tests/~selftest_pep723_uverr/~setup.log

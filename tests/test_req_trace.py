@@ -59,7 +59,9 @@ def _split_tags(raw: str) -> List[str]:
 
 
 def _sub_in_readme(readme_text: str, num: str, sub: str) -> bool:
-    return re.search(r"REQ-%s\.%s(?!\d)" % (num, re.escape(sub)), readme_text) is not None
+    # Not followed by a digit (REQ-005.1 is not REQ-005.11) and not by a dot and a digit (REQ-005.1 is not REQ-005.1.17):
+    # a sub-id that the README only mentions as the front of a longer id is not in the README (CodeRabbit, PR 517).
+    return re.search(r"REQ-%s\.%s(?!\d|\.\d)" % (num, re.escape(sub)), readme_text) is not None
 
 
 def trace_problems(
@@ -242,6 +244,19 @@ def test_subtag_prefix_is_not_confused_with_longer_subrequirement() -> None:
     # README only has REQ-005.11; a tag REQ-005.1 must not pass just because ".11" starts with ".1".
     problems, _ = _check(readme="## [REQ-005] x\nREQ-005.11 only\n", batch="REQ-005\n", tags=("req = 'REQ-005.1'",))
     assert any("REQ-005.1" in p for p in problems)
+
+
+def test_subtag_that_is_only_the_front_of_a_nested_id_is_not_in_the_readme() -> None:
+    # README has only REQ-005.1.17; a tag REQ-005.1 must not pass on the front of it, a tag REQ-005.1.17 does, and a
+    # sentence-ending dot after the id (no digit behind it) still counts as the id.
+    readme = "## [REQ-005] x\nREQ-005.1.17 is a shall of the third level\n"
+    problems, _ = trace_problems(readme, "REQ-005\n", ("req = 'REQ-005.1'",), {}, {})
+    assert any("REQ-005.1" in p for p in problems)
+    ok, _ = trace_problems(readme, "REQ-005\n", ("req = 'REQ-005.1.17'",), {}, {})
+    assert ok == []
+    ended = "## [REQ-005] x\nSee REQ-005.1. It is a shall.\n"
+    ok, _ = trace_problems(ended, "REQ-005\n", ("req = 'REQ-005.1'",), {}, {})
+    assert ok == []
 
 
 def test_a_comma_list_is_checked_part_by_part() -> None:

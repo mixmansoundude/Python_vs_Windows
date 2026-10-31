@@ -14,7 +14,7 @@
 #     the same unconditional prompt text, and that the run footprint stays at exactly one
 #     execution (a single "Entry smoke exit=0" line).
 #
-#   self.checkpoint.risk    - README REQ-018.2 and REQ-018.8: read from the console text of the two runs above, the
+#   self.checkpoint.risk    - README REQ-018.8 (REQ-018.2 stays untraced, see UNTRACED_SHALLS): read from the console text of the two runs above, the
 #     prompt (from its heading to the line that records the decision) says "running it twice could cause harm", so
 #     the user is told the risk before choosing. An empty block (heading or decision line missing) fails the row.
 #
@@ -212,7 +212,7 @@ Write-NdjsonRow ([ordered]@{
     details = $declineDetails
 })
 
-# --- Risk wording (README REQ-018.2 and REQ-018.8): the prompt names the risk of running the program twice ---
+# --- Risk wording (README REQ-018.8): the prompt names the risk of running the program twice ---
 # Judged on the console text of the two scenarios above. The accepted and the declined run print the same prompt, so
 # both must say it, and each must have a prompt block at all.
 $riskMarker   = 'running it twice could cause harm'
@@ -227,7 +227,7 @@ $riskShown = $accBlock
 if ($riskShown.Length -gt 500) { $riskShown = $riskShown.Substring(0, 500) }
 Write-NdjsonRow ([ordered]@{
     id      = 'self.checkpoint.risk'
-    req     = 'REQ-018.2, REQ-018.8'
+    req     = 'REQ-018.8'
     pass    = $riskPass
     desc    = 'Post-execution checkpoint: the prompt tells the user that running the program twice could cause harm, in the accepted and the declined run'
     details = [ordered]@{

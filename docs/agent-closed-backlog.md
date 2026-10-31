@@ -3931,6 +3931,121 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Not covered.** The computed-name import of the test program is missing again in any later rebuild unless hidden-import
   recovery fires, so the second bootstrap judges the lists and the log, not the program's output.
 
+### Item 92 (closed 2026-10-31, PR #515; filed 2026-10-30 by the coordinator from PR #513's red run)
+
+- **The problem.** Run `41074512594` (PR #513, `justme-test` lane): the first conda dry run in `tests/selfapps_reqspec.ps1`
+  exited 1 on one `502 Server Error: Bad Gateway` for a repodata shard. The install and the second dry run in the same run
+  worked, yet nine `reqspec.*` rows and the required aggregate check went red for a provider blip that touches nothing in the
+  diff. The script had no retry at all; the product's own REQ-022 retry is a different code path and does not cover a test
+  script's conda calls.
+- **What shipped.** `Invoke-CondaCommand` in `tests/selfapps_reqspec.ps1` runs a conda network call, and on a non-zero exit
+  whose output matches `$script:CondaTransientPattern` (a 5xx status, a failed connection, a read or connect timeout) waits
+  15 seconds and runs it once more. At most two attempts, never for a solver answer or a 404, the first answer and a one-line
+  notice are appended to the script's log. The five network call sites (`conda create`, the bulk install, the good dry run, the
+  ingest dry run and the dry run that is expected to fail) go through it and record `attempts` in their row details; the local
+  config and import calls stay raw. CodeRabbit pointed out that `reqspec.conda.dryrun.failcase` passed on any non-zero exit,
+  so a 502 on that call would have passed it without proving the constraint was rejected: its verdict is now
+  `Test-FailcaseRejected` (non-zero exit and no transient answer in the output), the call retries once like the others, and
+  the row records `transientAnswer`.
+- **Rows and tests.** Four rows prove the helper with a stub command that prints the real 502 line (`reqspec.retry.once`,
+  `.bounded`, `.nontransient`, `.classify`; tag `N/A`, the script's own helper). `tests/test_reqspec_retry.py` cuts the helper
+  out of the script and runs it under real `pwsh` with a function named `cmd` standing in for the native command, so the loop
+  is checked on Linux as well; static pins keep the helper single, bounded (at most two attempts, a wait of 1 to 30 seconds),
+  and the raw `cmd /c` calls on an allow list.
+- **Red first.** Run `41149444391` (head `7d7f9db`, tests only, helper with `$maxAttempts = 1`): on every lane
+  `reqspec.retry.once` and `.bounded` were red with `attempts` 1 and the 502 line as the output (the right reason),
+  `.nontransient` and `.classify` green, and `self.pytest.unit` red; no other row of the eight lanes was red. The fix was
+  pushed after the whole run had finished and every row was read (the check-in came after the last lane ended).
+- **Not covered.** The product's own detection, which missed the same text, is Item 93 (same PR).
+
+### Item 93 (closed 2026-10-31, PR #515; filed 2026-10-30 by the coordinator while reading Item 92's evidence)
+
+- **The problem.** conda's sharded repodata path does not wrap a failed shard download: the crash ends in
+  `requests.exceptions.HTTPError: 502 Server Error: Bad Gateway for url: ...msgpack.zst` (run `41074512594`). The two places
+  in `run_setup.bat` that decide whether a conda failure is transient, the create check (`:conda_create_check_transient`,
+  REQ-022.1) and the bulk install (`:conda_bulk_install`, REQ-005.2), searched the conda output for `CondaHTTPError`,
+  `Failed to fetch`, `timed out` and `ConnectionError`, none of which that text holds. A user who hit the 502 got no wait and
+  no second attempt, and went on down the failure chain (a fallback provider, or a failed install) for a blip.
+- **What shipped.** Both `findstr /i` lines gained a fifth phrase, `Server Error`, with a `rem derived requirement:` comment.
+  It matches `502 Server Error` and `503 Server Error` in any wrapping, case blind. It cannot match a 404, which conda words
+  as `404 Client Error`, nor a solver answer; those are still not retried.
+- **Tests.** `tests/selfapps_conda_transient.ps1` (`real` and `justme-test`, gating from the first run) cuts the two real
+  blocks out of `run_setup.bat` at their labels, runs each in a driver with a stub `conda.bat` that counts its calls and prints
+  the real 502 line, and checks the counted calls and the log: `self.conda.retry5xx.control` (the old wording is retried, which
+  proves the harness itself), `.bulk` and `.create` (a 502 is retried once and the second answer is used), `.bounded` (a 502
+  that stays is tried exactly twice and reported failed), `.nonretry` (a solver answer and a 404 run once). The same driver
+  stays honest in `tests/test_conda_transient_terms.py`, which keeps the two sites on one phrase list, tests the list against
+  real conda text with findstr's rules (case blind, literal, OR) and pins that the cut-out blocks reach only names the driver
+  defines.
+- **Red first.** Same run `41149444391`: on `real` and `justme-test` `self.conda.retry5xx.bulk` was red with 1 call
+  instead of 2 (`RC=1`, no retry line), `.create` red with 0 retry calls and `RESULT=failed`, `.bounded` red the same way,
+  while the harness check `.control` (the old `CondaHTTPError` wording is retried: bulk 2 calls `RC=0`, create 1 call
+  `RESULT=done`) and `.nonretry` (a solver answer and a 404 run once) were green, so the stub conda and the cut-out blocks
+  worked and only the missing phrase was red. `self.pytest.unit` red on every lane (the phrase test); nothing else.
+- **Documented here, for the maintainer's README.** REQ-022.1 gains the fifth phrase (the unwrapped `requests` HTTP error
+  text), REQ-022.3 says none of the five phrases, and REQ-005.2's signature list follows; the wording went to the PR body for
+  lane 3, which owns README.md.
+
+### Item 94a (closed 2026-10-31, PR #517; filed 2026-10-30 from the shall-tracing work)
+
+- **The problem.** README REQ-018.2 [critical] asks the prompt that offers a further run to name the risk that the program may
+  not be safe to run twice, REQ-018.8 asks it of the post-execution checkpoint, REQ-018.25 of the Miniconda choice, and
+  REQ-021.3 asks the syntax-error report to say the mistake is in the user's program and not in installing dependencies or
+  building the EXE. Only the optimized-build prompt said "running it twice could cause harm"; the checkpoint, the
+  runtime-install offer and the last-chance [C] choice said only that the program runs again, and the syntax-error report named
+  the file and the error but not whose mistake it was.
+- **What shipped.** Four lines in `run_setup.bat`: the sentence in each of the three prompt blocks (the [C] one sits between
+  [C] and [N]) and the report's "The mistake is in your own program" with the two things it is not. No README change: the shalls
+  were right and the product was not.
+- **Rows and tests.** `self.checkpoint.risk` (REQ-018.8), `self.runtime.install.risk` (REQ-018, the goal), `self.lastchance.risk`
+  (REQ-018.25) and `self.preflight.attribution` (REQ-021.3) read the console text of real runs, each taking the prompt block from
+  its heading to the line that records the decision, so an empty block fails the row. `tests/test_rerun_prompts.py` pins the same
+  in the batch with synthetic cases that prove each rule can fail. After review the attribution check reads the sentence as an
+  own-program statement plus the clauses that follow a `not`, so "not dependencies, but the EXE build caused it" cannot pass.
+- **Red first.** Run `41172556451` (head `a5eac37`, tests only): on `real` the four rows and `self.pytest.unit` were red, on
+  `conda-full` `self.checkpoint.risk`, `self.preflight.attribution` and `self.pytest.unit` (the other two rows are real-lane only),
+  on the other five lanes only `self.pytest.unit`. Fix run `41191314038` (head `0866748`): no red row on any of the eight lanes.
+- **Not covered.** REQ-018.2 itself is credited to no row: two starts without a prompt remain (the failure-hint re-run, Item 96,
+  and the repair loop's starts, Item 97), so its entry in `UNTRACED_SHALLS` stays a `gap:` entry until a row shows that nothing
+  starts the program a further time without a question.
+
+### Item 94b (closed 2026-10-31, PR #517; filed 2026-10-30 from the shall-tracing work)
+
+- **The problem.** README REQ-018.9: with `NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` set, the elective offers decline without
+  waiting. The four gates (checkpoint, optimized build, runtime install, last chance) already did, but no row showed it for each
+  signal, and a run with the prompt unreachable looks the same as a run that declined.
+- **What shipped.** No product change. `tests/selfapps_offers_noninteractive.ps1` (`real` lane, gating, 600 seconds per run) runs
+  the bootstrapper on two small programs (one that raises a computed-name import error and exits 0, one that exits 3) with
+  exactly one signal set, the others scrubbed and standard input closed. A run passes when each offer reached its heading, none of
+  the interactive prompt text follows it and the decline line is logged (`self.offers.noinput`, `.nonint`, `.cilane`). A fourth run
+  with no signal must show the prompts (`self.offers.control`), which is what stops the three from passing on prompts that never
+  appear. The launch ledger shows the missing-package program started once. `tests/test_offers_noninteractive.py` pins the shape
+  of the four gates in the batch (heading, three live `defined` lines, the read, a decline log line the script's regexes match),
+  the script's literal ids and tags, the scrub, the exit codes and the gating step.
+- **Evidence.** Fix run `41191314038` (head `0866748`): the four rows true on `real`, no red row on any lane. The failing program
+  is not counted by the ledger because the failure-hint re-run still starts a failed EXE a second time (Item 96).
+
+### Item 95 (closed 2026-10-31, PR #517; filed 2026-10-30 from reading the cache lane's step)
+
+- **The problem.** The cache lane's step "Validate restored conda binary" built `$exactArgs = @('-ExactHit')` and splatted the
+  array into `tools/ci_cache_selfheal.ps1 -CondaDir ...`. An array splat hands its items over as positional values, so PowerShell
+  offered the string `-ExactHit` to a script with no positional parameter left and stopped with "A positional parameter cannot be
+  found that accepts argument '-ExactHit'". The runner's pwsh shell uses `$ErrorActionPreference = 'stop'`, so on every exact
+  cache hit the step died before the health check ran, and `continue-on-error` kept the lane green: the exit-1 branch (a
+  corrupted exact-key restore) could not fire. A prefix match and a miss pass no switch and were fine.
+- **What shipped.** A hashtable splat (`$extra = @{ ExactHit = $true }`, then `@extra`) in the step, and a lessons-learned entry.
+- **Tests.** `tests/test_cache_health_step.py` (inside `self.pytest.unit`, so every lane) runs the step's own text through real
+  `pwsh` the way the runner does, against a stub with the real script's parameter block, and checks what the stub was given and
+  the three `HP_CACHE_*` flags for exit codes 1, 2 and 3. A repository-wide rule fails any call of a `.ps1` file in the workflows,
+  `tools/` or `tests/` that splats an array. Controls: the old shape fails with PowerShell's own message, a hashtable passes every
+  row. After review the test passes the script path with single quotes doubled, so an apostrophe in the temp folder's name cannot
+  break it.
+- **Red first.** Run `41172556451` (head `a5eac37`, workflow unchanged): `self.pytest.unit` red on all eight lanes, together with
+  the Item 94a pins of the same run; the exact-hit tests and the repository rule were among the failing tests. Fix run
+  `41191314038`: green on all eight.
+- **Not covered.** The step stays informational by design (`continue-on-error`, `exit 0`); only its body is proven, not that a
+  corrupted exact-key restore is healed in a live run.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

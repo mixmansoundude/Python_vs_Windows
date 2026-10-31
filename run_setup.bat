@@ -1251,6 +1251,9 @@ rem to test CLAUDE.md Active Backlog Item 23's cascade-restore fix, which specif
 rem genuine (not HP_TEST_FORCE_CONDA_FAIL-style) failure reaching :conda_create_failed during a
 rem cascade re-entry.
 if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_test_network_fail
+rem [TEST] HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL: fail the first attempt with output that holds none of the four
+rem transient phrases, so the check below must stop without a second attempt (README REQ-022.3).
+if "%HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL%"=="1" goto :conda_create_test_plain_fail
 rem derived requirement: HP_PYSPEC_WRITEBACK marks a PYSPEC value that was
 rem self-written moments ago by a DIFFERENT provider's own resolved interpreter
 rem (see :write_runtime_txt and its two inline duplicates) -- an artifact of
@@ -1291,6 +1294,10 @@ if defined HP_CONDA_PYSPEC_SKIP (
 )
 set "HP_CCREATE_RC=%ERRORLEVEL%"
 goto :conda_create_have_rc
+:conda_create_test_plain_fail
+echo PackagesNotFoundError: the requested packages are not available in the channel, simulated > "~conda_create.tmp"
+set "HP_CCREATE_RC=1"
+goto :conda_create_have_rc
 :conda_create_test_network_fail
 rem [TEST] HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL: simulate a transient CondaHTTPError on the
 rem first conda-create attempt only (mirrors HP_TEST_FORCE_CONDA_NETWORK_FAIL for bulk-install).
@@ -1303,7 +1310,8 @@ if not "%HP_CCREATE_RC%"=="0" goto :conda_create_check_transient
 del "~conda_create.tmp" >nul 2>&1
 goto :conda_create_done
 :conda_create_check_transient
-findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_create.tmp" >nul 2>&1
+rem derived requirement: Server Error is the 5xx wording conda's sharded repodata path prints unwrapped, for example HTTPError: 502 Server Error: Bad Gateway, with none of the other four phrases (Item 93). A 404 says Client Error and stays a failure. Keep this list equal to the one in :conda_bulk_install.
+findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" /c:"Server Error" "~conda_create.tmp" >nul 2>&1
 set "HP_CCREATE_TRANSIENT_RC=%ERRORLEVEL%"
 del "~conda_create.tmp" >nul 2>&1
 if not "%HP_CCREATE_TRANSIENT_RC%"=="0" goto :conda_create_failed
@@ -6566,7 +6574,8 @@ if "%HP_CBULK_RC%"=="0" (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 0
 )
-findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_bulk.tmp" >nul 2>&1
+rem derived requirement: same phrase list as the conda create check, Server Error included for an unwrapped 5xx (Item 93). Keep the two equal.
+findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" /c:"Server Error" "~conda_bulk.tmp" >nul 2>&1
 if errorlevel 1 (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 1
