@@ -3986,6 +3986,66 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   text), REQ-022.3 says none of the five phrases, and REQ-005.2's signature list follows; the wording went to the PR body for
   lane 3, which owns README.md.
 
+### Item 94a (closed 2026-10-31, PR #517; filed 2026-10-30 from the shall-tracing work)
+
+- **The problem.** README REQ-018.2 [critical] asks the prompt that offers a further run to name the risk that the program may
+  not be safe to run twice, REQ-018.8 asks it of the post-execution checkpoint, REQ-018.25 of the Miniconda choice, and
+  REQ-021.3 asks the syntax-error report to say the mistake is in the user's program and not in installing dependencies or
+  building the EXE. Only the optimized-build prompt said "running it twice could cause harm"; the checkpoint, the
+  runtime-install offer and the last-chance [C] choice said only that the program runs again, and the syntax-error report named
+  the file and the error but not whose mistake it was.
+- **What shipped.** Four lines in `run_setup.bat`: the sentence in each of the three prompt blocks (the [C] one sits between
+  [C] and [N]) and the report's "The mistake is in your own program" with the two things it is not. No README change: the shalls
+  were right and the product was not.
+- **Rows and tests.** `self.checkpoint.risk` (REQ-018.8), `self.runtime.install.risk` (REQ-018, the goal), `self.lastchance.risk`
+  (REQ-018.25) and `self.preflight.attribution` (REQ-021.3) read the console text of real runs, each taking the prompt block from
+  its heading to the line that records the decision, so an empty block fails the row. `tests/test_rerun_prompts.py` pins the same
+  in the batch with synthetic cases that prove each rule can fail. After review the attribution check reads the sentence as an
+  own-program statement plus the clauses that follow a `not`, so "not dependencies, but the EXE build caused it" cannot pass.
+- **Red first.** Run `41172556451` (head `a5eac37`, tests only): on `real` the four rows and `self.pytest.unit` were red, on
+  `conda-full` `self.checkpoint.risk`, `self.preflight.attribution` and `self.pytest.unit` (the other two rows are real-lane only),
+  on the other five lanes only `self.pytest.unit`. Fix run `41191314038` (head `0866748`): no red row on any of the eight lanes.
+- **Not covered.** REQ-018.2 itself is credited to no row: two starts without a prompt remain (the failure-hint re-run, Item 96,
+  and the repair loop's starts, Item 97), so its entry in `UNTRACED_SHALLS` stays a `gap:` entry until a row shows that nothing
+  starts the program a further time without a question.
+
+### Item 94b (closed 2026-10-31, PR #517; filed 2026-10-30 from the shall-tracing work)
+
+- **The problem.** README REQ-018.9: with `NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` set, the elective offers decline without
+  waiting. The four gates (checkpoint, optimized build, runtime install, last chance) already did, but no row showed it for each
+  signal, and a run with the prompt unreachable looks the same as a run that declined.
+- **What shipped.** No product change. `tests/selfapps_offers_noninteractive.ps1` (`real` lane, gating, 600 seconds per run) runs
+  the bootstrapper on two small programs (one that raises a computed-name import error and exits 0, one that exits 3) with
+  exactly one signal set, the others scrubbed and standard input closed. A run passes when each offer reached its heading, none of
+  the interactive prompt text follows it and the decline line is logged (`self.offers.noinput`, `.nonint`, `.cilane`). A fourth run
+  with no signal must show the prompts (`self.offers.control`), which is what stops the three from passing on prompts that never
+  appear. The launch ledger shows the missing-package program started once. `tests/test_offers_noninteractive.py` pins the shape
+  of the four gates in the batch (heading, three live `defined` lines, the read, a decline log line the script's regexes match),
+  the script's literal ids and tags, the scrub, the exit codes and the gating step.
+- **Evidence.** Fix run `41191314038` (head `0866748`): the four rows true on `real`, no red row on any lane. The failing program
+  is not counted by the ledger because the failure-hint re-run still starts a failed EXE a second time (Item 96).
+
+### Item 95 (closed 2026-10-31, PR #517; filed 2026-10-30 from reading the cache lane's step)
+
+- **The problem.** The cache lane's step "Validate restored conda binary" built `$exactArgs = @('-ExactHit')` and splatted the
+  array into `tools/ci_cache_selfheal.ps1 -CondaDir ...`. An array splat hands its items over as positional values, so PowerShell
+  offered the string `-ExactHit` to a script with no positional parameter left and stopped with "A positional parameter cannot be
+  found that accepts argument '-ExactHit'". The runner's pwsh shell uses `$ErrorActionPreference = 'stop'`, so on every exact
+  cache hit the step died before the health check ran, and `continue-on-error` kept the lane green: the exit-1 branch (a
+  corrupted exact-key restore) could not fire. A prefix match and a miss pass no switch and were fine.
+- **What shipped.** A hashtable splat (`$extra = @{ ExactHit = $true }`, then `@extra`) in the step, and a lessons-learned entry.
+- **Tests.** `tests/test_cache_health_step.py` (inside `self.pytest.unit`, so every lane) runs the step's own text through real
+  `pwsh` the way the runner does, against a stub with the real script's parameter block, and checks what the stub was given and
+  the three `HP_CACHE_*` flags for exit codes 1, 2 and 3. A repository-wide rule fails any call of a `.ps1` file in the workflows,
+  `tools/` or `tests/` that splats an array. Controls: the old shape fails with PowerShell's own message, a hashtable passes every
+  row. After review the test passes the script path with single quotes doubled, so an apostrophe in the temp folder's name cannot
+  break it.
+- **Red first.** Run `41172556451` (head `a5eac37`, workflow unchanged): `self.pytest.unit` red on all eight lanes, together with
+  the Item 94a pins of the same run; the exact-hit tests and the repository rule were among the failing tests. Fix run
+  `41191314038`: green on all eight.
+- **Not covered.** The step stays informational by design (`continue-on-error`, `exit 0`); only its body is proven, not that a
+  corrupted exact-key restore is healed in a live run.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
@@ -4060,8 +4120,9 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   pull request are the evidence) and shows the error only on a pull request that touches the file, so it never ran,
   which is what `docs/open-questions.md` Q5 asked about. Fix: the spelling, plus `labels: ["no-automerge"]`, because
   `pr-automerge.yml` arms auto-merge for any same-repo pull request without it and a Dependabot-triggered run (no
-  repository secrets) reaches its `GITHUB_TOKEN` step; whether such pull requests should merge themselves is the new
-  Q6. Test first: `tests/test_dependabot_config.py` (text based, option names from Dependabot's options reference,
+  repository secrets) reaches its `GITHUB_TOKEN` step; whether such pull requests should merge themselves was the new
+  Q6 (answered 2026-10-31: keep the label for the first few, then let them merge on green; CLAUDE.md's GitHub Actions
+  entry). Test first: `tests/test_dependabot_config.py` (text based, option names from Dependabot's options reference,
   synthetic cases for each rule) was pushed alone (`a803e5d`), and run `41149101367` read it red on the four lanes
   that finish first (contract-uv, contract-uv-fail, uv-dl-fallback, justme-test): `self.pytest.unit` failed on
   `RealFile::test_dependabot_can_read_the_config` alone (1181 passed, 3 skipped), its message naming line 18 and the

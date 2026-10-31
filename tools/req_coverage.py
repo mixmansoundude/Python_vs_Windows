@@ -19,7 +19,8 @@ def compute_coverage(ndjson_dir: Path) -> Dict[str, str]:
 
     Rules:
     - Parse all *.ndjson files under ndjson_dir recursively.
-    - For each row that has a "req" field, record the pass/fail outcome.
+    - For each row that has a "req" field, record the pass/fail outcome. A row that proves several shalls
+      lists them separated by commas ("REQ-009, REQ-018.27"); each one is credited with the row's outcome.
     - If any row for a REQ is fail -> "fail"; else "pass".
     - REQs with no rows are not included (caller may treat absence as "missing").
     """
@@ -42,9 +43,10 @@ def compute_coverage(ndjson_dir: Path) -> Dict[str, str]:
             if not req:
                 continue
             pass_val = bool(row.get("pass"))
-            if req not in req_results:
-                req_results[req] = []
-            req_results[req].append(pass_val)
+            for part in str(req).split(","):
+                part = part.strip()
+                if part:
+                    req_results.setdefault(part, []).append(pass_val)
 
     coverage: Dict[str, str] = {}
     for req in sorted(req_results):

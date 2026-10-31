@@ -56,14 +56,17 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
+# A call that proves a numbered shall passes a -Tag hashtable that holds the req key (several shalls: a comma list). The
+# tag stays a literal at the call site because tests/test_req_shall_trace.py reads it as static text.
 function Write-DepRow {
     param(
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)]$Pass,
         [Parameter(Mandatory)][string]$Desc,
-        [Parameter(Mandatory)][hashtable]$Details
+        [Parameter(Mandatory)][hashtable]$Details,
+        [hashtable]$Tag = @{ req = 'REQ-005.1' }
     )
-    Write-NdjsonRow ([ordered]@{ id = $Id; req = 'REQ-005.1'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = $Id; req = $Tag.req; pass = $Pass; desc = $Desc; details = $Details })
 }
 
 $allIds = @(
@@ -244,7 +247,7 @@ $d['requirementsAfter'] = @(($reqAfter3 -split "`r?`n") | Where-Object { $_ })
 $d['requirementsHasAll'] = [bool]$reqHasAll3; $d['mergeLine'] = [bool]$mergeLine3; $d['noOverrideClaim'] = [bool]$noOverrideClaim3
 $pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and $reqHasAll3 -and $mergeLine3 -and $noOverrideClaim3
 if (-not $pass) { $anyRed = $true }
-Write-DepRow -Id 'self.depsource.all_three' -Pass ([bool]$pass) -Desc 'REQ-005.1: with PEP 723, pyproject.toml and requirements.txt all present their lists are merged, all three packages are installed, requirements.txt holds all three, the console reports the merge and does not claim an override' -Details $d
+Write-DepRow -Id 'self.depsource.all_three' -Pass ([bool]$pass) -Desc 'REQ-005.1: with PEP 723, pyproject.toml and requirements.txt all present their lists are merged, all three packages are installed, requirements.txt holds all three, the console reports the merge and does not claim an override' -Details $d -Tag @{ req = 'REQ-005.1.1' }
 
 # ---- 4: malformed PEP 723 header falls through to requirements.txt, with the documented WARN
 $c = Invoke-Cell -Name 'pep723_malformed' -Files @{ 'cell_app.py' = ($pep723Open + $stubPlain); 'requirements.txt' = "termcolor`n" }
@@ -254,7 +257,7 @@ $d = Get-CellDetails -Cell $c -Verdict $v -ExpectedSource 'requirements.txt' -Ex
 $d['warnShown'] = [bool]$warnShown
 $pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and $warnShown
 if (-not $pass) { $anyRed = $true }
-Write-DepRow -Id 'self.depsource.pep723_malformed' -Pass ([bool]$pass) -Desc 'REQ-005.1: a malformed PEP 723 header prints the documented WARN and the run falls through to requirements.txt' -Details $d
+Write-DepRow -Id 'self.depsource.pep723_malformed' -Pass ([bool]$pass) -Desc 'REQ-005.1: a malformed PEP 723 header prints the documented WARN and the run falls through to requirements.txt' -Details $d -Tag @{ req = 'REQ-005.1.4' }
 
 # ---- 5: pyproject without [project].dependencies falls through to requirements.txt
 $c = Invoke-Cell -Name 'pyproject_nodeps' -Files @{ 'cell_app.py' = $stubPlain; 'pyproject.toml' = $pyprojectNoDeps; 'requirements.txt' = "termcolor`n" }
@@ -289,7 +292,7 @@ $noOverrideClaim8 = -not ($c.Log -match 'overrides requirements\.txt')
 $d['mergeLine'] = [bool]$mergeLine8; $d['noOverrideClaim'] = [bool]$noOverrideClaim8
 $pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and $mergeLine8 -and $noOverrideClaim8
 if (-not $pass) { $anyRed = $true }
-Write-DepRow -Id 'self.depsource.requirements_pyproject' -Pass ([bool]$pass) -Desc 'REQ-005.1: pyproject.toml and requirements.txt without a header are merged, both packages are installed and the console does not claim an override' -Details $d
+Write-DepRow -Id 'self.depsource.requirements_pyproject' -Pass ([bool]$pass) -Desc 'REQ-005.1: pyproject.toml and requirements.txt without a header are merged, both packages are installed and the console does not claim an override' -Details $d -Tag @{ req = 'REQ-005.1.1' }
 
 # ---- 9: one package pinned three ways; the header pin wins and the console names the conflict
 $pin723 = "# /// script`n# dependencies = [`n#     `"six==1.17.0`",`n# ]`n# ///`n"
@@ -303,7 +306,7 @@ $reqPinned = $reqAfter9 -match '(?m)^six==1\.17\.0\s*$'
 $d['installedSixVersion'] = $sixVersion; $d['conflictLine'] = [bool]$conflictLine; $d['requirementsHoldsWinner'] = [bool]$reqPinned
 $pass = $v.SourceOk -and $v.WatchedOk -and $v.Ran -and ($sixVersion -eq '1.17.0') -and $conflictLine -and $reqPinned
 if (-not $pass) { $anyRed = $true }
-Write-DepRow -Id 'self.depsource.conflict' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package pinned differently in the three lists is installed at the header pin, requirements.txt then holds that pin, and the console names the conflict and the winner' -Details $d
+Write-DepRow -Id 'self.depsource.conflict' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package pinned differently in the three lists is installed at the header pin, requirements.txt then holds that pin, and the console names the conflict and the winner' -Details $d -Tag @{ req = 'REQ-005.1.2, REQ-005.1.3' }
 
 if ($anyRed) { exit 1 }
 exit 0

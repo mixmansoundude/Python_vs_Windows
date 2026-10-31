@@ -736,6 +736,29 @@ an older sha.
 
 ---
 
+## Pass a switch to a PowerShell script with a hashtable splat: an array splat hands `-Name` over as a positional string (Item 95)
+
+The cache lane's "Validate restored conda binary" step built `$exactArgs = @('-ExactHit')` and called
+`& .\tools\ci_cache_selfheal.ps1 -CondaDir '...' @exactArgs`. Splatting an ARRAY passes its items as positional values, so
+the script was offered the string `-ExactHit` as a value, had no positional parameter left (`-CondaDir` is bound by name),
+and PowerShell stopped with `A positional parameter cannot be found that accepts argument '-ExactHit'`. GitHub's `pwsh`
+shell runs with `$ErrorActionPreference = 'stop'`, so on every EXACT cache hit (`cache-hit` is `'true'`, the ordinary case)
+the step died before the health check ran, and `continue-on-error: true` plus the trailing `exit 0` kept the lane green:
+the exit-1 branch of `tools/ci_cache_selfheal.ps1` (a corrupted exact-key restore) could not fire. A miss and a prefix
+match pass no switch, so those runs were fine. **Rule: pass a switch or a named parameter to a PowerShell script with a
+hashtable splat (`$extra = @{ ExactHit = $true }`, then `@extra`); an array splat is for native executables, which receive
+the text as argv.** (A script or function whose `param` block has no `[Parameter()]` or `[CmdletBinding()]` attribute
+swallows the stray value into `$args` without an error, which hides the bug the other way round.)
+A step that is informational by design (`continue-on-error`, `exit 0`) cannot show that its body ran, so it needs a test
+that runs the body: `tests/test_cache_health_step.py` (inside `self.pytest.unit`) runs the real step text
+through `pwsh` the way the runner does against a stub with the real script's parameter block, and fails the repository if any
+workflow, `tools/` or `tests/` file splats an array into a call of a `.ps1` file. Reproduce locally (single quotes
+around the whole command, or bash expands the `$` names): `pwsh -Command 'function f { param([Parameter(Mandatory = $true)]
+[string]$A, [switch]$S) "S=$($S.IsPresent)" }; $x = @("-S"); f -A 1 @x'` fails with the positional-parameter error, and
+`$h = @{ S = $true }; f -A 1 @h` prints `S=True`.
+
+---
+
 ## A bot config with one unknown option is rejected as a whole, and its only error is a check run on a pull request that touches it (Dependabot, Item 90)
 
 `.github/dependabot.yml` was added 2026-08-17 with `open-pull-request-limit: 5`; the option is
@@ -985,6 +1008,19 @@ batch clears it before the launch and reads it after. Test the negative controls
 earlier tier) as well as the positive case; a negative control passes before the fix for the wrong reason, so the
 red proof is the positive rows.
 
+**"Did not wait" is proven by what was not shown, and only next to a run that does wait** (Item 94b, REQ-018.9). The
+decline line of an elective offer is logged by the auto-decline branch and also by an interactive read that got end of
+file, so the line alone cannot tell them apart. `tests/selfapps_offers_noninteractive.ps1` closes standard input
+(`< nul`; an open, silent one would also hang the final `pause` of a run that sets only NOINPUT), takes one signal per
+scenario with the others scrubbed in the launched shell, and passes a run only when the offer's heading was reached, the
+interactive prompt text is absent after the heading and the decline line is present (the last-chance offer logs
+`automated` for a skipped read and `neither` for one that was asked). A fourth scenario with no signal must show the
+prompts, which is what stops the other three from passing because a prompt never appears. No single program triggers all
+four offers (the optimized build needs a program that exits 0, the last chance one that fails, the install offer a
+missing module), so two small programs share the scenarios. The launch ledger counts program starts, so the same script
+also shows that the missing-package program runs exactly once without consent; the failing program is not counted,
+because the hint re-run starts a failed EXE a second time (Item 96).
+
 ---
 
 ## A test that reads the redirected console log cannot see `[DEBUG]`/`[TRACE]` lines, and a delete is not a guard
@@ -1197,7 +1233,9 @@ busts on any bootstrapper edit; a `pipreqs_version` suffix busts on a pin change
 
 **Three-layer anti-corruption chain, keyed on `HP_CACHE_CORRUPTED`:**
 1. Health check on restore (`conda.bat info`) -- sets the flag on failure but `exit 0`s regardless
-   (informational, never fails the step outright).
+   (informational, never fails the step outright). On an EXACT cache hit the step passes `-ExactHit` to the script
+   (exit 1 = corrupted, flagged, not healed); until Item 95 the array splat that carried the switch threw instead,
+   so this layer never ran on an exact hit (see the splat entry above).
 2. Bootstrap-failure fallback -- if `run_setup.bat` itself fails in this lane even with a
    healthy-looking cache, this ALSO sets the flag.
 3. Skip path -- when the flag is set, later steps write placeholder NDJSON rows
