@@ -212,7 +212,7 @@ if ($runReal) {
     if (-not $iPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.provider.invalid'
-        req     = 'REQ-009'
+        req     = 'REQ-009.16'
         pass    = $iPass
         desc    = 'a PVW_PROVIDER value other than conda stops the run with one error before any uv or conda work, and the value is never echoed'
         details = $badDetails
@@ -229,7 +229,7 @@ if ($runReal) {
     if (-not $gPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.provider.miniconda_gone'
-        req     = 'REQ-009'
+        req     = 'REQ-009.13'
         pass    = $gPass
         desc    = 'a memory file that names conda is cleared, with a visible line, when Miniconda is not installed, and the normal order runs'
         details = [ordered]@{ exitCode = $g.RunExit; precondition = $gPrecond; cleared = $gCleared; visibleOnConsole = $gVisible; normalOrder = $gNormal; status = $g.Status }
@@ -246,7 +246,7 @@ if ($runReal) {
     if (-not $rPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.provider.unreadable'
-        req     = 'REQ-009'
+        req     = 'REQ-009.14'
         pass    = $rPass
         desc    = 'a memory file the bootstrapper cannot read is ignored with a visible warning, left in place, and the normal order runs'
         details = [ordered]@{ exitCode = $r.RunExit; precondition = $rPrecond; warned = $rWarned; normalOrder = $rNormal; fileKept = $rKept; status = $r.Status }
@@ -289,7 +289,7 @@ if ($runUv) {
     if (-not $cfPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.provider.forced'
-        req     = 'REQ-009'
+        req     = 'REQ-009.15'
         pass    = $cfPass
         desc    = 'PVW_PROVIDER=conda acquires Miniconda, never reuses the uv venv, ignores an exact pin the bootstrapper itself wrote earlier, and writes no memory file'
         details = [ordered]@{
@@ -317,7 +317,7 @@ if ($runUv) {
     if (-not $mPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.provider.remember'
-        req     = 'REQ-009'
+        req     = 'REQ-009.9, REQ-009.10, REQ-009.11, REQ-009.12'
         pass    = $mPass
         desc    = 'after a run that only worked on conda the next run, after the inputs were edited, starts at conda, says so and how to reset, and skips uv'
         details = [ordered]@{
@@ -337,7 +337,7 @@ if ($runUv) {
     if (-not $sPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.provider.forced_stop'
-        req     = 'REQ-009'
+        req     = 'REQ-009.15'
         pass    = $sPass
         desc    = 'when conda cannot solve under PVW_PROVIDER=conda the run stops there with a hint and no other provider is tried'
         details = [ordered]@{ exitCode = $s.RunExit; reachedConda = $sReachedConda; hintShown = $sHint; noOtherProvider = $sNoCascade; noMemoryWritten = $sNoFile; status = $s.Status }

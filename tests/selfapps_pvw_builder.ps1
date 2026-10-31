@@ -79,7 +79,9 @@ function Write-BuilderRow {
         [Parameter(Mandatory)][string]$Desc,
         [Parameter(Mandatory)][hashtable]$Details
     )
-    # README REQ-009.17 to REQ-009.21: each scenario proves one shall of the PVW_BUILDER group. The tag has to stay
+    # README REQ-009.17 to REQ-009.21: each scenario proves one shall of the PVW_BUILDER group (the two both scenarios also
+    # prove REQ-018.35, which counts the setting as consent; REQ-018.36, the warning before the run starts, is proven by
+    # the successful both scenario only, because the forced failure skips the verification run). The tag has to stay
     # a literal for tests/test_req_trace.py (it scans the text), so the lookup is a switch of literal hashtables.
     $tag = switch ($scenario) {
         'invalid'                { @{ req = 'REQ-009.21' } }
@@ -92,8 +94,8 @@ function Write-BuilderRow {
         'nuitka_failother'       { @{ req = 'REQ-009.18' } }
         'both_unsupported'       { @{ req = 'REQ-009.20' } }
         'nuitka_stale'           { @{ req = 'REQ-009.19' } }
-        'both'                   { @{ req = 'REQ-009.20' } }
-        'both_forcefail'         { @{ req = 'REQ-009.20' } }
+        'both'                   { @{ req = 'REQ-009.20, REQ-018.35, REQ-018.36' } }
+        'both_forcefail'         { @{ req = 'REQ-009.20, REQ-018.35' } }
         default                  { @{ req = 'REQ-009' } }
     }
     Write-NdjsonRow ([ordered]@{ id = 'self.builder.override'; req = $tag.req; pass = $Pass; desc = $Desc; details = $Details })
@@ -354,8 +356,14 @@ try {
             $desc = 'PVW_BUILDER=nuitka: a real Nuitka build is produced without running PyInstaller'
         }
         'both' {
-            $pass = $overrideLogged -and $pyiProduced -and (-not $promptShown) -and $optSucceeded -and $exeExists -and $tmpExeGone -and $exeRuns -and ($statusState -eq 'ok')
-            $details.optSucceeded = $optSucceeded; $details.tmpExeGone = [bool]$tmpExeGone; $details.exeRuns = [bool]$exeRuns
+            # REQ-018.36: the warning that the program starts once more precedes the run. The verification run happened
+            # (the success line is written only after it exited 0), so the warning has to come before that line.
+            $warnText    = 'starts your program once more for up to 30 seconds'
+            $warnAt      = $combined.IndexOf($warnText, [System.StringComparison]::Ordinal)
+            $verifiedAt  = $combined.IndexOf('Optimized build succeeded and verified', [System.StringComparison]::Ordinal)
+            $warnsBefore = ($warnAt -ge 0) -and ($verifiedAt -gt $warnAt)
+            $pass = $overrideLogged -and $pyiProduced -and (-not $promptShown) -and $warnsBefore -and $optSucceeded -and $exeExists -and $tmpExeGone -and $exeRuns -and ($statusState -eq 'ok')
+            $details.optSucceeded = $optSucceeded; $details.warnsBefore = $warnsBefore; $details.tmpExeGone = [bool]$tmpExeGone; $details.exeRuns = [bool]$exeRuns
             $desc = 'PVW_BUILDER=both: a real PyInstaller build is verified, then a real Nuitka build is swapped in without a prompt'
         }
         default {

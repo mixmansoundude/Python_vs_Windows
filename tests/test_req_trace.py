@@ -12,6 +12,10 @@ Makes "every requirement has a test" a mechanical check instead of a reading exe
   "should", must hold at least one numbered shall of its own, and every tagged numbered line in it must
   say **shall** (AGENTS.md, "Writing README requirements").
 
+A tag names one requirement (`REQ-018`, `REQ-018.27`, `REQ-005.1.17`) or several separated by commas
+(`req = 'REQ-009, REQ-018.27'`), the way a row that proves several shalls is tagged; each part is checked on its own.
+tests/test_req_shall_trace.py goes one level down and asks that every numbered shall is named.
+
 The tag scan is static text, like tools/check_ndjson_registry.py: a tag built from a variable is
 invisible here, so keep the tag a literal at the row's call site. Stale exemptions (an entry that
 now has a tagged row, or a README section) emit a warning instead of failing, so a lane that adds
@@ -31,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 NUM = re.compile(r"REQ-(\d{3})")
 TAG = re.compile(r"""\breq\s*=\s*['"]([^'"\r\n]+)['"]""")
-SUBTAG = re.compile(r"^REQ-(\d{3})([a-z]?)(?:\.(\d+))?$")
+SUBTAG = re.compile(r"^REQ-(\d{3})([a-z]?)(?:\.(\d+(?:\.\d+)*))?$")
 # Tags that name something other than a README requirement number. REQ-AV is the AV-safe build path
 # (docs/prd-av-safe-build-path.md); CLAUDE.md-Item-* tags point at a backlog item.
 FREE_TAGS = ("N/A", "REQ-AV")
@@ -48,8 +52,16 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _split_tags(raw: str) -> List[str]:
+    """One `req` value names several requirements when they are separated by commas. An empty part (a stray
+    comma) is kept so that it is reported as a bad tag."""
+    return [part.strip() for part in raw.split(",")]
+
+
 def _sub_in_readme(readme_text: str, num: str, sub: str) -> bool:
-    return re.search(r"REQ-%s\.%s(?!\d)" % (num, re.escape(sub)), readme_text) is not None
+    # Not followed by a digit (REQ-005.1 is not REQ-005.11) and not by a dot and a digit (REQ-005.1 is not REQ-005.1.17):
+    # a sub-id that the README only mentions as the front of a longer id is not in the README (CodeRabbit, PR 517).
+    return re.search(r"REQ-%s\.%s(?!\d|\.\d)" % (num, re.escape(sub)), readme_text) is not None
 
 
 def trace_problems(
@@ -67,21 +79,22 @@ def trace_problems(
     tagged: set = set()
     bad_tags: List[str] = []
     for text in tag_texts:
-        for tag in TAG.findall(text):
-            if tag in FREE_TAGS or tag.startswith(FREE_TAG_PREFIXES):
-                continue
-            m = SUBTAG.match(tag)
-            if not m:
-                bad_tags.append(tag)
-                continue
-            num, _letter, sub = m.group(1), m.group(2), m.group(3)
-            if num not in known:
-                bad_tags.append(tag)
-                continue
-            if sub is not None and not _sub_in_readme(readme_text, num, sub):
-                bad_tags.append(tag)
-                continue
-            tagged.add(num)
+        for raw in TAG.findall(text):
+            for tag in _split_tags(raw):
+                if tag in FREE_TAGS or tag.startswith(FREE_TAG_PREFIXES):
+                    continue
+                m = SUBTAG.match(tag)
+                if not m:
+                    bad_tags.append(tag)
+                    continue
+                num, _letter, sub = m.group(1), m.group(2), m.group(3)
+                if num not in known:
+                    bad_tags.append(tag)
+                    continue
+                if sub is not None and not _sub_in_readme(readme_text, num, sub):
+                    bad_tags.append(tag)
+                    continue
+                tagged.add(num)
 
     problems: List[str] = []
     for num in sorted(known - tagged):
@@ -231,6 +244,42 @@ def test_subtag_prefix_is_not_confused_with_longer_subrequirement() -> None:
     # README only has REQ-005.11; a tag REQ-005.1 must not pass just because ".11" starts with ".1".
     problems, _ = _check(readme="## [REQ-005] x\nREQ-005.11 only\n", batch="REQ-005\n", tags=("req = 'REQ-005.1'",))
     assert any("REQ-005.1" in p for p in problems)
+
+
+def test_subtag_that_is_only_the_front_of_a_nested_id_is_not_in_the_readme() -> None:
+    # README has only REQ-005.1.17; a tag REQ-005.1 must not pass on the front of it, a tag REQ-005.1.17 does, and a
+    # sentence-ending dot after the id (no digit behind it) still counts as the id.
+    readme = "## [REQ-005] x\nREQ-005.1.17 is a shall of the third level\n"
+    problems, _ = trace_problems(readme, "REQ-005\n", ("req = 'REQ-005.1'",), {}, {})
+    assert any("REQ-005.1" in p for p in problems)
+    ok, _ = trace_problems(readme, "REQ-005\n", ("req = 'REQ-005.1.17'",), {}, {})
+    assert ok == []
+    ended = "## [REQ-005] x\nSee REQ-005.1. It is a shall.\n"
+    ok, _ = trace_problems(ended, "REQ-005\n", ("req = 'REQ-005.1'",), {}, {})
+    assert ok == []
+
+
+def test_a_comma_list_is_checked_part_by_part() -> None:
+    # Both parts are known: the list covers REQ-002 (through its sub-id's number) and REQ-005.11.
+    problems, _ = _check(tags=("req = 'REQ-001'\nreq = 'REQ-002, REQ-005.11'",))
+    assert problems == []
+    # One bad part is named alone; the good part still counts, so REQ-002 is not reported as untagged.
+    problems, _ = _check(tags=("req = 'REQ-001'\nreq = 'REQ-002, REQ-005.99'",))
+    assert any("'REQ-005.99'" in p for p in problems) and not any("'REQ-002, REQ-005.99'" in p for p in problems)
+    assert not any("REQ-002 is mentioned" in p for p in problems)
+    # A stray comma leaves an empty part, which names no requirement.
+    problems, _ = _check(tags=("req = 'REQ-001'\nreq = 'REQ-002,'\nreq = 'REQ-005.11'",))
+    assert any("''" in p for p in problems)
+
+
+def test_a_multi_level_subtag_must_exist_in_the_readme_and_is_exact() -> None:
+    readme = "## [REQ-005] x\nREQ-005.1.17 is a shall of the third level\n"
+    ok, _ = trace_problems(readme, "REQ-005\n", ("req = 'REQ-005.1.17'",), {}, {})
+    assert ok == []
+    # .1.1 must not pass just because .1.17 starts with it, and .1.99 is a typo.
+    for wrong in ("REQ-005.1.1", "REQ-005.1.99"):
+        problems, _ = trace_problems(readme, "REQ-005\n", ("req = '%s'" % wrong,), {}, {})
+        assert any(wrong in p for p in problems), wrong
 
 
 def test_free_tags_are_accepted() -> None:

@@ -11,7 +11,8 @@ docs/plan-test-suite-gaps.md keeps a dated copy of the output as its status tabl
 tool instead of editing the numbers by hand. The association of a tag with a row id is the first
 `id = '...'` inside the same ordered hashtable (from the `@{` above the tag to the `})` below it), which is
 right for every row written in the repository's usual shape and a hint, not a proof, for any other.
-tests/test_req_trace.py is the gate (a tag must name a shall that exists); this tool only reports.
+tests/test_req_trace.py is the gate (a tag must name a shall that exists); this tool only reports. A tag may list
+several requirements separated by commas (`req = 'REQ-009, REQ-018.27'`); the row is counted under each of them.
 
 The last column counts the rows (or workflow steps, when no id sits near the tag) tagged `REQ-nnn` with no
 sub-id: they show the requirement is exercised but do not say which shall, and moving such a tag to the
@@ -68,7 +69,8 @@ def row_tags(texts: Iterable[str]) -> Dict[str, Set[str]]:
                 if found:
                     row = found.group(1)
                     break
-            tags.setdefault(m.group(1), set()).add(row)
+            for part in m.group(1).split(","):
+                tags.setdefault(part.strip(), set()).add(row)
     return tags
 
 

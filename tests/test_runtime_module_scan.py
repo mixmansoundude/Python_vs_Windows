@@ -276,6 +276,23 @@ class BatchCallSites(unittest.TestCase):
         self.assertIn("Runtime install: added", lines[call + 2])
         self.assertIn("depSource=[Environment]::GetEnvironmentVariable('DEP_SOURCE')", self.bat)
 
+    def test_the_rebuild_passes_both_flags_for_each_installed_module(self):
+        # README REQ-018.19: --hidden-import and --collect-submodules for each installed module. The program loads the
+        # package by a computed name, so self.runtime.install.accept shows the first flag by behavior (the check run is
+        # clean only if the EXE holds the package); nothing runs the second flag, so its way onto the PyInstaller command
+        # line is pinned here as text (CodeRabbit, PR 517).
+        i = re.search(r"(?m)^:rti_rebuild", self.bat).start()
+        body = self.bat[i:self.bat.index("\n:rti_row", i)]
+        add = body[body.index(":rti_add_hidden"):]
+        self.assertIn('--hidden-import=%~1"', add)
+        self.assertIn('--collect-submodules=%~1"', add)
+        loop = 'for /f "usebackq tokens=1,2" %%A in ("~runtime_install_ok.txt") do call :rti_add_hidden "%%A"'
+        self.assertIn(loop, body)
+        pyi = next(ln for ln in body.splitlines() if "-m PyInstaller" in ln)
+        self.assertIn("%HP_PYI_HIDDEN_IMPORTS%", pyi)
+        self.assertIn("%HP_PYI_HID_COLLECT%", pyi)
+        self.assertLess(body.index(loop), body.index("-m PyInstaller"))
+
     def test_the_reminder_is_printed_before_the_lock_is_released(self):
         i = self.bat.index("if defined HP_RTM_FOUND call :print_runtime_missing_reminder")
         j = self.bat.index("call :release_lock", i)

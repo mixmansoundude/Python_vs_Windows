@@ -54,14 +54,17 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
+# A call that proves numbered shalls passes a -Tag hashtable that holds the req key (a comma list for several); the tag
+# stays a literal at the call site because tests/test_req_shall_trace.py reads it as static text.
 function Write-DmRow {
     param(
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)]$Pass,
         [Parameter(Mandatory)][string]$Desc,
-        [Parameter(Mandatory)][hashtable]$Details
+        [Parameter(Mandatory)][hashtable]$Details,
+        [hashtable]$Tag = @{ req = 'REQ-005.1' }
     )
-    Write-NdjsonRow ([ordered]@{ id = $Id; req = 'REQ-005.1'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = $Id; req = $Tag.req; pass = $Pass; desc = $Desc; details = $Details })
 }
 
 $allIds = @(
@@ -230,7 +233,7 @@ $agreeA1 = (Test-Keys $a1.Req @('termcolor', 'iniconfig')) -and (Test-Keys $a1.H
 $preA = ($a1.Exit -eq 0) -and ($a1.State -ceq 'ok') -and $agreeA1
 $baselineA = $preA -and $snapReqA1 -and $snapHdrA1 -and $recordedA1
 if (-not $baselineA) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.baseline' -Pass ([bool]$baselineA) -Desc 'REQ-005.1: after a first run that installed everything, requirements.txt and the PEP 723 header hold the same list and both are recorded for the next run' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.baseline' -Tag @{ req = 'REQ-005.1.5' } -Pass ([bool]$baselineA) -Desc 'REQ-005.1: after a first run that installed everything, requirements.txt and the PEP 723 header hold the same list and both are recorded for the next run' -Details ([ordered]@{
     exitCode = $a1.Exit; state = $a1.State; requirementsNames = @($a1.Req.Keys); headerNames = @($a1.Hdr.Keys); agree = [bool]$agreeA1
     snapshotRequirements = [bool]$snapReqA1; snapshotHeader = [bool]$snapHdrA1; recordedLogged = [bool]$recordedA1
 })
@@ -244,7 +247,7 @@ $reqOk2 = Test-Keys $a2.Req @('termcolor')
 $hdrOk2 = Test-Keys $a2.Hdr @('termcolor')
 $pass = $preA -and ($a2.Exit -eq 0) -and ($a2.State -ceq 'ok') -and $reqOk2 -and $hdrOk2 -and $removedLine2 -and $headerRemoved2
 if (-not $pass) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.delete' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user deletes from requirements.txt after a run is removed from the PEP 723 header too, and the console says so' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.delete' -Tag @{ req = 'REQ-005.1.7, REQ-005.1.8, REQ-005.1.16, REQ-005.1.17' } -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user deletes from requirements.txt after a run is removed from the PEP 723 header too, and the console says so' -Details ([ordered]@{
     baselineOk = [bool]$preA; exitCode = $a2.Exit; state = $a2.State; requirementsNames = @($a2.Req.Keys); headerNames = @($a2.Hdr.Keys)
     requirementsOk = [bool]$reqOk2; headerOk = [bool]$hdrOk2; removedLine = [bool]$removedLine2; headerRemovedLogged = [bool]$headerRemoved2
 })
@@ -258,7 +261,7 @@ $toolzInstalled3 = $a3.Installed -contains 'toolz'
 $noRemoved3 = -not ($a3.Log -match 'you removed it from')
 $pass = $preA -and ($a3.Exit -eq 0) -and ($a3.State -ceq 'ok') -and $reqOk3 -and $hdrOk3 -and $toolzInstalled3 -and $noRemoved3
 if (-not $pass) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.add' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user adds to requirements.txt after a run is installed and written into the PEP 723 header, not thrown away' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.add' -Tag @{ req = 'REQ-005.1.7, REQ-005.1.15' } -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user adds to requirements.txt after a run is installed and written into the PEP 723 header, not thrown away' -Details ([ordered]@{
     baselineOk = [bool]$preA; exitCode = $a3.Exit; state = $a3.State; requirementsNames = @($a3.Req.Keys); headerNames = @($a3.Hdr.Keys)
     requirementsOk = [bool]$reqOk3; headerOk = [bool]$hdrOk3; toolzInstalled = [bool]$toolzInstalled3; noRemovedLine = [bool]$noRemoved3
 })
@@ -298,7 +301,7 @@ $reqOkB2 = Test-Keys $b2.Req @('termcolor', 'iniconfig')
 $hdrOkB2 = Test-Keys $b2.Hdr @('termcolor', 'iniconfig')
 $pass = $baselineB -and ($b2.Exit -eq 0) -and ($b2.State -ceq 'ok') -and $reqOkB2 -and $hdrOkB2 -and $stayLine2
 if (-not $pass) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.pyproject_keeps' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package deleted from requirements.txt while pyproject.toml still lists it stays everywhere, and the console says where to remove it' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.pyproject_keeps' -Tag @{ req = 'REQ-005.1.11, REQ-005.1.18' } -Pass ([bool]$pass) -Desc 'REQ-005.1: a package deleted from requirements.txt while pyproject.toml still lists it stays everywhere, and the console says where to remove it' -Details ([ordered]@{
     baselineOk = [bool]$baselineB; exitCode = $b2.Exit; state = $b2.State; requirementsNames = @($b2.Req.Keys); headerNames = @($b2.Hdr.Keys)
     requirementsOk = [bool]$reqOkB2; headerOk = [bool]$hdrOkB2; staysLine = [bool]$stayLine2
 })
@@ -315,7 +318,7 @@ $hdrPin2 = ($c2.Hdr['six'] -ceq 'six==1.17.0')
 $noConflict2 = -not ($c2.Log -match 'Conflict for six')
 $pass = $baselineC -and ($c2.Exit -eq 0) -and ($c2.State -ceq 'ok') -and ($sixVersion2 -eq '1.17.0') -and $reqPin2 -and $hdrPin2 -and $noConflict2
 if (-not $pass) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.pin_edit' -Pass ([bool]$pass) -Desc 'REQ-005.1: a pin the user edits in requirements.txt after a run is installed and written into the header, and is not reported as a conflict with the older header pin' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.pin_edit' -Tag @{ req = 'REQ-005.1.9, REQ-005.1.10' } -Pass ([bool]$pass) -Desc 'REQ-005.1: a pin the user edits in requirements.txt after a run is installed and written into the header, and is not reported as a conflict with the older header pin' -Details ([ordered]@{
     baselineOk = [bool]$baselineC; exitCode = $c2.Exit; state = $c2.State; installedSixVersion = $sixVersion2
     requirementsSpec = [string]$c2.Req['six']; headerSpec = [string]$c2.Hdr['six']; requirementsPinned = [bool]$reqPin2; headerPinned = [bool]$hdrPin2; noConflictLine = [bool]$noConflict2
 })
@@ -335,7 +338,7 @@ $hdrOkD2 = Test-Keys $d2.Hdr @('termcolor', 'toolz')
 $toolzInstalledD2 = $d2.Installed -contains 'toolz'
 $pass = $baselineD -and $headerEditApplied -and ($d2.Exit -eq 0) -and ($d2.State -ceq 'ok') -and $reqOkD2 -and $hdrOkD2 -and $toolzInstalledD2
 if (-not $pass) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.header_add' -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user adds to the PEP 723 header after a run is installed and written into requirements.txt' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.header_add' -Tag @{ req = 'REQ-005.1.15' } -Pass ([bool]$pass) -Desc 'REQ-005.1: a package the user adds to the PEP 723 header after a run is installed and written into requirements.txt' -Details ([ordered]@{
     baselineOk = [bool]$baselineD; headerEditApplied = [bool]$headerEditApplied; exitCode = $d2.Exit; state = $d2.State
     requirementsNames = @($d2.Req.Keys); headerNames = @($d2.Hdr.Keys); requirementsOk = [bool]$reqOkD2; headerOk = [bool]$hdrOkD2; toolzInstalled = [bool]$toolzInstalledD2
 })
@@ -362,7 +365,7 @@ $quietE3 = -not ($e3.Log -match 'you removed it from|Conflict for|still lists it
 $hdrEmptyE3 = ($e3.Hdr.Count -eq 0)
 $pass = $baselineE -and ($e2.Exit -eq 0) -and ($e2.State -ceq 'ok') -and $removedLineE2 -and $headerRemovedE2 -and $hdrEmptyE2 -and $reqEmptyE2 -and ($e3.Exit -eq 0) -and ($e3.State -ceq 'ok') -and $quietE3 -and $hdrEmptyE3
 if (-not $pass) { $anyRed = $true }
-Write-DmRow -Id 'self.depmerge.later.delete_last' -Pass ([bool]$pass) -Desc 'REQ-005.1: the last package the user removes from requirements.txt (it moves into an included file) also leaves the PEP 723 header, and the next run does not report the removal again' -Details ([ordered]@{
+Write-DmRow -Id 'self.depmerge.later.delete_last' -Tag @{ req = 'REQ-005.1.8, REQ-005.1.17' } -Pass ([bool]$pass) -Desc 'REQ-005.1: the last package the user removes from requirements.txt (it moves into an included file) also leaves the PEP 723 header, and the next run does not report the removal again' -Details ([ordered]@{
     baselineOk = [bool]$baselineE; exitCode = $e2.Exit; state = $e2.State; requirementsNames = @($e2.Req.Keys); headerNames = @($e2.Hdr.Keys)
     removedLine = [bool]$removedLineE2; headerRemovedLogged = [bool]$headerRemovedE2; headerEmpty = [bool]$hdrEmptyE2; requirementsEmpty = [bool]$reqEmptyE2
     nextRunExit = $e3.Exit; nextRunState = $e3.State; nextRunQuiet = [bool]$quietE3; nextRunHeaderNames = @($e3.Hdr.Keys)
