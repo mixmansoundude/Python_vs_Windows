@@ -6663,7 +6663,8 @@ Items completed and shipped:
   structure without a paren-balance parser, which was assessed as disproportionate for this
   feature). Test hooks: `HP_TEST_DISABLE_LOCK` (opt out entirely, for tests that don't want
   lock semantics at all) and `HP_TEST_FORCE_LOCK_STALE` (deterministically force the staleness
-  check without waiting out the real threshold). Three new `tests/selftest.ps1` rows:
+  check without waiting out the real threshold). (`HP_TEST_DISABLE_LOCK` was removed in 2026-10: no test or
+  workflow step ever set it.) Three new `tests/selftest.ps1` rows:
   `self.stub.lock_no_leak` (lock does not persist after a normal successful run -- reuses the
   already-completed pipreqs-fail-fallback run above it at zero extra CI cost),
   `self.stub.lock_held_decline` (a fresh pre-existing lock blocks a second instance, which exits

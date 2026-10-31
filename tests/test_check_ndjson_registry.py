@@ -41,6 +41,27 @@ def test_scan_code_ids_covers_all_four_emission_patterns(tmp_path):
     }
 
 
+def test_dotless_named_param_is_not_a_row_id(tmp_path):
+    # `-Id 'x'` of some other command can never be a registry row (a doc id needs a dot), so it must not
+    # be read as an unregistered row now that the check gates.
+    ps1 = tmp_path / "selfapps_other.ps1"
+    ps1.write_text(
+        "Get-Process -Id '4242'\n"
+        "Stop-Thing -Id \"plain\"\n"
+        "Write-EntryRow -Id 'self.example.kept' -Expected $x\n",
+        encoding="utf-8",
+    )
+    assert check_ndjson_registry.scan_code_ids([ps1]) == {"self.example.kept"}
+
+
+def test_dotless_entry_row_id_stays_visible(tmp_path):
+    # Write-EntryRow writes its -Id as the row id as is, so a dotless one must reach the comparison (where it
+    # can never be registered and fails) instead of being dropped with the other commands' -Id values.
+    ps1 = tmp_path / "selfapps_entry_like.ps1"
+    ps1.write_text("Write-EntryRow -Expected $x -Id 'newrow'\n", encoding="utf-8")
+    assert check_ndjson_registry.scan_code_ids([ps1]) == {"newrow"}
+
+
 def test_scan_log_ids_reads_ndjson_lines(tmp_path):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
@@ -196,8 +217,8 @@ def test_main_reports_fail_on_undocumented_code_row(tmp_path, capsys):
 
 def _unbalanced_fence_sections(text):
     """Headings of the sections that hold an odd number of code-fence lines. parse_doc_registry pairs fences over the
-    whole file, so one unclosed fence turns every later prose block into "registered ids" and the advisory registry
-    job fails for a reason nobody can see from the row names (PR #498)."""
+    whole file, so one unclosed fence turns every later prose block into "registered ids" and the registry check
+    fails for a reason nobody can see from the row names (PR #498)."""
     section, counts = "(top)", {}
     for line in text.splitlines():
         if line.startswith("## "):
@@ -217,3 +238,17 @@ def test_agent_ndjson_doc_has_balanced_code_fences():
 
     doc = Path(__file__).resolve().parent.parent / "docs" / "agent-ndjson.md"
     assert _unbalanced_fence_sections(doc.read_text(encoding="utf-8")) == []
+
+
+def test_repo_rows_and_registry_agree(capsys):
+    """The real repository, not a synthetic tree: a row emitted by tests/*.ps1, run_setup.bat, a workflow or
+    tests/dynamic_tests.py must be registered in docs/agent-ndjson.md, and a registered row must still have an
+    emission site. Running it as a unit test makes `self.pytest.unit` carry the check in every lane, which the
+    aggregate self-test gate turns into a merge hold (Item 35); the CI job of the same tool is the report with
+    the observed-row list. Static only: the observed-row part of the tool never affects its exit code."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parent.parent
+    result = check_ndjson_registry.main(["--repo-root", str(repo)])
+    out = capsys.readouterr().out
+    assert result == 0, out

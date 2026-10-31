@@ -1085,6 +1085,39 @@ set lives in `run_setup.bat`.
 
 ---
 
+## [REQ-022] Conda Environment Creation Retry
+
+**Goal.** The bootstrapper should create the conda environment even when a brief network or repository problem
+makes the first attempt fail, and should not repeat a failure that waiting will not fix.
+
+- **REQ-022.1** [major] The bootstrapper **shall**, when `conda create` for the program's environment fails and
+  its output contains `CondaHTTPError`, `Failed to fetch`, `timed out` or `ConnectionError`, wait 15 seconds and
+  run the same `conda create` command a second time.
+- **REQ-022.2** [major] The bootstrapper **shall**, when the second `conda create` of REQ-022.1 fails, treat the
+  environment creation as failed.
+- **REQ-022.3** [major] The bootstrapper **shall**, when the first `conda create` fails and its output contains
+  none of the four phrases of REQ-022.1, treat the environment creation as failed without a second attempt.
+
+> **Notes (non-normative).**
+> - Rationale: a request to conda-forge is dropped now and then, and one wait followed by one retry turns most of
+>   those drops into a success, so the run reaches a worse provider only when the problem lasts. A failure with
+>   another cause, for example a package conda-forge does not have, would give the same result after the wait, so
+>   it is not retried.
+> - Mechanism: `:try_conda_create` writes the output of `conda create` to `~conda_create.tmp`, copies it into
+>   `~setup.log` and searches it with `findstr /i`, so the phrases match in any letter case. The second attempt is
+>   not searched for the phrases: any failure of it is REQ-022.2. The pattern (detect, wait 15 seconds, retry
+>   once) is the one the conda bulk install uses in REQ-005.2.
+> - "Treat the environment creation as failed" means the path every other conda-create error takes
+>   (`:conda_create_failed`): the run continues with the next provider after Miniconda, as REQ-009 orders them, or
+>   on a provider cascade keeps the build it already has.
+> - Log contract: `[INFO] conda create: transient failure detected; retrying after 15s.`, and when the second
+>   attempt fails `[WARN] conda create: retry after transient failure also failed.`
+> - Tests: `self.stub.conda_create_retry` (REQ-022.1, `tests/selftest.ps1`) simulates the transient first failure
+>   and requires the retry line and a completed run. The retry-exhausted path is exercised by
+>   `self.cascade.conda_create_fail` (REQ-009, `tests/selfapps_cascade_conda_create_fail.ps1`).
+
+---
+
 ## [REQ-023] Venv Fallback Canary Probe
 
 - After the REQ-009 Tier 3 venv fallback (`:try_venv_fallback`) creates `.venv` and confirms the interpreter file exists, the bootstrapper verifies the interpreter actually runs (`python -c "import sys"`) before declaring the tier ready.
@@ -1097,6 +1130,88 @@ set lives in `run_setup.bat`.
 - The venv fallback tier's retry-on-transient-failure behavior (when plain venv creation fails
   outright, distinct from this canary probe) is part of the REQ-013 Network Resilience
   requirement above, not this one -- this section covers only the post-creation health check.
+
+---
+
+## [REQ-024] Concurrent-Instance Lock
+
+**Goal.** The bootstrapper should not let two instances run the setup in the same program folder at the same
+time, and should not let an instance that ended abnormally keep later runs out of that folder for long.
+
+- **REQ-024.1** [major] The bootstrapper **shall**, at the start of a run and before any download, installation or
+  environment creation, create the lock folder `~bootstrap.lock` in the program folder when no such folder exists.
+- **REQ-024.2** [major] The bootstrapper **shall**, when the lock folder exists and was last changed less than 2
+  hours ago, show a message that another instance of the setup appears to be running in the program folder and
+  that names the lock folder to delete if that is not the case.
+- **REQ-024.3** [major] The bootstrapper **shall**, when the lock folder exists and was last changed less than 2
+  hours ago, stop with exit code 1.
+- **REQ-024.4** [major] The bootstrapper **shall**, when it stops under REQ-024.3, leave the existing lock folder
+  in place.
+- **REQ-024.5** [major] The bootstrapper **shall**, when it stops under REQ-024.3, not write
+  `~bootstrap.status.json`.
+- **REQ-024.6** [major] The bootstrapper **shall**, when the lock folder exists and was last changed 2 hours ago
+  or longer, remove it, create its own lock folder in its place and continue the run.
+- **REQ-024.7** [major] The bootstrapper **shall**, when it cannot determine when an existing lock folder was
+  last changed, continue the run and leave that lock folder in place.
+- **REQ-024.8** [major] The bootstrapper **shall**, when a run that created the lock folder reaches its end with
+  a success or an error report, remove the lock folder.
+- **REQ-024.9** [major] The bootstrapper **shall**, when it cannot create its own lock folder after removing one
+  under REQ-024.6, continue the run without a lock and write a warning to the log.
+
+> **Notes (non-normative).**
+> - Rationale: two instances in one folder would write the same environment, logs and status file at the same
+>   time, which is what a double click on the same file twice starts. A lock held by a run that crashed, was
+>   closed or lost power cannot be released by that run, so its age is the test: only a lock older than any
+>   plausible setup is taken over.
+> - Mechanism: `:acquire_lock` makes the folder with `mkdir`, which is atomic on NTFS, then writes `owner.txt`
+>   (process id and start time) into it; the message of REQ-024.2 prints that file. The age is the folder's last
+>   write time (`:lock_is_stale`); the process id is not used to test whether the owner is alive, because ids are
+>   reused. The lock is released by `:success`, by `:die` and by the early stops that run after it was taken. A run
+>   that is killed (Ctrl+C, a closed window, power loss) never releases it, which is what REQ-024.6 is for.
+> - Limits: the lock is not refreshed while a run goes on, so a run that has lasted more than 2 hours can have its
+>   lock replaced by a new double click. When the replacement folder of REQ-024.6 cannot be created (REQ-024.9),
+>   the run continues without a lock, so a second instance is not kept out; a run that stopped there would turn a
+>   stale lock that cannot be removed into a folder where nothing ever runs again. That run holds no lock, so it
+>   releases none and leaves whatever it could not remove in place. A declined instance waits for a key press
+>   unless the CI marker `HP_CI_LANE` is set, so a double-click window stays open long enough to read the message.
+> - Log contract: `[WARN] REQ-024: setup already running (lock held, not stale); this instance is exiting.`,
+>   `[INFO] REQ-024: stale lock evicted (older than the staleness threshold); proceeding.`,
+>   `[WARN] REQ-024: could not determine whether the existing lock is stale (indeterminate result); continuing without it.`
+>   and `[WARN] REQ-024: could not acquire lock after evicting stale lock; continuing without it.`
+> - Tests (`tests/selftest.ps1`): `self.stub.lock_held_decline` (REQ-024.3, and it checks REQ-024.2, REQ-024.4 and
+>   REQ-024.5 in the same run), `self.stub.lock_stale_evict` (REQ-024.6, with the age forced by a test hook rather
+>   than waited out), `self.stub.lock_indeterminate` (REQ-024.7) and `self.stub.lock_no_leak` (REQ-024.8, after a
+>   full successful run).
+
+---
+
+## [REQ-025] Low Disk-Space Warning
+
+**Goal.** The bootstrapper should tell the user early, and in plain words, when the drive that holds the program
+folder is short of free space, and should still run, because the user may have enough space for this program or
+may free some after reading the warning.
+
+- **REQ-025.1** [major] The bootstrapper **shall**, when the drive that holds the program folder has less than 2 GB
+  (2,147,483,648 bytes) of free space, show a warning that gives the free space in whole gigabytes and names
+  freeing disk space as the likely fix if the setup fails.
+- **REQ-025.2** [major] The bootstrapper **shall**, after it has shown that warning, continue with the rest of the
+  setup.
+- **REQ-025.3** [minor] The bootstrapper **shall**, when the drive has 2 GB or more of free space or its free space
+  cannot be read, show no low-disk-space warning.
+
+> **Notes (non-normative).**
+> - Rationale: the Miniconda download and install plus the environment can together need from several hundred
+>   megabytes to a few gigabytes, and a full drive otherwise surfaces as whatever low-level error `curl`, `conda`
+>   or `pip` prints deep in the setup. The limit is generous on purpose and the check only warns, because the
+>   Prime Directive (REQ-001) does not allow a low reading to block a run.
+> - Mechanism: a PowerShell call reads the free bytes of the drive named in the program folder's path and divides
+>   by 2^30, rounding down, which is the figure the warning prints (`~N GB`). The check runs once, right after the
+>   Windows system-folder check and before the lock of REQ-024. A program folder on a network share has no drive
+>   letter, so no reading is taken and no warning is shown.
+> - Log contract: `[WARN] REQ-025: low disk space detected (~N GB free); continuing (warn-only).`
+> - Tests: `self.stub.low_disk_warn` (REQ-025.1, `tests/selftest.ps1`) forces the low reading with a test hook,
+>   because a CI drive is never short of space, and checks that the warning appears and that the run still ends
+>   with state `ok` and exit code 0, which is also REQ-025.2.
 
 ---
 

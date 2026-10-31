@@ -5,7 +5,8 @@ run_setup.bat inline emissions, .github/workflows/*.yml inline PowerShell
 emissions, and tests/dynamic_tests.py's Python record({"id": ...}) calls), and
 observed NDJSON artifacts from a CI run (log, optional).
 
-Advisory tool: reports mismatches, does not attempt to be exhaustive.
+Reports doc/code mismatches (gating since Item 35: the exit code is static, the log part is report only);
+does not attempt to be exhaustive.
 Python scanning (tests/dynamic_tests.py only) uses `ast` to resolve id values
 that are string literals, f-strings templated from an enclosing `for` loop's
 literal iterable (e.g. f"pr.{_pkg}.{_target}"), or a bare loop variable used
@@ -27,7 +28,12 @@ BRACE_RE = re.compile(r'([A-Za-z0-9_.\-]*)\{([^{}]+)\}')
 DOC_TOKEN_RE = re.compile(r'([A-Za-z0-9][A-Za-z0-9_.~\-]*\.[A-Za-z0-9_.~\-]*)(?:\s*\(([^()]*)\))?')
 CODE_HASHTABLE_ID_RE = re.compile(r"""\bid\s*=\s*['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
 CODE_WRITERESULT_ID_RE = re.compile(r"""Write-Result\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
-CODE_NAMEDPARAM_ID_RE = re.compile(r"""-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
+# A registered row id always has a dot (DOC_TOKEN_RE needs one), so a dotless `-Id 'x'` is some other
+# command's parameter, not a row, and would read as "unregistered" in a check that now gates (Item 35).
+CODE_NAMEDPARAM_ID_RE = re.compile(r"""-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_\-]*\.[A-Za-z0-9_.\-]*)['"]""")
+# Write-EntryRow writes whatever -Id it is given as the row id, dotless or not (a dotless one can never be
+# registered, so it must stay visible to the comparison and fail it).
+CODE_ENTRYROW_ID_RE = re.compile(r"""Write-EntryRow\b[^\r\n]*-Id\s+['"]([A-Za-z0-9][A-Za-z0-9_.\-]*)['"]""")
 CODE_JSONLITERAL_ID_RE = re.compile(r'"id"\s*:\s*"([A-Za-z0-9][A-Za-z0-9_.\-]*)"')
 
 
@@ -72,6 +78,8 @@ def scan_code_ids(paths):
         for m in CODE_WRITERESULT_ID_RE.finditer(text):
             ids.add(m.group(1))
         for m in CODE_NAMEDPARAM_ID_RE.finditer(text):
+            ids.add(m.group(1))
+        for m in CODE_ENTRYROW_ID_RE.finditer(text):
             ids.add(m.group(1))
         for m in CODE_JSONLITERAL_ID_RE.finditer(text):
             ids.add(m.group(1))
@@ -326,8 +334,8 @@ def main(argv=None):
         print("PASS: no doc/code registry mismatches found.")
         return 0
     else:
-        print("FAIL: doc/code registry mismatches found (see above). This check is advisory")
-        print("(non-gating) -- it will not block PR merges, but should be addressed.")
+        print("FAIL: doc/code registry mismatches found (see above). Register the row in")
+        print("docs/agent-ndjson.md or remove the stale entry; this check gates (Item 35).")
         return 1
 
 

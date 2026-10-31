@@ -720,6 +720,20 @@ an older sha.
 
 ---
 
+## A row whose premise is the runner's own network turns a runner blip into a red aggregate check
+
+`self.ux.connectivity.online` drives the product's reachability check against the runner's live network and passes on the
+"internet reachable" line. In run `41034407669` the `uv-dl-fallback` runner had no internet for a moment ("no internet
+detected (ICMP and HTTPS check failed)" within about a second, after the product's own two pings and two curls), the row went
+red, and with the aggregate gate real that holds a PR whose diff touches none of it. **Rule: for a row whose premise is
+external (the runner has network), verify the premise inside the row and repeat the scenario only when the product itself
+reports the premise failing** (here the offline line; up to three runs, 20 seconds apart), keep the pass condition on the last
+run's real result so a network that stays down stays red, never retry an outcome with neither line (a real failure), and record
+`attempts` in the row. Do not "fix" it with `pass:true` plus a flag, and do not use "Re-run failed jobs" (duplicate Pages
+artifact, see the GitHub Actions entry): the fix is a new commit. `tests/test_connectivity_online_retry.py` pins the shape.
+
+---
+
 ## pipreqs reads with the locale encoding; Python 3.15 hides that unless a test forces it off
 
 pipreqs 0.4.13 opens every `.py` with `encoding=None` (the locale encoding, cp1252 on Western Windows)

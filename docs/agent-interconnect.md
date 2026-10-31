@@ -99,6 +99,11 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
   reads (a missing, unexpected or duplicate lane fails it separately).
   `tests/test_aggregate_gate.py` pins the step, the lane list (equal to the matrix) and the `always()` jobs; do not
   put `continue-on-error` back on the step, and re-prove with a throwaway red row if the job graph around it changes.
+  **The NDJSON registry check gates through the same check** (Item 35 registry slice): `tests/test_check_ndjson_registry.py::
+  test_repo_rows_and_registry_agree` runs `tools/check_ndjson_registry.py` over the real repository inside `self.pytest.unit`
+  (pre-harness, every lane), so an emitted row with no `docs/agent-ndjson.md` entry, or an entry with no emission site,
+  turns the aggregate check red; the `ndjson-registry-check` job has no `continue-on-error` either, but it is not a required
+  status check, which is why the unit test exists. Add the registry line in the same commit as the row.
   A run cancelled by a newer push also ends with this check red on the superseded commit (its cancelled lanes wrote no
   verdict, so the aggregator fails closed); only the check on the current head counts.
 - **A row exists only if its script ran, and an absent row cannot be red.** `run_tests.bat` therefore runs `selftest.ps1`

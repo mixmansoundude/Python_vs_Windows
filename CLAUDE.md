@@ -95,6 +95,7 @@ tools/
   pipreqs_precheck.py          Item 63 pre-check/UTF-8 staging for pipreqs (canonical source for HP_PIPREQS_PRECHECK)
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
   check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
+  req_trace_table.py           Which numbered README shalls a row tag names (report only; docs/plan-test-suite-gaps.md keeps a dated copy)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
   sanitize_iterate_payload.py  NDJSON redaction, deduplication, truncation
@@ -307,6 +308,7 @@ Test files and what they cover:
 | `test_window_confirm.py` | Item 82 slice 2: the kill marker is cleared before the runner launches and read only from the file (never from the exit code), the window question's conditions and gate order, only an explicit yes records `user_confirmed`, the automated branch asks nothing |
 | `test_provider_memory.py` | Item 66: `PVW_PROVIDER` validation (compared with `findstr /x /l` on the `set` output, no line expands the variable, runs after the file count and before the cached-EXE fast path), uv skips tested before the `PVW_UV_EXE` branch, the memory read contract (conda only, Miniconda present, never cleared by input edits), write guards (verified pass, conda after uv, state ok, no switch), the `runtime.txt` record at all three write-back sites, the failed-forced-solve hint |
 | `test_req_trace.py` | Requirement traceability ratchet (docs/plan-test-suite-gaps.md T5): every README/batch requirement number has a tagged NDJSON row or a listed exemption, undocumented requirement numbers and tag typos fail; synthetic cases prove each rule can fail |
+| `test_req_trace_table.py` | `tools/req_trace_table.py`: shalls grouped by their own number (a REQ-009 shall inside the REQ-003 section counts under REQ-009), the row id taken from the tag's own row, the gap list and counts; synthetic cases prove each report line |
 | `test_flag_inventory.py` | REQ-019 mechanical half (T6): every `HP_TEST_*` hook the batch reads is named by a test or workflow, README env-table flags exist in code, `PVW_*` overrides are documented; synthetic cases prove each rule can fail |
 | `test_elevation_stdin.py` | Item 78 follow-up: the one `fsutil` call (in `:detect_elevation`) runs with `<nul`, so the elevation test cannot take the program's redirected stdin (behavior proven by `self.interactive.stdin.roundtrip`); synthetic case proves the guard can fail |
 | `test_run_tests_step.py` | Item 84: the "Run tests (run_tests.bat)" CI step must end in `exit $rc` with no empty-repo mapping, and `selfapps_runtests_contract.ps1` must end with its own `exit 1` (any red row) and `exit 0`; synthetic cases prove each rule can fail |
@@ -319,6 +321,8 @@ Test files and what they cover:
 | `test_embed_tier.py` | REQ-009 Tier 5: version-table resolution (floor/ceiling fallback, the newest minor a range allows, the swap download with the network mocked), the batch step that reads the request when no earlier step did, batch `HP_EMBED_LATEST_*` constants equal the table's `LATEST_MINOR` entry, HP_EMBED_EXTRACT / HP_EMBED_PYVER_CHECK payload sync, and static pins for `tests/selfapps_embed_version.ps1` (literal ids, own exit codes, watchdog, real-lane gating step, 3.12 strictly inside the table); synthetic cases prove each rule can fail |
 | `test_nuitka_launchcache.py` | Item 72 (b): the Nuitka launch-cache experiment `tests/selfapps_nuitka_launchcache.ps1` builds with the same flags as the two Nuitka command lines in `run_setup.bat` (exactly 2 such lines; its `Build-App` takes its flags from the checked `$prodFlags`, not literals), runs only on the uv lane and is non-gating, emits its registered row, ends with its own exit codes and checks the cache folder in its long form (a runner reports it as `PVWEXP~1`); synthetic cases prove each rule can fail |
 | `test_nuitka_cachesafety.py` | Item 72 follow-up: `run_setup.bat` has exactly two Nuitka command lines, with the production flags and NO `--onefile-tempdir-spec`/`:nuitka_cache_arg` anywhere (a static unpack folder failed cold concurrent launches; the message names the cold-storage trigger); the safety script emits its row once, builds with the production flag text plus the spec, asserts warm/overlap/kill-recovery/post-cold-launch but only RECORDS the cold rounds and the update scenario (`adoptable` needs both), ends with its own exit codes, and its step is uv-only and non-gating; synthetic cases prove each rule can fail |
+| `test_aggregate_gate.py` | Item 35: the aggregate self-test step stays a gate (no `continue-on-error`, exact `if`, `exit 1`, `id: aggregate` and its output write, lane list equal to the matrix, `always()` jobs, no TEMP PROBE step) and the NDJSON registry job gates too (no `continue-on-error`, `pipefail`, no `|| true`/`|| :`/`|| exit 0`, `test_repo_rows_and_registry_agree` still runs the checker and asserts its result); synthetic cases prove each rule can fail |
+| `test_connectivity_online_retry.py` | `self.ux.connectivity.online` may run its scenario up to three times, only while the product printed its own `no internet detected` line (a runner network blip, run `41034407669`); a log with neither line is not retried, the row passes only on the last run's reachable line and records `attempts` and `noInternetSeen`; synthetic cases prove each rule can fail |
 | `test_nuitka_unsupported_hint.py` | Item 80: the mark/command/check order around each of the two Nuitka command lines, the count's `findstr` pattern against Nuitka's real "is not supported" line (matches) and its "only experimentally supported" warning, the bootstrapper's own sentence and a different failure (do not match), the sentence safe for `:log`, the check fail-safe without a mark, and the three `selfapps_pvw_builder.ps1` stub lines agreeing with the pattern; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
@@ -547,9 +551,8 @@ but several represent real gaps worth closing before calling the path fully rele
   below aggregates all 8 lanes, a real failure in any of them blocks a merge via the aggregate
   check even though the individual lane still shows non-required in the PR checks UI (the step is
   real since 2026-10-24, see "Aggregate gate" below). "Non-gating" in this item means "has no
-  required check of its own", not "cannot block a merge." `ndjson-registry-check` (a separate
-  advisory doc/code/log sync job, needs several more clean-PASS runs before even considering
-  gating); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
+  required check of its own", not "cannot block a merge." `ndjson-registry-check` (the doc/code sync
+  job; gates since the Item 35 registry slice, see "Registry check gate" below); inert/never-fired NDJSON rows with zero real-CI observation confirmed via
   `docs/agent-ndjson.md` -- `self.dll_bundle.recover` (see Item 37), `self.failfast.probe`,
   `self.exe.smokerun` (audit for others, these three are only the confirmed set); the real
   interactive `set /p` prompts and `pause`/`HP_INTERACTIVE_RUN`'s natural un-forced state, neither
@@ -635,9 +638,18 @@ but several represent real gaps worth closing before calling the path fully rele
   `tests/test_aggregate_selftest_verdicts.ps1`.
   **Consequence to know**: upstream drift on a provider-dependent `uv`-lane row (a new Python, uv or Nuitka release;
   Item 80 was five such rows for two days) now holds every PR until the row is fixed or its pass condition is
-  corrected; do not skip or relax a row to get green (AGENTS.md). The history (the 2026-08-30 revert on PR #471, the
+  corrected; do not skip or relax a row to get green (AGENTS.md). First case seen: `self.ux.connectivity.online` (a live-network row) went red on `uv-dl-fallback` in run `41034407669` when the
+  runner had no internet for a moment; the scenario now repeats up to three times, only on the product's own offline line. The history (the 2026-08-30 revert on PR #471, the
   cascade and warnfix reds fixed by PR #491, the `cache` smokerun artifact, the soak evidence) is in
   `docs/agent-closed-backlog.md`, "Item 35 aggregate gate history".
+
+  **Registry check gate (2026-10-30).** `ndjson-registry-check` compares `docs/agent-ndjson.md` with the row ids the
+  code emits; its exit code is that static comparison alone (the observed-row list in its report never affects it), so
+  it cannot fail from a network or provider problem and needed no further soak. The job lost `continue-on-error`, and
+  because its own check is not a required status check (a branch-protection setting, the maintainer's), the same
+  comparison also runs as a unit test of the real repository inside `self.pytest.unit`, which the aggregate gate
+  already holds a PR on in every lane. `tests/test_aggregate_gate.py` pins both halves. A new or removed row now needs
+  its `docs/agent-ndjson.md` line in the same PR, or `self.pytest.unit` and the registry job go red.
 
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
@@ -796,8 +808,9 @@ rather than relying on manual memory.
   network (uv, Miniconda, python.org downloads), so a required check of its own would add flake
   risk the aggregate gate already covers; do not promote it separately. Leave
   `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` non-gating indefinitely (their non-gating
-  status is explicitly load-bearing, not provisional). `ndjson-registry-check` has now had a long
-  clean run; gate it only after the aggregate gate is, one change at a time.
+  status is explicitly load-bearing, not provisional). `ndjson-registry-check` was gated after the
+  aggregate gate (2026-10-30, Item 35 registry slice): its job lost `continue-on-error`, and the same check is
+  `tests/test_check_ndjson_registry.py::test_repo_rows_and_registry_agree` inside `self.pytest.unit`.
 
 ### CI wall-clock duration (slowest-lane growth)
 
