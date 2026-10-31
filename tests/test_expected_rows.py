@@ -38,9 +38,16 @@ BASELINE = REPO / "tests" / "expected_rows"
 REGISTRY_DOC = REPO / "docs" / "agent-ndjson.md"
 TOOL = REPO / "tools" / "check_expected_rows.py"
 
-# derived requirement: "probe." ids are for proving the gate on a real run (a throwaway id in one baseline file that no
-# code writes, as tests/test_aggregate_gate.py's TEMP PROBE steps were for the enforce step); they are not registered.
+# derived requirement: a "probe." id is how the gate is proved on a real run (a throwaway id in one baseline file that no
+# code writes, as tests/test_aggregate_gate.py's TEMP PROBE steps were for the enforce step). It is registered nowhere and
+# must never be merged: with one in a list the gate would be red on every run, so the lists are checked for it below.
 PROBE_PREFIX = "probe."
+
+
+def probe_ids(per_lane):
+    """The throwaway ids a baseline still lists, as readable problem lines."""
+    return ["%s lists the throwaway id %s" % (lane, rid)
+            for lane, ids in sorted(per_lane.items()) for rid in ids if rid.startswith(PROBE_PREFIX)]
 
 
 def write_lane(results, lane, ids, run="100", attempt="1", extra_lines=()):
@@ -354,12 +361,22 @@ class RepositoryBaseline(unittest.TestCase):
         problems = []
         for lane, ids in cer.read_baseline(str(BASELINE)).items():
             for rid in ids:
-                if rid.startswith(PROBE_PREFIX):
-                    continue
                 if rid not in registered:
                     problems.append("%s lists %s, which docs/agent-ndjson.md does not register" % (lane, rid))
         self.assertEqual(problems, [], "A row that was removed or renamed must leave tests/expected_rows/<lane>.txt in "
                                        "the same change, or the aggregate gate fails on the missing id")
+
+    def test_no_list_carries_a_throwaway_probe_id(self):
+        self.assertEqual(probe_ids(cer.read_baseline(str(BASELINE))), [],
+                         "a probe. id proves the gate on one red run and is removed in the next commit")
+
+    def test_the_probe_guard_can_fail(self):
+        with tempfile.TemporaryDirectory() as td:
+            write_baseline(td, {"real": ["a.row", "probe.expected_rows.missing"], "uv": ["b.row"]})
+            self.assertEqual(probe_ids(cer.read_baseline(td)),
+                             ["real lists the throwaway id probe.expected_rows.missing"])
+            write_baseline(td, {"real": ["a.row"], "uv": ["b.row"]})
+            self.assertEqual(probe_ids(cer.read_baseline(td)), [])
 
     def test_a_lane_that_wrote_exactly_its_list_passes_and_one_short_fails(self):
         baseline = cer.read_baseline(str(BASELINE))
