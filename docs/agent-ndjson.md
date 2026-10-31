@@ -1093,7 +1093,7 @@ Proves the fail-closed fix to `selftest-gate`'s own verdict aggregation (CLAUDE.
 "Precondition" -- see that item for the full mechanism: comparing the SET of expected lane IDs
 against the SET observed, rather than only detecting a total absence of files). Extracted to
 `tools/aggregate_selftest_verdicts.ps1`, exercised via 8 fixture scenarios mimicking
-`actions/download-artifact@v6`'s own output layout, no dependency on a real 8-lane matrix run.
+`actions/download-artifact`'s own output layout, no dependency on a real 8-lane matrix run.
 Wired into `real` (GATING) so a regression in the aggregation logic itself fails CI on every run.
 
 Scenarios: `healthy` (all 8 lanes present, including one whose record omits the `lane` field

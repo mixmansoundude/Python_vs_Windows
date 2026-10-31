@@ -675,7 +675,8 @@ all three by bypassing `set /p` before it reads the piped stdin.
 repo at ~168 KB base64 passed via `INVENTORY_B64`). Write to a file in `$GITHUB_WORKSPACE` and read
 from disk instead.
 
-**`download-artifact@v6`'s `merge-multiple: true` silently overwrites same-named files** when a
+**`download-artifact@v6`'s `merge-multiple: true` silently overwrites same-named files** (seen on v6;
+the v7 and v8 release notes list no change to it, so treat it as still true) when a
 step downloads MULTIPLE artifacts matching a `pattern:` and each zips a file with the SAME local
 filename -- only the LAST-downloaded artifact's content survives, no error anywhere. Bit this repo
 twice (an NDJSON cross-check silently degraded to 1 observed lane instead of 8+; `selftest-gate`'s
@@ -704,6 +705,11 @@ named github-pages" (PR #488, run `39004972181`). The red `Publish diagnostics t
 failure, not a code defect, and the next push publishes normally. To get a fresh answer for a flaky lane, push a
 new commit instead. The step conclusion alone also misleads on the `uv` lane: its interactive step is
 `continue-on-error`, so a re-run showed a green step while the artifact still held the same red row. Read the row.
+Since the aggregate gate became real, a provider hiccup in ANY lane holds the PR: on PR #513 (run `41074512594`)
+conda-forge answered `502 Bad Gateway` to the one `conda install --dry-run` of `tests/selfapps_reqspec.ps1` in the
+`justme-test` lane, nine rows and the aggregate went red, and every other lane had the row ids and counts of the
+previous full run. The answer is the next planned commit on the branch (or the merge of main), with one PR comment
+that names the check and the cause; never an empty commit and never a re-run.
 
 **A push that cancels the previous run of `batch-check.yml` leaves a red "Aggregate self-test verdicts" on the superseded
 commit** (since Item 35 C6 made the gate real; run `40143017186`, head `896a1b9`, superseded by `9136983`). The gate job
@@ -711,6 +717,30 @@ is `if: always()` so it still starts, the cancelled lanes wrote no verdict, the 
 step runs (it was not skipped by `!cancelled()` in that case). That red belongs to the old commit and is not a finding
 about the PR: the PR page shows the checks of its current head, so read the run of the head, never the check event of
 an older sha.
+
+---
+
+## A bot config with one unknown option is rejected as a whole, and its only error is a check run on a pull request that touches it (Dependabot, Item 90)
+
+`.github/dependabot.yml` was added 2026-08-17 with `open-pull-request-limit: 5`; the option is
+`open-pull-requests-limit`. Dependabot validates the file against a schema that allows no extra properties. Its options
+reference never mentions invalid options, so the evidence is the check run's text below and ten weeks without a single
+pull request or `dependabot/*` branch while six of the nine pinned actions fell one or two majors behind: the one unknown
+key left it with no usable configuration. Nothing a session reads showed it. The page that lists Dependabot's update
+jobs and their errors is in the repository's Insights, which a session cannot read (`docs/open-questions.md` once asked
+the maintainer to look). The only error text a session can reach is a failed check run named after the file, "Your
+.github/dependabot.yml contained invalid details", with `The property '#/updates/0/' contains additional properties
+["open-pull-request-limit"] outside of the schema when none are allowed`; Dependabot posts it on a pull request that
+touches the file. It is not a required check and no workflow reads it, so it stayed red and unread until PR #513 edited
+the file's comment.
+
+**Rules:** (1) a configuration for a service that nothing in CI exercises needs a test of its own:
+`tests/test_dependabot_config.py` reads the file as text (the pytest step installs no YAML library) and holds its keys
+to the option names of Dependabot's options reference, inside `self.pytest.unit`, which the aggregate check gates.
+(2) "The service has never produced anything" is a reason to list the check runs of the commit that last touched its
+file before asking the maintainer to look at settings: `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` with
+`.app.slug` and `.output.summary` shows a third-party app's verdict. (3) When Dependabot gains an option this repository
+wants, add its spelling to the test's list in the same change, because the list is what catches the next typo.
 
 ---
 

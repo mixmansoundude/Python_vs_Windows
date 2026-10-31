@@ -6,7 +6,7 @@
 # Unlike a real batch-check.yml run (which would need all 8 matrix lanes to actually finish and
 # upload their own lane_verdict.json artifacts before the aggregation step ever runs), this test
 # exercises the extracted script directly against fixture directories built to mimic exactly what
-# actions/download-artifact@v6 produces (each artifact under its own
+# actions/download-artifact produces (each artifact under its own
 # <VerdictsDir>/selftest-verdict-<lane>/lane_verdict.json subdirectory, no merge-multiple) -- no
 # dependency on a real CI run or real artifact upload/download round trip. Wired into the `real`
 # lane (a GATING lane, not in the job-level continue-on-error list) so a regression in the
@@ -79,7 +79,7 @@ function New-VerdictFixture {
 
 function Add-VerdictRecord {
     # derived requirement: $ArtifactLane names the FOLDER (mimicking the artifact name
-    # download-artifact@v6 creates); $RecordLane is the "lane" field written INSIDE the JSON --
+    # download-artifact creates); $RecordLane is the "lane" field written INSIDE the JSON --
     # kept as separate parameters (usually equal) so the duplicate_lane scenario can construct
     # two differently-NAMED folders that both claim the SAME record lane, exactly like a real
     # double-upload would look once downloaded. -OmitLane (CodeRabbit review, PR #454) drops the

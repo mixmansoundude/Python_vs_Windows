@@ -3963,6 +3963,61 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   once the aggregate gate (#509) had merged, each got its own gating step (real and conda-full, logs in the `test-logs`
   artifact), the chain was deleted from the script, and the unit tests pin the steps.
 
+### Item 90 (closed 2026-10-31; `codeql-action` PR #508, the other five and the Dependabot fix PR #513; filed 2026-10-24 from the October maintenance scan)
+
+- **The problem.** `.github/dependabot.yml` (`github-actions`, weekly, added 2026-08-17) never opened a pull request, while
+  six of the nine pinned actions had fallen one to two majors behind (`docs/open-questions.md` Q5 asked why; the cause is
+  under "Dependabot" below). The run page carried "Node.js 20 is deprecated ... forced to run on Node.js 24" against
+  `download-artifact@v6`.
+- **What shipped.** One commit per action, every use of that action changed, to the latest major of 2026-10-30:
+  `codeql-action` v3 to v4 (PR #508), `download-artifact` v6 to v7 to v8, `github-script` v8 to v9, `cache` (restore and
+  save) v5 to v6, `checkout` v5 to v7, `upload-artifact` v6 to v7. `.github/dependabot.yml`'s comment no longer lists
+  versions. The release notes of each new major were read first (WebFetch of the releases page); what mattered here:
+  `github-script` v9 removes `require('@actions/github')` and injects `getOctokit`, and no script here requires that module
+  or declares `getOctokit` (only `require('fs')`); `checkout` v7 blocks a fork PR checkout under `pull_request_target` and
+  `workflow_run`, which no workflow uses, and the model quick-fix job's plain `git push` is reached only when the iterate
+  gate has failures; `cache` v6 and `upload-artifact` v7 are ESM (`upload-artifact` v7 adds an `archive` input, default
+  unchanged); `download-artifact` v7 is the first to run on Node.js 24 by default, and v8 fails the step on a digest mismatch
+  by default (v7 only warned) and does not unzip a download that is not a zip. Every download here is a zip written by
+  `upload-artifact`, by name or by `pattern:` without `merge-multiple`, so each artifact still lands in its own folder.
+- **Why it was bundled.** The plan was two pull requests (the four lower-risk bumps first, then the artifact pair). The first
+  run of PR #513 (`41074512594`, head `1f9df96`) read clean for the pins and red for an unrelated reason, and re-running failed
+  jobs is not allowed on this workflow (see `docs/agent-lessons-learned.md`), so the second half was pushed to the same
+  branch as the fresh commit instead of waiting for a second pull request.
+- **First run, read.** No job carried the Node.js 20 notice (only the known `INPUT_PATH` length warning, now 56337 against
+  32766, and the benign fixture annotations); `selftest-gate` downloaded all eight verdict artifacts with the digest logged
+  and checked; every lane had the row count of the previous full run (real 259, conda-full 168, uv 138, cache 103,
+  justme-test 93, contract-uv 93, uv-dl-fallback 90, contract-uv-fail 89); the only red rows were the nine `reqspec.*` rows
+  of `justme-test`, because conda-forge answered `502 Bad Gateway` to its single `conda install --dry-run`.
+- **Second run, read.** Run `41113603827` (head `a48d50a`, after one merge of main): 13 of 13 jobs green; every
+  lane had the row ids and counts of the main run on the same base (`41112568792`: real 261, conda-full 168, uv 138,
+  cache 103, justme-test 93, contract-uv 93, uv-dl-fallback 90, contract-uv-fail 89, no red row); 53 artifacts with the
+  names of that run and sizes within 1%; `selftest-gate` and `publish_diag` logged the `download-artifact@v8` digest
+  checks. "Model quick-fix (inline)" skipped its download (no gate failure), so the pattern download that shows the
+  `v8` configuration in use is `publish_diag`'s. `workflow-lint.yml` and `batch-paren-hazard-probe.yml` run only by hand
+  (`workflow_dispatch`): dispatching both on the branch gave a green lint and a red probe, which is by design (the probe
+  confirms the same-line paren hazard), and a red check on the head that is no finding.
+- **Dependabot (found and fixed in the same pull request).** The head of that run carried a failed check run named
+  `.github/dependabot.yml` (app `dependabot`): `The property '#/updates/0/' contains additional
+  properties ["open-pull-request-limit"] outside of the schema when none are allowed`. The file had said
+  `open-pull-request-limit: 5` since 2026-08-17; the option is `open-pull-requests-limit`. Dependabot rejects a file
+  with one unknown option (its documentation is silent on invalid options; the check run's text and ten weeks without a
+  pull request are the evidence) and shows the error only on a pull request that touches the file, so it never ran,
+  which is what `docs/open-questions.md` Q5 asked about. Fix: the spelling, plus `labels: ["no-automerge"]`, because
+  `pr-automerge.yml` arms auto-merge for any same-repo pull request without it and a Dependabot-triggered run (no
+  repository secrets) reaches its `GITHUB_TOKEN` step; whether such pull requests should merge themselves is the new
+  Q6. Test first: `tests/test_dependabot_config.py` (text based, option names from Dependabot's options reference,
+  synthetic cases for each rule) was pushed alone (`a803e5d`), and run `41149101367` read it red on the four lanes
+  that finish first (contract-uv, contract-uv-fail, uv-dl-fallback, justme-test): `self.pytest.unit` failed on
+  `RealFile::test_dependabot_can_read_the_config` alone (1181 passed, 3 skipped), its message naming line 18 and the
+  mistyped option, and no other row of those lanes was red (93, 89, 90 and 93 rows, the counts of the main run). The
+  fix went up under the early-push rule, which cancelled that run. Dependabot's check run on the fixed head
+  (`863409f`) read "Dependabot config file validation" / "All changes look good" (success, a second after the push),
+  where it had failed on `a48d50a`. Not proven until Dependabot opens a first pull request, which waits for an
+  action to release a major newer than its pin; CLAUDE.md's GitHub Actions entry keeps that as a watch item.
+- **Not done on purpose.** `configure-pages@v6`, `upload-pages-artifact@v5` and `deploy-pages@v5` were current on
+  2026-10-24 and were not re-read.
+
 ### Item 35 aggregate gate history (moved from CLAUDE.md 2026-10-24 when the gate became real; Item 35 itself stays open)
 
   **Aggregate-check mechanism: implemented and now the primary path for closing the required-
@@ -6731,7 +6786,9 @@ Items completed and shipped:
   manifest file to scan). Dependabot PRs land on a same-repo branch (not a fork), so the
   existing `pr-automerge.yml` handler picks them up automatically like any other PR -- auto-merge
   is armed (not an instant merge), so the `real`/`conda-full` gating lanes still have to pass
-  before a version bump actually merges. No workflow changes needed. CLOSED by this PR.
+  before a version bump actually merges. No workflow changes needed. CLOSED by this PR. (Correction 2026-10-31: the option
+  was mistyped here, Dependabot rejected the file and nothing ever arrived; fixed in Item 90's pull request, which
+  also holds Dependabot's pull requests for a reader with the `no-automerge` label.)
 
 - **Fail-fast probe window widened 5000ms -> 10000ms**: `HP_FAILFAST_PROBE_MS` (the REQ-018
   Slice 2b-C fail-fast probe's classification window -- see the entry below for the full

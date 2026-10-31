@@ -77,7 +77,7 @@ $lanes = @()
 $observedLanes = [ordered]@{}
 
 foreach ($file in $files) {
-    # derived requirement: download-artifact@v6 (no merge-multiple) places each artifact under
+    # derived requirement: download-artifact (no merge-multiple) places each artifact under
     # its own <VerdictsDir>/<artifact-name>/ subdirectory -- the artifact name IS
     # "selftest-verdict-<lane>" (see batch-check.yml's "Upload iterate gate verdict" step), so
     # the immediate parent directory name is a second, independent source for the lane identity
