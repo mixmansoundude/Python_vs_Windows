@@ -2337,9 +2337,10 @@ diagnostic these tests emit, not the tests' own primary assertion target).
 Scenario 16 covers `--hidden-import` auto-recovery reaching its 3-attempt cap without resolving. In
 that same failure family -- any EXE that still fails at runtime AFTER hidden-import recovery has
 been tried (or was never applicable, e.g. a genuinely missing DATA file, not a missing module) --
-`:exe_smokerun_hints` re-runs the EXE briefly (no timeout needed; these failures exit immediately)
-purely to pattern-match its stderr and offer a targeted, actionable hint. Two real captures, from
-two different xfail scenarios:
+`:exe_smokerun_hints` pattern-matches the error text a run already printed and offers a targeted,
+actionable hint (since Item 96 it never starts the EXE again; the two captures below were taken
+before that change, when the hints read a brief re-run, and the hint lines themselves are unchanged).
+Two real captures, from two different xfail scenarios:
 
 **A missing bundled data file** (real capture, `FileNotFoundError`):
 

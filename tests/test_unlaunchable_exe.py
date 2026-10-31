@@ -1,6 +1,7 @@
 """Item 87: a file that cannot be started must end the check, not hang it.
 
-The three bounded-launch helpers (tools/exe_smokerun.ps1, tools/failfast_probe.ps1, tools/exe_hint_rerun.ps1) called
+The bounded-launch helpers (tools/exe_smokerun.ps1 and tools/failfast_probe.ps1; a third one, exe_hint_rerun.ps1, was
+removed by Item 96 because the failure hints no longer start the program at all) called
 $p.Start() without handling a failure. When Start() throws (a text file, a zero-byte file or a truncated copy of a
 program named dist\\<env>.exe; an antivirus stub; an interrupted build), the process object has no process, the read
 loop's `-not $p.HasExited` test errors and reads as true, and the loop spins forever. The first red-test commit of
@@ -12,8 +13,7 @@ Contract after the fix (each helper, exercised end to end through a real `pwsh` 
     `type`, so < > & | % ^ may stay, nothing else unprintable may);
   - it prints a console line that says the program could not be started;
   - exe_smokerun writes result -1, failfast_probe writes 0|-1 (not exceeded, exit -1: the cached-EXE caller already
-    discards and rebuilds on that), exe_hint_rerun writes an empty output file (the hint falls through to the
-    generic one); smokerun and probe leave empty output/error files and never leave ~smokerun_killed.txt.
+    discards and rebuilds on that); both leave empty output/error files and never leave ~smokerun_killed.txt.
 The batch side is pinned by the static tests at the bottom (ordering of the marker read, the delete of the unusable
 EXE, the interpreter run that follows, the test hook). A real Windows run of the batch is the row set in
 tests/selfapps_unlaunchable_exe.ps1.
@@ -139,17 +139,6 @@ class ProbeLaunchFailure(_Contract, unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertFalse((Path(d) / "~launch_failed.txt").exists())
             self.assertEqual((Path(d) / "~probe_result.txt").read_text(encoding="ascii").strip(), "0|0")
-
-
-@unittest.skipUnless(PWSH, "pwsh not available")
-class HintRerunLaunchFailure(_Contract, unittest.TestCase):
-    def test_unlaunchable_file_leaves_an_empty_hint_output(self):
-        for kind in KINDS:
-            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as d:
-                proc = _run("exe_hint_rerun.ps1", d, {"HP_HINT_RERUN_EXE": str(_make_bad(d, kind)), "HP_HINT_RERUN_KILL_MS": "500"})
-                self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertNotRegex(proc.stderr, r"Exception|cannot call a method|null-valued")
-                self.assertEqual((Path(d) / "~exe_out.txt").read_text(encoding="ascii").strip(), "")
 
 
 class BatchWiring(unittest.TestCase):

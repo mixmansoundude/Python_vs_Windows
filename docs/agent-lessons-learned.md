@@ -1013,7 +1013,8 @@ prompts, which is what stops the other three from passing because a prompt never
 four offers (the optimized build needs a program that exits 0, the last chance one that fails, the install offer a
 missing module), so two small programs share the scenarios. The launch ledger counts program starts, so the same script
 also shows that the missing-package program runs exactly once without consent; the failing program is not counted,
-because the hint re-run starts a failed EXE a second time (Item 96).
+because the repair loop that follows a failed EXE run starts it a second time from `dist\` (announced, Item 97);
+`tests/selfapps_hint_norerun.ps1` counts starts against announcements.
 
 ---
 
@@ -1187,23 +1188,24 @@ regex anchor applied to file content that might carry Windows line endings -- .N
 multiline mode matches before `\n`, not `\r\n`, so an anchor like `^#import site$` silently fails
 to match CRLF-terminated content; widen to `(?m)^#import site\r?$`.
 
-**Three distinct bounded-launch helpers, three different kill philosophies -- do not conflate
-them:**
+**Two bounded-launch helpers, two different kill philosophies -- do not conflate them** (a third,
+`~exe_hint_rerun.ps1`, was removed by Item 96: it started the EXE once more only to read its error text, which README
+REQ-018.1 and REQ-018.2 do not allow without consent; the failure hints now read text a run already printed, see
+`docs/agent-interconnect.md`):
 - `~failfast_probe.ps1` (`HP_FAILFAST_PROBE_MS`, default 10000ms) -- a CLASSIFICATION checkpoint
   only, never kills; after the window, a second unbounded wait covers the user's real program.
 - `~exe_smokerun.ps1` (`HP_SMOKERUN_KILL_MS`, default 30000ms) -- kills, but only if the process
   produced ZERO output by the deadline ("activity-aware": any output, even one chunk with no
   trailing newline, skips the kill for the rest of the run, unbounded).
-- `~exe_hint_rerun.ps1` (`HP_HINT_RERUN_KILL_MS`, default 10000ms) -- kills UNCONDITIONALLY at its
-  deadline regardless of output, since it exists purely to capture a bounded diagnostic snapshot,
-  never shown live. **`Process.Kill()` alone only terminates the tracked process, not descendants**
-  -- a spawned child inheriting the redirected pipe can keep it open forever after the parent
-  dies. Fixed via `taskkill /F /T /PID` (process-tree kill; .NET Framework has no
-  `Process.Kill(entireProcessTree)` overload) PLUS an independent bounded final read
-  (`Task.Wait($drainMs)`, 5000ms) as a second safety net -- confirmed as load-bearing via a real
-  triple-lane CI failure (kill eventually succeeded, just 40-60s late against a 500ms test
-  deadline) traced to TWO unbounded waits in the kill path itself (the blocking `taskkill.exe`
-  invocation, and the trailing `$p.WaitForExit()`) -- both are now bounded to 5000ms each.
+
+**A helper that must kill a process it started has to kill the whole tree and bound every wait that follows.**
+`Process.Kill()` alone only terminates the tracked process, not descendants -- a spawned child inheriting the redirected
+pipe can keep it open forever after the parent dies. Use `taskkill /F /T /PID` (process-tree kill; .NET Framework has no
+`Process.Kill(entireProcessTree)` overload) PLUS an independent bounded final read (`Task.Wait($drainMs)`, 5000ms) as a
+second safety net. The removed hint helper proved both are load-bearing in a real triple-lane CI failure (the kill
+eventually succeeded, just 40-60s late against a 500ms test deadline) traced to TWO unbounded waits in the kill path itself
+(the blocking `taskkill.exe` invocation and the trailing `$p.WaitForExit()`); both were bounded to 5000ms each.
+`tests/selfapps_layered_e2e.ps1`'s bounded launch of the built EXE follows the same pattern.
 
 **Why the fail-fast probe default is 10000ms, not 5000ms**: a PyInstaller *onefile* EXE must first
 extract its bundled runtime and boot an embedded interpreter before ANY user code (or its failure)

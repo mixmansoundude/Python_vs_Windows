@@ -11,6 +11,11 @@ self.hint.datafile.capture, self.launch.count.repaired_run and self.hint.final_f
 rules read run_setup.bat, that script and batch-check.yml as text, and run the script's own counting functions through a
 real pwsh, so a reworded log line, a counting rule that stops counting or a step that stops gating fails here with a
 sentence, before a Windows run is needed. Synthetic cases prove each rule can fail.
+
+The fix (same item): the hints read text a run already printed. After a repair rebuild that still failed, the repair loop's
+last output is handed to the hints (:hidden_import_recover_done moves dist\\~exe_out.txt to the app root); otherwise the hints
+build ~exe_out.txt from the verification run's own capture (~run.out.txt and ~run.err.txt). The batch side of that is
+pinned below by batch_problems, which reads run_setup.bat as text.
 """
 import json
 import os
@@ -129,6 +134,79 @@ def script_problems(text):
         found.append("the script does not end with exit 0 (last line: %r)" % (live[-1] if live else ""))
     if "if (-not $allPass) { exit 1 }" not in live:
         found.append("the script never exits 1 when a row is red")
+    return found
+
+
+def between(flat, start, end):
+    """The text from the line `start` up to the next occurrence of `end`; None when either is missing."""
+    a = flat.find(start)
+    if a < 0:
+        return None
+    b = flat.find(end, a + len(start))
+    return None if b < 0 else flat[a:b]
+
+
+def batch_problems(batch_text):
+    """The batch side of the fix: the hints read printed text and never start the program."""
+    found = []
+    flat = batch_text.replace("\r\n", "\n")
+    live = [ln for ln in flat.split("\n") if not is_comment(ln)]
+    for needle in ("HP_EXE_HINT_RERUN", "exe_hint_rerun", "HP_HINT_RERUN"):
+        if any(needle in ln for ln in live):
+            found.append("run_setup.bat still uses %s, the helper that started the EXE again to collect hints" % needle)
+    calls = [ln for ln in live if "call :exe_smokerun_hints" in ln]
+    if len(calls) != 1 or not calls[0].lstrip().startswith('if not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints'):
+        found.append("the hints must be called once, and only for an exit code other than -1: %r" % calls)
+
+    # :exe_smokerun_hints
+    body = between(flat, "\n:exe_smokerun_hints\n", "\nexit /b 0\n")
+    if body is None:
+        found.append(":exe_smokerun_hints is missing or no longer ends with exit /b 0 at the start of a line")
+    else:
+        code = [ln for ln in body.split("\n") if not is_comment(ln)]
+        for ln in code:
+            if re.search(r"Process\]::Start|Start-Process|ProcessStartInfo|emit_from_base64|\bpushd\b|\bstart\b\s+\"", ln):
+                found.append(":exe_smokerun_hints starts or prepares a program: %s" % ln.strip()[:80])
+            if "%ENVNAME%.exe" in ln and not ln.lstrip().startswith("if not exist"):
+                found.append(":exe_smokerun_hints names the EXE other than in its existence check: %s" % ln.strip()[:80])
+        text = "\n" + "\n".join(code)
+        want = ('if exist "~exe_out.txt" goto :hint_source_ready',
+                'if exist "~run.out.txt" type "~run.out.txt" >> "~exe_out.txt"',
+                'if exist "~run.err.txt" type "~run.err.txt" >> "~exe_out.txt"',
+                "\n:hint_source_ready",
+                'set "HP_HINT_FILE=~exe_out.txt"')
+        positions = [text.find(w) for w in want]
+        for w, pos in zip(want, positions):
+            if pos < 0:
+                found.append(":exe_smokerun_hints lost the line %s" % w.strip())
+        if all(pos >= 0 for pos in positions) and positions != sorted(positions):
+            found.append(":exe_smokerun_hints reads its sources in the wrong order (hand-over, then the two captures, then the label)")
+
+    # :run_exe_smokerun clears an older ~exe_out.txt before it launches
+    pre = between(flat, "\n:run_exe_smokerun\n", 'call :emit_from_base64 "~exe_smokerun.ps1" HP_EXE_SMOKERUN')
+    if pre is None:
+        found.append(":run_exe_smokerun or its helper emit line is missing")
+    elif not re.search(r'^if exist "~exe_out\.txt" del "~exe_out\.txt"', pre, re.M):
+        found.append(":run_exe_smokerun does not delete an older ~exe_out.txt before the launch, so a hand-over of an earlier tier could be read")
+
+    # :hidden_import_recover_done hands the loop's last output over only after a rebuild that still failed
+    done = between(flat, "\n:hidden_import_recover_done\n", 'set "HP_HIDDEN_ITER="')
+    if done is None:
+        found.append(":hidden_import_recover_done is missing or no longer ends in set HP_HIDDEN_ITER=")
+    else:
+        code = [ln.strip() for ln in done.split("\n") if not is_comment(ln)]
+        text = "\n".join(code)
+        clear = 'if exist "~exe_out.txt" del "~exe_out.txt" >nul 2>&1'
+        keep = ('if %HP_HIDDEN_ITER% GEQ 1 if not "%HP_EXE_EXIT%"=="0" if not "%HP_EXE_EXIT%"=="-1" set "HP_HID_KEEP_OUT=1"')
+        move = 'if defined HP_HID_KEEP_OUT if exist "dist\\~exe_out.txt" move /y "dist\\~exe_out.txt" "~exe_out.txt" >nul 2>&1'
+        drop = 'if exist "dist\\~exe_out.txt" del "dist\\~exe_out.txt" >nul 2>&1'
+        for what, line in (("clear an older hand-over", clear), ("decide the hand-over (rebuilt, and still failing)", keep),
+                           ("move the loop output to the app root", move), ("drop the loop output in dist", drop)):
+            if line not in text:
+                found.append(":hidden_import_recover_done does not %s: %s" % (what, line))
+        if clear in text and keep in text and move in text and drop in text:
+            if not text.index(clear) < text.index(keep) < text.index(move) < text.index(drop):
+                found.append(":hidden_import_recover_done runs its hand-over steps in the wrong order (clear, decide, move, drop)")
     return found
 
 
@@ -288,6 +366,13 @@ class RealFiles(unittest.TestCase):
 
     def test_the_step_gates_both_lanes_and_uploads_the_evidence(self):
         self.assertEqual(workflow_problems(self.workflow), [])
+
+    def test_the_hints_read_printed_text_and_never_start_the_program(self):
+        self.assertEqual(batch_problems(self.batch), [])
+
+    def test_the_hint_helper_and_its_tests_are_gone(self):
+        for gone in ("tools/exe_hint_rerun.ps1", "tests/test_exe_hint_rerun.py"):
+            self.assertFalse((REPO / gone).exists(), gone + " came back")
 
     def test_the_rows_are_registered(self):
         registry = (REPO / "docs" / "agent-ndjson.md").read_text(encoding="utf-8")
@@ -450,6 +535,70 @@ class EachRuleCanFail(unittest.TestCase):
     def test_a_missing_upload_pattern_is_caught(self):
         mutated = self.workflow.replace("tests/~selftest_hint_*/~hint_ledger.jsonl", "tests/~selftest_hint_*/~other.jsonl")
         self.assertTrue(any("~hint_ledger.jsonl" in f for f in workflow_problems(mutated)))
+
+    # the batch side: each pin fails on a synthetic change
+    def _batch_without(self, old, new=""):
+        self.assertTrue(old in self.batch, "the synthetic case needs the batch text to hold " + old[:40])
+        return self.batch.replace(old, new)
+
+    def test_a_helper_payload_that_comes_back_is_caught(self):
+        text = self.batch + '\r\nset "HP_EXE_HINT_RERUN=QUFB"\r\n'
+        self.assertTrue(any("HP_EXE_HINT_RERUN" in f for f in batch_problems(text)))
+
+    def test_a_hint_that_starts_the_program_again_is_caught(self):
+        text = self._batch_without('set "HP_HINT_FILE=~exe_out.txt"',
+                                   'powershell -NoProfile -Command "[System.Diagnostics.Process]::Start(\'x\')"\r\nset "HP_HINT_FILE=~exe_out.txt"')
+        self.assertTrue(any("starts or prepares a program" in f for f in batch_problems(text)))
+
+    def test_a_hint_that_names_the_exe_in_a_launch_is_caught(self):
+        text = self._batch_without('set "HP_HINT_FILE=~exe_out.txt"',
+                                   'call "dist\\%ENVNAME%.exe" >> "~exe_out.txt" 2>&1\r\nset "HP_HINT_FILE=~exe_out.txt"')
+        self.assertTrue(any("names the EXE" in f for f in batch_problems(text)))
+
+    def test_hints_that_no_longer_read_the_captures_are_caught(self):
+        text = self._batch_without('if exist "~run.err.txt" type "~run.err.txt" >> "~exe_out.txt"')
+        self.assertTrue(any("~run.err.txt" in f for f in batch_problems(text)))
+
+    def test_hints_that_read_the_handover_last_are_caught(self):
+        text = self._batch_without('if exist "~exe_out.txt" goto :hint_source_ready',
+                                   'rem the hand-over check moved')
+        self.assertTrue(any("hint_source_ready" in f for f in batch_problems(text)))
+
+    def test_a_second_call_of_the_hints_is_caught(self):
+        text = self.batch + '\r\nif not "%HP_EXE_EXIT%"=="-1" call :exe_smokerun_hints\r\n'
+        self.assertTrue(any("called once" in f for f in batch_problems(text)))
+
+    def test_a_smoke_run_that_keeps_an_older_handover_is_caught(self):
+        old = 'rem Item 96: the failure hints read ~exe_out.txt, which the repair loop below may leave for them. Clear any older one.\nif exist "~exe_out.txt" del "~exe_out.txt" >nul 2>&1\n'
+        text = self._batch_without(old)
+        self.assertTrue(any("older ~exe_out.txt" in f for f in batch_problems(text)))
+
+    def test_a_handover_after_any_rebuild_state_is_caught(self):
+        text = self._batch_without('if %HP_HIDDEN_ITER% GEQ 1 if not "%HP_EXE_EXIT%"=="0"',
+                                   'if %HP_HIDDEN_ITER% GEQ 0 if not "%HP_EXE_EXIT%"=="0"')
+        self.assertTrue(any("decide the hand-over" in f for f in batch_problems(text)))
+
+    def test_a_handover_that_is_never_moved_is_caught(self):
+        text = self._batch_without('move /y "dist\\~exe_out.txt" "~exe_out.txt"', 'copy /y "dist\\~exe_out.txt" "~exe_out.txt"')
+        self.assertTrue(any("move the loop output" in f for f in batch_problems(text)))
+
+    def test_a_handover_that_leaves_the_old_one_in_place_is_caught(self):
+        lines = self.batch.split("\r\n") if "\r\n" in self.batch else self.batch.split("\n")
+        newline = "\r\n" if "\r\n" in self.batch else "\n"
+        keep = 'if exist "~exe_out.txt" del "~exe_out.txt" >nul 2>&1'
+        first = next(i for i, ln in enumerate(lines) if ln == "set \"HP_HID_KEEP_OUT=\"")
+        self.assertEqual(lines[first - 1], keep, "the synthetic case needs the clear line right before it")
+        del lines[first - 1]
+        self.assertTrue(any("clear an older hand-over" in f for f in batch_problems(newline.join(lines))))
+
+    def test_a_loop_output_left_in_dist_is_caught(self):
+        text = self._batch_without('if exist "dist\\~exe_out.txt" del "dist\\~exe_out.txt" >nul 2>&1')
+        self.assertTrue(any("drop the loop output" in f for f in batch_problems(text)))
+
+    def test_a_handover_below_the_counter_reset_is_caught(self):
+        # the pin reads up to the first reset of HP_HIDDEN_ITER, so a hand-over placed after it would see an empty counter
+        text = self._batch_without("\n:hidden_import_recover_done\n", '\n:hidden_import_recover_done\nset "HP_HIDDEN_ITER="\n')
+        self.assertTrue(any("decide the hand-over" in f for f in batch_problems(text)))
 
 
 if __name__ == "__main__":

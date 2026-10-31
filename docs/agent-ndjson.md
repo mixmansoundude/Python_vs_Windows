@@ -890,7 +890,8 @@ judged on evidence: per offer, its heading reached, its interactive prompt text 
 by the interactive branch) ABSENT after the heading, and its decline line present (the last-chance offer logs
 `automated` when skipped and `neither` when asked). `rti` also needs exactly one launch in `~offers_ledger.jsonl` (the
 EXE run) and neither program may have been started through the interpreter. The total for `lc` is recorded, not
-asserted: the hint re-run of a failed EXE run starts that program a second time (CLAUDE.md Item 96). `.control`: with no
+asserted: the repair loop that follows a failed EXE run starts that program a second time from `dist\` (announced;
+CLAUDE.md Item 97), and `selfapps_hint_norerun.ps1` counts starts against announcements. `.control`: with no
 signal the checkpoint, optimized-build and last-chance prompts are printed (the last-chance offer logs that it was
 asked); the missing-package prompt is a `choice` whose behavior with closed input is only recorded. Details carry, per
 program, the flags seen, finished, seconds, exit code, status state, ledger counts, the facts per offer (`reached`,
@@ -912,6 +913,8 @@ start is silent. The consent the repair loop's own announced starts need is show
 `selfapps_repair_consent.ps1` (Item 97), which credit REQ-018.1 and REQ-018.2. After a failed EXE
 verification run, `:exe_smokerun_hints` used to start `dist\<env>.exe` again (a helper killed after ten seconds) only to
 read its error text. That start was beyond the single automatic run, no line announced it and nobody had agreed to it.
+The hints now read text a run already printed: the repair loop's last output when that loop rebuilt the EXE (it is the
+newest evidence), otherwise the verification run's own captured output.
 Two programs, each in a fresh folder, append one JSON line per start to a ledger at an ABSOLUTE path (`HINT_LEDGER`: the
 repair loop runs the EXE from `dist\`, so a ledger relative to the working directory would be split in two). Every start
 must be accounted for by the setup log: `starts <= announced + rebuilds`, where `announced` counts the "Verifying the
@@ -1126,8 +1129,8 @@ through the interpreter (`Entry smoke exit=0`, `from-single` in `~run.out.txt`) 
 `fastpath_stub`: run 1 builds (EXE over 1 MB, source hash file written), the EXE is replaced with a text file, run 2 forces
 the interactive fail-fast probe; the row passes only when the probe started the stub (`Launching your program now via the
 cached standalone EXE`), said it could not be started with a reason, discarded and rebuilt it (a real EXE over 1 MB again,
-`Entry smoke exit=0`) and never claimed the program was still running. The third helper (`~exe_hint_rerun.ps1`) has no
-bootstrapper scenario, only `tests/test_unlaunchable_exe.py`. Skips on non-Windows.
+`Entry smoke exit=0`) and never claimed the program was still running. A third helper (`~exe_hint_rerun.ps1`) existed
+until Item 96 removed it, so no launch point is left without a scenario. Skips on non-Windows.
 
 ```
 self.unlaunchable.smoke_stub

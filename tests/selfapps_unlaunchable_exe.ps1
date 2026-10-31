@@ -1,8 +1,8 @@
 # ASCII only
 # selfapps_unlaunchable_exe.ps1 - CLAUDE.md Item 87: a dist\<env>.exe that Windows cannot start must end the check.
 #
-# The three bounded-launch helpers (~exe_smokerun.ps1, ~failfast_probe.ps1, ~exe_hint_rerun.ps1) used to call
-# Process.Start() without handling a failure. A text file, a zero-byte file or a truncated copy of a program named
+# The bounded-launch helpers (~exe_smokerun.ps1, ~failfast_probe.ps1 and a third one, ~exe_hint_rerun.ps1, removed by Item 96)
+# used to call Process.Start() without handling a failure. A text file, a zero-byte file or a truncated copy of a program named
 # dist\<env>.exe (an interrupted build, an antivirus stub) made Start() throw, and the read loop that follows then
 # waited for a process that never ran, forever. The first red-test commit of PR #499 saw it: a text file seeded as the
 # EXE kept the step running for over ten minutes until the next push cancelled the run.
@@ -15,8 +15,8 @@
 #   fastpath_stub  run 1 builds normally; the EXE is then replaced with a text file (the source hash still says it is
 #                  fresh) and run 2 forces the interactive fail-fast probe. The probe must end, the stub must be
 #                  discarded and the program rebuilt (README REQ-018.3).
-# The third helper (~exe_hint_rerun.ps1) is covered by tests/test_unlaunchable_exe.py; the batch only reaches it for an
-# EXE that already ran, so no bootstrapper scenario can start it with a stub.
+# The failure hints used to start the EXE through a third helper; Item 96 removed it (the hints read text a run already
+# printed), so no further launch point is left to cover.
 #
 # derived requirement: ids stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py scans text,
 # not PowerShell).

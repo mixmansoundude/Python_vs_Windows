@@ -416,8 +416,8 @@ if ($exeExists) {
                 # inheriting the redirected stdout/stderr handles can leave that child running
                 # after $proc is killed, so the pipe never reaches EOF and an unbounded
                 # ReadToEndAsync().Result would hang forever, defeating the whole point of this
-                # bounded launch. Same taskkill /T (process-tree kill) pattern already
-                # established in tools/exe_hint_rerun.ps1 for the identical hazard, but with a
+                # bounded launch. Same taskkill /T (process-tree kill) pattern recorded in
+                # docs/agent-lessons-learned.md (bounded-launch helpers) for the identical hazard, but with a
                 # BOUNDED wait after each termination attempt (not an unbounded final
                 # WaitForExit()) -- if taskkill AND Kill() both somehow fail to terminate $proc
                 # itself, the test must still reach the bounded output drain below instead of

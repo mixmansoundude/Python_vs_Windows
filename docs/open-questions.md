@@ -44,8 +44,8 @@ broken (kept in the project files as `item97/item97-explained.md`).
    stops with `ModuleNotFoundError`: start 1 is the check run, announced as a throwaway. Start 2 is the loop starting the
    EXE again from `dist\` with a one-line warning and no question, only to read the same error that `~run.err.txt` already
    holds. Then the loop rebuilds with `--hidden-import=X` and start 3 checks the repair; up to three rebuilds, so up to five
-   starts. A program that fails for another reason gets start 2 as well, and on main today a third start from the failure
-   hints (Item 96 removes that one). A script that is not safe to run twice (it appends a suffix to every row, sends a
+   starts. A program that fails for another reason gets start 2 as well (before Item 96 a third, silent start came from the
+   failure hints, which now read the text the runs already printed). A script that is not safe to run twice (it appends a suffix to every row, sends a
    message) repeats its work each time, and from `dist\` it may not even find its input files.
    Options: (A) read the saved output of the first run to find the package, so the loop needs no start to learn the error,
    and start the program once after each rebuild to check the repair, announced; the README would still have to allow that
@@ -53,7 +53,7 @@ broken (kept in the project files as `item97/item97-explained.md`).
    is and ask once before its first extra start: default No, 30 seconds, the same gate as the other four elective offers.
    The user would see a warning that names the risk and the line `Run your program again to try to repair it? [y/N]`; Yes
    behaves as today, No leaves one start and prints the usual hint for adding the package by hand. Starts for the example
-   program: today 3; A 2; C 3 on Yes and 1 on No (after Item 96).
+   program: today 3; A 2; C 3 on Yes and 1 on No.
    Maintainer's lean (2026-10-31): C as a first pass with nothing else changed, no question when `HP_PVW_KNOWN_IDEMPOTENT` is
    set or in a non-interactive run (REQ-018.9); later, read the saved output first and ask only when it names a package that
    can be added, and add a third answer "do not ask again for the next N runs" to the consent gates. Default meanwhile:

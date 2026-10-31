@@ -1515,21 +1515,20 @@ returns, so `:provider_cascade` needed no change, and the conda tier's own run i
 - The `[HINT][RUNTIME_MISMATCH]` line in `:exe_smokerun_hints` no longer says "not your environment or
   dependencies", because the offer that can follow suggests exactly that.
 
-## Launch failures (`~launch_failed.txt`, Item 87): three helpers, one marker, one reporter
+## Launch failures (`~launch_failed.txt`, Item 87): two helpers, one marker, one reporter
 
-**Touch `~exe_smokerun.ps1` (`HP_EXE_SMOKERUN`), `~failfast_probe.ps1` (`HP_FAILFAST_PROBE`), `~exe_hint_rerun.ps1`
-(`HP_EXE_HINT_RERUN`), `:run_exe_smokerun`, `:run_failfast_probe` or `:verify_no_exe_interpreter`, must understand
-this.** A file named `dist\<env>.exe` that Windows cannot start (a text file, a zero-byte file, a cut-off copy: an
+**Touch `~exe_smokerun.ps1` (`HP_EXE_SMOKERUN`), `~failfast_probe.ps1` (`HP_FAILFAST_PROBE`), `:run_exe_smokerun`,
+`:run_failfast_probe` or `:verify_no_exe_interpreter`, must understand this.** A file named `dist\<env>.exe` that Windows cannot start (a text file, a zero-byte file, a cut-off copy: an
 interrupted build, an antivirus stub) makes `Process.Start()` throw. The old helpers did not catch it, the process
-object had no process, `-not $p.HasExited` errored and read as true, and the poll loop never ended. All three helpers now
-wrap `Start()` in `try/catch`. Contract (`tests/test_unlaunchable_exe.py` drives each helper through real `pwsh` under a
-25-second hard timeout, with a text, empty, cut-off and missing file):
+object had no process, `-not $p.HasExited` errored and read as true, and the poll loop never ended. Both helpers now
+wrap `Start()` in `try/catch` (a third one, `~exe_hint_rerun.ps1`, did too until Item 96 removed it, see the next section).
+Contract (`tests/test_unlaunchable_exe.py` drives each helper through real `pwsh` under a 25-second hard timeout, with a
+text, empty, cut-off and missing file):
 - The helper writes `~launch_failed.txt` (the inner exception message, printable ASCII only, one line, cut at 200
   characters), prints `[WARN] The program could not be started, so it was not run.`, writes empty output files and the
   result its caller already treats as a failed run (`-1` for the smoke runner, `0|-1` for the probe: not exceeded, exit
   -1, which `:try_fast_exe` discards and rebuilds on), and returns exit code 0. It never writes
-  `~smokerun_killed.txt`: a failed launch is not a stop (Item 82 slice 2). The hint re-run has no marker and writes an
-  empty output file, so the hint falls through to the generic one.
+  `~smokerun_killed.txt`: a failed launch is not a stop (Item 82 slice 2).
 - **The marker holds arbitrary .NET text**, so the batch shows and logs it only with `type` in `:report_launch_failure`
   (`type "~launch_failed.txt"` to the console and `type ... >> "%LOG%"`), never through `:log`, and deletes it.
 - `:run_exe_smokerun` deletes the old marker before the launch, sets `HP_EXE_LAUNCH_FAILED` when the file exists after
@@ -1548,7 +1547,34 @@ wrap `Start()` in `try/catch`. Contract (`tests/test_unlaunchable_exe.py` drives
   with a stub, because the stale-EXE paths now delete the EXE first (Item 71).
 - Rows: `self.unlaunchable.smoke_stub` and `self.unlaunchable.fastpath_stub` (`tests/selfapps_unlaunchable_exe.ps1`, real
   lane, gating, 15-minute watchdog per run so a regression is a red row and not a held job). Payload margins after the
-  trim: `HP_EXE_SMOKERUN` 1093, `HP_FAILFAST_PROBE` 1635, `HP_EXE_HINT_RERUN` 1875.
+  trim: `HP_EXE_SMOKERUN` 1093, `HP_FAILFAST_PROBE` 1635.
+
+## The failure hints read text a run already printed, they never start the program (Item 96)
+
+**Touch `:exe_smokerun_hints`, the hand-over in `:hidden_import_recover_done`, the pre-launch clear in `:run_exe_smokerun`
+or `tests/selfapps_hint_norerun.ps1`, must understand this.** `:exe_smokerun_hints` used to start `dist\<env>.exe` once more
+through `~exe_hint_rerun.ps1` (killed after ten seconds) only to read its error text. That start went beyond the single
+automatic run (README REQ-018.1) and the consent rule for any further run (REQ-018.2): no line announced it and nobody had
+agreed. The helper and its payload `HP_EXE_HINT_RERUN` are gone; the hints match against `~exe_out.txt` in the app root,
+which is filled from text that a run already printed:
+- **After a repair rebuild, the repair loop's last output.** `:hidden_import_recover_done` moves `dist\~exe_out.txt` to the
+  app root only when this call rebuilt the EXE (`HP_HIDDEN_ITER` at least 1) and the rebuilt EXE still failed (`HP_EXE_EXIT`
+  not 0 and not -1). It is the newest evidence, so the hint describes the repaired EXE's failure and does not repeat the
+  hidden-import hint for a module the repair already added.
+- **Otherwise the verification run's own capture.** With no hand-over, `:exe_smokerun_hints` builds `~exe_out.txt` from
+  `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt: it runs from
+  `dist\`, and a program that reads a file relative to its working directory would be blamed for a file that exists at the
+  app root (Item 38). Item 97 plans to run the loop from the app root, which would let its last run always be used.
+- **Stale files**: `:run_exe_smokerun` deletes an older `~exe_out.txt` before the launch and `:hidden_import_recover_done`
+  deletes it before deciding, because the subroutine can run twice per build.
+- **Known limit**: the second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only
+  that call ends in a failure, the hint is explained from the verification run's capture, not from the DLL-repaired EXE.
+- **The accounting rule the rows hold**: every start of the program is announced or follows a rebuild,
+  `starts <= announced + rebuilds`, where `announced` counts the "Verifying the built standalone EXE" lines and `rebuilds` the
+  "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=" lines. A new place that starts the program must announce itself with
+  that line (`:warn_user_code_launch`) or be counted as an unannounced start. Rows: `self.launch.count.failed_run`,
+  `self.launch.count.repaired_run`, `self.hint.datafile.capture`, `self.hint.final_failure` (`tests/selfapps_hint_norerun.ps1`,
+  real and conda-full lanes, gating); `tests/test_hint_norerun.py` pins the batch side.
 
 ### Cascade signal reliability
 
