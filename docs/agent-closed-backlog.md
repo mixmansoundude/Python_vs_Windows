@@ -4070,8 +4070,9 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `tests/test_expected_rows.py` checks every listed id against `docs/agent-ndjson.md` so the message comes before a 2.5 hour
   run does. The first lists came from runs `41171609830`, `41191380406` and `41192472458` (all eight lanes green in each; the
   ids were identical across the three).
-- **Tests.** `tests/test_expected_rows.py` (60 cases): the tool's checks and exit codes, the cache waiver and its limits, the
-  refusal of unusable input, `generate`, the repository's lists (one per matrix lane, clean and sorted, registered, none
+- **Tests.** `tests/test_expected_rows.py` (63 cases): the tool's checks and exit codes, the cache waiver and its limits, the
+  refusal of unusable input, `generate` (also refusing a run that lacks a lane and a lane waived in every run, found by
+  CodeRabbit, with nothing written), the repository's lists (one per matrix lane, clean and sorted, registered, none
   carrying a throwaway `probe.` id), and the workflow wiring read as text with a mutation case for each part (download before
   check, no `merge-multiple`, this attempt's artifacts only, the exit-code initialisation, `$value` ANDing both codes, the
   report upload). The step itself was also run under real `pwsh` with a stand-in artifact folder for four situations (a

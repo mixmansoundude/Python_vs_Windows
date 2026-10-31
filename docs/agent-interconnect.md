@@ -147,7 +147,8 @@ ran). The lists close that: one file per selftest matrix lane, one row id per li
   waiver rows count only in the cache lane. A lane with no artifact at all is never waived.
 - **Adding an id to a list**: only after it has appeared in the green runs of that lane. Regenerate with `python
   tools/check_expected_rows.py generate --results <dir of one run's artifacts> [<another run>] --baseline tests/expected_rows`
-  (writes the ids present in EVERY given run, skips a waived cache run and the gate artifact); get a run's artifacts from the
+  (writes the ids present in EVERY given run, skips a waived cache run and the gate artifact, and refuses input where a run lacks a
+  lane or a lane was waived in every run, writing nothing); get a run's artifacts from the
   Actions artifact download or `gh api repos/<owner>/<repo>/actions/runs/<id>/artifacts` (unzip each
   `ci_test_results-selftest-<lane>-<run>-<attempt>` into its own folder, the folder name is the lane). A conditional row
   (written only for some inputs) must not be listed.
