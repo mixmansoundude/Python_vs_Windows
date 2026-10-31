@@ -327,6 +327,7 @@ Test files and what they cover:
 | `test_nuitka_unsupported_hint.py` | Item 80: the mark/command/check order around each of the two Nuitka command lines, the count's `findstr` pattern against Nuitka's real "is not supported" line (matches) and its "only experimentally supported" warning, the bootstrapper's own sentence and a different failure (do not match), the sentence safe for `:log`, the check fail-safe without a mark, and the three `selfapps_pvw_builder.ps1` stub lines agreeing with the pattern; synthetic cases prove each rule can fail |
 | `test_reqspec_retry.py` | Item 92: `Invoke-CondaCommand` in `tests/selfapps_reqspec.ps1` retries a conda network call once, only when the output shows a 5xx or a failed connection (the 502 of run `41074512594`); the helper is cut out of the script and run through real `pwsh` with a `cmd` function in place of the native command (502 then success exits 0 after two attempts, a 502 that stays runs exactly twice, a solver answer, a 404 and a success run once, the first answer and a notice reach the log), the transient pattern against real conda text, static pins (one helper, at most two attempts, wait of 1-30 seconds, every network `cmd /c` goes through it, the four `reqspec.retry.*` rows keep literal ids and `req = 'N/A'`, the workflow step stays gating); synthetic cases prove each rule can fail |
 | `test_conda_transient_terms.py` | Item 93: the two conda retry sites (`:conda_bulk_install`, `:conda_create_check_transient`) search the same `findstr /i /c:` phrases, the original four plus `Server Error`, checked with findstr's rules (case blind, literal, OR) against real conda text (the 502 crash line of run `41074512594`, 503, CondaHTTPError, ConnectionError, ReadTimeout match; a solver answer, UnsatisfiableError and `404 Client Error` do not); the labels `tests/selfapps_conda_transient.ps1` cuts the two blocks at exist once and the blocks reach only names its driver defines; the five `self.conda.retry5xx.*` rows keep literal ids and tags; the workflow step gates on `real` and `justme-test`; synthetic cases prove each rule can fail |
+| `test_dependabot_config.py` | Item 90 follow-up: Dependabot has to be able to read `.github/dependabot.yml` (read as text, the pytest step has no YAML library): `version: 2`, every top-level, update-entry and schedule option spelled as Dependabot's options reference spells it (a file with one unknown option is rejected, which is what the old `open-pull-request-limit` did for ten weeks), a package-ecosystem, a directory and a schedule interval per entry, a `github-actions` entry; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -723,28 +724,6 @@ The maintainer cannot hand-test, so every item ships with a Windows CI scenario 
 the original symptom (see that doc's "CI-first testing policy").
 
 
-### Item 90: bump the GitHub Actions pins by hand, one action per pull request (filed 2026-10-24)
-
-- **Item 90 (small each, mechanical; from the October 2026 scan, `docs/open-questions.md` Q5 still open)**:
-  Dependabot has opened nothing, so the pins are bumped by hand, each action in its own PR that is read in CI
-  like any other (the maintainer's answer to Q5 can only switch this to Dependabot's PRs). Per bump: read the
-  action's release notes for the new major (WebFetch of `https://github.com/<owner>/<repo>/releases`), change
-  every use of that one action, and read the run, not only its colour. Status (in use -> latest as read on
-  2026-10-24): `codeql-action` v3 -> v4 done in `codeql.yml` (v4 runs on Node.js 24, v3 is deprecated in
-  December 2026; the run of PR #508 logged `CODEQL_ACTION_VERSION: 4.39.1` and uploaded its results without a
-  warning). Open, with what the release notes say and what this repo's use of each action means for the bump
-  (release notes read 2026-10-24; none says a Node.js or runner minimum beyond runner 2.327.1, which GitHub-hosted
-  runners exceed): `github-script` v8 -> v9 (6 uses in `pr-automerge.yml`, 3 in `batch-check.yml`): v9 removes
-  `require('@actions/github')` and injects `getOctokit`; no script here uses either (only `require('fs')`), so the
-  bump should be inert. `checkout` v5 -> v7 (every workflow): v7 blocks a fork PR checkout under `pull_request_target`
-  and `workflow_run`; no workflow here uses either trigger. `cache` v5 -> v6: ESM only. `upload-artifact` v6 -> v7: ESM,
-  new `archive: false` option, no breaking change listed (13 uses in `batch-check.yml`, 1 in `workflow-lint.yml`).
-  `download-artifact` v6 -> v8 is the one with a behavior change: v8 fails the step on a hash mismatch by default
-  (`digest-mismatch: error`; v7 only warned) and no longer unzips non-zip downloads, so bump to v7 first, then v8, and
-  re-read the GitHub Actions data-passing entry in `docs/agent-lessons-learned.md` (`merge-multiple`). Every open
-  one touches `batch-check.yml`, which lane 1's aggregate-gate edit owns, so those wait for it to merge. Remove this
-  item when every pin is on its latest major.
-
 ## Cold Storage (promising ideas, deliberately shelved -- revisit only if a named trigger fires)
 
 Moved to `docs/agent-cold-storage.md` (2026-07-31, to reduce this file's per-session context
@@ -774,31 +753,48 @@ rather than relying on manual memory.
 
 ### GitHub Actions / CI health (action pins, deprecations, lint)
 
-- **Last scanned**: 2026-10-24.
-- **Findings**: the pins are no longer all on their latest majors (the 2026-07 sweep said they
-  were; `upload-artifact` v7 shipped in 2026-02, so that sweep may already have been wrong). Read
-  from each action's GitHub releases page (the page shows day and month, no year, so read these as
-  indicative): in use -> latest: `checkout` v5 -> v7, `cache` v5 -> v6, `upload-artifact` v6 -> v7,
-  `download-artifact` v6 -> v8, `github-script` v8 -> v9, `codeql-action` v3 -> v4 (bumped by hand under
-  Item 90). Current: `configure-pages@v6`, `upload-pages-artifact@v5`,
-  `deploy-pages@v5`. No pin was edited in this scan: the artifact actions' majors change behavior
-  CI relies on (artifact naming, `merge-multiple`, hash checks), so each bump is its own CI-proven
-  PR, one action at a time. **Dependabot is inert**: `.github/dependabot.yml` landed 2026-08-17 and
-  not one Dependabot PR or `dependabot/*` branch has existed since (every PR checked by author and
-  head branch). The reason is not visible from a session (repository settings), so it is
-  `docs/open-questions.md` Q5. Notices unchanged: "Node.js 20 is deprecated ... forced to run on
-  Node.js 24" against `download-artifact@v6` (now also explained by the pin being behind); the
-  punycode notice was not seen in the sampled run. `actionlint` and `yamllint` clean.
-- **Going forward**: once Q5 is answered, either Dependabot's first PRs arrive or the pins are
-  bumped by hand. Re-read the latest majors every scan: from a session `gh` and `curl` cannot reach
-  other repositories, but `WebFetch` of `https://github.com/<owner>/<repo>/releases` works.
+- **Last scanned**: 2026-10-30 (Item 90 bumped the pins by hand: `codeql-action` in PR #508, the other five in PR #513).
+- **Findings**: every pinned action is on its latest major. Latest releases read from each action's GitHub releases
+  page on 2026-10-30 (the page shows day and month, no year, so read these as indicative): `checkout` 7.0.1,
+  `cache` 6.1.0, `upload-artifact` 7.0.2, `download-artifact` 8.0.2, `github-script` 9.0.0, `codeql-action` 4 (the run
+  of PR #508 logged `CODEQL_ACTION_VERSION: 4.39.1`). `configure-pages@v6`, `upload-pages-artifact@v5` and
+  `deploy-pages@v5` were current on 2026-10-24 and were not re-read. The 2026-07 sweep that called every pin current
+  was wrong (`upload-artifact` v7 had shipped in 2026-02). The artifact actions' majors change behavior CI relies on
+  (artifact naming, `merge-multiple`, hash checks: `download-artifact` v8 fails a step on a digest mismatch), so
+  those bumps were read in CI, not only merged. **Dependabot was inert for ten weeks because of one mistyped
+  option**: `.github/dependabot.yml` (2026-08-17) said `open-pull-request-limit`, the option is
+  `open-pull-requests-limit`, and Dependabot rejects a file that holds an option outside its schema (the options
+  reference is silent on invalid options; the evidence is the check run below and ten weeks without one pull request
+  or `dependabot/*` branch). The only sign is a failed check run named `.github/dependabot.yml` (app
+  `dependabot`, "Your .github/dependabot.yml contained invalid details") on a pull request that touches the file;
+  it is not a required check and no workflow reads it, so it went unseen until PR #513 edited the file's comment
+  (`gh api repos/<owner>/<repo>/commits/<sha>/check-runs` lists it). Fixed in that pull request, and
+  `tests/test_dependabot_config.py` now holds the file to Dependabot's option names inside `self.pytest.unit`, which the
+  aggregate check gates; that answered the old Q5. The same check run on the fixed head read "Dependabot config file
+  validation" / "All changes look good" (success, a second after the push), so the file parses; a healthy file reads
+  that. Still unproven end to end: a first Dependabot pull request exists only once an action releases a major newer
+  than its pin. The "Node.js 20 is deprecated ... forced to run on Node.js
+  24" notice of 2026-10-24 (against `download-artifact@v6`) is gone: no job of PR #513's first run (`41074512594`)
+  carried it.
+- **Going forward**: re-read the latest majors every scan. Dependabot (weekly) should now propose each bump by itself,
+  so the scan first checks that it did: a `dependabot/*` branch or pull request and, when an action's latest major has
+  been out for more than two weeks without one, the `.github/dependabot.yml` check run of the latest pull request that
+  touched the file, before anything else. Its pull requests carry `no-automerge` (set in the file; whether they may
+  merge themselves is `docs/open-questions.md` Q6): `pr-automerge.yml` has a `GITHUB_TOKEN` step that a
+  Dependabot-triggered run, which gets no repository secrets, would reach. Read the first one's runs in full like any
+  bump (a Dependabot run also has a restricted token, so the Pages publish and the pull request comments may differ)
+  and write here what happened. If Dependabot stops producing anything, bump by hand, one action per commit. From a
+  session `gh` and `curl` cannot reach other repositories, but `WebFetch` of
+  `https://github.com/<owner>/<repo>/releases` works. Per bump, read the run and not only its colour: the annotations,
+  the artifact downloads in `selftest-gate` and `publish_diag`, the `pull_request` run of `pr-automerge.yml` (only that
+  event runs the PR's own copy) and every lane's rows.
 
 ### Persisted CI run-page warnings
 
 - **Last scanned**: 2026-10-24.
 - **Findings**: annotations of every job of the latest full `main` run (40055643200). (1) NEW on
   all seven Windows matrix jobs: `Environment variable 'INPUT_PATH' exceeds the maximum supported
-  length` (53197 against 32766): the `test-logs` upload step's `path:` list, about 55k characters
+  length` (53197 against 32766; 56337 on 2026-10-30): the `test-logs` upload step's `path:` list, about 55k characters
   today and two lines per file. Nothing is lost today: 160 of the 233 forward-slash patterns that
   sit past character 32766 matched files in the `real` lane's `test-logs` artifact (the rest are
   scenario-specific). If a late scenario's log ever goes missing from an artifact, suspect this
