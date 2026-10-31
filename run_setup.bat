@@ -1251,6 +1251,9 @@ rem to test CLAUDE.md Active Backlog Item 23's cascade-restore fix, which specif
 rem genuine (not HP_TEST_FORCE_CONDA_FAIL-style) failure reaching :conda_create_failed during a
 rem cascade re-entry.
 if "%HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL%"=="1" goto :conda_create_test_network_fail
+rem [TEST] HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL: fail the first attempt with output that holds none of the four
+rem transient phrases, so the check below must stop without a second attempt (README REQ-022.3).
+if "%HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL%"=="1" goto :conda_create_test_plain_fail
 rem derived requirement: HP_PYSPEC_WRITEBACK marks a PYSPEC value that was
 rem self-written moments ago by a DIFFERENT provider's own resolved interpreter
 rem (see :write_runtime_txt and its two inline duplicates) -- an artifact of
@@ -1290,6 +1293,10 @@ if defined HP_CONDA_PYSPEC_SKIP (
   call "%CONDA_BAT%" create -y -n "%ENVNAME%" "%HP_CONDA_PYSPEC_USE%" pip --override-channels -c conda-forge > "~conda_create.tmp" 2>&1
 )
 set "HP_CCREATE_RC=%ERRORLEVEL%"
+goto :conda_create_have_rc
+:conda_create_test_plain_fail
+echo PackagesNotFoundError: the requested packages are not available in the channel, simulated > "~conda_create.tmp"
+set "HP_CCREATE_RC=1"
 goto :conda_create_have_rc
 :conda_create_test_network_fail
 rem [TEST] HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL: simulate a transient CondaHTTPError on the
