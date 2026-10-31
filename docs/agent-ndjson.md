@@ -1280,6 +1280,24 @@ the first argument is validated before the fast path and every early stop releas
 self.entryarg.noext, self.entryarg.csv, self.entryarg.missing, self.entryarg.wildcard, self.entryarg.directory, self.entryarg.stops_release_lock
 ```
 
+## selfapps-conda-transient NDJSON rows (selfapps_conda_transient.ps1, real and justme-test lanes, GATING)
+
+Item 93 regression test (README REQ-005.2, REQ-022.1 to .3). No Miniconda and no network: the bulk-install subroutine
+and the create flow's transient check are cut out of `run_setup.bat`, wrapped in a driver batch file and run by cmd.exe
+against a stub `conda.bat` that prints a chosen text and counts its calls. `control` (the `CondaHTTPError` wording is
+retried at both sites: bulk makes two stub calls and returns 0, create makes the one retry call and ends done; proves the
+harness), `bulk` and `create` (the same sites on the 502 text conda printed in run 41074512594, `requests.exceptions.
+HTTPError: 502 Server Error: Bad Gateway for url: ...msgpack.zst`), `bounded` (a 502 that stays: exactly two bulk calls
+and one create retry, then the `retry after transient failure also failed` line and the failure), `nonretry` (a solver
+answer and the client-error form `404 Client Error` are run once, no retry line). Skips with `skip=true,
+reason=non-windows-host` off Windows. Expected red on the commit that adds it for `bulk`, `create` and `bounded` (the
+detection does not know the phrase `Server Error`), green for `control` and `nonretry` throughout.
+
+```
+self.conda.retry5xx.control, self.conda.retry5xx.bulk, self.conda.retry5xx.create,
+self.conda.retry5xx.bounded, self.conda.retry5xx.nonretry
+```
+
 ## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)
 
 CLAUDE.md Item 68 regression test (`docs/plan-field-report-2026-10.md`; README REQ-005, REQ-005.5, REQ-007).
