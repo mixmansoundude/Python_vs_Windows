@@ -101,8 +101,11 @@ jobs:
           # own cache happens to be organically corrupted this run -- see that file and
           # docs/agent-closed-backlog.md's Item 19 entry for why the ambient `cache` lane alone
           # (informational, job-level continue-on-error) was not enough signal on its own.
-          $exactArgs = @()
-          if ($env:HP_CACHE_EXACT_HIT -eq 'true') { $exactArgs = @('-ExactHit') }
+          # derived requirement (Item 95): a switch is splatted from a HASHTABLE. An array splat hands '-ExactHit'
+          # to the script as a positional string, which its param block does not accept, so every exact cache hit
+          # threw here and this step's continue-on-error hid it: the health check never ran on an exact hit.
+          $exactArgs = @{}
+          if ($env:HP_CACHE_EXACT_HIT -eq 'true') { $exactArgs = @{ ExactHit = $true } }
           & .\tools\ci_cache_selfheal.ps1 -CondaDir 'C:\Users\Public\Documents\Miniconda3' @exactArgs
           $rc = $LASTEXITCODE
           if ($rc -eq 1 -or $rc -eq 3) {
@@ -1360,6 +1363,16 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_noflag_default.ps1
+
+      # Item 94b (REQ-018.9): in a non-interactive run every elective offer (post-execution checkpoint, optimized
+      # build, missing-package install, last-chance offer) declines without reading the console. One signal at a
+      # time (NOINPUT, HP_NONINTERACTIVE, HP_CI_LANE), plus a control run with none of them that must reach the
+      # prompts. Eight default bootstraps of two small programs. Real lane only, gating from its first run.
+      - name: "Self-test: elective offers decline without waiting in non-interactive runs (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_offers_noninteractive.ps1
 
       # docs/plan-test-suite-gaps.md gap T2 (REQ-005.1): dependency source resolution, one bootstrap per cell
       # (PEP 723 only, requirements.txt only, all three, malformed PEP 723, pyproject without dependencies,
@@ -2652,6 +2665,12 @@ jobs:
             tests\~selftest_noflag_evidence\~noflag_ledger.jsonl
             tests/~selftest_noflag_evidence/~bootstrap.status.json
             tests\~selftest_noflag_evidence\~bootstrap.status.json
+            tests/~selftest_offers_*/~offers_console.log
+            tests/~selftest_offers_*/~offers_env.txt
+            tests/~selftest_offers_*/~offers_env0.txt
+            tests/~selftest_offers_*/~offers_ledger.jsonl
+            tests/~selftest_offers_*/~setup.log
+            tests/~selftest_offers_*/~bootstrap.status.json
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt

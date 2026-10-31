@@ -20,10 +20,11 @@ updates:
     # 2026-10-31 and nothing was ever opened. tests/test_dependabot_config.py
     # holds every option name to Dependabot's options reference.
     open-pull-requests-limit: 5
-    # Held for a reader: pr-automerge.yml arms auto-merge for every same-repo
-    # pull request without this label, and a bump of an action changes how CI
-    # itself runs (Item 90 read each run before merging). Removing the label
-    # lets Dependabot's pull requests merge themselves once the aggregate
-    # check is green (docs/open-questions.md Q6).
+    # Held for a reader, for now (maintainer decision 2026-10-31): pr-automerge.yml
+    # arms auto-merge for every same-repo pull request without this label, and a
+    # bump of an action changes how CI itself runs, so a session reads the runs of
+    # each of the first few Dependabot pull requests before merging it. Once they
+    # have behaved, delete this labels: block and they merge by themselves when
+    # the aggregate check is green (CLAUDE.md, GitHub Actions / CI health).
     labels:
       - "no-automerge"

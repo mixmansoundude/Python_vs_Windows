@@ -14,6 +14,10 @@
 #     the same unconditional prompt text, and that the run footprint stays at exactly one
 #     execution (a single "Entry smoke exit=0" line).
 #
+#   self.checkpoint.risk    - README REQ-018.2 and REQ-018.8: read from the console text of the two runs above, the
+#     prompt (from its heading to the line that records the decision) says "running it twice could cause harm", so
+#     the user is told the risk before choosing. An empty block (heading or decision line missing) fails the row.
+#
 # Lane: real and conda-full only (matches selfapps_exefastpath.ps1 / selfapps_failfast_probe.ps1).
 param()
 $ErrorActionPreference = 'Continue'
@@ -33,7 +37,20 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$ndjsonIds = @('self.checkpoint.accept', 'self.checkpoint.decline')
+# The prompt text between its heading and the first line that records the decision, whitespace flattened to single
+# spaces. Empty when either marker is missing, so a prompt that moved or changed its heading cannot pass.
+function Get-PromptBlock {
+    param([string]$Text, [string]$Heading, [string]$Decision)
+    if (-not $Text) { return '' }
+    $from = $Text.IndexOf($Heading, [System.StringComparison]::Ordinal)
+    if ($from -lt 0) { return '' }
+    $rest = $Text.Substring($from)
+    $m = [regex]::Match($rest, $Decision)
+    if (-not $m.Success) { return '' }
+    return ($rest.Substring(0, $m.Index) -replace '\s+', ' ').Trim()
+}
+
+$ndjsonIds = @('self.checkpoint.accept', 'self.checkpoint.decline', 'self.checkpoint.risk')
 
 # Non-Windows skip
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -133,7 +150,7 @@ try {
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.checkpoint.accept'
-    req     = 'REQ-018'
+    req     = 'REQ-018, REQ-018.8'
     pass    = $acceptPass
     desc    = 'Post-execution checkpoint: HP_TEST_CHECKPOINT_ANSWER=Y accepts and runs the entry a second time via the interpreter'
     details = $acceptDetails
@@ -189,11 +206,38 @@ try {
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.checkpoint.decline'
-    req     = 'REQ-018'
+    req     = 'REQ-018, REQ-018.8'
     pass    = $declinePass
     desc    = 'Post-execution checkpoint: default/HP_CI_LANE auto-decline keeps the run footprint at exactly one execution'
     details = $declineDetails
 })
 
-if (-not ($acceptPass -and $declinePass)) { exit 1 }
+# --- Risk wording (README REQ-018.2 and REQ-018.8): the prompt names the risk of running the program twice ---
+# Judged on the console text of the two scenarios above. The accepted and the declined run print the same prompt, so
+# both must say it, and each must have a prompt block at all.
+$riskMarker   = 'running it twice could cause harm'
+$riskHeading  = 'Verification finished -- see the Run Status above.'
+$riskDecision = 'post-execution checkpoint \((exe|interpreter)\): (accepted|declined)'
+$accBlock = Get-PromptBlock -Text $accText -Heading $riskHeading -Decision $riskDecision
+$decBlock = Get-PromptBlock -Text $decText -Heading $riskHeading -Decision $riskDecision
+$accNamesRisk = $accBlock.Contains($riskMarker)
+$decNamesRisk = $decBlock.Contains($riskMarker)
+$riskPass = ($accBlock.Length -gt 0) -and ($decBlock.Length -gt 0) -and $accNamesRisk -and $decNamesRisk
+$riskShown = $accBlock
+if ($riskShown.Length -gt 500) { $riskShown = $riskShown.Substring(0, 500) }
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.checkpoint.risk'
+    req     = 'REQ-018.2, REQ-018.8'
+    pass    = $riskPass
+    desc    = 'Post-execution checkpoint: the prompt tells the user that running the program twice could cause harm, in the accepted and the declined run'
+    details = [ordered]@{
+        acceptBlockFound  = ($accBlock.Length -gt 0)
+        declineBlockFound = ($decBlock.Length -gt 0)
+        acceptNamesRisk   = $accNamesRisk
+        declineNamesRisk  = $decNamesRisk
+        promptText        = $riskShown
+    }
+})
+
+if (-not ($acceptPass -and $declinePass -and $riskPass)) { exit 1 }
 exit 0

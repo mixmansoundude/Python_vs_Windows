@@ -17,6 +17,9 @@
 #   self.lastchance.enter         interpreter site (HP_SKIP_EXE_SMOKERUN), the real set /p read answers with a bare
 #                                 Enter (default neither), and the error-line helper failing to emit
 #                                 (HP_TEST_FORCE_EMIT_FAIL) only costs the "last line" part of the prompt
+#   self.lastchance.risk          README REQ-018.2 and REQ-018.25: read from the console text of the worked and errline
+#                                 runs, the [C] choice says the program runs once more AND that running it twice could
+#                                 cause harm (the text between [C] and [N]); no extra bootstrap
 #   self.lastchance.checkpoint_ok the accepted post-execution checkpoint ran the program through the interpreter
 #                                 and it exited 0 (an EXE packaging problem, not the environment): no prompt
 #   self.lastchance.exit0         a run that exits 0 never gets the prompt and no row is written
@@ -63,6 +66,28 @@ function Test-AfterOffer {
     $at = $Console.IndexOf('Your program stopped with an error')
     if ($at -lt 0) { return $false }
     return ($Console.IndexOf($Text, $at, [System.StringComparison]::Ordinal) -ge 0)
+}
+
+# The prompt text between its heading and the first line that records the decision, whitespace flattened to single
+# spaces. Empty when either marker is missing, so a prompt that moved or changed its heading cannot pass.
+function Get-PromptBlock {
+    param([string]$Text, [string]$Heading, [string]$Decision)
+    if (-not $Text) { return '' }
+    $from = $Text.IndexOf($Heading, [System.StringComparison]::Ordinal)
+    if ($from -lt 0) { return '' }
+    $rest = $Text.Substring($from)
+    $m = [regex]::Match($rest, $Decision)
+    if (-not $m.Success) { return '' }
+    return ($rest.Substring(0, $m.Index) -replace '\s+', ' ').Trim()
+}
+
+# The text of the [C] choice: from "[C]" up to "[N]" in a prompt block. Empty when either is missing or out of order.
+function Get-ChoiceC {
+    param([string]$Block)
+    $c = $Block.IndexOf('[C]', [System.StringComparison]::Ordinal)
+    $n = $Block.IndexOf('[N]', [System.StringComparison]::Ordinal)
+    if ($c -lt 0 -or $n -le $c) { return '' }
+    return $Block.Substring($c, $n - $c)
 }
 
 $group = [Environment]::GetEnvironmentVariable('LASTCHANCE_GROUP')
@@ -270,7 +295,7 @@ if ($runReal) {
     if (-not $wPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.worked'
-        req     = 'REQ-018'
+        req     = 'REQ-018.23, REQ-018.24'
         pass    = $wPass
         desc    = 'after a failed verification run on uv, answer W keeps the build, starts no cascade and records user_confirmed'
         details = [ordered]@{
@@ -309,7 +334,7 @@ if ($runReal) {
     if (-not $ePass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.errline'
-        req     = 'REQ-018'
+        req     = 'REQ-018.23, REQ-018.24'
         pass    = $ePass
         desc    = 'with no answer in an automated run the offer resolves to neither without waiting, and an error line holding < > & | % ^ is shown intact with no stray file'
         details = [ordered]@{
@@ -329,6 +354,37 @@ if ($runReal) {
         }
     })
 
+    # ---- risk (README REQ-018.2 and REQ-018.25): the [C] choice says the program runs once more and names the risk ----
+    # Read from the console of the worked and errline runs above (the same prompt in both), so no extra bootstrap.
+    $riskMarker   = 'running it twice could cause harm'
+    $riskHeading  = 'Your program stopped with an error, exit code'
+    $riskDecision = 'Last chance: (you said it worked|automated run, no question asked|neither|cascade approved)'
+    $wChoice = Get-ChoiceC (Get-PromptBlock -Text $w.Console -Heading $riskHeading -Decision $riskDecision)
+    $eChoice = Get-ChoiceC (Get-PromptBlock -Text $e.Console -Heading $riskHeading -Decision $riskDecision)
+    $wSaysOnceMore = $wChoice.Contains('Try again with Miniconda') -and $wChoice.Contains('once more')
+    $eSaysOnceMore = $eChoice.Contains('Try again with Miniconda') -and $eChoice.Contains('once more')
+    $wNamesRisk = $wChoice.Contains($riskMarker)
+    $eNamesRisk = $eChoice.Contains($riskMarker)
+    $rPass = ($wChoice.Length -gt 0) -and ($eChoice.Length -gt 0) -and $wSaysOnceMore -and $eSaysOnceMore -and $wNamesRisk -and $eNamesRisk
+    if (-not $rPass) { $allPass = $false }
+    $rShown = $wChoice
+    if ($rShown.Length -gt 400) { $rShown = $rShown.Substring(0, 400) }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.lastchance.risk'
+        req     = 'REQ-018.2, REQ-018.25'
+        pass    = $rPass
+        desc    = 'the Miniconda choice of the last-chance offer says the program runs once more and that running it twice could cause harm'
+        details = [ordered]@{
+            workedChoiceFound  = ($wChoice.Length -gt 0)
+            errlineChoiceFound = ($eChoice.Length -gt 0)
+            workedSaysOnceMore = $wSaysOnceMore
+            errlineSaysOnceMore = $eSaysOnceMore
+            workedNamesRisk    = $wNamesRisk
+            errlineNamesRisk   = $eNamesRisk
+            choiceText         = $rShown
+        }
+    })
+
     # ---- enter: interpreter site, a real set /p read with a bare Enter, and the line helper unavailable ----
     $n = Invoke-LastChance -Name 'enter' -AppCode $appFail -Stdin "`r`n" -EnvVars @{
         HP_SKIP_EXE_SMOKERUN = '1'
@@ -345,7 +401,7 @@ if ($runReal) {
     if (-not $nPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.enter'
-        req     = 'REQ-018'
+        req     = 'REQ-018.23'
         pass    = $nPass
         desc    = 'at the interpreter site a bare Enter at the real prompt means neither, and a failed error-line helper only drops the last-line part'
         details = [ordered]@{
@@ -375,7 +431,7 @@ if ($runReal) {
     if (-not $cPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.checkpoint_ok'
-        req     = 'REQ-018'
+        req     = 'REQ-018.26'
         pass    = $cPass
         desc    = 'when the accepted checkpoint run through the interpreter exits 0 the failed EXE run does not raise the offer'
         details = [ordered]@{
@@ -398,7 +454,7 @@ if ($runReal) {
     if (-not $oPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.exit0'
-        req     = 'REQ-018'
+        req     = 'REQ-018.26'
         pass    = $oPass
         desc    = 'a run that exits 0 never raises the offer and leaves no trace of it'
         details = [ordered]@{
@@ -419,7 +475,7 @@ if ($runUv) {
     if (-not $tPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.timeout'
-        req     = 'REQ-018'
+        req     = 'REQ-018.26'
         pass    = $tPass
         desc    = 'a silent run that the smoke runner force-stops (exit -1) does not raise the offer even when an answer is supplied'
         details = [ordered]@{
@@ -445,7 +501,7 @@ if ($runUv) {
     if (-not $hcPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.cascade'
-        req     = 'REQ-009'
+        req     = 'REQ-009, REQ-018.27'
         pass    = $hcPass
         desc    = 'answer C re-attempts the program under conda, which passes it, and the prompt is shown exactly once'
         details = [ordered]@{
@@ -476,7 +532,7 @@ if ($runUv) {
     if (-not $haPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.cascade_again'
-        req     = 'REQ-009'
+        req     = 'REQ-009, REQ-018.26'
         pass    = $haPass
         desc    = 'when the program also fails on conda the prompt is not shown a second time'
         details = [ordered]@{
@@ -510,7 +566,7 @@ if ($runUv) {
     if (-not $wyPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.window_yes'
-        req     = 'REQ-018'
+        req     = 'REQ-018.28, REQ-018.29'
         pass    = $wyPass
         desc    = 'on the conda tier a silent program the runner force-stopped raises the question and an explicit yes records user_confirmed'
         details = [ordered]@{
@@ -542,7 +598,7 @@ if ($runUv) {
     if (-not $wePass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.window_enter'
-        req     = 'REQ-018'
+        req     = 'REQ-018.28, REQ-018.29'
         pass    = $wePass
         desc    = 'a bare Enter at the real window question means no and records nothing'
         details = [ordered]@{
@@ -566,7 +622,7 @@ if ($runUv) {
     if (-not $waPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.window_auto'
-        req     = 'REQ-019'
+        req     = 'REQ-018.28, REQ-018.29'
         pass    = $waPass
         desc    = 'in an automated run with no override the window question resolves to no without waiting and records nothing'
         details = [ordered]@{
@@ -593,7 +649,7 @@ if ($runUv) {
     if (-not $wsPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.window_selfexit'
-        req     = 'REQ-018'
+        req     = 'REQ-018.31'
         pass    = $wsPass
         desc    = 'a program that exits by itself with -1 on the conda tier does not raise the window question, and a stale kill marker is cleared'
         details = [ordered]@{

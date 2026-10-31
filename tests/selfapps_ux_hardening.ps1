@@ -734,7 +734,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $sysAcceptPass = ($sysAcceptConsentLog -and $sysAcceptSelected)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.ux.system.gate.accept'
-        req     = 'REQ-014'
+        req     = 'REQ-014, REQ-019.2'
         pass    = $sysAcceptPass
         desc    = 'System Python consent ACCEPT routes into Tier 4 system provider in a default no-flag run (REQ-009 provider independence)'
         details = [ordered]@{ consentAcceptLog = $sysAcceptConsentLog; systemSelected = $sysAcceptSelected; state = $sysAcceptState; exitCode = $sysAcceptExit }
@@ -797,7 +797,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $venvFbPass = ($venvFbReady -and $venvFbProvider -and $venvFbAppRan)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.venv.fallback'
-        req     = 'REQ-009'
+        req     = 'REQ-009, REQ-019.2'
         pass    = $venvFbPass
         desc    = 'REQ-009 Tier 3: venv fallback fires when conda fails and app bootstraps via .venv'
         details = [ordered]@{

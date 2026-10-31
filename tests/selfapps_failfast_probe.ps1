@@ -314,7 +314,7 @@ sys.exit(0)
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.failfast.probe.alive'
-    req     = 'REQ-018'
+    req     = 'REQ-018.4'
     pass    = $alivePass
     desc    = 'Fail-fast probe: a cached EXE still running past the probe window is never discarded, even if it later exits non-zero; the bootstrap reports the true outcome and stays state=ok'
     details = $aliveDetails

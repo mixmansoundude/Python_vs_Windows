@@ -57,10 +57,10 @@ $allIds = @(
 )
 
 $reqOf = @{
-    'self.launch.argv.fresh' = 'REQ-026.1'; 'self.launch.argv.cap' = 'REQ-026.5'; 'self.launch.count.default' = 'REQ-018'
-    'self.launch.argv.fastpath' = 'REQ-026.2'; 'self.launch.argv.interpreter' = 'REQ-026.3'
+    'self.launch.argv.fresh' = 'REQ-026.1'; 'self.launch.argv.cap' = 'REQ-026.5'; 'self.launch.count.default' = 'REQ-018.1'
+    'self.launch.argv.fastpath' = 'REQ-026.2, REQ-018.3'; 'self.launch.argv.interpreter' = 'REQ-026.3'
     'self.isolation.req010.pythonhome' = 'REQ-010'; 'self.isolation.req010.path_shadow' = 'REQ-010'
-    'self.launch.count.checkpoint' = 'REQ-018'; 'self.launch.argv.checkpoint' = 'REQ-026.4'; 'self.launch.argv.none' = 'REQ-026.6'
+    'self.launch.count.checkpoint' = 'REQ-018.1'; 'self.launch.argv.checkpoint' = 'REQ-026.4'; 'self.launch.argv.none' = 'REQ-026.6'
 }
 
 function Write-AllRows {
@@ -235,7 +235,7 @@ Write-NdjsonRow ([ordered]@{
 })
 $countPass = $aCountOk
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.count.default'; req = 'REQ-018'; pass = [bool]$countPass
+    id = 'self.launch.count.default'; req = 'REQ-018.1'; pass = [bool]$countPass
     desc = 'REQ-018: a default fresh bootstrap runs the user program exactly once'
     details = [ordered]@{ ledgerLines = $linesA.Count; expected = 1; exitCode = $exitA }
 })
@@ -244,7 +244,7 @@ $b1 = if ($linesB.Count -ge 2) { $linesB[1] } else { $null }
 $fastLogged = $logB -match [regex]::Escape('Fast path: reusing')
 $bPass = ($linesB.Count -eq 2) -and ($null -ne $b1) -and ($b1.frozen -eq $true) -and (Test-ArgvEqual $b1.argv $expectedArgv) -and $fastLogged
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.argv.fastpath'; req = 'REQ-026.2'; pass = [bool]$bPass
+    id = 'self.launch.argv.fastpath'; req = 'REQ-026.2, REQ-018.3'; pass = [bool]$bPass
     desc = 'REQ-026: the cached-EXE fast path launches the EXE once with the same forwarded arguments'
     details = [ordered]@{ exitCode = $exitB; ledgerLines = $linesB.Count; expectedLines = 2; fastPathLogged = [bool]$fastLogged; argv = if ($b1) { @($b1.argv) } else { $null } }
 })
@@ -317,7 +317,7 @@ $d1 = if ($linesD.Count -ge 2) { $linesD[1] } else { $null }
 $dCountPass = ($linesD.Count -eq 2) -and $checkpointAccepted -and ($null -ne $d0) -and ($null -ne $d1) -and
     ($d0.frozen -eq $true) -and ($d1.frozen -eq $false)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.launch.count.checkpoint'; req = 'REQ-018'; pass = [bool]$dCountPass
+    id = 'self.launch.count.checkpoint'; req = 'REQ-018.1'; pass = [bool]$dCountPass
     desc = 'REQ-018: an accepted post-execution checkpoint adds exactly one interpreter run after the EXE run'
     details = [ordered]@{ exitCode = $exitD; ledgerLines = $linesD.Count; expectedLines = 2; checkpointAccepted = [bool]$checkpointAccepted; firstFrozen = if ($d0) { $d0.frozen } else { $null }; secondFrozen = if ($d1) { $d1.frozen } else { $null } }
 })

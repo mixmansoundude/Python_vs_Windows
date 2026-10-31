@@ -172,7 +172,7 @@ $entryPass = ($exitF1 -eq 0) -and ($exitF2 -eq 0) -and $exeF1 -and $entrySkipLog
     ($linesF1.Count -eq $expectedF1Lines) -and ($null -ne $f1) -and ($f1.frozen -eq $true) -and
     ($linesF2.Count -eq $expectedF2Lines) -and ($null -ne $f2) -and ($f2.frozen -eq $true)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.skiphooks.entry_only'; req = 'REQ-012.2'; pass = [bool]$entryPass
+    id = 'self.skiphooks.entry_only'; req = 'REQ-012.1, REQ-012.2'; pass = [bool]$entryPass
     desc = 'REQ-012: HP_SKIP_ENTRY_SMOKE alone skips the interpreter smoke test but not the EXE verification run (one launch on the build, one more on the repeat)'
     details = [ordered]@{
         exitFirst = $exitF1; exitRepeat = $exitF2; exeBuilt = [bool]$exeF1
@@ -214,7 +214,7 @@ $exePass = ($exitG1 -eq 0) -and ($exitG2 -eq 0) -and $exeG1 -and $exeSkipLogged 
     ($linesG1.Count -eq $expectedG1Lines) -and ($null -ne $g1) -and ($g1.frozen -eq $false) -and
     $repeatSkipLogged -and ($linesG2.Count -eq $expectedG2Lines)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.skiphooks.exe_only'; req = 'REQ-012.4'; pass = [bool]$exePass
+    id = 'self.skiphooks.exe_only'; req = 'REQ-012.3, REQ-012.4'; pass = [bool]$exePass
     desc = 'REQ-012: HP_SKIP_EXE_SMOKERUN alone leaves the EXE unrun, the interpreter verifies the build once, and the repeat runs nothing'
     details = [ordered]@{
         exitFirst = $exitG1; exitRepeat = $exitG2; exeBuilt = [bool]$exeG1
