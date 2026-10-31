@@ -2,8 +2,8 @@
 
 Run 41074512594 (PR #513): a single `502 Server Error: Bad Gateway` on a repodata shard made the first conda dry run exit 1,
 and nine `reqspec.*` rows plus the required "Aggregate self-test verdicts" check went red, although every other conda call in
-the same run worked. The script's four network calls (the dry run and the install of each half) now go through
-`Invoke-CondaCommand`: one more attempt after a short wait, only when the output names a 5xx or a failed connection, never
+the same run worked. The script's five network calls (the dry run and the install of each half, and the dry run that is expected to fail) now go
+through `Invoke-CondaCommand`: one more attempt after a short wait, only when the output names a 5xx or a failed connection, never
 for a solver answer or a 404, never more than twice.
 
 What this file proves, without Windows or conda:
@@ -12,6 +12,8 @@ What this file proves, without Windows or conda:
     that stays exits 1 after exactly two, a solver answer, a 404 and a success are run once, the first attempt's output and a
     one-line notice reach the log;
   - the transient pattern against text conda wrote (the 502 crash line of that run, conda's own CondaHTTPError wording);
+  - the expected-failure row's verdict (`Test-FailcaseRejected`, cut out the same way): a solver answer with a non-zero exit
+    passes, a 5xx or connection answer does not, because it proves nothing about the constraint (CodeRabbit, PR #515);
   - static pins: one helper, a bounded attempt count and wait, every network call of the script goes through it (a new raw
     `cmd /c $...Command` must be added to the short allow list on purpose), the four proof rows keep literal ids, the workflow
     step stays a gating step.
@@ -35,9 +37,9 @@ PWSH = shutil.which("pwsh")
 
 ROW_IDS = ("reqspec.retry.once", "reqspec.retry.bounded", "reqspec.retry.nontransient", "reqspec.retry.classify")
 STEP_NAME = "Self-test: requirements specifier coverage"
-# Raw `cmd /c $X` calls that are allowed to stay outside the helper: local configuration, the dry run that is EXPECTED to
-# fail on the solver (a 5xx there fails the same way), and the two python import checks.
-RAW_ALLOWED = {"configCommand", "badDryRunCommand", "importCommand", "ingestImportCommand"}
+# Raw `cmd /c $X` calls that are allowed to stay outside the helper: local configuration and the two python import checks.
+# The dry run that is EXPECTED to fail goes through the helper too, and its verdict refuses a 5xx answer.
+RAW_ALLOWED = {"configCommand", "importCommand", "ingestImportCommand"}
 MAX_ATTEMPTS = 2
 MAX_WAIT_SECONDS = 30
 
@@ -91,9 +93,13 @@ def problems(text):
     stray = sorted(raw - RAW_ALLOWED - {"Command"})
     if stray:
         found.append("raw cmd /c calls outside the helper: %s" % ", ".join(stray))
-    for label in ("conda dry-run", "conda install", "ingest conda dry-run", "ingest conda install"):
+    for label in ("conda dry-run", "conda install", "ingest conda dry-run", "ingest conda install", "conda failure-case dry-run"):
         if not re.search(r"Invoke-CondaCommand\b[^\n]*-Label '%s'" % re.escape(label), text):
             found.append("no Invoke-CondaCommand call labelled %r" % label)
+    if not re.search(r"\$failcasePass\s*=\s*Test-FailcaseRejected\b", text):
+        found.append("the failcase row must take its verdict from Test-FailcaseRejected")
+    if not re.search(r"\$failcaseDetails\.transientAnswer\s*=", text):
+        found.append("the failcase details must record transientAnswer")
     for row in ROW_IDS:
         n = len(re.findall(r"\bid\s*=\s*'%s'" % re.escape(row), text))
         if n != 1:
@@ -143,6 +149,14 @@ class SyntheticRulesCanFail(unittest.TestCase):
 
     def test_call_site_moved_back_to_raw(self):
         text = _read().replace("Invoke-CondaCommand -Command $dryRunCommand -Label 'conda dry-run'", "Invoke-Other -Command $dryRunCommand")
+        self.assertTrue(problems(text))
+
+    def test_failcase_verdict_back_to_exit_code_only(self):
+        text = _read().replace("$failcasePass = Test-FailcaseRejected", "$failcasePass = ($failcase.exitCode -ne 0) #")
+        self.assertTrue(problems(text))
+
+    def test_failcase_call_moved_back_to_raw(self):
+        text = _read().replace("Invoke-CondaCommand -Command $badDryRunCommand -Label 'conda failure-case dry-run'", "cmd /c $badDryRunCommand")
         self.assertTrue(problems(text))
 
     def test_row_id_through_a_variable(self):
@@ -241,6 +255,36 @@ class HelperBehavior(unittest.TestCase):
     def test_no_retry_writes_nothing_to_the_log(self):
         r = self._run([{"code": 0, "text": "ok"}])
         self.assertEqual(r["log"], "")
+
+
+FAILCASE_RUNNER = r"""
+$ErrorActionPreference = 'Stop'
+{HELPER}
+$cases = @(
+    [pscustomobject]@{ exitCode = 1; transientAnswer = $false },
+    [pscustomobject]@{ exitCode = 1; transientAnswer = $true },
+    [pscustomobject]@{ exitCode = 0; transientAnswer = $false },
+    [pscustomobject]@{ exitCode = 1 }
+)
+($cases | ForEach-Object { [bool](Test-FailcaseRejected -Details $_) }) | ConvertTo-Json -Compress
+"""
+
+
+@unittest.skipUnless(PWSH, "pwsh is not installed")
+class FailcaseVerdict(unittest.TestCase):
+    """reqspec.conda.dryrun.failcase must not pass on a provider answer: a 502 exits non-zero too."""
+
+    def test_verdicts(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "run.ps1"
+            script.write_text(FAILCASE_RUNNER.replace("{HELPER}", helper_text(_read())), encoding="ascii")
+            p = subprocess.run(
+                [PWSH, "-NoProfile", "-NonInteractive", "-File", str(script)],
+                capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+            )
+            self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+            # solver answer passes; transient answer does not; a zero exit is not a rejection; a missing flag counts as no transient
+            self.assertEqual(json.loads(p.stdout.strip().splitlines()[-1]), [True, False, False, True])
 
 
 if __name__ == "__main__":

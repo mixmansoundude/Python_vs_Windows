@@ -120,7 +120,7 @@ function Write-ReqspecRows {
     }
     $failcasePass = $true
     if (-not $Skip) {
-        $failcasePass = ($failcase.exitCode -ne 0)
+        $failcasePass = Test-FailcaseRejected -Details $failcase
     }
     Write-NdjsonRow ([ordered]@{
         id = 'reqspec.conda.dryrun.failcase'
@@ -263,6 +263,13 @@ function Invoke-CondaCommand {
         Start-Sleep -Seconds $WaitSeconds
     }
     return [pscustomobject]@{ Output = $text; ExitCode = $code; Attempts = $attempts; Retried = $retried }
+}
+
+# The verdict of the dry run that is EXPECTED to fail. A non-zero exit alone is not a rejection of the constraint: a 5xx from
+# conda-forge exits non-zero as well, and passing on it would prove nothing about the requirement (CodeRabbit, PR #515).
+function Test-FailcaseRejected {
+    param($Details)
+    return (($Details.exitCode -ne 0) -and (-not $Details.transientAnswer))
 }
 
 function Get-CondaBatPath {
@@ -637,9 +644,12 @@ try {
 }
 
 try {
-    $badDryOutput = cmd /c $badDryRunCommand 2>&1
-    $exitCodeBad = $LASTEXITCODE
+    $badDryRun = Invoke-CondaCommand -Command $badDryRunCommand -Label 'conda failure-case dry-run' -LogPath $logPath
+    $badDryOutput = $badDryRun.Output
+    $exitCodeBad = $badDryRun.ExitCode
     $failcaseDetails.exitCode = $exitCodeBad
+    $failcaseDetails.attempts = $badDryRun.Attempts
+    $failcaseDetails.transientAnswer = [bool]($badDryOutput -match $script:CondaTransientPattern)
     if ($badDryOutput) {
         Add-Content -LiteralPath $logPath -Value 'conda failure-case dry-run output:' -Encoding Ascii
         Add-Content -LiteralPath $logPath -Value ($badDryOutput | Out-String) -Encoding Ascii
