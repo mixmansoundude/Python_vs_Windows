@@ -4005,8 +4005,9 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   pull request are the evidence) and shows the error only on a pull request that touches the file, so it never ran,
   which is what `docs/open-questions.md` Q5 asked about. Fix: the spelling, plus `labels: ["no-automerge"]`, because
   `pr-automerge.yml` arms auto-merge for any same-repo pull request without it and a Dependabot-triggered run (no
-  repository secrets) reaches its `GITHUB_TOKEN` step; whether such pull requests should merge themselves is the new
-  Q6. Test first: `tests/test_dependabot_config.py` (text based, option names from Dependabot's options reference,
+  repository secrets) reaches its `GITHUB_TOKEN` step; whether such pull requests should merge themselves was the new
+  Q6 (answered 2026-10-31: keep the label for the first few, then let them merge on green; CLAUDE.md's GitHub Actions
+  entry). Test first: `tests/test_dependabot_config.py` (text based, option names from Dependabot's options reference,
   synthetic cases for each rule) was pushed alone (`a803e5d`), and run `41149101367` read it red on the four lanes
   that finish first (contract-uv, contract-uv-fail, uv-dl-fallback, justme-test): `self.pytest.unit` failed on
   `RealFile::test_dependabot_can_read_the_config` alone (1181 passed, 3 skipped), its message naming line 18 and the

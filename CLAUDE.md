@@ -783,11 +783,16 @@ rather than relying on manual memory.
 - **Going forward**: re-read the latest majors every scan. Dependabot (weekly) should now propose each bump by itself,
   so the scan first checks that it did: a `dependabot/*` branch or pull request and, when an action's latest major has
   been out for more than two weeks without one, the `.github/dependabot.yml` check run of the latest pull request that
-  touched the file, before anything else. Its pull requests carry `no-automerge` (set in the file; whether they may
-  merge themselves is `docs/open-questions.md` Q6): `pr-automerge.yml` has a `GITHUB_TOKEN` step that a
-  Dependabot-triggered run, which gets no repository secrets, would reach. Read the first one's runs in full like any
-  bump (a Dependabot run also has a restricted token, so the Pages publish and the pull request comments may differ)
-  and write here what happened. If Dependabot stops producing anything, bump by hand, one action per commit. From a
+  touched the file, before anything else. Its pull requests carry `no-automerge` (set in the file): `pr-automerge.yml`
+  has a `GITHUB_TOKEN` step that a Dependabot-triggered run, which gets no repository secrets, would reach. **Decided
+  by the maintainer 2026-10-31 (former open question 6)**: keep the label for now and read the runs of each of the first
+  few Dependabot pull requests in full like any bump before merging it (a Dependabot run also has a restricted token, so
+  the Pages publish and the pull request comments may differ), and write here what happened; once they have behaved,
+  delete `labels:` from `.github/dependabot.yml` so they merge themselves when "Aggregate self-test verdicts" is green.
+  The reason for that end state is the maintainer's goal that the repository runs without an AI agent in the critical
+  path: a bump that needs an agent to read it before every merge is a dependency on one, and the aggregate check plus
+  the fixes this repository has made to its own gates is what is meant to carry that. If Dependabot stops producing
+  anything, bump by hand, one action per commit. From a
   session `gh` and `curl` cannot reach other repositories, but `WebFetch` of
   `https://github.com/<owner>/<repo>/releases` works. Per bump, read the run and not only its colour: the annotations,
   the artifact downloads in `selftest-gate` and `publish_diag`, the `pull_request` run of `pr-automerge.yml` (only that

@@ -135,7 +135,9 @@ the file as text (no YAML library in the pytest step) and holds its keys to list
 reference; a new option the file needs goes into the lists in the same change. The file sets `labels: ["no-automerge"]`
 because `pr-automerge.yml` arms auto-merge for every same-repo pull request without that label (a Dependabot-triggered
 run has neither PAT secret, so its `GITHUB_TOKEN` step applies; unproven until a first pull request exists). Deleting the
-label from the file is the switch that lets Dependabot's pull requests merge themselves (`docs/open-questions.md` Q6).
+label from the file is the switch that lets Dependabot's pull requests merge themselves; the maintainer decided
+(2026-10-31) to keep the label while a session reads the runs of the first few Dependabot pull requests, then to delete it
+(the repository is meant to run without an AI agent in the critical path, CLAUDE.md's GitHub Actions entry).
 
 ---
 

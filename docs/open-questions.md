@@ -25,18 +25,6 @@ chat one at a time; the later ones wait their turn.
    the gates that read fewer signals. Which gates should read all three? Default: no code change until the
    no-flag default-run scenario (T12) shows how much it matters; word each shall per gate until then.
 
-## From the Item 90 follow-up (Dependabot, filed 2026-10-31)
-
-6. **Should Dependabot's pull requests merge themselves?** Dependabot could not read `.github/dependabot.yml` until
-   2026-10-31 (the option `open-pull-request-limit` is spelled `open-pull-requests-limit`, and a file with one unknown
-   option is rejected), which is why it opened no pull request in ten weeks; the first one arrives when an action
-   releases a major newer than its pin. `pr-automerge.yml` arms auto-merge for every same-repo pull request that does
-   not carry `no-automerge`, so a Dependabot pull request would merge itself once "Aggregate self-test verdicts" is
-   green (every row of every lane, but not the annotations Item 90 read before each bump). (A) Keep what the file sets
-   now: the label `no-automerge` on every Dependabot pull request, so each stays open until a session has read its runs
-   and merges it. (B) Delete `labels:` from the file, and they merge by themselves like any other pull request.
-   Default meanwhile: A.
-
 ## From the Aug-Sep 2026 field report (`docs/plan-field-report-2026-10.md`, filed 2026-10-08)
 
 Each question names the backlog item it blocks and the default an implementing agent should use
