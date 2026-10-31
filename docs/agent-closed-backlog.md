@@ -4011,9 +4011,10 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   that finish first (contract-uv, contract-uv-fail, uv-dl-fallback, justme-test): `self.pytest.unit` failed on
   `RealFile::test_dependabot_can_read_the_config` alone (1181 passed, 3 skipped), its message naming line 18 and the
   mistyped option, and no other row of those lanes was red (93, 89, 90 and 93 rows, the counts of the main run). The
-  fix went up under the early-push rule, which cancelled that run. Not proven until Dependabot opens a first pull
-  request, which waits for an action to release a major newer than its pin; CLAUDE.md's GitHub Actions entry keeps
-  that as a watch item.
+  fix went up under the early-push rule, which cancelled that run. Dependabot's check run on the fixed head
+  (`863409f`) read "Dependabot config file validation" / "All changes look good" (success, a second after the push),
+  where it had failed on `a48d50a`. Not proven until Dependabot opens a first pull request, which waits for an
+  action to release a major newer than its pin; CLAUDE.md's GitHub Actions entry keeps that as a watch item.
 - **Not done on purpose.** `configure-pages@v6`, `upload-pages-artifact@v5` and `deploy-pages@v5` were current on
   2026-10-24 and were not re-read.
 

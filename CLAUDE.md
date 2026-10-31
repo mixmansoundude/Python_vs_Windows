@@ -767,8 +767,10 @@ rather than relying on manual memory.
   it is not a required check and no workflow reads it, so it went unseen until PR #513 edited the file's comment
   (`gh api repos/<owner>/<repo>/commits/<sha>/check-runs` lists it). Fixed in that pull request, and
   `tests/test_dependabot_config.py` now holds the file to Dependabot's option names inside `self.pytest.unit`, which the
-  aggregate check gates; that answered the old Q5. Still unproven end to end: a first Dependabot pull request exists
-  only once an action releases a major newer than its pin. The "Node.js 20 is deprecated ... forced to run on Node.js
+  aggregate check gates; that answered the old Q5. The same check run on the fixed head read "Dependabot config file
+  validation" / "All changes look good" (success, a second after the push), so the file parses; a healthy file reads
+  that. Still unproven end to end: a first Dependabot pull request exists only once an action releases a major newer
+  than its pin. The "Node.js 20 is deprecated ... forced to run on Node.js
   24" notice of 2026-10-24 (against `download-artifact@v6`) is gone: no job of PR #513's first run (`41074512594`)
   carried it.
 - **Going forward**: re-read the latest majors every scan. Dependabot (weekly) should now propose each bump by itself,
