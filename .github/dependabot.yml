@@ -15,4 +15,15 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-request-limit: 5
+    # Dependabot rejects a file with an option outside its schema; the old
+    # spelling of the next line (no s) did that from 2026-08-17 until
+    # 2026-10-31 and nothing was ever opened. tests/test_dependabot_config.py
+    # holds every option name to Dependabot's options reference.
+    open-pull-requests-limit: 5
+    # Held for a reader: pr-automerge.yml arms auto-merge for every same-repo
+    # pull request without this label, and a bump of an action changes how CI
+    # itself runs (Item 90 read each run before merging). Removing the label
+    # lets Dependabot's pull requests merge themselves once the aggregate
+    # check is green (docs/open-questions.md Q6).
+    labels:
+      - "no-automerge"

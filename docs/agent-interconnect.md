@@ -126,6 +126,19 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
 
 ---
 
+## `.github/dependabot.yml`, `tests/test_dependabot_config.py` and the `no-automerge` label (Item 90 follow-up)
+
+**Touch the file, the test's name lists, or `pr-automerge.yml`'s label handling, must understand the others.** Dependabot
+validates the file against a schema with no extra properties: one unknown option (the old `open-pull-request-limit`)
+gets the whole file rejected, with an error only in a check run on a pull request that touches the file. The test reads
+the file as text (no YAML library in the pytest step) and holds its keys to lists copied from Dependabot's options
+reference; a new option the file needs goes into the lists in the same change. The file sets `labels: ["no-automerge"]`
+because `pr-automerge.yml` arms auto-merge for every same-repo pull request without that label (a Dependabot-triggered
+run has neither PAT secret, so its `GITHUB_TOKEN` step applies; unproven until a first pull request exists). Deleting the
+label from the file is the switch that lets Dependabot's pull requests merge themselves (`docs/open-questions.md` Q6).
+
+---
+
 ## Concurrent-instance lock (REQ-024) touches every exit path
 
 The lock (`:acquire_lock`/`:lock_is_stale`/`:release_lock`) is released only at `:die` and

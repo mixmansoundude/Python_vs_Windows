@@ -1,19 +1,22 @@
 """Item 90 follow-up: Dependabot has to be able to read .github/dependabot.yml.
 
 The file was added 2026-08-17 with `open-pull-request-limit: 5`; the option is spelled `open-pull-requests-limit`.
-Dependabot refuses a configuration that holds an option it does not know, as a whole, so it never ran: no pull request
-and no `dependabot/*` branch existed for ten weeks while six of the nine pinned actions fell one or two majors behind
-(docs/open-questions.md used to ask why). The only sign was a failed check run named after the file, "The property
-'#/updates/0/' contains additional properties [open-pull-request-limit] outside of the schema when none are allowed",
-which Dependabot posts on a pull request that touches the file. It is not a required check, so it stayed red and unread
-until PR #513 edited the file's comment (2026-10-30).
+Dependabot validates the file against a schema that allows no other property. Its options reference says nothing about
+invalid options, so the evidence that the file was never used is the error below and ten weeks without one pull request
+or `dependabot/*` branch while six of the nine pinned actions fell one or two majors behind (docs/open-questions.md used
+to ask why). The only sign was a failed check run named after the file, titled "Your .github/dependabot.yml contained
+invalid details", with the text: The property '#/updates/0/' contains additional properties ["open-pull-request-limit"]
+outside of the schema when none are allowed. Dependabot posts it on a pull request that touches the file; it is not a
+required check, so it stayed red and unread until PR #513 edited the file's comment (2026-10-30).
 
 These rules read the file as text (the pytest step installs no YAML library, same style as test_aggregate_gate.py) and
-hold it to the option names of Dependabot's own reference page:
-https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
-The name lists below were copied from that page on 2026-10-31. When Dependabot gains an option this repository wants, add
-its spelling to the list in the same change; a mistyped option is what these lists exist to catch.
-Synthetic cases prove each rule can fail.
+hold it to the option names of GitHub's options reference,
+https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference ,
+read on 2026-10-31 and compared with the community JSON schema of the file,
+https://www.schemastore.org/dependabot-2.0.json (`additionalProperties: false`). The two agree on every name in the lists
+below except `name`, which only the schema has for an update entry; it is left out until the reference lists it.
+`reviewers` is in neither. When Dependabot gains an option this repository wants, add its spelling to the list in the
+same change; a mistyped option is what these lists exist to catch. Synthetic cases prove each rule can fail.
 """
 import difflib
 import re
@@ -27,8 +30,8 @@ TOP_KEYS = frozenset({"version", "updates", "registries", "enable-beta-ecosystem
 UPDATE_KEYS = frozenset({
     "allow", "assignees", "commit-message", "cooldown", "directories", "directory", "exclude-paths", "groups", "ignore",
     "insecure-external-code-execution", "labels", "milestone", "multi-ecosystem-group", "open-pull-requests-limit",
-    "package-ecosystem", "patterns", "pull-request-branch-name", "rebase-strategy", "registries", "reviewers",
-    "schedule", "target-branch", "vendor", "versioning-strategy",
+    "package-ecosystem", "patterns", "pull-request-branch-name", "rebase-strategy", "registries", "schedule",
+    "target-branch", "vendor", "versioning-strategy",
 })
 SCHEDULE_KEYS = frozenset({"interval", "day", "time", "timezone", "cronjob"})
 INTERVALS = frozenset({"daily", "weekly", "monthly", "quarterly", "semiannually", "yearly", "cron"})
@@ -97,7 +100,7 @@ def problems(text):
         found.append("the file must say `version: 2`")
     for key, (no, _) in sorted(top.items(), key=lambda kv: kv[1][0]):
         if key not in TOP_KEYS:
-            found.append("line %d: `%s` is not a top-level option Dependabot knows; it would ignore the whole file%s"
+            found.append("line %d: `%s` is not a top-level option Dependabot's schema allows; it rejects the whole file%s"
                          % (no, key, unknown(key, TOP_KEYS)))
     if not entries:
         found.append("`updates:` holds no entries that this reader can see (block layout, one `- package-ecosystem:` per entry)")
@@ -105,7 +108,7 @@ def problems(text):
         keys = entry["keys"]
         for key, (no, _) in sorted(keys.items(), key=lambda kv: kv[1][0]):
             if key not in UPDATE_KEYS:
-                found.append("line %d: `%s` is not an option Dependabot knows; it would ignore the whole file%s"
+                found.append("line %d: `%s` is not an option Dependabot's schema allows; it rejects the whole file%s"
                              % (no, key, unknown(key, UPDATE_KEYS)))
         if "package-ecosystem" not in keys:
             found.append("updates entry %d has no package-ecosystem" % n)
@@ -116,7 +119,7 @@ def problems(text):
         schedule = entry["schedule"]
         for key, (no, _) in sorted(schedule.items(), key=lambda kv: kv[1][0]):
             if key not in SCHEDULE_KEYS:
-                found.append("line %d: `%s` is not a schedule option Dependabot knows%s" % (no, key, unknown(key, SCHEDULE_KEYS)))
+                found.append("line %d: `%s` is not a schedule option Dependabot's schema allows%s" % (no, key, unknown(key, SCHEDULE_KEYS)))
         if "schedule" in keys:
             interval = schedule.get("interval")
             if interval is None:

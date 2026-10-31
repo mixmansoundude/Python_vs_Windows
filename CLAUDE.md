@@ -324,6 +324,7 @@ Test files and what they cover:
 | `test_aggregate_gate.py` | Item 35: the aggregate self-test step stays a gate (no `continue-on-error`, exact `if`, `exit 1`, `id: aggregate` and its output write, lane list equal to the matrix, `always()` jobs, no TEMP PROBE step) and the NDJSON registry job gates too (no `continue-on-error`, `pipefail`, no `|| true`/`|| :`/`|| exit 0`, `test_repo_rows_and_registry_agree` still runs the checker and asserts its result); synthetic cases prove each rule can fail |
 | `test_connectivity_online_retry.py` | `self.ux.connectivity.online` may run its scenario up to three times, only while the product printed its own `no internet detected` line (a runner network blip, run `41034407669`); a log with neither line is not retried, the row passes only on the last run's reachable line and records `attempts` and `noInternetSeen`; synthetic cases prove each rule can fail |
 | `test_nuitka_unsupported_hint.py` | Item 80: the mark/command/check order around each of the two Nuitka command lines, the count's `findstr` pattern against Nuitka's real "is not supported" line (matches) and its "only experimentally supported" warning, the bootstrapper's own sentence and a different failure (do not match), the sentence safe for `:log`, the check fail-safe without a mark, and the three `selfapps_pvw_builder.ps1` stub lines agreeing with the pattern; synthetic cases prove each rule can fail |
+| `test_dependabot_config.py` | Item 90 follow-up: Dependabot has to be able to read `.github/dependabot.yml` (read as text, the pytest step has no YAML library): `version: 2`, every top-level, update-entry and schedule option spelled as Dependabot's options reference spells it (a file with one unknown option is rejected, which is what the old `open-pull-request-limit` did for ten weeks), a package-ecosystem, a directory and a schedule interval per entry, a `github-actions` entry; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -757,24 +758,38 @@ rather than relying on manual memory.
   `deploy-pages@v5` were current on 2026-10-24 and were not re-read. The 2026-07 sweep that called every pin current
   was wrong (`upload-artifact` v7 had shipped in 2026-02). The artifact actions' majors change behavior CI relies on
   (artifact naming, `merge-multiple`, hash checks: `download-artifact` v8 fails a step on a digest mismatch), so
-  those bumps were read in CI, not only merged. **Dependabot is inert**: `.github/dependabot.yml` landed 2026-08-17
-  and not one Dependabot PR or `dependabot/*` branch has existed since (every PR checked by author and head
-  branch). The reason is not visible from a session (repository settings), so it is `docs/open-questions.md` Q5,
-  still open. The "Node.js 20 is deprecated ... forced to run on Node.js 24" notice of 2026-10-24 (against
-  `download-artifact@v6`) is gone: no job of PR #513's first run (`41074512594`) carried it.
-- **Going forward**: re-read the latest majors every scan and bump by hand, one action per commit, until Q5 is
-  answered (a switched-on Dependabot would only add pull requests for the next drift). From a session `gh` and
-  `curl` cannot reach other repositories, but `WebFetch` of `https://github.com/<owner>/<repo>/releases` works.
-  Per bump, read the run and not only its colour: the annotations, the artifact downloads in `selftest-gate` and
-  `publish_diag`, the `pull_request` run of `pr-automerge.yml` (only that event runs the PR's own copy) and every
-  lane's rows.
+  those bumps were read in CI, not only merged. **Dependabot was inert for ten weeks because of one mistyped
+  option**: `.github/dependabot.yml` (2026-08-17) said `open-pull-request-limit`, the option is
+  `open-pull-requests-limit`, and Dependabot rejects a file that holds an option outside its schema (the options
+  reference is silent on invalid options; the evidence is the check run below and ten weeks without one pull request
+  or `dependabot/*` branch). The only sign is a failed check run named `.github/dependabot.yml` (app
+  `dependabot`, "Your .github/dependabot.yml contained invalid details") on a pull request that touches the file;
+  it is not a required check and no workflow reads it, so it went unseen until PR #513 edited the file's comment
+  (`gh api repos/<owner>/<repo>/commits/<sha>/check-runs` lists it). Fixed in that pull request, and
+  `tests/test_dependabot_config.py` now holds the file to Dependabot's option names inside `self.pytest.unit`, which the
+  aggregate check gates; that answered the old Q5. Still unproven end to end: a first Dependabot pull request exists
+  only once an action releases a major newer than its pin. The "Node.js 20 is deprecated ... forced to run on Node.js
+  24" notice of 2026-10-24 (against `download-artifact@v6`) is gone: no job of PR #513's first run (`41074512594`)
+  carried it.
+- **Going forward**: re-read the latest majors every scan. Dependabot (weekly) should now propose each bump by itself,
+  so the scan first checks that it did: a `dependabot/*` branch or pull request and, when an action's latest major has
+  been out for more than two weeks without one, the `.github/dependabot.yml` check run of the latest pull request that
+  touched the file, before anything else. Its pull requests carry `no-automerge` (set in the file; whether they may
+  merge themselves is `docs/open-questions.md` Q6): `pr-automerge.yml` has a `GITHUB_TOKEN` step that a
+  Dependabot-triggered run, which gets no repository secrets, would reach. Read the first one's runs in full like any
+  bump (a Dependabot run also has a restricted token, so the Pages publish and the pull request comments may differ)
+  and write here what happened. If Dependabot stops producing anything, bump by hand, one action per commit. From a
+  session `gh` and `curl` cannot reach other repositories, but `WebFetch` of
+  `https://github.com/<owner>/<repo>/releases` works. Per bump, read the run and not only its colour: the annotations,
+  the artifact downloads in `selftest-gate` and `publish_diag`, the `pull_request` run of `pr-automerge.yml` (only that
+  event runs the PR's own copy) and every lane's rows.
 
 ### Persisted CI run-page warnings
 
 - **Last scanned**: 2026-10-24.
 - **Findings**: annotations of every job of the latest full `main` run (40055643200). (1) NEW on
   all seven Windows matrix jobs: `Environment variable 'INPUT_PATH' exceeds the maximum supported
-  length` (53197 against 32766): the `test-logs` upload step's `path:` list, about 55k characters
+  length` (53197 against 32766; 56337 on 2026-10-30): the `test-logs` upload step's `path:` list, about 55k characters
   today and two lines per file. Nothing is lost today: 160 of the 233 forward-slash patterns that
   sit past character 32766 matched files in the `real` lane's `test-logs` artifact (the rest are
   scenario-specific). If a late scenario's log ever goes missing from an artifact, suspect this
