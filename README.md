@@ -406,7 +406,7 @@ The install strategy varies by the active REQ-009 provider. The steps below appl
   conda install --file <resolved_requirements> --override-channels -c conda-forge
   ```
   If this fails with a transient network signature (`CondaHTTPError`, `Failed to fetch`, `timed out`,
-  `ConnectionError`), wait 15 seconds and retry once before falling through to REQ-005.3. This is the
+  `ConnectionError`, `Server Error`), wait 15 seconds and retry once before falling through to REQ-005.3. This is the
   same retry mechanism REQ-022 applies to conda environment creation.
   - Log contract: `[INSTALL] conda bulk: transient failure detected; retrying after 15s.`
   - CI test flag: `HP_TEST_FORCE_CONDA_NETWORK_FAIL=1`.
@@ -1091,12 +1091,12 @@ set lives in `run_setup.bat`.
 makes the first attempt fail, and should not repeat a failure that waiting will not fix.
 
 - **REQ-022.1** [major] The bootstrapper **shall**, when `conda create` for the program's environment fails and
-  its output contains `CondaHTTPError`, `Failed to fetch`, `timed out` or `ConnectionError`, wait 15 seconds and
-  run the same `conda create` command a second time.
+  its output contains `CondaHTTPError`, `Failed to fetch`, `timed out`, `ConnectionError` or `Server Error`, wait
+  15 seconds and run the same `conda create` command a second time.
 - **REQ-022.2** [major] The bootstrapper **shall**, when the second `conda create` of REQ-022.1 fails, treat the
   environment creation as failed.
 - **REQ-022.3** [major] The bootstrapper **shall**, when the first `conda create` fails and its output contains
-  none of the four phrases of REQ-022.1, treat the environment creation as failed without a second attempt.
+  none of the five phrases of REQ-022.1, treat the environment creation as failed without a second attempt.
 
 > **Notes (non-normative).**
 > - Rationale: a request to conda-forge is dropped now and then, and one wait followed by one retry turns most of
@@ -1107,6 +1107,9 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 >   `~setup.log` and searches it with `findstr /i`, so the phrases match in any letter case. The second attempt is
 >   not searched for the phrases: any failure of it is REQ-022.2. The pattern (detect, wait 15 seconds, retry
 >   once) is the one the conda bulk install uses in REQ-005.2.
+> - `Server Error` is the wording `requests` prints for a 5xx answer, for example `502 Server Error: Bad Gateway`,
+>   which conda's sharded repodata path can print without any of the other four phrases. A 4xx answer says
+>   `Client Error` instead, so a missing package or channel is not retried.
 > - "Treat the environment creation as failed" means the path every other conda-create error takes
 >   (`:conda_create_failed`): the run continues with the next provider after Miniconda, as REQ-009 orders them, or
 >   on a provider cascade keeps the build it already has.
@@ -1116,7 +1119,7 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 >   (REQ-022.1) simulates the transient first failure and requires the retry line and a completed run;
 >   `self.stub.conda_create_exhausted` (REQ-022.2) fails the retry as well and requires exactly one retry, the
 >   "also failed" line, the failure report and state `error`; `self.stub.conda_create_nonretry` (REQ-022.3) fails
->   the first attempt with a message that holds none of the four phrases and requires that no retry line, "also
+>   the first attempt with a message that holds none of the five phrases and requires that no retry line, "also
 >   failed" line or retry message appears. `self.cascade.conda_create_fail` (REQ-009,
 >   `tests/selfapps_cascade_conda_create_fail.ps1`) exercises the exhausted path inside a provider cascade.
 

@@ -1933,7 +1933,7 @@ if ($createRetryExit -eq 0 -and $createRetryMsgFound) { $summary.Add('Conda crea
 # --- Conda env-create outcomes (README REQ-022.2 and REQ-022.3) ---
 # Both runs use the Miniconda installed by the scenarios above and fail at the env-create step through a test
 # hook, so no real conda create runs. BOTH_FAIL fails the first attempt and the retry; PLAIN_FAIL fails the first
-# attempt with output that holds none of the four transient phrases of REQ-022.1.
+# attempt with output that holds none of the five transient phrases of REQ-022.1.
 $createExhaustDir = Join-Path $TestsDir '~selftest_conda_create_exhausted'
 if (Test-Path $createExhaustDir) { Remove-Item -Recurse -Force $createExhaustDir }
 New-Item -ItemType Directory -Force -Path $createExhaustDir | Out-Null
@@ -2027,7 +2027,7 @@ Write-NdjsonRow ([ordered]@{
   id = 'self.stub.conda_create_nonretry'
   req = 'REQ-022.3'
   pass = $createPlainPass
-  desc = 'REQ-022: a failed conda env creation whose output has none of the four transient phrases is treated as failed without a second attempt'
+  desc = 'REQ-022: a failed conda env creation whose output has none of the five transient phrases is treated as failed without a second attempt'
   details = [ordered]@{
     hookRan = $createPlainHookRan
     noRetry = $createPlainNoRetry
