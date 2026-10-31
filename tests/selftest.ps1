@@ -720,7 +720,7 @@ $lockHeldNoStatus = -not (Test-Path $lockHeldStatusPath)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_message'
   req = 'REQ-024.2'
-  pass = -not $lockHeldMessagePass  # red proof, removed in the next commit
+  pass = $lockHeldMessagePass
   desc = 'REQ-024: a fresh (non-stale) lock directory makes a second instance say that another instance appears to be running and name the lock folder to delete'
   details = [ordered]@{ saysRunning = $lockHeldSaysRunning; namesLockFolder = $lockHeldNamesFolder; logLineFound = $lockHeldMsgFound }
 })
@@ -728,7 +728,7 @@ if ($lockHeldMessagePass) { $summary.Add('lock held message: PASS') } else { $su
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_decline'
   req = 'REQ-024.3'
-  pass = -not $lockHeldDeclined  # red proof, removed in the next commit
+  pass = $lockHeldDeclined
   desc = 'REQ-024: a fresh (non-stale) lock directory makes a second instance stop with exit code 1'
   details = [ordered]@{ declined = $lockHeldDeclined; exitCode = $lockHeldExit }
 })
@@ -736,7 +736,7 @@ if ($lockHeldDeclined) { $summary.Add('lock held decline: PASS') } else { $summa
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_kept'
   req = 'REQ-024.4'
-  pass = -not $lockHeldKept  # red proof, removed in the next commit
+  pass = $lockHeldKept
   desc = 'REQ-024: a second instance that stops on a fresh lock directory leaves that directory, and the owner file in it, as they were'
   details = [ordered]@{ lockPresent = (Test-Path $lockHeldPreexisting); ownerUnchanged = ($lockHeldOwnerAfter -eq $lockHeldOwnerBefore) }
 })
@@ -744,7 +744,7 @@ if ($lockHeldKept) { $summary.Add('lock held kept: PASS') } else { $summary.Add(
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_nostatus'
   req = 'REQ-024.5'
-  pass = -not $lockHeldNoStatus  # red proof, removed in the next commit
+  pass = $lockHeldNoStatus
   desc = 'REQ-024: a second instance that stops on a fresh lock directory writes no ~bootstrap.status.json'
   details = [ordered]@{ statusFilePresent = (Test-Path $lockHeldStatusPath) }
 })
@@ -917,7 +917,7 @@ $lockStartPass = ($lockStartSeen -and ($lockStartPresent.Count -eq 0))
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_start'
   req = 'REQ-024.1'
-  pass = -not $lockStartPass  # red proof, removed in the next commit
+  pass = $lockStartPass
   desc = 'REQ-024: the lock directory exists while a run is still at its start, before any download, installation or environment creation'
   details = [ordered]@{
     lockSeen = $lockStartSeen
@@ -982,7 +982,7 @@ $lockBlockedPass = ($lockBlockedHeld -and $lockBlockedWarnFound -and (-not $lock
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_evict_blocked'
   req = 'REQ-024.9'
-  pass = -not $lockBlockedPass  # red proof, removed in the next commit
+  pass = $lockBlockedPass
   desc = 'REQ-024: when a stale lock directory cannot be removed the run continues without a lock, warns in the log and leaves the directory alone'
   details = [ordered]@{
     holdProven = $lockBlockedHeld
@@ -1044,7 +1044,7 @@ if (Test-Path $lowDiskStatusPath) {
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_warn'
   req = 'REQ-025.1'
-  pass = -not $lowDiskWarnPass  # red proof, removed in the next commit
+  pass = $lowDiskWarnPass
   desc = 'REQ-025: HP_TEST_FORCE_LOW_DISK forces the low-disk-space warning, which gives the free space in whole gigabytes and names freeing disk space as the likely fix'
   details = [ordered]@{
     warnFound = $lowDiskWarnFound
@@ -1059,7 +1059,7 @@ $lowDiskContinuePass = ($lowDiskWarnFound -and $lowDiskBootstrapOk -and ($lowDis
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_continues'
   req = 'REQ-025.2'
-  pass = -not $lowDiskContinuePass  # red proof, removed in the next commit
+  pass = $lowDiskContinuePass
   desc = 'REQ-025: after the low-disk-space warning the setup continues and ends with state ok and exit code 0'
   details = [ordered]@{
     warnFound = $lowDiskWarnFound
@@ -1086,7 +1086,7 @@ if ($diskAmple) { $diskAbsentPass = ($diskRunsRead -and ($diskWarnLines -eq 0)) 
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_absent'
   req = 'REQ-025.3'
-  pass = -not $diskAbsentPass  # red proof, removed in the next commit
+  pass = $diskAbsentPass
   desc = 'REQ-025: with 2 GB or more of free space on the drive no low-disk-space warning is shown'
   details = [ordered]@{
     freeGb = $diskFreeGb
@@ -1970,7 +1970,7 @@ $createExhaustPass = ($createExhaustRetried -and $createExhaustAlsoFailed -and $
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.conda_create_exhausted'
   req = 'REQ-022.2'
-  pass = -not $createExhaustPass  # red proof, removed in the next commit
+  pass = $createExhaustPass
   desc = 'REQ-022: when the retry of a failed conda env creation also fails the environment creation is treated as failed (state error)'
   details = [ordered]@{
     retriedOnce = $createExhaustRetried
@@ -2024,7 +2024,7 @@ $createPlainPass = ($createPlainHookRan -and $createPlainNoRetry -and $createPla
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.conda_create_nonretry'
   req = 'REQ-022.3'
-  pass = -not $createPlainPass  # red proof, removed in the next commit
+  pass = $createPlainPass
   desc = 'REQ-022: a failed conda env creation whose output has none of the four transient phrases is treated as failed without a second attempt'
   details = [ordered]@{
     hookRan = $createPlainHookRan
