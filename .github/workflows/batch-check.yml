@@ -101,8 +101,11 @@ jobs:
           # own cache happens to be organically corrupted this run -- see that file and
           # docs/agent-closed-backlog.md's Item 19 entry for why the ambient `cache` lane alone
           # (informational, job-level continue-on-error) was not enough signal on its own.
-          $exactArgs = @()
-          if ($env:HP_CACHE_EXACT_HIT -eq 'true') { $exactArgs = @('-ExactHit') }
+          # derived requirement (Item 95): a switch is splatted from a HASHTABLE. An array splat hands '-ExactHit'
+          # to the script as a positional string, which its param block does not accept, so every exact cache hit
+          # threw here and this step's continue-on-error hid it: the health check never ran on an exact hit.
+          $exactArgs = @{}
+          if ($env:HP_CACHE_EXACT_HIT -eq 'true') { $exactArgs = @{ ExactHit = $true } }
           & .\tools\ci_cache_selfheal.ps1 -CondaDir 'C:\Users\Public\Documents\Miniconda3' @exactArgs
           $rc = $LASTEXITCODE
           if ($rc -eq 1 -or $rc -eq 3) {
