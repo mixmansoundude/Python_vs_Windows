@@ -904,6 +904,38 @@ self.offers.cilane
 self.offers.control
 ```
 
+## selfapps-hint-norerun NDJSON rows (selfapps_hint_norerun.ps1, real and conda-full lanes, gating)
+
+Item 96 (README REQ-018: the program starts once per invocation and a further run is asked about; REQ-007: after a failed
+EXE run the bootstrapper logs hints read from its error text). The two count rows carry the goal tag only: they show no
+start is silent, but the repair loop's own announced starts are not asked about (Item 97, open question 7), so they
+credit neither REQ-018.1 nor REQ-018.2, which stays untraced. After a failed EXE
+verification run, `:exe_smokerun_hints` used to start `dist\<env>.exe` again (a helper killed after ten seconds) only to
+read its error text. That start was beyond the single automatic run, no line announced it and nobody had agreed to it.
+Two programs, each in a fresh folder, append one JSON line per start to a ledger at an ABSOLUTE path (`HINT_LEDGER`: the
+repair loop runs the EXE from `dist\`, so a ledger relative to the working directory would be split in two). Every start
+must be accounted for by the setup log: `starts <= announced + rebuilds`, where `announced` counts the "Verifying the
+built standalone EXE" lines (the verification run and the repair loop each announce before they start the program) and
+`rebuilds` counts the "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=" lines (the loop makes one run after each
+rebuild, covered by its announcement). `plain` (opens a data file that does not exist, exit 1, nothing can be
+repaired): `.failed_run` (every start accounted for; before the fix 3 starts against 2 announcements) and
+`.datafile.capture` (the data-file hint names `hint_missing_data.json`, read from the captured text). `repaired`
+(imports an installed package by a runtime string, so the first run fails with ModuleNotFoundError, the loop adds
+`--hidden-import` and rebuilds, and the rebuilt EXE then fails on the missing data file): `.repaired_run` (before the
+fix 4 starts against 2 + 1) and `.final_failure` (the hint describes the failure of the repaired EXE, the missing file,
+and does not repeat the hidden-import hint for a module the repair had already added). Each row also needs its
+precondition (the verification run failed, the program really ran, the repair fired where it should). Details carry
+finished, seconds, exit code, the counts (starts, announced, rebuilds, allowed, unannounced), the starts that came from
+`dist\` and through the interpreter, and, only when something is wrong, `problems` plus a log excerpt. Each run has a 15
+minute limit. Skips on non-Windows.
+
+```
+self.launch.count.failed_run
+self.hint.datafile.capture
+self.launch.count.repaired_run
+self.hint.final_failure
+```
+
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
 
 Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"; Item 89: the

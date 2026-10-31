@@ -1465,6 +1465,17 @@ jobs:
         run: |
           & tests\selfapps_exedyn_fail.ps1
 
+      # Item 96 (README REQ-018 and REQ-007): after a failed EXE verification run the failure hints are read
+      # from text the run already printed; the program is not started once more to collect them. Two small failing
+      # programs (a missing data file, and a --hidden-import repair followed by a second failure) append one line per
+      # start to a ledger, and every start must be announced in the setup log. Two default bootstraps. Real and
+      # conda-full, gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: failure hints do not start the program again (real/conda-full only)"
+        if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_hint_norerun.ps1
+
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2683,6 +2694,12 @@ jobs:
             tests/~selftest_offers_*/~offers_ledger.jsonl
             tests/~selftest_offers_*/~setup.log
             tests/~selftest_offers_*/~bootstrap.status.json
+            tests/~selftest_hint_*/~hint_*.log
+            tests/~selftest_hint_*/~hint_ledger.jsonl
+            tests/~selftest_hint_*/~setup.log
+            tests/~selftest_hint_*/~run.out.txt
+            tests/~selftest_hint_*/~run.err.txt
+            tests/~selftest_hint_*/~bootstrap.status.json
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt
