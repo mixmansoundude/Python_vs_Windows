@@ -1098,6 +1098,63 @@ Write-NdjsonRow ([ordered]@{
   }
 })
 if ($diskAbsentPass) { $summary.Add('low disk space absent: PASS') } else { $summary.Add('low disk space absent: FAIL') }
+# REQ-025.4: when the free space of the drive cannot be read, no low-disk-space warning is shown. The hook
+# HP_TEST_FORCE_DISK_READ_FAIL makes the batch file's own PowerShell call ask for a drive that does not exist, which is
+# the failure a program folder on a network share gives, so the real reading runs and finds nothing. A reading that
+# fails must not turn into "0 GB free". The row also needs the positive evidence that the reading was taken and came
+# back empty (the DEBUG line in ~setup.log), because "no warning" alone is also true when the check never ran.
+$diskFailDir = Join-Path $TestsDir '~selftest_disk_read_fail'
+if (Test-Path $diskFailDir) { Remove-Item -Recurse -Force $diskFailDir }
+New-Item -ItemType Directory -Force -Path $diskFailDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $diskFailDir -Force
+Set-Content -Path (Join-Path $diskFailDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$diskFailLogName = '~disk_read_fail_bootstrap.log'
+$prevDiskReadFail = $env:HP_TEST_FORCE_DISK_READ_FAIL
+$prevForceLowDiskFail = $env:HP_TEST_FORCE_LOW_DISK
+$prevCILaneDiskFail = $env:HP_CI_LANE
+$env:HP_TEST_FORCE_DISK_READ_FAIL = '1'
+$env:HP_TEST_FORCE_LOW_DISK = $null
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $diskFailDir
+try {
+  cmd /c "call run_setup.bat > $diskFailLogName 2>&1"
+  $diskFailExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_DISK_READ_FAIL = $prevDiskReadFail
+  $env:HP_TEST_FORCE_LOW_DISK = $prevForceLowDiskFail
+  $env:HP_CI_LANE = $prevCILaneDiskFail
+}
+$diskFailLogPath = Join-Path $diskFailDir $diskFailLogName
+$diskFailLines = @()
+if (Test-Path $diskFailLogPath) { $diskFailLines = Get-Content -LiteralPath $diskFailLogPath -Encoding ASCII }
+$diskFailSetupPath = Join-Path $diskFailDir '~setup.log'
+$diskFailSetupLines = @()
+if (Test-Path $diskFailSetupPath) { $diskFailSetupLines = Get-Content -LiteralPath $diskFailSetupPath -Encoding ASCII }
+$diskFailWarnLines = @($diskFailLines | Where-Object { $_ -like '*low disk space detected*' -or $_ -like '*GB free disk space detected*' }).Count
+$diskFailUnreadableLogged = @($diskFailSetupLines | Where-Object { $_ -like '*REQ-025: free disk space could not be read*' }).Count -gt 0
+$diskFailStatusPath = Join-Path $diskFailDir '~bootstrap.status.json'
+$diskFailBootstrapOk = $false
+if (Test-Path $diskFailStatusPath) {
+  try {
+    $diskFailStatus = Get-Content -LiteralPath $diskFailStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $diskFailBootstrapOk = ($diskFailStatus.state -eq 'ok' -and $diskFailStatus.exitCode -eq 0)
+  } catch { }
+}
+$diskFailPass = (($diskFailWarnLines -eq 0) -and $diskFailUnreadableLogged)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.low_disk_unreadable'
+  req = 'REQ-025.4'
+  pass = $diskFailPass
+  desc = 'REQ-025: when the free space of the drive cannot be read no low-disk-space warning is shown, and the setup log says the reading was not available'
+  details = [ordered]@{
+    warningLines = $diskFailWarnLines
+    unreadableLogged = $diskFailUnreadableLogged
+    bootstrapOk = $diskFailBootstrapOk
+    exitCode = $diskFailExit
+  }
+})
+if ($diskFailPass) { $summary.Add('low disk space unreadable: PASS') } else { $summary.Add('low disk space unreadable: FAIL') }
 
 # --- OneDrive/synced-folder path warning test ---
 # Arrange: run from a directory whose name contains "OneDrive" so the guardrail fires.

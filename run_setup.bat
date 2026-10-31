@@ -388,7 +388,7 @@ set "HP_FREE_GB="
 if defined HP_TEST_FORCE_LOW_DISK (
   set "HP_FREE_GB=0"
 ) else (
-  for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $letter = ([System.IO.Path]::GetPathRoot($env:HP_SCRIPT_ROOT)).Substring(0,1); [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }" 2^>nul`) do set "HP_FREE_GB=%%D"
+  for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $letter = ([System.IO.Path]::GetPathRoot($env:HP_SCRIPT_ROOT)).Substring(0,1); if ($env:HP_TEST_FORCE_DISK_READ_FAIL) { $letter = '@' }; [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }" 2^>nul`) do set "HP_FREE_GB=%%D"
 )
 if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (
   echo *** WARNING: Only ~%HP_FREE_GB% GB free disk space detected on this drive.
