@@ -41,10 +41,7 @@ FREE_TAG_PREFIXES = ("CLAUDE.md-Item-",)
 NO_ROW_TAG_YET: Dict[str, str] = {}
 
 # Requirement number -> why the README has no mention yet although run_setup.bat uses it.
-NOT_IN_README: Dict[str, str] = {
-    "024": "concurrent-instance lock: log lines and tests exist, no README section",
-    "025": "free-disk-space warning: log line and test exist, no README section",
-}
+NOT_IN_README: Dict[str, str] = {}
 
 
 def _read(path: Path) -> str:
