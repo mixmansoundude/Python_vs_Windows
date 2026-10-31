@@ -388,8 +388,12 @@ set "HP_FREE_GB="
 if defined HP_TEST_FORCE_LOW_DISK (
   set "HP_FREE_GB=0"
 ) else (
-  for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $letter = ([System.IO.Path]::GetPathRoot($env:HP_SCRIPT_ROOT)).Substring(0,1); [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }" 2^>nul`) do set "HP_FREE_GB=%%D"
+  for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $letter = ([System.IO.Path]::GetPathRoot($env:HP_SCRIPT_ROOT)).Substring(0,1); if ($env:HP_TEST_FORCE_DISK_READ_FAIL) { $letter = '@' }; $d = Get-PSDrive -Name $letter -ErrorAction Stop; if ($null -ne $d.Free) { [math]::Floor($d.Free / 1GB) } } catch { '' }" 2^>nul`) do set "HP_FREE_GB=%%D"
 )
+rem derived requirement: Get-PSDrive reports a drive it cannot find as a NON-terminating error, so the try/catch above never
+rem sees it and the missing .Free used to read as 0 GB, a false low-space warning, see REQ-025.4. -ErrorAction Stop sends it to the
+rem catch and a drive with no Free figure prints nothing; an empty reading means no warning, and the log says so.
+if not defined HP_FREE_GB call :log "[DEBUG] REQ-025: free disk space could not be read; no low-disk warning shown."
 if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (
   echo *** WARNING: Only ~%HP_FREE_GB% GB free disk space detected on this drive.
   echo *** Downloading Python/Miniconda and building your app can need several GB.

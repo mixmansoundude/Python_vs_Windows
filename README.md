@@ -1220,14 +1220,20 @@ may free some after reading the warning.
 > - Mechanism: a PowerShell call reads the free bytes of the drive named in the program folder's path and divides
 >   by 2^30, rounding down, which is the figure the warning prints (`~N GB`). The check runs once, right after the
 >   Windows system-folder check and before the lock of REQ-024. A program folder on a network share has no drive
->   letter, so no reading is taken and no warning is shown.
-> - Log contract: `[WARN] REQ-025: low disk space detected (~N GB free); continuing (warn-only).`
+>   letter, and a drive that cannot be found or that reports no free-space figure gives an empty reading; an empty
+>   reading means no warning (REQ-025.4). The call must send a missing drive to its `catch` explicitly
+>   (`-ErrorAction Stop`): `Get-PSDrive` reports it as a non-terminating error, and left alone the empty figure read as
+>   0 GB, which warned about "~0 GB free" on a drive nobody could measure.
+> - Log contract: `[WARN] REQ-025: low disk space detected (~N GB free); continuing (warn-only).` An empty reading
+>   writes `[DEBUG] REQ-025: free disk space could not be read; no low-disk warning shown.` to `~setup.log` only.
 > - Tests (`tests/selftest.ps1`): `self.stub.low_disk_warn` (REQ-025.1) forces the low reading with a test hook,
 >   because a CI drive is never short of space, and requires the warning, its whole-gigabyte figure and its wording
 >   about freeing disk space; `self.stub.low_disk_continues` (REQ-025.2) requires that the same run ends with state
 >   `ok` and exit code 0; `self.stub.low_disk_absent` (REQ-025.3) reads the logs of three runs without the hook and
 >   requires no warning when the drive has 2 GB or more free (the row records that it proved nothing on a drive that
->   is short or cannot be read).
+>   is short or cannot be read); `self.stub.low_disk_unreadable` (REQ-025.4) makes the reading ask for a drive that
+>   does not exist, because a CI runner's own drive can always be read, and requires no warning and the DEBUG line
+>   above in `~setup.log` (without that line, a run in which the check never ran would pass too).
 
 ---
 

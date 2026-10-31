@@ -68,7 +68,6 @@ UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-018.21": "gap: no row makes the install or the rebuild fail, so the install_failed and rebuild_failed states and the absence of a provider cascade after them are never asserted",
     "REQ-018.22": "gap: tests/test_runtime_module_scan.py PackagesAndAppend pins the module-to-package table (cv2, PIL) and the unchanged-name rule; no row asserts that the prompt lists every package it would install",
     "REQ-018.30": "unit: tests/test_window_confirm.py::WindowQuestionWiring the question says the check stops the program after about 30 seconds (static wording pin)",
-    "REQ-025.4": "gap: no row makes the free-space reading fail (a hook that does so is not built; the batch catch leaves the figure empty) and asserts that no low-disk-space warning is shown and the setup goes on; see README REQ-025.4",
 }
 
 
