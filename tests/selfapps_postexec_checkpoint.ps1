@@ -150,7 +150,7 @@ try {
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.checkpoint.accept'
-    req     = 'REQ-018'
+    req     = 'REQ-018, REQ-018.8'
     pass    = $acceptPass
     desc    = 'Post-execution checkpoint: HP_TEST_CHECKPOINT_ANSWER=Y accepts and runs the entry a second time via the interpreter'
     details = $acceptDetails
@@ -206,7 +206,7 @@ try {
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.checkpoint.decline'
-    req     = 'REQ-018'
+    req     = 'REQ-018, REQ-018.8'
     pass    = $declinePass
     desc    = 'Post-execution checkpoint: default/HP_CI_LANE auto-decline keeps the run footprint at exactly one execution'
     details = $declineDetails
@@ -227,7 +227,7 @@ $riskShown = $accBlock
 if ($riskShown.Length -gt 500) { $riskShown = $riskShown.Substring(0, 500) }
 Write-NdjsonRow ([ordered]@{
     id      = 'self.checkpoint.risk'
-    req     = 'REQ-018.2'
+    req     = 'REQ-018.2, REQ-018.8'
     pass    = $riskPass
     desc    = 'Post-execution checkpoint: the prompt tells the user that running the program twice could cause harm, in the accepted and the declined run'
     details = [ordered]@{

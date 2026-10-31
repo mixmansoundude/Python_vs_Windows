@@ -371,7 +371,7 @@ if ($runReal) {
     if ($rShown.Length -gt 400) { $rShown = $rShown.Substring(0, 400) }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.risk'
-        req     = 'REQ-018.2'
+        req     = 'REQ-018.2, REQ-018.25'
         pass    = $rPass
         desc    = 'the Miniconda choice of the last-chance offer says the program runs once more and that running it twice could cause harm'
         details = [ordered]@{

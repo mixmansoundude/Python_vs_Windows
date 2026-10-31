@@ -72,7 +72,7 @@ keep their 2026-10-11 wording; where they disagree with this section, this secti
 |---|---|---|
 | Item 35, T4 (baseline red rows, aggregate gate) | done; the aggregate verdict is a required check (criterion C6) | #491, #509 |
 | T5 requirement-trace ratchet | done; README sections for REQ-022, REQ-024 and REQ-025 added and `NOT_IN_README` is empty | #490, and the docs-and-tags change after #511 |
-| T5 shall-level ratchet (every numbered shall named by a row or listed with a reason) | done; 84 of 116 shalls are named by a row, the other 32 sit in `UNTRACED_SHALLS` (28 `gap:`, 4 `unit:`) | the shall-tracing change after #513 |
+| T5 shall-level ratchet (every numbered shall named by a row or listed with a reason) | done; 88 of 116 shalls are named by a row, the other 28 sit in `UNTRACED_SHALLS` (25 `gap:`, 3 `unit:`) | the shall-tracing change after #513 |
 | T6 flag-inventory ratchet | done; the one dead hook, `HP_TEST_DISABLE_LOCK`, was removed in the docs-and-tags change after #511 | #490 |
 | T1 A to D launch ledger | done | #494 |
 | T1 E single-flag skip hooks, T2 dependency-source matrix, T7 log rotation, T8 non-ASCII folder, T9 UNC launch, T12 no-flag default run | done | #498 |
@@ -92,9 +92,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-009 | 13 | 13 | 0 | 21 |
 | REQ-012 | 6 | 5 | 1 | 1 |
-| REQ-018 | 37 | 23 | 14 | 13 |
+| REQ-018 | 37 | 26 | 11 | 13 |
 | REQ-019 | 3 | 3 | 0 | 0 |
-| REQ-021 | 6 | 5 | 1 | 0 |
+| REQ-021 | 6 | 6 | 0 | 0 |
 | REQ-022 | 3 | 1 | 2 | 0 |
 | REQ-024 | 9 | 4 | 5 | 0 |
 | REQ-025 | 3 | 1 | 2 | 0 |
@@ -102,9 +102,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-84 of 116 numbered shalls are named by at least one row tag.
+88 of 116 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-018.2, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.8, REQ-018.9, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.25, REQ-018.30, REQ-021.3, REQ-022.2, REQ-022.3, REQ-024.1, REQ-024.2, REQ-024.4, REQ-024.5, REQ-024.9, REQ-025.2, REQ-025.3.
+Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.9, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-022.2, REQ-022.3, REQ-024.1, REQ-024.2, REQ-024.4, REQ-024.5, REQ-024.9, REQ-025.2, REQ-025.3.
 
 Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011, REQ-013, REQ-014, REQ-015, REQ-016, REQ-017, REQ-020, REQ-023.
 
@@ -117,18 +117,22 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    `self.stub.lock_held_decline` should name REQ-024.3, REQ-024.4 and REQ-024.5, and `self.stub.low_disk_warn`
    REQ-025.2; each deletes its `UNTRACED_SHALLS` entry (a stale entry only warns, so either order lands green).
 2. **Rows for shalls nothing checks** (the `gap:` entries of `UNTRACED_SHALLS`, each written first and read red).
-   By size of the user-visible risk: REQ-018.2 and .8 (the prompts that offer to run the program again do not say
-   it may repeat side effects: wording first, then a row), REQ-018.9 (the NOINPUT and HP_NONINTERACTIVE paths of the
-   four offers; open question 2), REQ-018.14, .16, .20, .21 and .22 (the runtime-install offer: asked once, not
-   offered for system Python, still-missing result, failed install or rebuild, package list in the prompt),
-   REQ-018.5 and .7 (the throwaway-check warning and the 30 second cap on the re-verification run), REQ-012.5 (the
-   neutral note when EXE verification is skipped), REQ-021.3 (the syntax-error wording), REQ-022.2 and .3 (the
-   second conda create fails; a failure without the four phrases is not retried), REQ-024.1, .2 and .9 (the lock
-   exists while the run goes on; the message names the folder; a stale lock that cannot be removed), REQ-025.3 (no
-   warning when the drive has enough space), REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the
-   header is never removed from; a merge that cannot run falls back with a warning) and REQ-003.1 to .3 (the
-   Windows floor, the Miniconda folder, where the working files go). REQ-018.6, .13, .25 and .30 are `unit:`
-   entries: a unit test shows the response, so a row is optional.
+   Done 2026-10-31 (Item 94a): REQ-018.2, .8 and .25 and REQ-021.3. The post-execution checkpoint, the runtime-install
+   offer and the Miniconda choice of the last-chance offer now say that running the program twice could cause
+   harm (the optimized-build prompt already did), the syntax-error report says the mistake is in the user's own
+   program and not in dependency installation or the EXE build, and four rows read the console text of real runs
+   (`self.checkpoint.risk`, `self.runtime.install.risk`, `self.lastchance.risk`, `self.preflight.attribution`);
+   `tests/test_rerun_prompts.py` holds the wording of all four prompts as text. What is left, by size of the
+   user-visible risk: REQ-018.9 (the NOINPUT and HP_NONINTERACTIVE paths of the four offers; open question 2),
+   REQ-018.14, .16, .20, .21 and .22 (the runtime-install offer: asked once, not offered for system Python,
+   still-missing result, failed install or rebuild, package list in the prompt), REQ-018.5 and .7 (the
+   throwaway-check warning and the 30 second cap on the re-verification run), REQ-012.5 (the neutral note when EXE
+   verification is skipped), REQ-022.2 and .3 (the second conda create fails; a failure without the four phrases
+   is not retried), REQ-024.1, .2 and .9 (the lock exists while the run goes on; the message names the folder; a
+   stale lock that cannot be removed), REQ-025.3 (no warning when the drive has enough space), REQ-005.1.6, .12,
+   .13 and .14 (a failed install records nothing; the header is never removed from; a merge that cannot run falls
+   back with a warning) and REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the working files go).
+   REQ-018.6, .13 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
