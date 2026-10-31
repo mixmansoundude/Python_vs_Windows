@@ -1303,7 +1303,8 @@ if not "%HP_CCREATE_RC%"=="0" goto :conda_create_check_transient
 del "~conda_create.tmp" >nul 2>&1
 goto :conda_create_done
 :conda_create_check_transient
-findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_create.tmp" >nul 2>&1
+rem derived requirement: Server Error is the 5xx wording conda's sharded repodata path prints unwrapped, for example HTTPError: 502 Server Error: Bad Gateway, with none of the other four phrases (Item 93). A 404 says Client Error and stays a failure. Keep this list equal to the one in :conda_bulk_install.
+findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" /c:"Server Error" "~conda_create.tmp" >nul 2>&1
 set "HP_CCREATE_TRANSIENT_RC=%ERRORLEVEL%"
 del "~conda_create.tmp" >nul 2>&1
 if not "%HP_CCREATE_TRANSIENT_RC%"=="0" goto :conda_create_failed
@@ -6562,7 +6563,8 @@ if "%HP_CBULK_RC%"=="0" (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 0
 )
-findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" "~conda_bulk.tmp" >nul 2>&1
+rem derived requirement: same phrase list as the conda create check, Server Error included for an unwrapped 5xx (Item 93). Keep the two equal.
+findstr /i /c:"CondaHTTPError" /c:"Failed to fetch" /c:"timed out" /c:"ConnectionError" /c:"Server Error" "~conda_bulk.tmp" >nul 2>&1
 if errorlevel 1 (
   del "~conda_bulk.tmp" >nul 2>&1
   exit /b 1

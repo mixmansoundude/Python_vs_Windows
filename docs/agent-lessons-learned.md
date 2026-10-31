@@ -802,6 +802,23 @@ should record which stage stopped the run, not only that it stopped.
 
 ---
 
+## A retry that keys on error text only works for the texts it was written against; test it with the real text and a stub, not a simulated hook (Item 93)
+
+`:conda_bulk_install` and the create flow search conda's output with `findstr` for four phrases. The 502 of run
+`41074512594` printed `requests.exceptions.HTTPError: 502 Server Error: Bad Gateway`, which holds none of them, so the product
+would not have waited and retried for a real user either. The existing hooks (`HP_TEST_FORCE_CONDA_NETWORK_FAIL`) could never
+have shown it: they write the CondaHTTPError text themselves, so they prove the flow and not the detection. **Rule: a test of
+text-keyed detection feeds it the text a real failure produced**, here by running the real code block from `run_setup.bat`
+against a stub program that prints that text and counts its calls (`tests/selfapps_conda_transient.ps1`), with a control
+scenario that uses the old wording so a broken harness is told apart from a missing phrase. Cutting a block out of the batch
+file is cheap to keep honest: the unit test checks the cut labels exist once and that the block reaches only names the driver
+defines. Two batch details from writing the driver: write `echo RC=%X% > file` with a space before the `>` (a digit directly
+before `>` can be read as a handle number), and escape `<` and `>` as `^<` `^>` in an `echo` that prints a URL in angle
+brackets. The phrase list now also holds `Server Error`; a 404 says `Client Error`, so it is not retried, and a 429 (Too Many
+Requests, also `Client Error`) still is not: add it only with its own evidence.
+
+---
+
 ## A stdlib-only program still gets a warn file full of "missing" modules; `parse_warn.py` filters them by rule, not by install attempt
 
 A real PyInstaller 6.22 build of a ten-line program that imports only `pkgutil`, `platform` and
