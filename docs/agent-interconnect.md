@@ -126,6 +126,28 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
 
 ---
 
+## Conda transient-failure phrases (Item 93): two `findstr` lines, one harness that cuts the code out of the batch
+
+**Touch either `findstr /i /c:"..."` line (`:conda_create_check_transient` for REQ-022.1, `:conda_bulk_install` for REQ-005.2),
+the labels around them, or what the blocks read, must understand the others.** Each site searches its own temp file
+(`~conda_create.tmp`, `~conda_bulk.tmp`) for `CondaHTTPError`, `Failed to fetch`, `timed out`, `ConnectionError` and, since Item 93,
+`Server Error` (the `requests` wording for a 5xx that conda's sharded repodata path prints unwrapped; a 404 says `Client Error`
+and is not retried). The two lists must stay equal; `tests/test_conda_transient_terms.py` fails when they drift and checks both
+against real conda text with findstr's rules (case blind, literal, OR). A phrase added here is a retried failure, so it must
+name a failure that waiting can fix.
+- `tests/selfapps_conda_transient.ps1` (`self.conda.retry5xx.*`, real and justme-test lanes) tests the REAL code without
+  Miniconda or a network: it cuts `:conda_bulk_install` (up to `:try_nuitka_tier_a`) and the create flow from
+  `:conda_create_check_transient` (up to `:conda_create_failed`) out of `run_setup.bat`, wraps each in a driver, and runs it
+  with cmd.exe against a stub `conda.bat` that prints a chosen text and counts its calls. Moving or renaming those four labels, or
+  making a block use a variable or label the driver does not define (`EXTERNAL_LABELS` and `KNOWN_VARIABLES` in the unit test),
+  fails the unit test with a message that names the script to update. The driver's `:log` only appends to a file, so a changed
+  log wording is matched by the row (`transient failure detected; retrying after 15s`, `retry after transient failure also failed`).
+- The test hooks `HP_TEST_FORCE_CONDA_NETWORK_FAIL` and `HP_TEST_FORCE_CONDA_CREATE_NETWORK_FAIL` still write the CondaHTTPError
+  text themselves (`self.stub.conda_retry`, `self.stub.conda_create_retry` in `tests/selftest.ps1`); they prove the retry
+  flow end to end, the harness above proves what the detection recognises.
+
+---
+
 ## `.github/dependabot.yml`, `tests/test_dependabot_config.py` and the `no-automerge` label (Item 90 follow-up)
 
 **Touch the file, the test's name lists, or `pr-automerge.yml`'s label handling, must understand the others.** Dependabot

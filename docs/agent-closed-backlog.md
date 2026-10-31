@@ -3931,6 +3931,61 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Not covered.** The computed-name import of the test program is missing again in any later rebuild unless hidden-import
   recovery fires, so the second bootstrap judges the lists and the log, not the program's output.
 
+### Item 92 (closed 2026-10-31, PR #515; filed 2026-10-30 by the coordinator from PR #513's red run)
+
+- **The problem.** Run `41074512594` (PR #513, `justme-test` lane): the first conda dry run in `tests/selfapps_reqspec.ps1`
+  exited 1 on one `502 Server Error: Bad Gateway` for a repodata shard. The install and the second dry run in the same run
+  worked, yet nine `reqspec.*` rows and the required aggregate check went red for a provider blip that touches nothing in the
+  diff. The script had no retry at all; the product's own REQ-022 retry is a different code path and does not cover a test
+  script's conda calls.
+- **What shipped.** `Invoke-CondaCommand` in `tests/selfapps_reqspec.ps1` runs a conda network call, and on a non-zero exit
+  whose output matches `$script:CondaTransientPattern` (a 5xx status, a failed connection, a read or connect timeout) waits
+  15 seconds and runs it once more. At most two attempts, never for a solver answer or a 404, the first answer and a one-line
+  notice are appended to the script's log. The five network call sites (`conda create`, the bulk install, the good dry run, the
+  ingest dry run and the dry run that is expected to fail) go through it and record `attempts` in their row details; the local
+  config and import calls stay raw. CodeRabbit pointed out that `reqspec.conda.dryrun.failcase` passed on any non-zero exit,
+  so a 502 on that call would have passed it without proving the constraint was rejected: its verdict is now
+  `Test-FailcaseRejected` (non-zero exit and no transient answer in the output), the call retries once like the others, and
+  the row records `transientAnswer`.
+- **Rows and tests.** Four rows prove the helper with a stub command that prints the real 502 line (`reqspec.retry.once`,
+  `.bounded`, `.nontransient`, `.classify`; tag `N/A`, the script's own helper). `tests/test_reqspec_retry.py` cuts the helper
+  out of the script and runs it under real `pwsh` with a function named `cmd` standing in for the native command, so the loop
+  is checked on Linux as well; static pins keep the helper single, bounded (at most two attempts, a wait of 1 to 30 seconds),
+  and the raw `cmd /c` calls on an allow list.
+- **Red first.** Run `41149444391` (head `7d7f9db`, tests only, helper with `$maxAttempts = 1`): on every lane
+  `reqspec.retry.once` and `.bounded` were red with `attempts` 1 and the 502 line as the output (the right reason),
+  `.nontransient` and `.classify` green, and `self.pytest.unit` red; no other row of the eight lanes was red. The fix was
+  pushed after the whole run had finished and every row was read (the check-in came after the last lane ended).
+- **Not covered.** The product's own detection, which missed the same text, is Item 93 (same PR).
+
+### Item 93 (closed 2026-10-31, PR #515; filed 2026-10-30 by the coordinator while reading Item 92's evidence)
+
+- **The problem.** conda's sharded repodata path does not wrap a failed shard download: the crash ends in
+  `requests.exceptions.HTTPError: 502 Server Error: Bad Gateway for url: ...msgpack.zst` (run `41074512594`). The two places
+  in `run_setup.bat` that decide whether a conda failure is transient, the create check (`:conda_create_check_transient`,
+  REQ-022.1) and the bulk install (`:conda_bulk_install`, REQ-005.2), searched the conda output for `CondaHTTPError`,
+  `Failed to fetch`, `timed out` and `ConnectionError`, none of which that text holds. A user who hit the 502 got no wait and
+  no second attempt, and went on down the failure chain (a fallback provider, or a failed install) for a blip.
+- **What shipped.** Both `findstr /i` lines gained a fifth phrase, `Server Error`, with a `rem derived requirement:` comment.
+  It matches `502 Server Error` and `503 Server Error` in any wrapping, case blind. It cannot match a 404, which conda words
+  as `404 Client Error`, nor a solver answer; those are still not retried.
+- **Tests.** `tests/selfapps_conda_transient.ps1` (`real` and `justme-test`, gating from the first run) cuts the two real
+  blocks out of `run_setup.bat` at their labels, runs each in a driver with a stub `conda.bat` that counts its calls and prints
+  the real 502 line, and checks the counted calls and the log: `self.conda.retry5xx.control` (the old wording is retried, which
+  proves the harness itself), `.bulk` and `.create` (a 502 is retried once and the second answer is used), `.bounded` (a 502
+  that stays is tried exactly twice and reported failed), `.nonretry` (a solver answer and a 404 run once). The same driver
+  stays honest in `tests/test_conda_transient_terms.py`, which keeps the two sites on one phrase list, tests the list against
+  real conda text with findstr's rules (case blind, literal, OR) and pins that the cut-out blocks reach only names the driver
+  defines.
+- **Red first.** Same run `41149444391`: on `real` and `justme-test` `self.conda.retry5xx.bulk` was red with 1 call
+  instead of 2 (`RC=1`, no retry line), `.create` red with 0 retry calls and `RESULT=failed`, `.bounded` red the same way,
+  while the harness check `.control` (the old `CondaHTTPError` wording is retried: bulk 2 calls `RC=0`, create 1 call
+  `RESULT=done`) and `.nonretry` (a solver answer and a 404 run once) were green, so the stub conda and the cut-out blocks
+  worked and only the missing phrase was red. `self.pytest.unit` red on every lane (the phrase test); nothing else.
+- **Documented here, for the maintainer's README.** REQ-022.1 gains the fifth phrase (the unwrapped `requests` HTTP error
+  text), REQ-022.3 says none of the five phrases, and REQ-005.2's signature list follows; the wording went to the PR body for
+  lane 3, which owns README.md.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
