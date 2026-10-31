@@ -1112,9 +1112,13 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 >   on a provider cascade keeps the build it already has.
 > - Log contract: `[INFO] conda create: transient failure detected; retrying after 15s.`, and when the second
 >   attempt fails `[WARN] conda create: retry after transient failure also failed.`
-> - Tests: `self.stub.conda_create_retry` (REQ-022.1, `tests/selftest.ps1`) simulates the transient first failure
->   and requires the retry line and a completed run. The retry-exhausted path is exercised by
->   `self.cascade.conda_create_fail` (REQ-009, `tests/selfapps_cascade_conda_create_fail.ps1`).
+> - Tests (`tests/selftest.ps1`, each fails the env-create step through a test hook): `self.stub.conda_create_retry`
+>   (REQ-022.1) simulates the transient first failure and requires the retry line and a completed run;
+>   `self.stub.conda_create_exhausted` (REQ-022.2) fails the retry as well and requires exactly one retry, the
+>   "also failed" line, the failure report and state `error`; `self.stub.conda_create_nonretry` (REQ-022.3) fails
+>   the first attempt with a message that holds none of the four phrases and requires that no retry line, "also
+>   failed" line or retry message appears. `self.cascade.conda_create_fail` (REQ-009,
+>   `tests/selfapps_cascade_conda_create_fail.ps1`) exercises the exhausted path inside a provider cascade.
 
 ---
 
@@ -1178,10 +1182,14 @@ time, and should not let an instance that ended abnormally keep later runs out o
 >   `[INFO] REQ-024: stale lock evicted (older than the staleness threshold); proceeding.`,
 >   `[WARN] REQ-024: could not determine whether the existing lock is stale (indeterminate result); continuing without it.`
 >   and `[WARN] REQ-024: could not acquire lock after evicting stale lock; continuing without it.`
-> - Tests (`tests/selftest.ps1`): `self.stub.lock_held_decline` (REQ-024.3, and it checks REQ-024.2, REQ-024.4 and
->   REQ-024.5 in the same run), `self.stub.lock_stale_evict` (REQ-024.6, with the age forced by a test hook rather
->   than waited out), `self.stub.lock_indeterminate` (REQ-024.7) and `self.stub.lock_no_leak` (REQ-024.8, after a
->   full successful run).
+> - Tests (`tests/selftest.ps1`): `self.stub.lock_start` (REQ-024.1) starts a run in the background, waits for the
+>   lock folder to appear, requires that nothing a download or an environment creates exists yet and then stops
+>   the run; `self.stub.lock_held_message` (REQ-024.2), `self.stub.lock_held_decline` (REQ-024.3),
+>   `self.stub.lock_held_kept` (REQ-024.4) and `self.stub.lock_held_nostatus` (REQ-024.5) read one declined run;
+>   `self.stub.lock_stale_evict` (REQ-024.6, with the age forced by a test hook rather than waited out),
+>   `self.stub.lock_indeterminate` (REQ-024.7), `self.stub.lock_no_leak` (REQ-024.8, after a full successful run)
+>   and `self.stub.lock_evict_blocked` (REQ-024.9, a stale lock folder holding a file that the test keeps open, so
+>   it cannot be removed).
 
 ---
 
@@ -1196,8 +1204,10 @@ may free some after reading the warning.
   freeing disk space as the likely fix if the setup fails.
 - **REQ-025.2** [major] The bootstrapper **shall**, after it has shown that warning, continue with the rest of the
   setup.
-- **REQ-025.3** [minor] The bootstrapper **shall**, when the drive has 2 GB or more of free space or its free space
-  cannot be read, show no low-disk-space warning.
+- **REQ-025.3** [minor] The bootstrapper **shall**, when the drive has 2 GB or more of free space, show no
+  low-disk-space warning.
+- **REQ-025.4** [minor] The bootstrapper **shall**, when the free space of the drive cannot be read, show no
+  low-disk-space warning.
 
 > **Notes (non-normative).**
 > - Rationale: the Miniconda download and install plus the environment can together need from several hundred
@@ -1209,9 +1219,12 @@ may free some after reading the warning.
 >   Windows system-folder check and before the lock of REQ-024. A program folder on a network share has no drive
 >   letter, so no reading is taken and no warning is shown.
 > - Log contract: `[WARN] REQ-025: low disk space detected (~N GB free); continuing (warn-only).`
-> - Tests: `self.stub.low_disk_warn` (REQ-025.1, `tests/selftest.ps1`) forces the low reading with a test hook,
->   because a CI drive is never short of space, and checks that the warning appears and that the run still ends
->   with state `ok` and exit code 0, which is also REQ-025.2.
+> - Tests (`tests/selftest.ps1`): `self.stub.low_disk_warn` (REQ-025.1) forces the low reading with a test hook,
+>   because a CI drive is never short of space, and requires the warning, its whole-gigabyte figure and its wording
+>   about freeing disk space; `self.stub.low_disk_continues` (REQ-025.2) requires that the same run ends with state
+>   `ok` and exit code 0; `self.stub.low_disk_absent` (REQ-025.3) reads the logs of three runs without the hook and
+>   requires no warning when the drive has 2 GB or more free (the row records that it proved nothing on a drive that
+>   is short or cannot be read). REQ-025.4 has no row yet: it needs a hook that makes the reading fail.
 
 ---
 

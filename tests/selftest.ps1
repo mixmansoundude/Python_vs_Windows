@@ -686,6 +686,8 @@ Set-Content -Path (Join-Path $lockHeldDir 'hello_stub.py') -Value 'print("hello-
 $lockHeldPreexisting = Join-Path $lockHeldDir '~bootstrap.lock'
 New-Item -ItemType Directory -Force -Path $lockHeldPreexisting | Out-Null
 Set-Content -Path (Join-Path $lockHeldPreexisting 'owner.txt') -Value "pid=999999`nstarted=simulated" -Encoding ASCII
+$lockHeldOwnerPath = Join-Path $lockHeldPreexisting 'owner.txt'
+$lockHeldOwnerBefore = Get-Content -LiteralPath $lockHeldOwnerPath -Raw -Encoding ASCII
 $lockHeldLogName = '~lock_held_bootstrap.log'
 Push-Location $lockHeldDir
 try {
@@ -697,26 +699,56 @@ try {
 $lockHeldLogPath = Join-Path $lockHeldDir $lockHeldLogName
 $lockHeldLines = @()
 if (Test-Path $lockHeldLogPath) { $lockHeldLines = Get-Content -LiteralPath $lockHeldLogPath -Encoding ASCII }
+$lockHeldText = ($lockHeldLines -join "`n")
 $lockHeldMsgFound = ($lockHeldLines | Where-Object { $_ -like '*already running*' }).Count -gt 0
+# derived requirement: one declined run, five README shalls. Each of REQ-024.2 to REQ-024.5 gets its own row
+# (read from this run's text, files and exit code, no extra bootstrap), so a red row names the shall that failed.
+# REQ-024.2: the message says another instance appears to be running and names the lock folder to delete.
+$lockHeldSaysRunning = $lockHeldText -like '*Another instance of this setup appears to be running in this folder*'
+$lockHeldNamesFolder = $lockHeldText -like '*delete the "~bootstrap.lock" folder*'
+$lockHeldMessagePass = ($lockHeldSaysRunning -and $lockHeldNamesFolder)
+# REQ-024.3: the second instance stops with exit code 1.
 $lockHeldDeclined = ($lockHeldExit -eq 1)
-$lockHeldNotDeleted = Test-Path $lockHeldPreexisting
+# REQ-024.4: the lock folder is still there and is still the one that was planted (a run that removed it and made
+# its own would have written its own owner.txt).
+$lockHeldOwnerAfter = $null
+if (Test-Path -LiteralPath $lockHeldOwnerPath) { $lockHeldOwnerAfter = Get-Content -LiteralPath $lockHeldOwnerPath -Raw -Encoding ASCII }
+$lockHeldKept = ((Test-Path $lockHeldPreexisting) -and ($lockHeldOwnerAfter -eq $lockHeldOwnerBefore))
+# REQ-024.5: no status file.
 $lockHeldStatusPath = Join-Path $lockHeldDir '~bootstrap.status.json'
 $lockHeldNoStatus = -not (Test-Path $lockHeldStatusPath)
-$lockHeldAllPass = ($lockHeldMsgFound -and $lockHeldDeclined -and $lockHeldNotDeleted -and $lockHeldNoStatus)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_held_message'
+  req = 'REQ-024.2'
+  pass = -not $lockHeldMessagePass  # red proof, removed in the next commit
+  desc = 'REQ-024: a fresh (non-stale) lock directory makes a second instance say that another instance appears to be running and name the lock folder to delete'
+  details = [ordered]@{ saysRunning = $lockHeldSaysRunning; namesLockFolder = $lockHeldNamesFolder; logLineFound = $lockHeldMsgFound }
+})
+if ($lockHeldMessagePass) { $summary.Add('lock held message: PASS') } else { $summary.Add('lock held message: FAIL') }
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.lock_held_decline'
   req = 'REQ-024.3'
-  pass = $lockHeldAllPass
-  desc = 'REQ-024: a fresh (non-stale) lock directory causes a second instance to decline gracefully without touching the lock it does not own'
-  details = [ordered]@{
-    msgFound = $lockHeldMsgFound
-    declined = $lockHeldDeclined
-    lockPreserved = $lockHeldNotDeleted
-    noStatusWrite = $lockHeldNoStatus
-    exitCode = $lockHeldExit
-  }
+  pass = -not $lockHeldDeclined  # red proof, removed in the next commit
+  desc = 'REQ-024: a fresh (non-stale) lock directory makes a second instance stop with exit code 1'
+  details = [ordered]@{ declined = $lockHeldDeclined; exitCode = $lockHeldExit }
 })
-if ($lockHeldAllPass) { $summary.Add('lock held decline: PASS') } else { $summary.Add('lock held decline: FAIL') }
+if ($lockHeldDeclined) { $summary.Add('lock held decline: PASS') } else { $summary.Add('lock held decline: FAIL') }
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_held_kept'
+  req = 'REQ-024.4'
+  pass = -not $lockHeldKept  # red proof, removed in the next commit
+  desc = 'REQ-024: a second instance that stops on a fresh lock directory leaves that directory, and the owner file in it, as they were'
+  details = [ordered]@{ lockPresent = (Test-Path $lockHeldPreexisting); ownerUnchanged = ($lockHeldOwnerAfter -eq $lockHeldOwnerBefore) }
+})
+if ($lockHeldKept) { $summary.Add('lock held kept: PASS') } else { $summary.Add('lock held kept: FAIL') }
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_held_nostatus'
+  req = 'REQ-024.5'
+  pass = -not $lockHeldNoStatus  # red proof, removed in the next commit
+  desc = 'REQ-024: a second instance that stops on a fresh lock directory writes no ~bootstrap.status.json'
+  details = [ordered]@{ statusFilePresent = (Test-Path $lockHeldStatusPath) }
+})
+if ($lockHeldNoStatus) { $summary.Add('lock held no status: PASS') } else { $summary.Add('lock held no status: FAIL') }
 
 # Part C: HP_TEST_FORCE_LOCK_STALE=1 forces the staleness check to report stale (deterministic --
 # avoids waiting out the real ~2 hour threshold in CI), so a pre-existing lock directory
@@ -833,6 +865,136 @@ Write-NdjsonRow ([ordered]@{
 })
 if ($lockIndeterminateAllPass) { $summary.Add('lock indeterminate continue: PASS') } else { $summary.Add('lock indeterminate continue: FAIL') }
 
+# Part E (README REQ-024.1): the lock folder exists from the start of a run, before any download, installation
+# or environment creation. A normal run removes its lock at its end, so the folder is watched while the run goes
+# on: the run is started in the background, polled until the lock appears, the first sighting is checked against
+# the folders and files that a download or an environment would create, and the whole process tree is stopped
+# (a stopped run never releases its lock, see the README notes of REQ-024).
+$lockStartDir = Join-Path $TestsDir '~selftest_lock_start'
+if (Test-Path $lockStartDir) { Remove-Item -Recurse -Force $lockStartDir }
+New-Item -ItemType Directory -Force -Path $lockStartDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $lockStartDir -Force
+Set-Content -Path (Join-Path $lockStartDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$lockStartLock = Join-Path $lockStartDir '~bootstrap.lock'
+$lockStartLogName = '~lock_start_bootstrap.log'
+$lockStartEarly = @('~uv_bin', '~miniconda.exe', '.uv_env', 'dist', 'build')
+$prevCILaneLockStart = $env:HP_CI_LANE
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+$lockStartSeen = $false
+$lockStartPresent = @()
+$lockStartWaitMs = 0
+$lockStartError = ''
+$lockStartProc = $null
+try {
+  $lockStartPsi = New-Object System.Diagnostics.ProcessStartInfo
+  $lockStartPsi.FileName = $env:ComSpec
+  $lockStartPsi.Arguments = '/c "call run_setup.bat > ' + $lockStartLogName + ' 2>&1"'
+  $lockStartPsi.WorkingDirectory = $lockStartDir
+  $lockStartPsi.UseShellExecute = $false
+  $lockStartPsi.CreateNoWindow = $true
+  $lockStartProc = [System.Diagnostics.Process]::Start($lockStartPsi)
+  $lockStartClock = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($lockStartClock.Elapsed.TotalSeconds -lt 90) {
+    if (Test-Path -LiteralPath $lockStartLock) {
+      $lockStartSeen = $true
+      $lockStartPresent = @($lockStartEarly | Where-Object { Test-Path -LiteralPath (Join-Path $lockStartDir $_) })
+      break
+    }
+    if ($lockStartProc.HasExited) { break }
+    Start-Sleep -Milliseconds 20
+  }
+  $lockStartWaitMs = [int]$lockStartClock.ElapsedMilliseconds
+} catch {
+  $lockStartError = $_.Exception.Message
+} finally {
+  $env:HP_CI_LANE = $prevCILaneLockStart
+  if ($null -ne $lockStartProc -and -not $lockStartProc.HasExited) {
+    & taskkill.exe /F /T /PID $lockStartProc.Id 2>&1 | Out-Null
+    [void]$lockStartProc.WaitForExit(20000)
+  }
+}
+$lockStartPass = ($lockStartSeen -and ($lockStartPresent.Count -eq 0))
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_start'
+  req = 'REQ-024.1'
+  pass = -not $lockStartPass  # red proof, removed in the next commit
+  desc = 'REQ-024: the lock directory exists while a run is still at its start, before any download, installation or environment creation'
+  details = [ordered]@{
+    lockSeen = $lockStartSeen
+    firstSightingMs = $lockStartWaitMs
+    createdBeforeLock = ($lockStartPresent -join ',')
+    error = $lockStartError
+  }
+})
+if ($lockStartPass) { $summary.Add('lock created at start: PASS') } else { $summary.Add('lock created at start: FAIL') }
+
+# Part F (README REQ-024.9): a stale lock directory that cannot be removed. The planted lock holds a file that
+# this script keeps open without delete sharing, so the batch file's rd cannot clear the folder and its mkdir
+# then finds the folder still there. The run must go on without a lock and say so, and must leave the folder alone.
+$lockBlockedDir = Join-Path $TestsDir '~selftest_lock_blocked'
+if (Test-Path $lockBlockedDir) { Remove-Item -Recurse -Force $lockBlockedDir }
+New-Item -ItemType Directory -Force -Path $lockBlockedDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $lockBlockedDir -Force
+Set-Content -Path (Join-Path $lockBlockedDir 'hello_stub.py') -Value 'print("hello-from-stub")' -Encoding ASCII
+$lockBlockedLock = Join-Path $lockBlockedDir '~bootstrap.lock'
+New-Item -ItemType Directory -Force -Path $lockBlockedLock | Out-Null
+$lockBlockedFile = Join-Path $lockBlockedLock 'owner.txt'
+Set-Content -Path $lockBlockedFile -Value "pid=999996`nstarted=simulated-blocked" -Encoding ASCII
+$lockBlockedLogName = '~lock_blocked_bootstrap.log'
+$lockBlockedHold = $null
+$lockBlockedHeld = $false
+$lockBlockedExit = $null
+$prevForceLockBlocked = $env:HP_TEST_FORCE_LOCK_STALE
+$prevCILaneLockBlocked = $env:HP_CI_LANE
+try {
+  $lockBlockedHold = [System.IO.File]::Open($lockBlockedFile, 'Open', 'Read', 'Read')
+  # prove the hold: deleting the file must fail while it is open (a delete that works means there is no hold)
+  try { [System.IO.File]::Delete($lockBlockedFile) } catch { $lockBlockedHeld = $true }
+  $env:HP_TEST_FORCE_LOCK_STALE = '1'
+  if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+  Push-Location $lockBlockedDir
+  try {
+    cmd /c "call run_setup.bat > $lockBlockedLogName 2>&1"
+    $lockBlockedExit = $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+} finally {
+  $env:HP_TEST_FORCE_LOCK_STALE = $prevForceLockBlocked
+  $env:HP_CI_LANE = $prevCILaneLockBlocked
+}
+$lockBlockedStillThere = (Test-Path -LiteralPath $lockBlockedLock) -and (Test-Path -LiteralPath $lockBlockedFile)
+if ($null -ne $lockBlockedHold) { $lockBlockedHold.Dispose() }
+$lockBlockedLogPath = Join-Path $lockBlockedDir $lockBlockedLogName
+$lockBlockedLines = @()
+if (Test-Path $lockBlockedLogPath) { $lockBlockedLines = Get-Content -LiteralPath $lockBlockedLogPath -Encoding ASCII }
+$lockBlockedWarnFound = ($lockBlockedLines | Where-Object { $_ -like '*could not acquire lock after evicting stale lock*' }).Count -gt 0
+$lockBlockedDeclinedMsg = ($lockBlockedLines | Where-Object { $_ -like '*already running*' }).Count -gt 0
+$lockBlockedStatusPath = Join-Path $lockBlockedDir '~bootstrap.status.json'
+$lockBlockedBootstrapOk = $false
+if (Test-Path $lockBlockedStatusPath) {
+  try {
+    $lockBlockedStatus = Get-Content -LiteralPath $lockBlockedStatusPath -Raw -Encoding ASCII | ConvertFrom-Json
+    $lockBlockedBootstrapOk = ($lockBlockedStatus.state -eq 'ok' -and $lockBlockedStatus.exitCode -eq 0)
+  } catch { }
+}
+$lockBlockedPass = ($lockBlockedHeld -and $lockBlockedWarnFound -and (-not $lockBlockedDeclinedMsg) -and $lockBlockedBootstrapOk -and $lockBlockedStillThere)
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.lock_evict_blocked'
+  req = 'REQ-024.9'
+  pass = -not $lockBlockedPass  # red proof, removed in the next commit
+  desc = 'REQ-024: when a stale lock directory cannot be removed the run continues without a lock, warns in the log and leaves the directory alone'
+  details = [ordered]@{
+    holdProven = $lockBlockedHeld
+    warnFound = $lockBlockedWarnFound
+    declinedMsg = $lockBlockedDeclinedMsg
+    bootstrapOk = $lockBlockedBootstrapOk
+    lockStillThere = $lockBlockedStillThere
+    exitCode = $lockBlockedExit
+  }
+})
+if ($lockBlockedPass) { $summary.Add('lock evict blocked continue: PASS') } else { $summary.Add('lock evict blocked continue: FAIL') }
+
 # --- Free-disk-space guard (REQ-025) test ---
 # Arrange: HP_TEST_FORCE_LOW_DISK=1 deterministically forces the "low disk space" branch instead
 # of depending on the real free space of the CI runner's drive (which is never actually low).
@@ -864,7 +1026,13 @@ try {
 $lowDiskLogPath = Join-Path $lowDiskDir $lowDiskLogName
 $lowDiskLines = @()
 if (Test-Path $lowDiskLogPath) { $lowDiskLines = Get-Content -LiteralPath $lowDiskLogPath -Encoding ASCII }
+$lowDiskText = ($lowDiskLines -join "`n")
 $lowDiskWarnFound = ($lowDiskLines | Where-Object { $_ -like '*low disk space detected*' }).Count -gt 0
+# REQ-025.1: the warning gives the free space in whole gigabytes (the hook forces a reading of 0) and names
+# freeing disk space as the likely fix if the setup fails.
+$lowDiskFigure = ($lowDiskText -like '*Only ~0 GB free disk space detected*') -and ($lowDiskText -like '*(~0 GB free)*')
+$lowDiskFixWording = $lowDiskText -like '*freeing up disk space is a likely fix*'
+$lowDiskWarnPass = ($lowDiskWarnFound -and $lowDiskFigure -and $lowDiskFixWording)
 $lowDiskStatusPath = Join-Path $lowDiskDir '~bootstrap.status.json'
 $lowDiskBootstrapOk = $false
 if (Test-Path $lowDiskStatusPath) {
@@ -873,19 +1041,61 @@ if (Test-Path $lowDiskStatusPath) {
     $lowDiskBootstrapOk = ($lowDiskStatus.state -eq 'ok' -and $lowDiskStatus.exitCode -eq 0)
   } catch { }
 }
-$lowDiskAllPass = ($lowDiskWarnFound -and $lowDiskBootstrapOk)
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_warn'
   req = 'REQ-025.1'
-  pass = $lowDiskAllPass
-  desc = 'REQ-025: HP_TEST_FORCE_LOW_DISK forces the low-disk-space WARN and the bootstrap still completes normally (warn-only, never abort)'
+  pass = -not $lowDiskWarnPass  # red proof, removed in the next commit
+  desc = 'REQ-025: HP_TEST_FORCE_LOW_DISK forces the low-disk-space warning, which gives the free space in whole gigabytes and names freeing disk space as the likely fix'
+  details = [ordered]@{
+    warnFound = $lowDiskWarnFound
+    figureFound = $lowDiskFigure
+    fixWordingFound = $lowDiskFixWording
+    exitCode = $lowDiskExit
+  }
+})
+if ($lowDiskWarnPass) { $summary.Add('low disk space warn: PASS') } else { $summary.Add('low disk space warn: FAIL') }
+# REQ-025.2: after the warning the setup goes on and ends well (warn-only, never an abort).
+$lowDiskContinuePass = ($lowDiskWarnFound -and $lowDiskBootstrapOk -and ($lowDiskExit -eq 0))
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.low_disk_continues'
+  req = 'REQ-025.2'
+  pass = -not $lowDiskContinuePass  # red proof, removed in the next commit
+  desc = 'REQ-025: after the low-disk-space warning the setup continues and ends with state ok and exit code 0'
   details = [ordered]@{
     warnFound = $lowDiskWarnFound
     bootstrapOk = $lowDiskBootstrapOk
     exitCode = $lowDiskExit
   }
 })
-if ($lowDiskAllPass) { $summary.Add('low disk space warn: PASS') } else { $summary.Add('low disk space warn: FAIL') }
+if ($lowDiskContinuePass) { $summary.Add('low disk space continues: PASS') } else { $summary.Add('low disk space continues: FAIL') }
+# REQ-025.3: with 2 GB or more free the warning does not appear. The free space is read here the way the batch
+# file reads it; the logs of the three lock runs above (no low-disk hook set) are the evidence. A drive this script
+# cannot read, or one that really is short, proves nothing, so the row passes with the inconclusive flag set.
+$diskFreeGb = $null
+try {
+  $diskLetter = ([System.IO.Path]::GetPathRoot($TestsDir)).Substring(0, 1)
+  $diskFreeGb = [math]::Floor((Get-PSDrive -Name $diskLetter).Free / 1GB)
+} catch { }
+$diskAmple = (($null -ne $diskFreeGb) -and ($diskFreeGb -ge 2))
+$diskWarnRuns = @($lockHeldLines, $lockStaleLines, $lockIndeterminateLines)
+$diskWarnLines = 0
+foreach ($diskRunLines in $diskWarnRuns) { $diskWarnLines += @($diskRunLines | Where-Object { $_ -like '*low disk space detected*' }).Count }
+$diskRunsRead = (($lockHeldLines.Count -gt 0) -and ($lockStaleLines.Count -gt 0) -and ($lockIndeterminateLines.Count -gt 0))
+$diskAbsentPass = $true
+if ($diskAmple) { $diskAbsentPass = ($diskRunsRead -and ($diskWarnLines -eq 0)) }
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.low_disk_absent'
+  req = 'REQ-025.3'
+  pass = -not $diskAbsentPass  # red proof, removed in the next commit
+  desc = 'REQ-025: with 2 GB or more of free space on the drive no low-disk-space warning is shown'
+  details = [ordered]@{
+    freeGb = $diskFreeGb
+    inconclusive = (-not $diskAmple)
+    runsRead = $diskRunsRead
+    warningLines = $diskWarnLines
+  }
+})
+if ($diskAbsentPass) { $summary.Add('low disk space absent: PASS') } else { $summary.Add('low disk space absent: FAIL') }
 
 # --- OneDrive/synced-folder path warning test ---
 # Arrange: run from a directory whose name contains "OneDrive" so the guardrail fires.
@@ -1717,6 +1927,114 @@ Write-NdjsonRow ([ordered]@{
   details = [ordered]@{ exitCode = $createRetryExit; retryMsgFound = $createRetryMsgFound }
 })
 if ($createRetryExit -eq 0 -and $createRetryMsgFound) { $summary.Add('Conda create retry: PASS') } else { $summary.Add('Conda create retry: FAIL') }
+
+# --- Conda env-create outcomes (README REQ-022.2 and REQ-022.3) ---
+# Both runs use the Miniconda installed by the scenarios above and fail at the env-create step through a test
+# hook, so no real conda create runs. BOTH_FAIL fails the first attempt and the retry; PLAIN_FAIL fails the first
+# attempt with output that holds none of the four transient phrases of REQ-022.1.
+$createExhaustDir = Join-Path $TestsDir '~selftest_conda_create_exhausted'
+if (Test-Path $createExhaustDir) { Remove-Item -Recurse -Force $createExhaustDir }
+New-Item -ItemType Directory -Force -Path $createExhaustDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $createExhaustDir -Force
+Set-Content -Path (Join-Path $createExhaustDir 'app.py') -Value 'print("should-not-run")' -Encoding ASCII
+$createExhaustLogName = '~conda_create_exhausted_bootstrap.log'
+$prevForceCondaOnlyEx = $env:HP_FORCE_CONDA_ONLY
+$prevSkipPipreqsEx = $env:HP_SKIP_PIPREQS
+$prevCILaneEx = $env:HP_CI_LANE
+$env:HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL = '1'
+$env:HP_FORCE_CONDA_ONLY = '1'
+$env:HP_SKIP_PIPREQS = '1'
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $createExhaustDir
+try {
+  cmd /c "call run_setup.bat > $createExhaustLogName 2>&1"
+  $createExhaustExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_CONDA_CREATE_BOTH_FAIL = ''
+  $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnlyEx
+  $env:HP_SKIP_PIPREQS = $prevSkipPipreqsEx
+  $env:HP_CI_LANE = $prevCILaneEx
+}
+$createExhaustSetupPath = Join-Path $createExhaustDir '~setup.log'
+$createExhaustLines = if (Test-Path -LiteralPath $createExhaustSetupPath) { Get-Content -LiteralPath $createExhaustSetupPath -Encoding ASCII } else { @() }
+$createExhaustRetried = @($createExhaustLines | Where-Object { $_ -like '*conda create: transient failure detected*' }).Count -eq 1
+$createExhaustAlsoFailed = @($createExhaustLines | Where-Object { $_ -like '*conda create: retry after transient failure also failed*' }).Count -gt 0
+$createExhaustReported = @($createExhaustLines | Where-Object { $_ -match [regex]::Escape('[ERROR] conda env create failed.') }).Count -gt 0
+$createExhaustState = $null
+$createExhaustStatusPath = Join-Path $createExhaustDir '~bootstrap.status.json'
+if (Test-Path -LiteralPath $createExhaustStatusPath) {
+  try { $createExhaustState = (Get-Content -LiteralPath $createExhaustStatusPath -Raw -Encoding ASCII | ConvertFrom-Json).state } catch { }
+}
+$createExhaustPass = ($createExhaustRetried -and $createExhaustAlsoFailed -and $createExhaustReported -and ($createExhaustState -eq 'error'))
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.conda_create_exhausted'
+  req = 'REQ-022.2'
+  pass = -not $createExhaustPass  # red proof, removed in the next commit
+  desc = 'REQ-022: when the retry of a failed conda env creation also fails the environment creation is treated as failed (state error)'
+  details = [ordered]@{
+    retriedOnce = $createExhaustRetried
+    retryAlsoFailed = $createExhaustAlsoFailed
+    failureReported = $createExhaustReported
+    state = $createExhaustState
+    exitCode = $createExhaustExit
+  }
+})
+if ($createExhaustPass) { $summary.Add('Conda create retry exhausted: PASS') } else { $summary.Add('Conda create retry exhausted: FAIL') }
+
+$createPlainDir = Join-Path $TestsDir '~selftest_conda_create_plain'
+if (Test-Path $createPlainDir) { Remove-Item -Recurse -Force $createPlainDir }
+New-Item -ItemType Directory -Force -Path $createPlainDir | Out-Null
+Copy-Item -Path $BatchPath -Destination $createPlainDir -Force
+Set-Content -Path (Join-Path $createPlainDir 'app.py') -Value 'print("should-not-run")' -Encoding ASCII
+$createPlainLogName = '~conda_create_plain_bootstrap.log'
+$prevForceCondaOnlyPl = $env:HP_FORCE_CONDA_ONLY
+$prevSkipPipreqsPl = $env:HP_SKIP_PIPREQS
+$prevCILanePl = $env:HP_CI_LANE
+$env:HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL = '1'
+$env:HP_FORCE_CONDA_ONLY = '1'
+$env:HP_SKIP_PIPREQS = '1'
+if (-not $env:HP_CI_LANE) { $env:HP_CI_LANE = 'selftest' }
+Push-Location $createPlainDir
+try {
+  cmd /c "call run_setup.bat > $createPlainLogName 2>&1"
+  $createPlainExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+  $env:HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL = ''
+  $env:HP_FORCE_CONDA_ONLY = $prevForceCondaOnlyPl
+  $env:HP_SKIP_PIPREQS = $prevSkipPipreqsPl
+  $env:HP_CI_LANE = $prevCILanePl
+}
+$createPlainSetupPath = Join-Path $createPlainDir '~setup.log'
+$createPlainLines = if (Test-Path -LiteralPath $createPlainSetupPath) { Get-Content -LiteralPath $createPlainSetupPath -Encoding ASCII } else { @() }
+$createPlainLogPath = Join-Path $createPlainDir $createPlainLogName
+$createPlainConsole = if (Test-Path -LiteralPath $createPlainLogPath) { Get-Content -LiteralPath $createPlainLogPath -Encoding ASCII } else { @() }
+$createPlainHookRan = @($createPlainLines | Where-Object { $_ -like '*PackagesNotFoundError*' }).Count -eq 1
+$createPlainNoRetryLog = @($createPlainLines | Where-Object { $_ -like '*conda create: transient failure detected*' -or $_ -like '*conda create: retry after transient failure*' }).Count -eq 0
+$createPlainNoRetryConsole = @($createPlainConsole | Where-Object { $_ -like '*Retrying environment creation*' }).Count -eq 0
+$createPlainNoRetry = ($createPlainNoRetryLog -and $createPlainNoRetryConsole)
+$createPlainReported = @($createPlainLines | Where-Object { $_ -match [regex]::Escape('[ERROR] conda env create failed.') }).Count -gt 0
+$createPlainState = $null
+$createPlainStatusPath = Join-Path $createPlainDir '~bootstrap.status.json'
+if (Test-Path -LiteralPath $createPlainStatusPath) {
+  try { $createPlainState = (Get-Content -LiteralPath $createPlainStatusPath -Raw -Encoding ASCII | ConvertFrom-Json).state } catch { }
+}
+$createPlainPass = ($createPlainHookRan -and $createPlainNoRetry -and $createPlainReported -and ($createPlainState -eq 'error'))
+Write-NdjsonRow ([ordered]@{
+  id = 'self.stub.conda_create_nonretry'
+  req = 'REQ-022.3'
+  pass = -not $createPlainPass  # red proof, removed in the next commit
+  desc = 'REQ-022: a failed conda env creation whose output has none of the four transient phrases is treated as failed without a second attempt'
+  details = [ordered]@{
+    hookRan = $createPlainHookRan
+    noRetry = $createPlainNoRetry
+    failureReported = $createPlainReported
+    state = $createPlainState
+    exitCode = $createPlainExit
+  }
+})
+if ($createPlainPass) { $summary.Add('Conda create no retry: PASS') } else { $summary.Add('Conda create no retry: FAIL') }
 
 # --- REQ-005.3 conda per-package fallback test ---
 # Arrange: HP_TEST_FORCE_CONDA_BULK_FAIL=1 forces a non-transient bulk-install failure, so the

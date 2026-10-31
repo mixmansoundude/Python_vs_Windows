@@ -92,16 +92,16 @@ several shalls of one scenario names one of them, so a shall can be checked and 
 | REQ-018 | 37 | 5 | 32 | 25 |
 | REQ-019 | 3 | 2 | 1 | 1 |
 | REQ-021 | 6 | 4 | 2 | 0 |
-| REQ-022 | 3 | 1 | 2 | 0 |
-| REQ-024 | 9 | 4 | 5 | 0 |
-| REQ-025 | 3 | 1 | 2 | 0 |
+| REQ-022 | 3 | 3 | 0 | 0 |
+| REQ-024 | 9 | 9 | 0 | 0 |
+| REQ-025 | 4 | 3 | 1 | 0 |
 | REQ-026 | 6 | 6 | 0 | 0 |
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-40 of 116 numbered shalls are named by at least one row tag.
+49 of 117 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.1, REQ-005.1.2, REQ-005.1.3, REQ-005.1.4, REQ-005.1.5, REQ-005.1.6, REQ-005.1.7, REQ-005.1.8, REQ-005.1.9, REQ-005.1.10, REQ-005.1.11, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-005.1.15, REQ-005.1.16, REQ-005.1.17, REQ-005.1.18, REQ-009.9, REQ-009.10, REQ-009.11, REQ-009.12, REQ-009.13, REQ-009.14, REQ-009.15, REQ-009.16, REQ-012.1, REQ-012.3, REQ-012.5, REQ-018.1, REQ-018.2, REQ-018.3, REQ-018.4, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.8, REQ-018.9, REQ-018.10, REQ-018.11, REQ-018.12, REQ-018.13, REQ-018.14, REQ-018.15, REQ-018.16, REQ-018.17, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.23, REQ-018.24, REQ-018.25, REQ-018.26, REQ-018.27, REQ-018.28, REQ-018.29, REQ-018.30, REQ-018.31, REQ-018.35, REQ-018.36, REQ-019.2, REQ-021.1, REQ-021.3, REQ-022.2, REQ-022.3, REQ-024.1, REQ-024.2, REQ-024.4, REQ-024.5, REQ-024.9, REQ-025.2, REQ-025.3.
+Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.1, REQ-005.1.2, REQ-005.1.3, REQ-005.1.4, REQ-005.1.5, REQ-005.1.6, REQ-005.1.7, REQ-005.1.8, REQ-005.1.9, REQ-005.1.10, REQ-005.1.11, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-005.1.15, REQ-005.1.16, REQ-005.1.17, REQ-005.1.18, REQ-009.9, REQ-009.10, REQ-009.11, REQ-009.12, REQ-009.13, REQ-009.14, REQ-009.15, REQ-009.16, REQ-012.1, REQ-012.3, REQ-012.5, REQ-018.1, REQ-018.2, REQ-018.3, REQ-018.4, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.8, REQ-018.9, REQ-018.10, REQ-018.11, REQ-018.12, REQ-018.13, REQ-018.14, REQ-018.15, REQ-018.16, REQ-018.17, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.23, REQ-018.24, REQ-018.25, REQ-018.26, REQ-018.27, REQ-018.28, REQ-018.29, REQ-018.30, REQ-018.31, REQ-018.35, REQ-018.36, REQ-019.2, REQ-021.1, REQ-021.3, REQ-025.4.
 
 Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011, REQ-013, REQ-014, REQ-015, REQ-016, REQ-017, REQ-020, REQ-023.
 
@@ -111,12 +111,15 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    rows, 32 of 37 shalls unnamed), then REQ-009, REQ-003 and REQ-012. No behavior changes, so no Windows cost
    beyond the run. `tests/test_req_trace.py` accepts only a one-level sub-id (`REQ-005.1`), so the 18
    shalls numbered `REQ-005.1.n` cannot be named until its tag pattern accepts a dotted id.
-2. **Rows for shalls nothing checks:** REQ-022.3 (a failure without the four phrases is not retried; one
-   conda-full scenario with a package conda-forge does not have), REQ-024.1 (the lock folder exists while the
-   run goes on; today `self.stub.lock_no_leak` also passes when no lock is ever created, so a stub that
-   reports whether `~bootstrap.lock` exists is the missing half), REQ-024.9 (a stale lock folder that cannot be
-   removed, with a file in it held open, leaves the run going without a lock and a warning in the log) and
-   REQ-025.3 (no warning when the drive has enough space). Each is written first and read red.
+2. **Rows for shalls nothing checks: done except REQ-025.4.** REQ-022.2 and .3 (`self.stub.conda_create_exhausted`,
+   `.conda_create_nonretry`, the second through the new hook `HP_TEST_FORCE_CONDA_CREATE_PLAIN_FAIL`), REQ-024.1
+   (`self.stub.lock_start` watches the lock folder while a background run is at its start), REQ-024.2, .4 and .5
+   (one row each, read from the declined run that already named REQ-024.3), REQ-024.9
+   (`self.stub.lock_evict_blocked`, a file held open inside the stale lock folder), and REQ-025.1 to .3
+   (`low_disk_warn` now also requires the whole-gigabyte figure and the wording, `low_disk_continues`,
+   `low_disk_absent`). REQ-025.3 was split: its unreadable-drive half is the new REQ-025.4, which needs a hook that
+   makes the free-space reading fail (not built; the batch's `catch` leaves the figure empty, which is the branch
+   to reach).
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
@@ -184,10 +187,10 @@ aggregate row `self.pytest.unit` in every lane.
 | 019 | Flags are scaffolding | none; a manual standing directive in `docs/agent-lessons-learned.md` | None | T6 |
 | 020 | Cache corruption | `self.corrupt.conda.*`, `self.corrupt.uv.detect` x5 (all) | Strong | |
 | 021 | Static pre-flight | `self.preflight.*` (R,F), `batch.preflight.compile` | Strong | |
-| 022 | conda create retry | `self.stub.conda_create_retry` (all, `REQ-022.1`); README section REQ-022 (three shalls); the retry-exhausted path through `self.cascade.conda_create_fail` (u, tagged REQ-009) | Strong for .1; .2 and .3 have no row of their own | row for REQ-022.3 |
+| 022 | conda create retry | `self.stub.conda_create_retry/.conda_create_exhausted/.conda_create_nonretry` (all, tagged `REQ-022.1/.2/.3`); README section REQ-022 (three shalls); the retry-exhausted path inside a cascade through `self.cascade.conda_create_fail` (u, tagged REQ-009) | Strong; the non-retry case uses a test hook, not a real conda failure | |
 | 023, 023b | venv canary, no-pip retry | `self.venv.canary_fail`, `self.venv.nopip_retry` (all) | Strong | |
-| 024 | concurrent-instance lock | `self.stub.lock_no_leak/.held_decline/.stale_evict/.indeterminate` (all, tagged `REQ-024.8/.3/.6/.7`); README section REQ-024 (nine shalls) | Strong for the decline, stale, indeterminate and release cases; .1 (the lock exists during the run) and .9 (the replacement folder cannot be created) have no row | rows for REQ-024.1 and REQ-024.9 |
-| 025 | low disk warning | `self.stub.low_disk_warn` (all, tagged `REQ-025.1`, forced by `HP_TEST_FORCE_LOW_DISK`; it also checks .2); README section REQ-025 (three shalls) | Strong for .1 and .2; .3 (no warning with enough space) has no row | row for REQ-025.3 |
+| 024 | concurrent-instance lock | `self.stub.lock_start/.lock_held_message/.lock_held_decline/.lock_held_kept/.lock_held_nostatus/.lock_stale_evict/.lock_indeterminate/.lock_evict_blocked/.lock_no_leak` (all, tagged `REQ-024.1` to `.9`); README section REQ-024 (nine shalls) | Strong; the lock-start row stops a background run, so it depends on the lock appearing before the first download | |
+| 025 | low disk warning | `self.stub.low_disk_warn/.low_disk_continues/.low_disk_absent` (all, tagged `REQ-025.1/.2/.3`, the first two forced by `HP_TEST_FORCE_LOW_DISK`); README section REQ-025 (four shalls) | Strong for .1 to .3; .4 (free space cannot be read) has no row | row for REQ-025.4 (needs a hook that makes the reading fail) |
 | 026 | argv passthrough | helper-level only: `test_exe_smokerun.py`, `test_failfast_probe.py`; Item 67 will cover the bad `%1` | Weak: nothing at batch level | T1 |
 | 027 | honest ambiguous exit | no-EXE branch via `self.exe.build.xfail` (scenario `execfail_runtimefail`, tagged REQ-003); fast-path note via `selfapps_failfast_probe.ps1` `ambiguousNoteFound` | Strong, untagged | T5 |
 | AV | Tier A and optimized build | `self.exe.build.tiera`, `self.exe.tiera.hidden_skip`, `self.optbuild.offer` x4 (u) | Medium: non-gating; Item 80 | Item 35 |
