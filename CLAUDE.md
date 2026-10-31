@@ -81,6 +81,7 @@ tests/
   selfapps_dep_merge_later.ps1 Item 89: what a LATER run does with the dependency lists (delete, add, pin edit, header edit, a package pyproject.toml still lists, an unchanged run); eight `self.depmerge.later.*` rows (real lane, gating; needs the uv header write-back)
   selfapps_nuitka_cachesafety.ps1 Item 72 follow-up (closed, flag NOT adopted): row self.nuitka.cachesafety measures what a static Nuitka unpack folder would break (warm and cold concurrent launches, overlap, kill mid-unpack, update while the old build runs) and records adoptable; uv lane, non-gating
   selfapps_example_apps.ps1    Item 74: three curated example apps from fixtures/examples (stdlib only, two files with a sibling import, a tkinter window that closes itself) run through the bootstrapper with no skip hook (real lane, gating)
+  expected_rows/<lane>.txt     Item 98: the row ids each selftest lane must write before run_tests.bat (one file per matrix lane, sorted; the selftest-gate job checks them)
   fixtures/examples/           Item 74: the curated example apps a person can drop next to run_setup.bat (README.txt inside); CI scenarios read these files, nothing generates them inline
   selfapps_unlaunchable_exe.ps1 Item 87: a dist\<env>.exe that Windows cannot start (text-file stub) ends the EXE verification run and the fail-fast probe instead of hanging them (real lane, gating, 15-minute watchdog per run; HP_TEST_CORRUPT_BUILT_EXE hook)
   selfapps_embed_version.ps1   REQ-009 Tier 5: the embed tier honors the Python version a program asks for (runtime.txt 3.12 is swapped in and is what the program runs under; 3.9 runs under the table floor with a WARN; 3.99 runs under the newest minor with a WARN; a pyproject.toml `>=3.11,<3.13` gets 3.12, the newest minor the range allows; four full builds, real lane, gating, 30-minute watchdog per run)
@@ -97,6 +98,7 @@ tools/
   check_delimiters.py          Bracket/quote balance validator (.bat/.ps1/.py/.yml/.json)
   check_crlf.py                 CRLF byte-uniformity checker/fixer for .bat/.cmd files (--fix mode)
   req_trace_table.py           Which numbered README shalls a row tag names (report only; docs/plan-test-suite-gaps.md keeps a dated copy)
+  check_expected_rows.py       Item 98: fails the aggregate gate when a row listed in tests/expected_rows/<lane>.txt was never written (`check`), writes those lists from green runs (`generate`)
   check_workflows_yaml.py      YAML syntax validation via PyYAML
   inline_model_fix.py          AI quick-fix orchestrator (OpenAI Responses API -- CI use only)
   sanitize_iterate_payload.py  NDJSON redaction, deduplication, truncation
@@ -327,6 +329,7 @@ Test files and what they cover:
 | `test_nuitka_unsupported_hint.py` | Item 80: the mark/command/check order around each of the two Nuitka command lines, the count's `findstr` pattern against Nuitka's real "is not supported" line (matches) and its "only experimentally supported" warning, the bootstrapper's own sentence and a different failure (do not match), the sentence safe for `:log`, the check fail-safe without a mark, and the three `selfapps_pvw_builder.ps1` stub lines agreeing with the pattern; synthetic cases prove each rule can fail |
 | `test_reqspec_retry.py` | Item 92: `Invoke-CondaCommand` in `tests/selfapps_reqspec.ps1` retries a conda network call once, only when the output shows a 5xx or a failed connection (the 502 of run `41074512594`); the helper is cut out of the script and run through real `pwsh` with a `cmd` function in place of the native command (502 then success exits 0 after two attempts, a 502 that stays runs exactly twice, a solver answer, a 404 and a success run once, the first answer and a notice reach the log), the transient pattern against real conda text, static pins (one helper, at most two attempts, wait of 1-30 seconds, every network `cmd /c` goes through it, the four `reqspec.retry.*` rows keep literal ids and `req = 'N/A'`, the workflow step stays gating); synthetic cases prove each rule can fail |
 | `test_conda_transient_terms.py` | Item 93: the two conda retry sites (`:conda_bulk_install`, `:conda_create_check_transient`) search the same `findstr /i /c:` phrases, the original four plus `Server Error`, checked with findstr's rules (case blind, literal, OR) against real conda text (the 502 crash line of run `41074512594`, 503, CondaHTTPError, ConnectionError, ReadTimeout match; a solver answer, UnsatisfiableError and `404 Client Error` do not); the labels `tests/selfapps_conda_transient.ps1` cuts the two blocks at exist once and the blocks reach only names its driver defines; the five `self.conda.retry5xx.*` rows keep literal ids and tags; the workflow step gates on `real` and `justme-test`; synthetic cases prove each rule can fail |
+| `test_expected_rows.py` | Item 98: `tools/check_expected_rows.py` (a complete lane passes; a missing id, a lane with no results, an empty artifact, a bad or missing baseline fail with the lane and id named; unlisted rows and the gate's own artifact are fine; the cache lane's own infrastructure-skip rows waive only the cache list; `generate` keeps the ids present in every run), the lists in `tests/expected_rows` (one per matrix lane, sorted, ASCII/LF, every id registered in `docs/agent-ndjson.md`, so removing or renaming a row without the list fails locally), and the selftest-gate wiring read as text (download before check, no `merge-multiple`, this attempt's artifacts only, `$rowsRc` starts failing and `$LASTEXITCODE` is cleared, `$value` ANDs both exit codes, report upload); synthetic cases prove each rule can fail |
 | `test_dependabot_config.py` | Item 90 follow-up: Dependabot has to be able to read `.github/dependabot.yml` (read as text, the pytest step has no YAML library): `version: 2`, every top-level, update-entry and schedule option spelled as Dependabot's options reference spells it (a file with one unknown option is rejected, which is what the old `open-pull-request-limit` did for ten weeks), a package-ecosystem, a directory and a schedule interval per entry, a `github-actions` entry; synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
@@ -655,6 +658,14 @@ but several represent real gaps worth closing before calling the path fully rele
   already holds a PR on in every lane. `tests/test_aggregate_gate.py` pins both halves. A new or removed row now needs
   its `docs/agent-ndjson.md` line in the same PR, or `self.pytest.unit` and the registry job go red.
 
+  **Expected-row baseline (Item 98, 2026-10-31).** The gate used to see only rows that were written: a row that never
+  appeared (a script that crashed before its first row, a step that stopped running; Items 84 and 95) could not be red.
+  `tests/expected_rows/<lane>.txt` now lists the ids each lane must write before `run_tests.bat`, and the selftest-gate
+  job runs `tools/check_expected_rows.py` over the lane NDJSON it downloads; a missing id, a lane with no results or a
+  check that cannot run sets the same `has_failures` the enforce step reads. A PR that removes or renames a row edits its
+  list in the same change (`tests/test_expected_rows.py` says which). Cache-lane infrastructure skips waive only that
+  lane's list. Mechanics and rules: `docs/agent-interconnect.md`, "Expected-row baseline".
+
   **Process discipline for every future slice in this item**: (1) one lane/row at a time --
   confirm the mechanism is genuinely real and non-flaky, let the full 8-lane matrix run to
   completion several consecutive times before treating it as proven, only then take the gating
@@ -830,7 +841,11 @@ rather than relying on manual memory.
   `contract-uv`/`contract-uv-fail`/`uv-dl-fallback` non-gating indefinitely (their non-gating
   status is explicitly load-bearing, not provisional). `ndjson-registry-check` was gated after the
   aggregate gate (2026-10-30, Item 35 registry slice): its job lost `continue-on-error`, and the same check is
-  `tests/test_check_ndjson_registry.py::test_repo_rows_and_registry_agree` inside `self.pytest.unit`.
+  `tests/test_check_ndjson_registry.py::test_repo_rows_and_registry_agree` inside `self.pytest.unit`. Item 98
+  (2026-10-31) added the expected-row lists: each scan, read the `unlisted` counts in the latest green run's
+  `expected-rows.txt` (artifact `selftest-gate-report-*`); a lane that keeps writing many rows no list has is losing
+  protection, so regenerate that lane's list from two green runs (the rule for adding an id is in
+  `docs/agent-interconnect.md`).
 
 ### CI wall-clock duration (slowest-lane growth)
 
