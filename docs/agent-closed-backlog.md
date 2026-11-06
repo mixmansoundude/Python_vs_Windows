@@ -4117,6 +4117,10 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Evidence.** Red run `42196914468` (head `54b0e2c`, tests only): on `real` and `conda-full` both count rows red with exactly one
   unannounced start each (3 starts for 2 announcements; 4 for 2 + 1 rebuild), both guards green, `self.pytest.unit` red on the
   batch-reading tests only, one red row (`self.pytest.unit`) on each of the other six lanes, no listed row missing in any lane.
+- **Fix run.** `42232561657` (head `4308159`, the fix plus the main of that time): 0 red rows on all eight lanes and no listed row
+  missing. On `real` and `conda-full` both count rows are green (`failed_run`: 1 start for 1 announcement; `repaired_run`: 3 starts
+  for 2 announcements and 1 rebuild) and both guards stay green. The two starts of the repair loop in `repaired_run` ran in `dist\`
+  (`startsFromDist` 2), which is the working-folder question of Item 101. `self.pytest.unit` passed (1449 tests) on every lane.
 - **Known limit.** The second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only that
   call ends in a failure the hint is explained from the verification run's capture, not from the DLL-repaired EXE.
   Detail: `docs/agent-interconnect.md`, "The failure hints read text a run already printed".
@@ -4153,8 +4157,36 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Evidence.** Red run `42196914468` (head `54b0e2c`, tests only): on `real` all nine `self.repair.*` rows red for the right reason
   (the gate rows `blockFound: false`, `declined` 3 starts and 1 rebuild with no question, `accepted` no question and no accepted
   line), `self.pytest.unit` red on exactly the eight batch-reading tests, nothing else red and no listed row missing in any lane.
+- **Fix run.** `42232561657` (head `4308159`): all nine `self.repair.*` rows green on `real`, the first time the real block ran under
+  cmd.exe. The prompt text shows only in the control scenario (`promptShown` true there; false for each signal alone, the test
+  answers and the once rows), `gate.once` shows the answer kept for the loop's second call, `consent.declined` ends after 1 start
+  with no rebuild, and `consent.accepted` makes 3 starts with the consent line ahead of the first `Adding --hidden-import`. The
+  four scripts that make the repair run (they answer yes through `HP_TEST_REPAIR_ANSWER`) show no red row on any lane.
 - **README wording proposed** in the PR body for the README owner: REQ-018.2 names the repair run, REQ-018.9 lists the fifth
   elective offer, REQ-018.35 names `HP_PVW_KNOWN_IDEMPOTENT`.
+
+### Item 100 (closed 2026-11-06, PR #520; an Item 35 slice, the "wider" Pages-publish gap CodeRabbit raised on PR #471)
+
+- **The problem.** `publish_diag` ("Publish diagnostics to Pages") starts under `if: always()`, but its step "Prep site directories"
+  made the `_site` folders and only then wrote `SITE`, `DIAG`, `ARTIFACTS` and `SHORTSHA` to `$GITHUB_OUTPUT`. GitHub's pwsh shell
+  runs with `$ErrorActionPreference = 'stop'`, so one failing `New-Item` (a full disk, which is what run `19236437263` died of, or a
+  name the file system refuses) ended the step with no outputs. About twenty later steps read `steps.prep.outputs.*`: an empty
+  `ARTIFACTS` turned bash's `"${ARTIFACTS}/iterate"` into `/iterate`, an empty `SITE` pointed "Upload Pages artifact" at the
+  repository root. CLAUDE.md Item 35 had carried this as "a future slice should generalize the `_site_prep_failed` fallback to a
+  single shared early step" since 2026-08-30.
+- **What shipped.** The four values are written first. They depend only on the working folder, the run id and the commit, never on
+  the folders existing, so no per-consumer fallback is needed (the two `_site_prep_failed` fallbacks already in the job are now
+  only a second line of defence). A folder failure still fails that one step; every later step sees the right paths and fails or
+  skips on its own terms.
+- **Tests.** `tests/test_publish_diag_prep.py` (12 cases): the step text is run through real `pwsh` the way the runner does it, once
+  normally (the folders, both `.nojekyll` files and the four outputs) and once with a run id of 300 characters so the per-run
+  folder name is refused on Linux and Windows alike (the step must stop at that folder and still leave all four outputs). The old
+  step is kept in the test as a harness check: it must lose every output on that input and work on a normal one, so the harness
+  cannot go quiet. Static rules: every output written before the first file-system line, every `steps.prep.outputs.NAME` the
+  workflow reads is a name the step writes, the step keeps `id: prep`, `shell: pwsh` and `if: ${{ !cancelled() }}`. It runs inside
+  `self.pytest.unit`, which the aggregate gate holds a PR on in every lane.
+- **Not done on purpose.** No change to the job graph, to `selftest-gate` or to any other `publish_diag` step. A write to
+  `$GITHUB_OUTPUT` itself failing (the disk is then full beyond saving) is not covered by any step order.
 
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 

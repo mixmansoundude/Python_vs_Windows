@@ -126,6 +126,22 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
 
 ---
 
+## `publish_diag` "Prep site directories" writes its outputs first (Item 100): about twenty steps read them
+
+**Touch that step, add a step that reads `steps.prep.outputs.*`, or add an output, must understand the others.** The Pages publish
+promises to survive any red lane (`publish_diag` runs under `if: ${{ always() }}`), and its step "Prep site directories"
+(`id: prep`, `shell: pwsh`, `if: ${{ !cancelled() }}`) is what the rest of the job stands on: `SITE` (the `_site` folder),
+`DIAG` (`_site/diag/<run>-<attempt>`), `ARTIFACTS` (`DIAG/_artifacts`) and `SHORTSHA`. All four are written to `$GITHUB_OUTPUT`
+BEFORE the first `New-Item`/`Remove-Item`, because pwsh stops at the first error and an output written after a failing mkdir is
+never written (an empty `ARTIFACTS` made `"${ARTIFACTS}/iterate"` read `/iterate`). A new output goes into that up-front block,
+and its value must not depend on a folder existing. The consumers keep their own `if: always()`; the two `_site_prep_failed`
+fallbacks ("Record iterate artifact status", "Fetch batch-check artifacts") are now a second line of defence only.
+`tests/test_publish_diag_prep.py` pins the order, that every `steps.prep.outputs.NAME` the workflow reads is a name the step
+writes (a renamed output or a typo fails locally), and runs the step text through `pwsh` with a run id that makes the per-run
+folder name too long.
+
+---
+
 ## Expected-row baseline (Item 98): `tests/expected_rows/<lane>.txt`, `tools/check_expected_rows.py` and the selftest-gate job
 
 **Touch the lists, the tool, the "Download lane NDJSON" or "Aggregate verdicts" step of `selftest-gate`, the name of the

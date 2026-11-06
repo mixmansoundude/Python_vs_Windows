@@ -342,6 +342,7 @@ Test files and what they cover:
 | `test_offers_noninteractive.py` | Item 94b, REQ-018.9: each of the four elective offers has its heading echo line, then three live `defined NOINPUT` / `defined HP_NONINTERACTIVE` / `defined HP_CI_LANE` lines, then the line that reads the answer (`set /p` or `choice`), and a decline `call :log` text that the script's regexes match; `tests/selfapps_offers_noninteractive.ps1` keeps literal row ids with `req = 'REQ-018.9'`, one signal per scenario and none for the control, closed standard input, a process-tree kill, the scrub of `HP_*`/`PVW_*`/`NOINPUT`, a program that exits 3 and one that raises a computed-name import error, and its own `exit 1` / `exit 0`; the real-lane-only gating step and its upload patterns; README Terms and the registry name the rows; synthetic cases prove each rule can fail |
 | `test_hint_norerun.py` | Item 96: `tests/selfapps_hint_norerun.ps1` keeps literal row ids with their `req` tags, writes the ledger line first from an absolute path, counts starts against the announcement and rebuild log lines, closes standard input, kills a hung run with `taskkill /F /T` and ends with its own `exit 1` / `exit 0`; the log texts it counts are still written by live `call :log` lines of `run_setup.bat`; the real-lane and conda-full gating step and its uploads; the script's own counting functions run through real `pwsh` on synthetic runs (a start beyond announced + rebuilds, each missing precondition, a stale hidden-import hint after a repair); synthetic cases prove each rule can fail |
 | `test_repair_consent.py` | Item 97: the `:hidden_import_consent` block is cut out of `run_setup.bat` (labels once, in order, reaches only `:log` and the variables the script's driver defines); its shape matches the other elective offers (heading echo, the risk sentence, `defined` tests of the test answer and the three non-interactive signals before the `choice /T 30 /D N` read, a known-idempotent and an earlier-answer test before the question, only an exact `choice` answer of 1 goes on, three places that allow, five log lines); the one call site sits after the Nuitka skip and before the first start, followed by `if not defined HP_HIC_ALLOWED exit /b 0`; the answer is cleared once at the top; `tests/selfapps_repair_consent.ps1` keeps literal row ids and tags, closed standard input, a process-tree kill, the ledger line first and its own `exit 1` / `exit 0`; the real-lane-only gating step and its uploads; the five scripts about the repair itself answer yes through `HP_TEST_REPAIR_ANSWER`; the rows are registered; synthetic cases prove each rule can fail |
+| `test_publish_diag_prep.py` | Item 100: the publish_diag step "Prep site directories" run through real `pwsh` the way the runner does (folders, both `.nojekyll` files, the four outputs `SITE`/`DIAG`/`ARTIFACTS`/`SHORTSHA`; with a 300-character run id the per-run folder is refused and the step must still leave all four outputs, stopping at that folder); the old step kept as a harness check (loses every output on that input); static pins (outputs written before the first file-system line, every `steps.prep.outputs.NAME` the workflow reads is a written name, `id: prep`, `shell: pwsh`, `if: !cancelled()`); synthetic cases prove each rule can fail |
 
 ### Static harness (Windows-only, requires PowerShell)
 ```batch
@@ -617,21 +618,12 @@ but several represent real gaps worth closing before calling the path fully rele
   whole workflow run itself is cancelled or the runner dies outright -- accepted as an unavoidable
   GitHub Actions characteristic, not a gap in this repo's own control.
 
-  **A WIDER, pre-existing version of this same class of gap remains open, out of scope for the
-  2026-08-30 fix above (CodeRabbit review, PR #471).** The fix above closed the reachability gap
-  for the 5 specific steps this PR's diff touches. Several OTHER `publish_diag` steps this PR never
-  touched -- `Package iterate logs archive`, `Mirror iterate logs into site bundle`, `Normalize
-  iterate artifact layout`, `Publish diagnostics index` (all pre-existing `if: always()`, confirmed
-  absent from this PR's own diff) -- consume `steps.prep.outputs.ARTIFACTS`/`DIAG`/`SITE` directly,
-  unguarded, the same way the 2 fixed steps did before their fix; if `Prep site directories` itself
-  fails before writing those outputs (as opposed to merely being skipped because an earlier step
-  failed), these steps would resolve to a malformed path (e.g. bash's `"${EMPTY}/iterate"` becomes
-  `/iterate`) rather than the graceful scratch-directory fallback the 2 fixed steps now have.
-  Auditing and fixing every such consumer across the whole job is a real, separate, larger
-  undertaking (a full pass over `publish_diag`'s ~20+ steps) -- deliberately not folded into this
-  PR, which is scoped to the reachability gap alone. A future slice should generalize the
-  `_site_prep_failed`-style fallback to a single shared early step (writing a fallback env var or
-  step output once) rather than repeating the guard at every consumer site.
+  **The wider version of this gap is closed (Item 100, 2026-11-06).** Other `publish_diag` steps (`Package iterate logs
+  archive`, `Mirror iterate logs into site bundle`, `Normalize iterate artifact layout`, `Publish diagnostics index`, the
+  Pages upload) read `steps.prep.outputs.ARTIFACTS`/`DIAG`/`SITE` directly; if "Prep site directories" failed in its mkdirs
+  (a full disk, the 19236437263 case) it had written no outputs yet and they resolved to malformed paths (`"${EMPTY}/iterate"`
+  became `/iterate`). The step now writes all four outputs BEFORE anything that can fail, so no per-consumer guard is needed;
+  `tests/test_publish_diag_prep.py` runs the step through pwsh with a refused folder name and pins the order.
 
   **"Gating" is a GitHub branch-protection setting, not a YAML edit.** This repo's actual merge
   gate is GitHub's native required-status-checks list on the default branch's protection rule
