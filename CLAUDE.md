@@ -739,19 +739,30 @@ but several represent real gaps worth closing before calling the path fully rele
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:
   `docs/plan-die-fatal-remediation.md`'s "Implementation Status" section.
 
-- **Item 97: `:hidden_import_recover` starts the program again with a one-line warning and no question -- BLOCKED on the
-  maintainer's answer to open question 7 (`docs/open-questions.md`).** After a failed check run the repair loop starts
-  `dist\<env>.exe` a second time to read an error `~run.err.txt` already holds, then once after each repair rebuild (at most
-  three), so README REQ-018.1 (one automatic start) and REQ-018.2 (consent before any other) do not hold for it while REQ-018.7
-  accepts the check run; `tests/test_req_shall_trace.py` keeps REQ-018.2 as a `gap:` entry for this reason. Maintainer's lean
-  (2026-10-31): a first pass that leaves the loop as it is and asks ONE question before its first extra start (default No, 30
-  seconds, the gate shape of the other four elective offers; no question for `NOINPUT`, `HP_NONINTERACTIVE`, `HP_CI_LANE` or
-  `HP_PVW_KNOWN_IDEMPOTENT`; a test override so the CI scenarios can answer Yes), later reading `~run.err.txt` first and asking
-  only when a package can be added, and a "do not ask again for N runs" answer on the consent gates. The option A build (read
-  the saved output instead of a new start) is paused and unpushed. **Do not build until the maintainer confirms the first
-  pass**; then red rows first (the launch ledger counts a start made without consent), the question, and the README wording in
-  the PR body for lane 3. A third, silent start, the failure-hint re-run in `:exe_smokerun_hints`, was removed by Item 96
-  (the hints now read `~run.out.txt` and `~run.err.txt`). No-go for other threads: `:hidden_import_recover`, `~hidden_import_scan.py` and the repair loop.
+- **Item 97 follow-ups: the repair loop's first pass shipped (PR #522); the extras below are NOT built and none is blocked.**
+  `:hidden_import_consent` (README REQ-018.2 and REQ-018.9) asks ONE question per bootstrap before the `--hidden-import`
+  repair loop's first extra start of the program: default No after 30 seconds; no wait and no repair under `NOINPUT`,
+  `HP_NONINTERACTIVE` or `HP_CI_LANE`; `HP_PVW_KNOWN_IDEMPOTENT` counts as consent; `HP_TEST_REPAIR_ANSWER` answers for the CI
+  scenarios about the repair itself. What shipped, with the red and fix run ids: `docs/agent-closed-backlog.md`, "Item 97
+  first pass" (Item 96, which removed the failure hint's own re-run, is next to it). Left, each its own slice: (a) read the
+  check run's saved `~run.err.txt` first and ask only when it names a package that can be added, so the loop needs no start to
+  learn the error; (b) a third answer, "do not ask again for the next N runs", on the consent gates; (c) `HP_PVW_KNOWN_IDEMPOTENT`
+  skipping the other four elective offers too (today it skips only this question, and `PVW_BUILDER=both` skips the
+  optimized-build question); (d) the maintainer's idea of 2026-10-31: ONE up-front, timed consent question (default No, the
+  same timer as the others) instead of the questions that come later in the run, whose Yes acts like
+  `HP_PVW_KNOWN_IDEMPOTENT`, and whose text says why a second run can happen at all (a failure that may be a false failure)
+  and the idempotency risk in a sentence or two; the maintainer asked me to review it once this has settled and to build it if
+  I think it is good. (d) needs (c) first, since its Yes has to be honored by every gate.
+
+- **Item 101: every start of the user's program uses the same working folder (README REQ-003.6, maintainer 2026-10-31).** The
+  folder that holds the user's `.py` files, wherever the EXE sits, so a program that opens a file by a relative path sees the
+  same files in every run the bootstrapper makes. Item 38 moved `:run_exe_smokerun`, `:try_fast_exe` and
+  `:verify_no_exe_interpreter` to the app root; two launch sites still `pushd dist`: `:offer_optimized_build`'s own
+  verification run and `:hidden_import_recover`'s EXE runs (now asked about first, Item 97). Red first: a program that prints
+  its working folder and reads a file next to the user's `.py` by a relative path, run through each site; tag the rows
+  REQ-003.6 once the README owner's pull request that adds the shall is merged into this branch. A frozen EXE's own
+  `sys.argv[0]`-relative files still land beside the EXE (see `docs/agent-interconnect.md`, "Single-verification smoke model"),
+  and a plain double-click of `dist\<env>.exe` starts in `dist\` whatever the bootstrapper does.
 
 ### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78, 80 and 81 shipped, see `docs/agent-closed-backlog.md`)
 

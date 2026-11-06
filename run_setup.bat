@@ -310,6 +310,11 @@ rem CLAUDE.md Item 78 slice 2: the remembered answer to the subfolder-only NI-VI
 rem Cleared here, once, so a value inherited from the calling terminal can never stand in for the user's answer. The
 rem VISA block itself runs again on a provider cascade re-entry and must keep the answer, so it cannot clear it.
 set "HP_VISA_DECISION="
+rem CLAUDE.md Item 97 (README REQ-018.2): the answer to the question before the --hidden-import repair loop starts the
+rem program again lives for one bootstrap only. Cleared here, once, so a value inherited from the calling terminal can never
+rem stand in for the user's answer; :hidden_import_consent keeps it because the loop can be called a second time and a
+rem provider cascade re-enters the build, and neither may ask the same question again.
+set "HP_HIC_ANSWER="
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
 if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
@@ -5325,6 +5330,12 @@ if defined HP_NUITKA_FALLBACK_USED (
   call :log "[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\%ENVNAME%.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag."
   exit /b 0
 )
+rem CLAUDE.md Item 97 (README REQ-018.1 and REQ-018.2): every start of the program below repeats whatever the program does,
+rem and the README allows one automatic start per invocation, so the user is asked before the first extra start. A yes, or
+rem HP_PVW_KNOWN_IDEMPOTENT, sets HP_HIC_ALLOWED; a no, a timeout and a non-interactive run leave it empty, and then nothing
+rem is started and nothing is rebuilt. HP_HIDDEN_REPAIRED was cleared at the top, so a no cannot be read as a repair.
+call :hidden_import_consent
+if not defined HP_HIC_ALLOWED exit /b 0
 rem CLAUDE.md Item 28: pair --collect-submodules=X with each --hidden-import=X this loop adds.
 rem A --hidden-import target only guarantees PyInstaller follows X's own statically-discovered
 rem imports; it does NOT guarantee every real submodule under X/ is bundled. A compiled C
@@ -5467,6 +5478,70 @@ rem context (set in :warnfix_cascade_detect when a cascade was offered but not a
 rem this launch warning too, so a confusing runtime failure right after is not mistaken for a
 rem bug in the user's own code.
 if defined HP_DEP_MAYBE_INCOMPLETE call :log "[WARN] Note: dependency installation for this run may be incomplete (see the earlier warning above) -- unexpected behavior below could stem from that rather than a bug in your own code."
+exit /b 0
+:hidden_import_consent
+rem CLAUDE.md Item 97 (README REQ-018.1 and REQ-018.2, maintainer decision 2026-10-31, first pass): ask ONCE
+rem per bootstrap before :hidden_import_recover starts the program again. After a failed check run the loop starts
+rem dist\%ENVNAME%.exe to read its error and once more after each repair rebuild, at most four starts in a call, and the
+rem loop can be called a second time after a DLL repair. The README allows one automatic start per invocation and any other
+rem only with the user's explicit consent in a prompt that names the risk. A yes sets HP_HIC_ALLOWED and the caller goes on.
+rem A no, an answer that cannot be read, no answer within 30 seconds and a non-interactive run (HP_CI_LANE, NOINPUT or
+rem HP_NONINTERACTIVE, README REQ-018.9) leave it empty and the caller returns, so nothing starts and nothing is rebuilt.
+rem HP_PVW_KNOWN_IDEMPOTENT is the user's own word that the program is safe to run more than once, README REQ-005.13 and
+rem REQ-018.35, so it allows the repair without a question. HP_TEST_REPAIR_ANSWER, Y or N, answers for the CI scenarios
+rem that exercise the repair itself and wins over the signals, like the test answer of every other elective offer.
+rem The answer, a no too, is kept in HP_HIC_ANSWER for the rest of the bootstrap, which is cleared once near the top of the
+rem file. Goto-based, so each %VAR% reads its run-time value, and no setlocal, so the verdict reaches the caller.
+rem Only Y goes on: Ctrl+C leaves errorlevel 0 and a choice that cannot read leaves 255, both are a no.
+set "HP_HIC_ALLOWED="
+if defined HP_PVW_KNOWN_IDEMPOTENT goto :hic_idempotent
+if defined HP_HIC_ANSWER goto :hic_remembered
+echo.
+echo *** The check run of your program failed, exit code %HP_EXE_EXIT%. ***
+echo *** It may only be missing a package that the EXE build could not see. ***
+echo *** To find out, the repair starts your program again to read its error, and again after each rebuild. ***
+echo *** That is up to four more starts, and up to eight if a library file has to be added too. ***
+echo *** Each start repeats whatever your program does, so say no if running it twice could cause harm. ***
+set "HP_HIC_CHOICE="
+if defined HP_TEST_REPAIR_ANSWER goto :hic_gate_override
+if defined HP_CI_LANE goto :hic_gate_auto
+if defined NOINPUT goto :hic_gate_auto
+if defined HP_NONINTERACTIVE goto :hic_gate_auto
+goto :hic_gate_interactive
+:hic_gate_override
+set "HP_HIC_RAW=%HP_TEST_REPAIR_ANSWER%"
+set "HP_HIC_CHOICE=%HP_HIC_RAW:~0,1%"
+goto :hic_gate_resolve
+:hic_gate_auto
+call :log "[INFO] Repair loop: not asked in a non-interactive run, so your program is not started again and nothing is rebuilt."
+set "HP_HIC_ANSWER=N"
+exit /b 0
+:hic_gate_interactive
+where choice >nul 2>&1
+if errorlevel 1 goto :hic_gate_declined
+choice /C YN /N /T 30 /D N /M "  Start your program again to try the repair? [Y/N, defaults to N after 30s] "
+if errorlevel 2 goto :hic_gate_declined
+if not errorlevel 1 goto :hic_gate_declined
+set "HP_HIC_CHOICE=Y"
+:hic_gate_resolve
+if /I "%HP_HIC_CHOICE%"=="Y" goto :hic_accepted
+:hic_gate_declined
+call :log "[INFO] Repair loop: declined. Your program was not started again and nothing was rebuilt."
+set "HP_HIC_ANSWER=N"
+exit /b 0
+:hic_accepted
+call :log "[INFO] Repair loop: accepted. Your program will be started again to look for a missing package."
+set "HP_HIC_ANSWER=Y"
+set "HP_HIC_ALLOWED=1"
+exit /b 0
+:hic_idempotent
+call :log "[INFO] Repair loop: HP_PVW_KNOWN_IDEMPOTENT is set, so no question is asked and your program may be started again."
+set "HP_HIC_ALLOWED=1"
+exit /b 0
+:hic_remembered
+call :log "[INFO] Repair loop: using the answer given earlier in this run."
+if /I not "%HP_HIC_ANSWER%"=="Y" exit /b 0
+set "HP_HIC_ALLOWED=1"
 exit /b 0
 :run_exe_smokerun
 if not exist "dist\%ENVNAME%.exe" (

@@ -677,6 +677,18 @@ mechanism a static override CANNOT replicate (the same env var would answer iden
 passes, infinite-looping on `Y`). Adding a bare `HP_CI_LANE` auto-decline here would silently break
 all three by bypassing `set /p` before it reads the piped stdin.
 
+**A gate added in front of behavior that scenarios already exercise declines every one of them, in every CI lane (Item 97).**
+The question in front of the `--hidden-import` repair loop (`:hidden_import_consent`) would have made
+`selfapps_hidden_import.ps1`, `selfapps_hidden_import_exhaust.ps1`, `selfapps_exedyn_fail.ps1`, `selfapps_layered_e2e.ps1` and
+the `repaired` scenario of `selfapps_hint_norerun.ps1` decline the repair (every lane is non-interactive) and read a failed check
+as their final result, with rows going red on lanes nobody was working on. Find every script that reaches the gated code by
+grepping `tests/` for the log lines it produces (`[REPAIR][HIDDEN_IMPORT]`), give each the gate's test answer around its bootstrap
+call (`HP_TEST_REPAIR_ANSWER=Y`, restored in `finally`) in the same change, and list them in the interconnect entry so the next
+scenario author knows. A second lesson from writing the red tests first: their "each rule can fail" mutation cases must run on a
+SYNTHETIC good fixture (`GOOD_BATCH` in `tests/test_repair_consent.py`). Mutating the real file, which does not have the block
+yet, made every mutation case fail for the wrong reason (nothing to mutate), which proves nothing about whether a rule can fail
+and hides which tests are red for the right reason.
+
 ---
 
 ## GitHub Actions data-passing hazards

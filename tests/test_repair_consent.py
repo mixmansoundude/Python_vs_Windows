@@ -4,7 +4,7 @@ After a failed EXE verification run, :hidden_import_recover starts dist\\<env>.e
 once more after each repair rebuild (at most three). README REQ-018.1 allows one automatic start per invocation and
 REQ-018.2 asks for the user's explicit consent, in a prompt that names the risk, before any other. The loop announced
 each start with a one-line warning and asked nothing, so a program that is not safe to run twice ran up to four more
-times unasked. The maintainer decided (2026-10-31, open question 7) on a first pass: ONE question before the loop's
+times unasked. The maintainer decided (2026-10-31) on a first pass: ONE question before the loop's
 first extra start, default No after 30 seconds, no waiting and no repair in a non-interactive run (NOINPUT,
 HP_NONINTERACTIVE or HP_CI_LANE), and HP_PVW_KNOWN_IDEMPOTENT (the user's own word that the program is safe to run more
 than once, REQ-005.13) counts as consent. HP_TEST_REPAIR_ANSWER is the test answer, checked first like the other four
