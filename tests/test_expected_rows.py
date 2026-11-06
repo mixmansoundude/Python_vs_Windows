@@ -48,6 +48,7 @@ WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
 BASELINE = REPO / "tests" / "expected_rows"
 POST_BASELINE = REPO / "tests" / "expected_rows_post"
 REGISTRY_DOC = REPO / "docs" / "agent-ndjson.md"
+SELFTESTS = REPO / "tests" / "selftests.ps1"
 TOOL = REPO / "tools" / "check_expected_rows.py"
 
 # derived requirement: a "probe." id is how the gate is proved on a real run (a throwaway id in one baseline file that no
@@ -60,6 +61,27 @@ def probe_ids(per_lane):
     """The throwaway ids a baseline still lists, as readable problem lines."""
     return ["%s lists the throwaway id %s" % (lane, rid)
             for lane, ids in sorted(per_lane.items()) for rid in ids if rid.startswith(PROBE_PREFIX)]
+
+
+def rows_written_twice(selftests_text):
+    """Ids tests/selftests.ps1 writes as literals. It runs twice per lane (its own workflow step, then run_tests.bat), so
+    these rows are in the pre-harness snapshot and in the post-harness file; every other row has one home."""
+    return set(re.findall(r"\bid\s*=\s*'([A-Za-z0-9][A-Za-z0-9_.~-]*)'", selftests_text))
+
+
+def folder_overlap(pre, post, twice):
+    """Problems with where the ids of the two folders sit: a batch.* row in a pre list (harness.ps1 writes it after the snapshot,
+    so it could never be there) and an id in both folders that selftests.ps1 does not write twice."""
+    problems = []
+    for lane in sorted(pre):
+        for rid in pre[lane]:
+            if rid.startswith("batch."):
+                problems.append("%s lists %s before run_tests.bat, but harness.ps1 writes it after the snapshot" % (lane, rid))
+    for lane in sorted(post):
+        for rid in post[lane]:
+            if rid in pre.get(lane, []) and rid not in twice:
+                problems.append("%s lists %s in both folders, and selftests.ps1 does not write it twice" % (lane, rid))
+    return problems
 
 
 ARTIFACT_PREFIX = {"pre": "ci_test_results", "post": "post_harness_rows"}
@@ -673,12 +695,23 @@ class PostRepositoryBaseline(BaselineRules, unittest.TestCase):
     WHAT = "tests/expected_rows_post"
 
     def test_the_post_harness_rows_are_not_in_the_pre_harness_lists(self):
-        # derived requirement: harness.ps1 deletes and rewrites the file, so a batch.* row listed in the pre-harness
-        # lists could never be written by the time they are read and the gate would be red for nothing.
-        pre, post = cer.read_baseline(str(BASELINE)), self.lists()
-        both = ["%s lists %s in both folders" % (lane, rid)
-                for lane in sorted(post) for rid in post[lane] if rid in pre.get(lane, [])]
-        self.assertEqual(both, [])
+        # derived requirement: harness.ps1 deletes and rewrites the file, so a batch.* row in a pre list could never be
+        # written by the time the gate reads it. The rows selftests.ps1 writes sit in both files on purpose: the second run
+        # inside run_tests.bat is the one the post list proves (a skipped section leaves no row, Item 84).
+        twice = rows_written_twice(SELFTESTS.read_text(encoding="utf-8"))
+        self.assertTrue(twice, "could not read the ids tests/selftests.ps1 writes")
+        self.assertEqual(folder_overlap(cer.read_baseline(str(BASELINE)), self.lists(), twice), [])
+
+    def test_the_overlap_guard_can_fail(self):
+        twice = {"self.twice.row"}
+        pre = {"real": ["a.row", "self.twice.row", "self.once.row"], "uv": ["b.row"]}
+        post = {"real": ["batch.x", "self.twice.row", "self.once.row"], "uv": ["batch.x"]}
+        self.assertEqual(folder_overlap(pre, post, twice),
+                         ["real lists self.once.row in both folders, and selftests.ps1 does not write it twice"])
+        pre["real"].append("batch.y")
+        self.assertEqual(folder_overlap(pre, post, twice)[0],
+                         "real lists batch.y before run_tests.bat, but harness.ps1 writes it after the snapshot")
+        self.assertEqual(rows_written_twice("Write-NdjsonRow ([ordered]@{ id = 'self.a.b'; pass = $true })"), {"self.a.b"})
 
     def test_the_harness_rows_are_listed(self):
         # the point of the folder: batch.* rows (harness.ps1) and self.stub.* rows (selftest.ps1) are checked

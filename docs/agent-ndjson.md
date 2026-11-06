@@ -21,6 +21,10 @@ artifact. `python -m pytest tests/test_expected_rows.py` names the file and id t
 id against this registry). A new row needs no list change; add it to a list only after it has appeared in the
 green runs of that lane (`python tools/check_expected_rows.py generate --results <run dirs> --baseline
 tests/expected_rows` writes the ids present in every run it is given).
+**The same holds for `tests/expected_rows_post/<lane>.txt` (Item 104)**: those lists name the rows each lane must have in
+the file `run_tests.bat` leaves behind (the harness `batch.*` rows, `self.stub.*`, `entry.helper.ok` and the rows
+`selftest.ps1` and `selftests.ps1` write), checked against the `post_harness_rows-selftest-*` artifact; the same unit test
+checks them against this registry, and `generate --stage post` writes them.
 
 **House rule: this file is the registry itself (row id -> emitting test/lane/mechanism), not a
 narrative.** Keep annotations to what a row means and how it's gated. A row's own MECHANISM
@@ -1164,7 +1168,10 @@ genuine 8-lane artifacts. Since Item 98 its `pass`/`has_failures` also cover the
 aggregator's exit code and `details.expected_rows_exit` the check's (0 = every listed row was written,
 1 = a row or a whole lane is missing, 2 = the check could not run, which also fails the gate). The
 names of the missing rows are in the step's console output and the `expected-rows.txt` /
-`expected-rows.json` files of the `selftest-gate-report-*` artifact, not in this row.
+`expected-rows.json` files of the `selftest-gate-report-*` artifact, not in this row. Since Item 104 a second check
+(`--stage post`, `tests/expected_rows_post/<lane>.txt` against the `post_harness_rows-selftest-*` artifact, the rows of
+`run_tests.bat`) is ANDed in the same way: `details.post_rows_exit` has the same three values, and its missing rows are in
+`expected-post-rows.txt` / `expected-post-rows.json` next to the first pair.
 
 ---
 

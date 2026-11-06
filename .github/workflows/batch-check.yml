@@ -3645,6 +3645,24 @@ jobs:
           Add-Content -LiteralPath tests\~test-results.ndjson -Value $json -Encoding Ascii
           Add-Content -LiteralPath ci_test_results.ndjson -Value $json -Encoding Ascii
 
+      # derived requirement (Item 104): the file run_tests.bat leaves behind (the harness batch.* rows, everything
+      # selftest.ps1 and selftests.ps1 append, the meta row above) is NOT in the pre-harness snapshot that "Upload CI
+      # NDJSON" takes above run_tests.bat, because harness.ps1 deletes and rewrites it. This small artifact is what
+      # lets selftest-gate check tests/expected_rows_post/<lane>.txt against it (tools/check_expected_rows.py check
+      # --stage post). It must stay AFTER "Run tests (run_tests.bat)" and after the meta row, and no later step may
+      # write the file (tests/test_expected_rows.py pins all three); `!cancelled()` so a lane whose step failed is
+      # still checked. A missing file leaves the lane without an artifact, which the check reports as a failure.
+      # The name starts with post_harness_rows-selftest-<lane>-<run>-<attempt> on purpose: the gate's download
+      # pattern and the tool's lane reading both depend on it.
+      - name: Upload post-harness rows
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: post_harness_rows-${{ github.job }}-${{ matrix.mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests/~test-results.ndjson
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Collect failing test IDs
         if: ${{ !cancelled() }}
         shell: pwsh
@@ -4688,6 +4706,18 @@ jobs:
           pattern: ci_test_results-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/lane-ndjson
 
+      # derived requirement (Item 104): the same for the file run_tests.bat leaves behind, which the pre-harness
+      # snapshot above does not hold (the matrix job's "Upload post-harness rows" step uploads it after the harness
+      # has rewritten it). Same rules as the download above: continue-on-error (an empty folder fails the check
+      # closed, every lane reads as having no results), no merge-multiple (the folder name is the lane), and a
+      # pattern that ends in this run's id and attempt.
+      - name: Download post-harness rows
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: post_harness_rows-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/post-rows
+
       - name: Aggregate verdicts
         id: aggregate
         shell: pwsh
@@ -4737,6 +4767,23 @@ jobs:
           } catch {
             Write-Host "expected-rows: the check could not run: $($_.Exception.Message)"
           }
+          # derived requirement (Item 104): the same check for the file run_tests.bat leaves behind, against
+          # tests/expected_rows_post. $global:LASTEXITCODE is cleared AGAIN: the check above leaves its own 0 there,
+          # and a second python that never started would otherwise read that stale 0 as its answer. Its own exit
+          # code ($postRc) starts failing for the same reason as $rowsRc and joins $value below.
+          $postRc = 2
+          $postTxt = Join-Path $env:RUNNER_TEMP 'expected-post-rows.txt'
+          $postJson = Join-Path $env:RUNNER_TEMP 'expected-post-rows.json'
+          $global:LASTEXITCODE = $null
+          try {
+            & python tools/check_expected_rows.py check --stage post `
+              --results (Join-Path $env:RUNNER_TEMP 'post-rows') `
+              --baseline tests/expected_rows_post `
+              --report $postJson | Tee-Object -FilePath $postTxt
+            if ($null -ne $LASTEXITCODE) { $postRc = $LASTEXITCODE }
+          } catch {
+            Write-Host "expected-post-rows: the check could not run: $($_.Exception.Message)"
+          }
           # derived requirement (CodeRabbit review, PR #454): treat anything OTHER than a clean
           # exit 0 as has_failures=true, not just the script's own documented exit 1. Aggregate_
           # selftest_verdicts.ps1 only ever exits 0 or 1 by its own contract, but the INVOCATION
@@ -4748,7 +4795,7 @@ jobs:
           # (fail OPEN: the aggregator never ran, but the gate reported clean). "$rc -ne 0" instead
           # (with $null -ne 0 evaluating true) fails CLOSED on any anomaly, not just the one
           # documented failure code.
-          $value = if ($rc -eq 0 -and $rowsRc -eq 0) { 'false' } else { 'true' }
+          $value = if ($rc -eq 0 -and $rowsRc -eq 0 -and $postRc -eq 0) { 'false' } else { 'true' }
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
           # derived requirement (CodeRabbit review, PR #454): the gate's own verdict was
@@ -4762,7 +4809,7 @@ jobs:
             id      = 'diag.selftest_gate.verdict'
             pass    = ($value -eq 'false')
             desc    = 'selftest-gate: aggregate self-test verdict across all matrix lanes'
-            details = [ordered]@{ has_failures = ($value -eq 'true'); exit_code = $rc; expected_rows_exit = $rowsRc; fallback_result = $env:HP_SELFTEST_RESULT }
+            details = [ordered]@{ has_failures = ($value -eq 'true'); exit_code = $rc; expected_rows_exit = $rowsRc; post_rows_exit = $postRc; fallback_result = $env:HP_SELFTEST_RESULT }
           } | ConvertTo-Json -Compress -Depth 8
           $gateRow | Out-File -FilePath 'ci_test_results.ndjson' -Encoding ascii -Append
 
@@ -4824,6 +4871,16 @@ jobs:
           } else {
             '- The expected-row check wrote no output.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
+          # Item 104: the same for the file run_tests.bat leaves behind (tag expected-post-rows).
+          $postPath = Join-Path $env:RUNNER_TEMP 'expected-post-rows.txt'
+          "### Expected post-harness rows" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (Test-Path $postPath) {
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Get-Content -Raw $postPath | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '- The post-harness expected-row check wrote no output.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
 
       # derived requirement (CodeRabbit review, PR #454): the report was previously surfaced only
       # via the job summary above, with no way to download or retain it -- the job summary page
@@ -4839,6 +4896,8 @@ jobs:
             ${{ runner.temp }}/selftest-gate.json
             ${{ runner.temp }}/expected-rows.txt
             ${{ runner.temp }}/expected-rows.json
+            ${{ runner.temp }}/expected-post-rows.txt
+            ${{ runner.temp }}/expected-post-rows.json
           if-no-files-found: warn
           retention-days: 7
 
