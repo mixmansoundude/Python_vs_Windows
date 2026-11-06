@@ -240,6 +240,16 @@ missing property flow into arithmetic.** To test the branch, ask for something t
 (`HP_TEST_FORCE_DISK_READ_FAIL` swaps the drive name for `@`), because a CI runner's own drive can always be read, and give the
 row a positive line to find (the DEBUG line in `~setup.log`): "no warning" alone also passes when the check never ran.
 
+**The first fix made the empty reading reachable, and the next line of the batch file could not survive it** (run
+`41237307501`, all eight lanes). The comparison was `if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (`: cmd expands `%HP_FREE_GB%`
+when it reads the line, before it tests `defined`, so an empty value left `if LSS 2 (` and the batch file stopped on a syntax
+error with exit code 255 (it would have done the same whenever PowerShell printed nothing, but no test had ever made it).
+The row was green anyway: it checked the warning and the DEBUG line and recorded `bootstrapOk false`, `exitCode 255` in its
+details without asserting them. **Rules: (1) a one-line `if defined X if %X% ...` guards nothing, test `defined` on its own line and `goto`
+past the line that expands the variable (the repo's goto-dispatch rule, "Provider-cascade dispatch is goto-based on purpose");
+(2) a row about an error path must assert that the run still ends the way the user needs (state `ok`, exit 0), and a row whose
+details hold a failing value that its pass condition ignores is a false green: read the details of every new row, not its colour.**
+
 ---
 
 ## A static "this text exists" row can pass on dead code -- test the behavior of both branches

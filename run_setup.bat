@@ -393,13 +393,20 @@ if defined HP_TEST_FORCE_LOW_DISK (
 rem derived requirement: Get-PSDrive reports a drive it cannot find as a NON-terminating error, so the try/catch above never
 rem sees it and the missing .Free used to read as 0 GB, a false low-space warning, see REQ-025.4. -ErrorAction Stop sends it to the
 rem catch and a drive with no Free figure prints nothing; an empty reading means no warning, and the log says so.
-if not defined HP_FREE_GB call :log "[DEBUG] REQ-025: free disk space could not be read; no low-disk warning shown."
-if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (
+rem derived requirement: the comparison below must not be parsed while HP_FREE_GB is empty. cmd expands percent variables when it
+rem reads a line, before any if defined on that line is tested, so the one-line form if defined X if %X% LSS 2 became "if LSS 2" for an
+rem empty reading and stopped the whole run with a syntax error (exit 255, run 41237307501). The goto keeps the line unread.
+if defined HP_FREE_GB goto :disk_space_have_figure
+call :log "[DEBUG] REQ-025: free disk space could not be read; no low-disk warning shown."
+goto :disk_space_checked
+:disk_space_have_figure
+if %HP_FREE_GB% LSS 2 (
   echo *** WARNING: Only ~%HP_FREE_GB% GB free disk space detected on this drive.
   echo *** Downloading Python/Miniconda and building your app can need several GB.
   echo *** If setup fails partway through, freeing up disk space is a likely fix.
   call :log "[WARN] REQ-025: low disk space detected (~%HP_FREE_GB% GB free); continuing (warn-only)."
 )
+:disk_space_checked
 set "HP_FREE_GB="
 if exist "%STATUS_FILE%" del "%STATUS_FILE%"
 rem REQ-024: concurrent-instance protection -- must run before any real bootstrap work

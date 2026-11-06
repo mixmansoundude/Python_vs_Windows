@@ -1232,8 +1232,9 @@ may free some after reading the warning.
 >   `ok` and exit code 0; `self.stub.low_disk_absent` (REQ-025.3) reads the logs of three runs without the hook and
 >   requires no warning when the drive has 2 GB or more free (the row records that it proved nothing on a drive that
 >   is short or cannot be read); `self.stub.low_disk_unreadable` (REQ-025.4) makes the reading ask for a drive that
->   does not exist, because a CI runner's own drive can always be read, and requires no warning and the DEBUG line
->   above in `~setup.log` (without that line, a run in which the check never ran would pass too).
+>   does not exist, because a CI runner's own drive can always be read, and requires no warning, the DEBUG line
+>   above in `~setup.log` (without that line, a run in which the check never ran would pass too) and a run that still
+>   ends with state `ok` and exit code 0.
 
 ---
 
