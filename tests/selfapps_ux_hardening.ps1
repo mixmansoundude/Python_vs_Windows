@@ -973,13 +973,16 @@ foreach ($scenarioName in @('empty', 'ci')) {
     $acceptLog  = $run.Text -match [regex]::Escape('[INFO] REQ-014: System Python consent: user accepted.')
     $selected   = $run.Text -match [regex]::Escape('Selected Python provider: System Python')
     $unused     = (-not $selected) -and (-not $acceptLog) -and ($run.State -ne 'degraded_env')
+    # The answer line of the interactive read. The empty row requires it (the gate read the keyboard); the ci row only records it,
+    # because the log lines already tell the branches apart and a prompt of an earlier gate would print the same words.
+    $readPrompt = $run.Text -match [regex]::Escape('Your choice [y/n]:')
     if ($scenarioName -eq 'empty') {
         Write-NdjsonRow ([ordered]@{
             id      = 'self.ux.system.gate.empty'
             req     = 'REQ-014.3'
-            pass    = ($run.Finished -and $asked -and $emptyLog -and (-not $declineLog) -and $abortLog -and $unused)
+            pass    = ($run.Finished -and $asked -and $readPrompt -and $emptyLog -and (-not $declineLog) -and $abortLog -and $unused)
             desc    = 'System Python consent gate: no answer at all (no CI marker, standard input closed) declines and leaves the system Python unused'
-            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; emptyInputLog = $emptyLog; declinedLog = $declineLog; abortLogFound = $abortLog; systemUnused = $unused; state = $run.State }
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; readPromptFound = $readPrompt; emptyInputLog = $emptyLog; declinedLog = $declineLog; abortLogFound = $abortLog; systemUnused = $unused; state = $run.State }
         })
     } else {
         Write-NdjsonRow ([ordered]@{
@@ -987,7 +990,7 @@ foreach ($scenarioName in @('empty', 'ci')) {
             req     = 'REQ-014.4'
             pass    = ($run.Finished -and $asked -and $declineLog -and (-not $emptyLog) -and $abortLog -and $unused)
             desc    = 'System Python consent gate: with only the CI marker set the gate declines without reading an answer'
-            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; declinedLog = $declineLog; emptyInputLog = $emptyLog; abortLogFound = $abortLog; systemUnused = $unused; state = $run.State }
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; readPromptFound = $readPrompt; declinedLog = $declineLog; emptyInputLog = $emptyLog; abortLogFound = $abortLog; systemUnused = $unused; state = $run.State }
         })
     }
 }
