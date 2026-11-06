@@ -197,7 +197,7 @@ try {
     if (-not $passNotice) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.wording.rebuild_notice'
-        req     = 'REQ-007'
+        req     = 'REQ-007.4, REQ-007.6'
         pass    = $passNotice
         desc    = 'A stale cached EXE is rebuilt with one line saying it is not being reused; a first build prints no such line'
         details = [ordered]@{

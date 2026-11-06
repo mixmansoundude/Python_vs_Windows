@@ -94,18 +94,21 @@ $smokerunPassPhrase  = 'EXE smokerun: exited 0 (ok)'
 $smokerunFired  = $combined -match [regex]::Escape($smokerunFiredPhrase)
 $smokerunPassed = $combined -match [regex]::Escape($smokerunPassPhrase)
 
-# xfailPass: smokerun fired AND did NOT report exit 0
-$xfailPass = $smokerunFired -and (-not $smokerunPassed)
+# xfailPass: smokerun fired AND did NOT report exit 0, and the failing EXE did not stop the setup (REQ-007.7:
+# the bootstrap itself still ends with exit code 0)
+$setupContinued = ($runExit -eq 0)
+$xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $setupContinued
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.smokerun.xfail'
-    req     = 'REQ-003'
+    req     = 'REQ-003, REQ-007.7, REQ-007.8'
     pass    = $xfailPass
     desc    = 'EXE smokerun XFAIL: bad import causes non-zero exit (expected failure)'
     details = [ordered]@{
         bootstrapExit  = $runExit
         smokerunFired  = $smokerunFired
         smokerunPassed = $smokerunPassed
+        setupContinued = $setupContinued
         xfailPass      = $xfailPass
         log            = $bootstrapLog
     }

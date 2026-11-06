@@ -327,7 +327,7 @@ self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.ov
 self.ux.connectivity.empty, self.ux.connectivity.noinput, self.ux.connectivity.nonint,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.ux.system.gate.empty, self.ux.system.gate.ci,
-self.sysbuild.decline, self.sysbuild.nuitka_prompt,
+self.sysbuild.decline, self.sysbuild.nuitka_prompt, self.sysbuild.ci_marker,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
