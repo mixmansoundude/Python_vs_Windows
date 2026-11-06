@@ -15,6 +15,13 @@ https://mixmansoundude.github.io/Python_vs_Windows/
 update this file in the same commit. Row IDs listed here act as a registry to catch
 accidental removal or unexpected additions.**
 
+**Removing or renaming a row also changes `tests/expected_rows/<lane>.txt` (Item 98).** Those lists name the
+rows each lane must write before `run_tests.bat`; the aggregate gate fails when one is missing from the lane's
+artifact. `python -m pytest tests/test_expected_rows.py` names the file and id to take out (it checks every listed
+id against this registry). A new row needs no list change; add it to a list only after it has appeared in the
+green runs of that lane (`python tools/check_expected_rows.py generate --results <run dirs> --baseline
+tests/expected_rows` writes the ids present in every run it is given).
+
 **House rule: this file is the registry itself (row id -> emitting test/lane/mechanism), not a
 narrative.** Keep annotations to what a row means and how it's gated. A row's own MECHANISM
 (why the underlying feature works the way it does) belongs in `docs/agent-interconnect.md` or
@@ -1152,7 +1159,12 @@ diag.selftest_gate.verdict
 `diag.selftest_gate.verdict` (inline `batch-check.yml`, `selftest-gate`'s own "Aggregate verdicts"
 step) is the companion VISIBILITY row for the AMBIENT gate's real outcome each run -- fires once
 per real CI run, recording whether the aggregation found `has_failures=true` against that run's
-genuine 8-lane artifacts.
+genuine 8-lane artifacts. Since Item 98 its `pass`/`has_failures` also cover the expected-row check
+(`tools/check_expected_rows.py` against `tests/expected_rows/<lane>.txt`): `details.exit_code` is the
+aggregator's exit code and `details.expected_rows_exit` the check's (0 = every listed row was written,
+1 = a row or a whole lane is missing, 2 = the check could not run, which also fails the gate). The
+names of the missing rows are in the step's console output and the `expected-rows.txt` /
+`expected-rows.json` files of the `selftest-gate-report-*` artifact, not in this row.
 
 ---
 

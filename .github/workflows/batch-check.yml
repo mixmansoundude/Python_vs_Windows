@@ -4671,6 +4671,23 @@ jobs:
           # <path>/<artifact-name>/ subdirectory; the aggregation step's Get-ChildItem already uses
           # -Recurse, so no other change is needed to see every lane's verdict.
 
+      # derived requirement (Item 98): the pre-harness NDJSON snapshot of every lane, read by the expected-row check
+      # in "Aggregate verdicts" below. The verdict files above only say whether a row written was red; this download
+      # is what lets the gate see a row that was NEVER written (a selfapps script that crashed before its first
+      # row, a step that stopped running). continue-on-error: a failed download leaves the folder empty and
+      # tools/check_expected_rows.py then reports every lane as having no results, which fails the gate CLOSED.
+      # NOT merge-multiple, for the same reason as the step above, and here the artifact folder name is also the
+      # lane name the checker reads (ci_test_results-selftest-<lane>-<run>-<attempt>). The gate's own upload of
+      # ci_test_results-selftest-gate-* happens at the end of this job, so it is not in the folder. The pattern ends
+      # in this run's id and attempt, so the artifacts of an earlier attempt of the same run are not united with
+      # this attempt's (a row missing now would otherwise be vouched for by the old file).
+      - name: Download lane NDJSON
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: ci_test_results-selftest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lane-ndjson
+
       - name: Aggregate verdicts
         id: aggregate
         shell: pwsh
@@ -4700,6 +4717,26 @@ jobs:
             -ExpectedLanes @('cache', 'real', 'conda-full', 'justme-test', 'uv', 'contract-uv', 'contract-uv-fail', 'uv-dl-fallback') `
             -ReportPath $reportPath
           $rc = $LASTEXITCODE
+          # derived requirement (Item 98): a row that was never written cannot be red, so the verdict files above
+          # cannot see a selfapps script that crashed before its first row or a step that stopped running (Item 84
+          # found it for the self-tests, Item 95 for the cache health check). tests/expected_rows/<lane>.txt lists
+          # the row ids each lane must have written before run_tests.bat; tools/check_expected_rows.py compares them
+          # with the lane NDJSON downloaded above. $rowsRc starts at 2 and $LASTEXITCODE is cleared first, so a
+          # python that is missing or dies before it can answer reads as a failure, never as the aggregator's
+          # stale exit code. The result joins $value below: any non-zero exit code fails the gate.
+          $rowsRc = 2
+          $rowsTxt = Join-Path $env:RUNNER_TEMP 'expected-rows.txt'
+          $rowsJson = Join-Path $env:RUNNER_TEMP 'expected-rows.json'
+          $global:LASTEXITCODE = $null
+          try {
+            & python tools/check_expected_rows.py check `
+              --results (Join-Path $env:RUNNER_TEMP 'lane-ndjson') `
+              --baseline tests/expected_rows `
+              --report $rowsJson | Tee-Object -FilePath $rowsTxt
+            if ($null -ne $LASTEXITCODE) { $rowsRc = $LASTEXITCODE }
+          } catch {
+            Write-Host "expected-rows: the check could not run: $($_.Exception.Message)"
+          }
           # derived requirement (CodeRabbit review, PR #454): treat anything OTHER than a clean
           # exit 0 as has_failures=true, not just the script's own documented exit 1. Aggregate_
           # selftest_verdicts.ps1 only ever exits 0 or 1 by its own contract, but the INVOCATION
@@ -4711,7 +4748,7 @@ jobs:
           # (fail OPEN: the aggregator never ran, but the gate reported clean). "$rc -ne 0" instead
           # (with $null -ne 0 evaluating true) fails CLOSED on any anomaly, not just the one
           # documented failure code.
-          $value = if ($rc -eq 0) { 'false' } else { 'true' }
+          $value = if ($rc -eq 0 -and $rowsRc -eq 0) { 'false' } else { 'true' }
           "has_failures=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
           # derived requirement (CodeRabbit review, PR #454): the gate's own verdict was
@@ -4723,9 +4760,9 @@ jobs:
           # the diagnostics site with zero new download-step wiring.
           $gateRow = [ordered]@{
             id      = 'diag.selftest_gate.verdict'
-            pass    = ($rc -eq 0)
+            pass    = ($value -eq 'false')
             desc    = 'selftest-gate: aggregate self-test verdict across all matrix lanes'
-            details = [ordered]@{ has_failures = ($rc -ne 0); exit_code = $rc; fallback_result = $env:HP_SELFTEST_RESULT }
+            details = [ordered]@{ has_failures = ($value -eq 'true'); exit_code = $rc; expected_rows_exit = $rowsRc; fallback_result = $env:HP_SELFTEST_RESULT }
           } | ConvertTo-Json -Compress -Depth 8
           $gateRow | Out-File -FilePath 'ci_test_results.ndjson' -Encoding ascii -Append
 
@@ -4777,6 +4814,16 @@ jobs:
           } else {
             '- No gate summary generated.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
           }
+          # Item 98: the expected-row check prints one line per lane and one per missing row (capped at 40 a lane).
+          $rowsPath = Join-Path $env:RUNNER_TEMP 'expected-rows.txt'
+          "### Expected rows" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if (Test-Path $rowsPath) {
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Get-Content -Raw $rowsPath | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            '- The expected-row check wrote no output.' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
 
       # derived requirement (CodeRabbit review, PR #454): the report was previously surfaced only
       # via the job summary above, with no way to download or retain it -- the job summary page
@@ -4788,7 +4835,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: selftest-gate-report-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/selftest-gate.json
+          path: |
+            ${{ runner.temp }}/selftest-gate.json
+            ${{ runner.temp }}/expected-rows.txt
+            ${{ runner.temp }}/expected-rows.json
           if-no-files-found: warn
           retention-days: 7
 

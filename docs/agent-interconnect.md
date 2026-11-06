@@ -126,6 +126,38 @@ The `HP_CI_SKIP_ENV` path still runs one `py_compile` on `~find_entry.py` and di
 
 ---
 
+## Expected-row baseline (Item 98): `tests/expected_rows/<lane>.txt`, `tools/check_expected_rows.py` and the selftest-gate job
+
+**Touch the lists, the tool, the "Download lane NDJSON" or "Aggregate verdicts" step of `selftest-gate`, the name of the
+lane NDJSON artifact, or remove/rename an NDJSON row, must understand the others.** The aggregate gate fails on a row with
+`pass:false`; a row that was never written cannot be red (Item 84: a skipped section; Item 95: a health check that never
+ran). The lists close that: one file per selftest matrix lane, one row id per line, `#` comments, sorted, ASCII, LF.
+- **Flow**: "Download lane NDJSON" fetches `ci_test_results-selftest-*-<run id>-<attempt>` (the pre-harness snapshot the
+  "Upload CI NDJSON" step of each lane uploads; this attempt only, no `merge-multiple` because the folder name is the lane).
+  "Aggregate verdicts" runs `python tools/check_expected_rows.py check --results <RUNNER_TEMP>/lane-ndjson --baseline
+  tests/expected_rows --report ...` and ANDs its exit code into the same `has_failures` the enforce step reads. `$rowsRc` starts
+  at 2 and `$LASTEXITCODE` is cleared first, so a missing or crashing python is a failure. Exit 0 = every listed row written,
+  1 = a row or a lane's results missing, 2 = unusable input. The names of missing rows are in the step output,
+  `$GITHUB_STEP_SUMMARY` ("Expected rows") and the `selftest-gate-report-*` artifact (`expected-rows.txt`/`.json`).
+- **Not listed is fine, listed and absent is red.** A new row needs no list change. A PR that removes or renames a row (or
+  stops a script writing it) must edit the matching list in the same change; `tests/test_expected_rows.py` checks every listed
+  id against `docs/agent-ndjson.md` locally, so it says which file and id before a 2.5 hour run does.
+- **Cache lane waiver**: if the lane wrote `self.cache.corrupted` or `self.cache.bootstrap.failed` it skipped its battery on
+  purpose (the lane reports an infrastructure problem as such), so its list is waived for that run and the report says so. The
+  waiver rows count only in the cache lane. A lane with no artifact at all is never waived.
+- **Adding an id to a list**: only after it has appeared in the green runs of that lane. Regenerate with `python
+  tools/check_expected_rows.py generate --results <dir of one run's artifacts> [<another run>] --baseline tests/expected_rows`
+  (writes the ids present in EVERY given run, skips a waived cache run and the gate artifact, and refuses input where a run lacks a
+  lane or a lane was waived in every run, writing nothing); get a run's artifacts from the
+  Actions artifact download or `gh api repos/<owner>/<repo>/actions/runs/<id>/artifacts` (unzip each
+  `ci_test_results-selftest-<lane>-<run>-<attempt>` into its own folder, the folder name is the lane). A conditional row
+  (written only for some inputs) must not be listed.
+- **Pins**: `tests/test_expected_rows.py` pins the tool, the lists (one per matrix lane, sorted, registered) and the workflow
+  wiring (download before check, exit-code initialisation, `$value` ANDs both codes, report upload). It reads the workflow as text.
+  The gate step itself is still pinned by `tests/test_aggregate_gate.py`.
+
+---
+
 ## Conda transient-failure phrases (Item 93): two `findstr` lines, one harness that cuts the code out of the batch
 
 **Touch either `findstr /i /c:"..."` line (`:conda_create_check_transient` for REQ-022.1, `:conda_bulk_install` for REQ-005.2),
