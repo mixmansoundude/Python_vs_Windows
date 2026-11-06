@@ -1102,7 +1102,9 @@ if ($diskAbsentPass) { $summary.Add('low disk space absent: PASS') } else { $sum
 # HP_TEST_FORCE_DISK_READ_FAIL makes the batch file's own PowerShell call ask for a drive that does not exist, which is
 # the failure a program folder on a network share gives, so the real reading runs and finds nothing. A reading that
 # fails must not turn into "0 GB free". The row also needs the positive evidence that the reading was taken and came
-# back empty (the DEBUG line in ~setup.log), because "no warning" alone is also true when the check never ran.
+# back empty (the DEBUG line in ~setup.log), because "no warning" alone is also true when the check never ran. The run must also
+# end with state ok and exit code 0: the first version of the fix logged the DEBUG line and then died on the very next line
+# (a syntax error, exit 255) and the row was green, because it did not look at how the run ended (run 41237307501).
 $diskFailDir = Join-Path $TestsDir '~selftest_disk_read_fail'
 if (Test-Path $diskFailDir) { Remove-Item -Recurse -Force $diskFailDir }
 New-Item -ItemType Directory -Force -Path $diskFailDir | Out-Null
@@ -1141,12 +1143,12 @@ if (Test-Path $diskFailStatusPath) {
     $diskFailBootstrapOk = ($diskFailStatus.state -eq 'ok' -and $diskFailStatus.exitCode -eq 0)
   } catch { }
 }
-$diskFailPass = (($diskFailWarnLines -eq 0) -and $diskFailUnreadableLogged)
+$diskFailPass = (($diskFailWarnLines -eq 0) -and $diskFailUnreadableLogged -and $diskFailBootstrapOk -and ($diskFailExit -eq 0))
 Write-NdjsonRow ([ordered]@{
   id = 'self.stub.low_disk_unreadable'
   req = 'REQ-025.4'
   pass = $diskFailPass
-  desc = 'REQ-025: when the free space of the drive cannot be read no low-disk-space warning is shown, and the setup log says the reading was not available'
+  desc = 'REQ-025: when the free space of the drive cannot be read no low-disk-space warning is shown, the setup log says the reading was not available, and the run still ends with state ok and exit code 0'
   details = [ordered]@{
     warningLines = $diskFailWarnLines
     unreadableLogged = $diskFailUnreadableLogged
