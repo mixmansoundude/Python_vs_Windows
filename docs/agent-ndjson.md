@@ -980,6 +980,39 @@ self.repair.consent.declined
 self.repair.consent.accepted
 ```
 
+## selfapps-workdir NDJSON rows (selfapps_workdir.ps1, conda-full lane only, gating)
+
+Item 101 (README REQ-003.6: every run of the user's program starts with the folder that holds its entry file as the
+working folder, so a program that opens a file by a relative name sees the same files in every run). Item 38 moved the
+verification run, the cached-EXE run and the interpreter runs to the app folder; two starts still ran from `dist\`
+(`pushd dist`): the verification run of the optimized build (`:offer_optimized_build`) and the runs of the
+`--hidden-import` repair loop (`:hidden_import_recover`), where a program could not see its own data file. A small
+program appends one JSON line per start to a ledger at an ABSOLUTE path (`WORKDIR_LEDGER`, a relative one would be split
+over the folders under test) BEFORE anything can fail: the working folder, whether it is the entry folder
+(`os.path.samefile`, so a short 8.3 name or letter case cannot fool it), whether the EXE or the interpreter started it,
+and whether `workdir_data.txt` next to the `.py` file can be opened by its relative name. One fresh folder per scenario.
+`.verify` (default bootstrap with the post-execution checkpoint accepted: the verification run of the fresh EXE and the
+checkpoint run through the interpreter), `.fastpath` (the same folder again: the cached EXE is reused and started) and
+`.interpreter` (PyInstaller and Nuitka forced to fail, so the interpreter runs the program) are controls that pass before
+and after the fix; `.repair` (the program reads the data file and then imports an installed package by a runtime string,
+so the first EXE run fails with ModuleNotFoundError; the repair question is answered yes; every start of the loop must see
+the data file, and before the fix the loop's first start, in `dist\`, failed on the missing file and the repair never
+happened) and `.optbuild` (`PVW_BUILDER=both` with a stub `nuitka.py` next to the program that copies the EXE PyInstaller
+built; the verification run of the optimized build is one more start, which must be in the entry folder) are red until
+the two `pushd dist` lines are gone. Each row also needs its preconditions from the setup log or console (the checkpoint
+was accepted, the cached EXE was reused, the repair line, the swap line, the number of starts), so a bootstrap that
+never reached the step cannot pass. Details carry finished, seconds, exit codes, the counts of starts (all, EXE,
+interpreter, outside the entry folder, without the data file) and, only when something is wrong, `problems` plus a log
+excerpt. Each bootstrap has a 15 minute limit. Skips on non-Windows.
+
+```
+self.workdir.verify
+self.workdir.fastpath
+self.workdir.interpreter
+self.workdir.repair
+self.workdir.optbuild
+```
+
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
 
 Gap T2 of `docs/plan-test-suite-gaps.md` (README REQ-005.1, "Source Resolution (authoritative order)"; Item 89: the

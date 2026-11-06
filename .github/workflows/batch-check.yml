@@ -1488,6 +1488,19 @@ jobs:
         run: |
           & tests\selfapps_repair_consent.ps1
 
+      # Item 101 (README REQ-003.6): every start of the program uses the folder that holds its entry file as the working
+      # folder. Item 38 moved most starts to the app folder; the verification run of the optimized build and the runs of the
+      # --hidden-import repair loop still ran from dist\. A small program records its working folder, who started it and
+      # whether it can open a data file next to its .py file by a relative name, in a ledger at an absolute path. Five
+      # fresh bootstraps (three controls, the repair loop, and the optimized build with a stub nuitka.py). The launch
+      # sites are batch code shared by every provider; conda-full has the most wall-clock headroom, so it runs there
+      # only. Gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: every start of the program uses the entry folder as the working folder (conda-full only)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_workdir.ps1
+
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2716,6 +2729,12 @@ jobs:
             tests/~selftest_repair_*/~setup.log
             tests/~selftest_repair_*/~repair_*.log
             tests/~selftest_repair_*/~repair_ledger.jsonl
+            tests/~selftest_workdir_*/~workdir_*.log
+            tests/~selftest_workdir_*/~workdir_ledger.jsonl
+            tests/~selftest_workdir_*/~setup.log
+            tests/~selftest_workdir_*/~run.out.txt
+            tests/~selftest_workdir_*/~run.err.txt
+            tests/~selftest_workdir_*/~bootstrap.status.json
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt
