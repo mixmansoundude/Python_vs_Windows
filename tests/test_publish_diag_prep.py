@@ -93,6 +93,14 @@ def consumed_names(workflow_text):
     return sorted(set(re.findall(r"steps\.prep\.outputs\.(\w+)", workflow_text)))
 
 
+def kind(path, name):
+    """True when `path` is a folder (name 'dir') or a file (name 'file'); a name the OS refuses to look up is False."""
+    try:
+        return path.is_dir() if name == "dir" else path.is_file()
+    except OSError:
+        return False
+
+
 def plain(text):
     """PowerShell's error text without colour codes or line breaks, for matching."""
     return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", text).split())
@@ -133,13 +141,13 @@ def run_step(run, run_id, attempt="1"):
                 if "=" in ln:
                     key, value = ln.split("=", 1)
                     written[key.strip()] = value.strip()
-        found = {key: Path(written[key]).is_dir() for key in ("SITE", "DIAG", "ARTIFACTS") if key in written}
+        found = {key: kind(Path(written[key]), "dir") for key in ("SITE", "DIAG", "ARTIFACTS") if key in written}
         if "SITE" in written:
             site = Path(written["SITE"])
             found["site_in_work"] = site.parent.resolve() == work.resolve()
-            found["nojekyll_site"] = (site / ".nojekyll").is_file()
+            found["nojekyll_site"] = kind(site / ".nojekyll", "file")
         if "DIAG" in written:
-            found["nojekyll_diag"] = (Path(written["DIAG"]) / ".nojekyll").is_file()
+            found["nojekyll_diag"] = kind(Path(written["DIAG"]) / ".nojekyll", "file")
         return proc, written, found
 
 
@@ -238,8 +246,10 @@ class StepBehavior(unittest.TestCase):
                                  "nojekyll_site": True, "nojekyll_diag": True})
 
     def test_a_folder_that_cannot_be_made_still_leaves_every_output_set(self):
-        proc, written, _ = run_step(self.real_run(), TOO_LONG)
+        proc, written, found = run_step(self.real_run(), TOO_LONG)
         self.assertNotEqual(proc.returncode, 0, "the harness no longer makes the per-run folder fail; nothing is proved")
+        self.assertEqual((found.get("SITE"), found.get("DIAG")), (True, False),
+                         "the step must stop at the per-run folder: %s" % plain(proc.stderr or proc.stdout)[:300])
         self.expect_outputs(written, TOO_LONG)
 
     def test_the_harness_sees_the_old_order_lose_every_output(self):

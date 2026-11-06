@@ -709,6 +709,17 @@ that failure genuinely fail the step), explicitly control the step's own final e
 end of the block** (an explicit `exit 0`, or reset `$LASTEXITCODE`) -- do not assume "the script's
 result is just a variable I read" is enough.
 
+**A step output written at the END of a `pwsh` step is lost when anything before it throws (Item 100).** GitHub's pwsh shell
+runs with `$ErrorActionPreference = 'stop'`, so the first failing cmdlet (a `New-Item` on a full disk or a refused name) ends the
+step and the `echo "NAME=value" >> $env:GITHUB_OUTPUT` lines below it never run; every later step that reads
+`steps.<id>.outputs.NAME` then gets an empty string, which in bash turns `"${DIR}/x"` into `/x`. `publish_diag`'s "Prep site
+directories" did exactly that for the Pages publish. **Rule: compute and write every output whose value does not depend on the work
+itself (paths, ids, short shas) FIRST, then do the work.** A job that must survive a failing step gets nothing from `if: always()`
+on its later steps if the values they read were never written. `tests/test_publish_diag_prep.py` shows the test shape: run the
+step's own text through `pwsh` with `$ErrorActionPreference = 'stop'`, once with an input that makes the work fail (a path
+component of 300 characters is refused on Linux and Windows) and read `GITHUB_OUTPUT`; keep the old step as a harness check that
+must lose its outputs on that input, so the test cannot go quiet.
+
 **Never use "Re-run failed jobs" on a run of `batch-check.yml`.** It re-runs `publish_diag` too, which uploads a
 second artifact named `github-pages` to the same run, and `actions/deploy-pages` then fails with "Multiple artifacts
 named github-pages" (PR #488, run `39004972181`). The red `Publish diagnostics to Pages` job is a CI-mechanism
