@@ -18,7 +18,6 @@ The batch side is pinned by the static tests at the bottom (ordering of the mark
 EXE, the interpreter run that follows, the test hook). A real Windows run of the batch is the row set in
 tests/selfapps_unlaunchable_exe.ps1.
 """
-import re
 import shutil
 import subprocess
 import sys
