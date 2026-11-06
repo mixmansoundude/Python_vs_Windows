@@ -16,7 +16,9 @@ to the setup log, and writes the first one to ~visa.where for the prompt.
 A path can hold characters cmd.exe treats as operators, so every path is
 reduced to ASCII letters, digits and ". _ - space \\" before it is printed.
 
-PATTERNS anchor on the full module name ("pyvisa"/"visa") with a trailing
+A match is a line that, after any indentation, starts with "import" or "from" and then
+"pyvisa" or "visa" ("from visa import ResourceManager" is the old package name used as a
+source, Item 102). PATTERNS anchor on the full module name ("pyvisa"/"visa") with a trailing
 \b, not a truncated "pyvis"/"vis" prefix -- this deliberately excludes an
 unrelated import that merely STARTS with those letters (e.g. "import
 pyvista", a real, popular, unrelated 3D-visualization package; "import
@@ -37,8 +39,7 @@ import os, re, sys
 
 ROOT = os.getcwd()
 PATTERNS = [
-    r"(?m)^\s*(?:from\s+pyvisa\b|import\s+pyvisa\b)",
-    r"(?m)^\s*import\s+visa\b",
+    r"(?m)^\s*(?:from|import)\s+(?:py)?visa\b",
 ]
 
 def safe(rel):
