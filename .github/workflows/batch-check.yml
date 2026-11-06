@@ -5275,16 +5275,29 @@ jobs:
         id: prep
         shell: pwsh
         run: |
+          # derived requirement (Item 100): write every step output BEFORE anything that can fail. The
+          # values depend only on the working folder, the run id and the commit, never on the folders
+          # existing, and pwsh stops at the first error: a failing New-Item (full disk, a refused name)
+          # used to end this step with no outputs, so every later step that reads
+          # steps.prep.outputs.* got an empty path ("${ARTIFACTS}/iterate" became "/iterate"). Folder
+          # creation below may still fail this one step; the later steps then see the right paths.
+          # tests/test_publish_diag_prep.py pins the order and runs this text through pwsh.
           $RunId = "${{ github.run_id }}"
           $Attempt = "${{ github.run_attempt }}"
           $SiteRoot = Join-Path $PWD '_site'
+          $DiagRoot = Join-Path $SiteRoot 'diag'
+          $Diag = Join-Path $DiagRoot "$RunId-$Attempt"
+          $Artifacts = Join-Path $Diag '_artifacts'
+          $short = "${{ github.sha }}"
+          if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
+          echo "SITE=$SiteRoot" >> $env:GITHUB_OUTPUT
+          echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
+          echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
+          echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
           if (Test-Path $SiteRoot) { Remove-Item -Recurse -Force $SiteRoot }
           New-Item -ItemType Directory -Path $SiteRoot | Out-Null
-          $DiagRoot = Join-Path $SiteRoot 'diag'
           New-Item -ItemType Directory -Path $DiagRoot | Out-Null
-          $Diag = Join-Path $DiagRoot "$RunId-$Attempt"
           New-Item -ItemType Directory -Path $Diag | Out-Null
-          $Artifacts = Join-Path $Diag '_artifacts'
           New-Item -ItemType Directory -Path $Artifacts | Out-Null
           # Professional note: .nojekyll keeps GitHub Pages from stripping the leading underscore
           # directories that we rely on to surface raw diagnostics.
@@ -5293,12 +5306,6 @@ jobs:
           # underscore-prefixed folders (e.g., _artifacts) stay browsable when users open the
           # diagnostics bundle without hitting the site root first.
           New-Item -ItemType File -Path (Join-Path $Diag '.nojekyll') -Force | Out-Null
-          $short = "${{ github.sha }}"
-          if ($short.Length -gt 7) { $short = $short.Substring(0,7) }
-          echo "SITE=$SiteRoot" >> $env:GITHUB_OUTPUT
-          echo "DIAG=$Diag" >> $env:GITHUB_OUTPUT
-          echo "ARTIFACTS=$Artifacts" >> $env:GITHUB_OUTPUT
-          echo "SHORTSHA=$short" >> $env:GITHUB_OUTPUT
 
       - name: Publish run_setup.bat to Pages (guaranteed-CRLF fallback for raw downloads)
         # derived requirement: docs/open-questions.md item 2 (Option C) -- a second, independent
