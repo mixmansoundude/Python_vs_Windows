@@ -269,7 +269,9 @@ self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
 self.corrupt.conda.heal.accept,
 self.corrupt.conda.override_exit,
-self.corrupt.uv.detect,
+self.corrupt.conda.real_detect, self.corrupt.conda.real_ci, self.corrupt.conda.real_ask,
+self.corrupt.conda.real_decline, self.corrupt.conda.real_locked, self.corrupt.conda.real_override,
+self.corrupt.uv.detect, self.corrupt.uv.real_probe,
 diag.conda.available, diag.conda.available.gate
 ```
 
@@ -277,6 +279,15 @@ diag.conda.available, diag.conda.available.gate
 path (`:corrupt_override_exit`, distinct "fix manually, do not self-heal" messaging) -- unlike its
 three `self.corrupt.conda.*` siblings, NOT gated on Miniconda already being on disk (setting
 `PVW_CONDA_EXE` unconditionally sets `CONDA_BAT` before the install-if-missing block runs).
+
+The `self.corrupt.conda.real_*` rows and `self.corrupt.uv.real_probe` (`tests/selftest.ps1`, every lane,
+REQ-020.1 to .4, .6, .7 and .8) run the REAL health check: the hook-based rows above skip it and need Miniconda on
+disk. They give the child run a private `PUBLIC` folder whose `Documents\Miniconda3\condabin\conda.bat` is a stub that
+exits 1, with `HP_FORCE_CONDA_ONLY=1` and `HP_CI_TEST_CONDA_DL` cleared (no 150 MB probe download). `real_ask` pipes
+`n` into a run without `HP_CI_LANE`; `real_locked` answers Y with a file of the stub installation held open, so the
+deletion leaves the folder (exit 3); `real_override` names the stub in `PVW_CONDA_EXE` and requires that nothing is
+deleted. `uv.real_probe` puts a text file in place of `~uv_bin\uv.exe` with `HP_OFFLINE_MODE=1` (skipped in the
+conda-only lane): it requires the health-check warning, the removed file and the offline-download line.
 
 `self.dll_bundle.recover` (`:emit_dll_bundle_row`, all 7 outcome points inside
 `:dll_bundle_recover`) is the machine-readable record of the conda native-DLL bundling repair

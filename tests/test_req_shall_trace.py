@@ -51,6 +51,7 @@ UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-003.1": "gap: rows are tagged REQ-003 (selfapps_unc, selfapps_justme, selfapps_exefail) but none names this shall; the Windows 10 (1809) floor and the curl and PowerShell it relies on are shown only by the runners",
     "REQ-003.2": "gap: selfapps_justme and the provider rows install Miniconda under %PUBLIC%\\Documents\\Miniconda3 and are tagged REQ-003; none asserts the install folder as this shall",
     "REQ-003.3": "gap: self.litter.appfolder (selftest.ps1) proves what the bootstrapper leaves in the folder, but no row asserts that the working files and the build output are created in the folder where it was started",
+    "REQ-003.6": "gap: self.exe.smokerun.cwd_consistency (tagged REQ-018) shows the verification run of a fresh build and the cached-EXE fast path agree on a program that opens a relative config.json; the optimized build's verification run and the --hidden-import repair re-run still start the program from dist (the pushd dist sites of run_setup.bat, deferred by backlog Item 38), and no row covers the interpreter run, the post-execution checkpoint or the failure-hint capture; the code gaps and their rows are with the thread that owns the 96/97 bundle",
     "REQ-005.1.6": "gap: self.depmerge.later.baseline shows the requirements.txt and header records exist after a clean run; no row shows that a failed or partial install records nothing, so the next run sees the same changes again",
     "REQ-005.1.12": "gap: tests/test_dep_merge.py LaterRun.test_a_header_we_did_not_write_keeps_a_package_alive pins the merge half (an unrecorded header keeps its package in the merged list); no row shows the header file itself is never removed from",
     "REQ-005.1.13": "gap: tests/test_dep_merge.py InternalError pins the helper's exit 3; no row or test makes the merge fail and shows the highest ranked input used alone with the [WARN] (:dm_fallback)",
@@ -68,6 +69,9 @@ UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-018.21": "gap: no row makes the install or the rebuild fail, so the install_failed and rebuild_failed states and the absence of a provider cascade after them are never asserted",
     "REQ-018.22": "gap: tests/test_runtime_module_scan.py PackagesAndAppend pins the module-to-package table (cv2, PIL) and the unchanged-name rule; no row asserts that the prompt lists every package it would install",
     "REQ-018.30": "unit: tests/test_window_confirm.py::WindowQuestionWiring the question says the check stops the program after about 30 seconds (static wording pin)",
+    "REQ-020.5": "gap: self.corrupt.conda.heal.accept reaches the Y branch with the deletion and the Miniconda download skipped (HP_TEST_SKIP_EVICT), and self.corrupt.conda.real_locked shows a deletion that fails; no row deletes a damaged installation, installs a fresh Miniconda in its place and shows the run continuing (a 150 MB download)",
+    "REQ-020.9": "gap: no row makes the fresh Miniconda install fail after the eviction, so exit code 4 and the 'Fresh Miniconda install failed after self-healing eviction.' line are never asserted",
+    "REQ-023.1": "inspection: run_setup.bat :: \"%HP_PY%\" -c \"import sys\"\nthe probe command that :try_venv_fallback runs after the venv is created; self.venv.canary_fail forces the probe's failure with a hook that jumps past the command, so no row makes the real command fail",
 }
 
 

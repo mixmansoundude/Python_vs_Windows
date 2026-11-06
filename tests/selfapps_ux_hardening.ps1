@@ -828,7 +828,7 @@ $venvCanaryPass = $true
 if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.venv.canary_fail'
-        req     = 'REQ-023'
+        req     = 'REQ-023.2, REQ-023.3, REQ-023.4'
         pass    = $true
         desc    = 'REQ-023: venv canary probe test'
         details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-prohibits-venv-fallback' }
@@ -868,15 +868,21 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     }
     $venvCanaryWarnFound = ($venvCanarySetupText -match [regex]::Escape('[WARN] venv fallback: interpreter created but failed canary probe (import sys).'))
     $venvCanaryNotSelected = -not ($venvCanarySetupText -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Local venv (fallback).'))
-    $venvCanaryPass = ($venvCanaryWarnFound -and $venvCanaryNotSelected)
+    # REQ-023.4: the next provider of the chain must actually be tried. The system tier logs this line the moment it
+    # starts, and the venv tier's own warning comes first, so the line is found only after the warning.
+    $venvCanaryWarnAt = $venvCanarySetupText.IndexOf('[WARN] venv fallback: interpreter created but failed canary probe (import sys).')
+    $venvCanaryNextAt = $venvCanarySetupText.IndexOf('[WARN] Attempting system Python fallback (degraded)...')
+    $venvCanaryNextTier = ($venvCanaryWarnAt -ge 0) -and ($venvCanaryNextAt -gt $venvCanaryWarnAt)
+    $venvCanaryPass = ($venvCanaryWarnFound -and $venvCanaryNotSelected -and $venvCanaryNextTier)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.venv.canary_fail'
-        req     = 'REQ-023'
+        req     = 'REQ-023.2, REQ-023.3, REQ-023.4'
         pass    = $venvCanaryPass
-        desc    = 'REQ-023: venv canary probe correctly declines a created-but-broken venv instead of selecting it'
+        desc    = 'REQ-023: venv canary probe correctly declines a created-but-broken venv instead of selecting it, and the next provider is tried'
         details = [ordered]@{
             canaryWarnFound = $venvCanaryWarnFound
             venvNotSelected = $venvCanaryNotSelected
+            nextTierAttempted = $venvCanaryNextTier
             exit            = $venvCanaryExit
         }
     })

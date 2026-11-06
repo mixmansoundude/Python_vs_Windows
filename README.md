@@ -151,7 +151,9 @@ imports installed**.
 ## [REQ-003] Platform & Locations
 
 **Goal.** The bootstrapper should run on Windows 10 (1809) or newer using the `curl` and PowerShell that
-Windows ships, and should keep everything it installs in writable, non-admin locations.
+Windows ships, should keep everything it installs in writable, non-admin locations, and should start the user's
+program from the folder that holds the program, so that a data file the program opens by a relative name is
+found on every run.
 
 - **REQ-003.1** [major] The bootstrapper **shall** run on Windows 10 (version 1809) or newer, using the
   `curl` and PowerShell that Windows ships.
@@ -165,8 +167,19 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 - **REQ-003.5** [minor] The bootstrapper **shall**, when the path of the folder where it was started is 200
   characters or longer (counting the closing backslash), print a warning that names the length, write the same
   warning to the setup log, and go on with the run.
+- **REQ-003.6** [major] The bootstrapper **shall** start every run of the user's program with the folder that
+  holds the program's entry file as the working folder.
 
 > **Notes (non-normative).**
+> - REQ-003.6 covers every run the bootstrapper itself starts, whichever launch method it uses: the verification
+>   run of a fresh build, the run of the cached EXE on the fast path, the run through the Python interpreter, the
+>   post-execution checkpoint and the further runs of the elective and repair steps. The entry file is always in
+>   the folder where the bootstrapper was started (REQ-011 stops a file from another folder), so this folder is
+>   the one of REQ-003.3. A program that opens `config.json` by that bare name therefore finds the file next to
+>   its `.py` source on a fresh build and on every later run alike, even though the EXE it runs sits in `dist`.
+> - Not covered: a double-click on `dist\<env>.exe` is the user's own launch, which Windows starts in the `dist`
+>   folder, and a file located from the program's own path (`__file__`, `sys.argv[0]`) is not affected either way:
+>   the EXE's `__file__` points into PyInstaller's temporary extraction folder and `sys.argv[0]` to the EXE.
 > - Limitation: UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. The
 >   warning of REQ-003.4 recommends mapping the share to a drive letter and running `run_setup.bat` again,
 >   which is what the user should do. CMD cannot make a UNC path its current directory, which is why the
@@ -1006,9 +1019,15 @@ program being run, and should be able to tell a verification skipped on request 
 
 ## [REQ-017] Bootstrapper Size Limit
 
-- `run_setup.bat` is fully self-contained (all helper payloads are base64-embedded), so the single file is the entire deliverable.
-- It must stay **under 20 MB** so it can be distributed by email. CI enforces this as a tripwire to catch unbounded future growth (the current size is a tiny fraction of the limit).
-- Test NDJSON row: `self.size.tripwire` (in `tests/selfapps_size.ps1`).
+**Goal.** The bootstrapper should be small enough to be sent by email as a single file.
+
+- **REQ-017.1** [minor] The size of `run_setup.bat` **shall** be less than 20 MB (20 x 1024 x 1024 bytes).
+
+> **Notes (non-normative).**
+> - Rationale: `run_setup.bat` is fully self-contained (all helper payloads are base64-embedded), so the single file
+>   is the entire deliverable. CI enforces the limit as a tripwire against unbounded future growth; the current size
+>   is a tiny fraction of it.
+> - Test: `self.size.tripwire` (`tests/selfapps_size.ps1`, every lane) reads the size of the checked-out file.
 
 ---
 
@@ -1072,16 +1091,54 @@ set lives in `run_setup.bat`.
 
 ## [REQ-020] Cache Corruption Hardening
 
-- On startup, if a previously downloaded conda or uv binary is found, the bootstrapper validates it with a health check before use.
-- Corrupt conda binary: runs `conda.bat info`; on failure, halts with a user-friendly error message and offers to self-heal (re-download Miniconda). If the user declines, exits with code 2.
-- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via the next available provider (conda if available, otherwise the embedded-Python download, venv, or system Python).
-- Log contract:
-  - `[ERROR] Corrupt conda binary detected at: <path>` (real corruption)
-  - `[WARN] Cached uv.exe failed health check; clearing and re-downloading.` (real uv corruption)
-  - `[INFO] Self-healing: corrupt conda evicted from <path>.` (user accepts self-heal)
-  - `[ERROR] Corrupt conda env; user declined rebuild.` (user declines)
-- CI test flags: `HP_TEST_CORRUPT_CONDA=1`, `HP_TEST_CORRUPT_UV=1`, `HP_TEST_HEAL_ANSWER=N`.
-- Test NDJSON rows: `self.corrupt.conda.detect`, `self.corrupt.conda.heal.decline`, `self.corrupt.conda.heal.accept`, `self.corrupt.uv.detect` (in `tests/selftest.ps1`).
+**Goal.** The bootstrapper should not use a conda or uv program left by an earlier run that no longer works, and
+should either repair it or tell the user plainly what to do.
+
+- **REQ-020.1** [major] The bootstrapper **shall**, when a conda installation that it did not install in this run
+  fails its health check, show a message that the conda installation is damaged and name its location.
+- **REQ-020.2** [major] The bootstrapper **shall**, when it shows the message of REQ-020.1 in a run in which
+  `HP_CI_LANE` is set, stop with exit code 2 without asking a question.
+- **REQ-020.3** [major] The bootstrapper **shall**, when it shows the message of REQ-020.1 in a run in which
+  neither `HP_CI_LANE` is set nor the user has named a conda in `PVW_CONDA_EXE`, ask the user whether to delete
+  the damaged installation and install a fresh one.
+- **REQ-020.4** [major] The bootstrapper **shall**, when the answer to the question of REQ-020.3 does not begin
+  with Y, stop with exit code 2 and leave the damaged installation in place.
+- **REQ-020.5** [major] The bootstrapper **shall**, when the answer to the question of REQ-020.3 begins with Y,
+  delete the damaged installation, install a fresh Miniconda in its place and continue the run.
+- **REQ-020.6** [major] The bootstrapper **shall**, when the deletion of REQ-020.5 leaves part of the
+  installation folder in place, stop with exit code 3 and tell the user that files may be locked.
+- **REQ-020.7** [major] The bootstrapper **shall**, when the damaged conda is the one the user named in
+  `PVW_CONDA_EXE`, delete nothing, name that path, say that automatic repair is not available for it and stop
+  with exit code 2.
+- **REQ-020.8** [major] The bootstrapper **shall**, when the cached `uv.exe` in `~uv_bin` fails a version probe
+  before it is used, write a warning to the setup log, remove the file and download a fresh copy in the same run.
+- **REQ-020.9** [major] The bootstrapper **shall**, when no conda installation is found after the fresh install
+  of REQ-020.5, stop with exit code 4 and report that the fresh install failed.
+
+> **Notes (non-normative).**
+> - Rationale: a Windows update or a migration can leave a Miniconda or uv from an earlier run unable to start (the
+>   example the screen gives is DLL load error 0xc000007b). Using it would fail later with a message that does not
+>   point at the cause. A conda that the user named in `PVW_CONDA_EXE` belongs to the user, so it is never deleted.
+> - Mechanism: the health check is `conda.bat info` (`:conda_binary_corrupt` and its labels in `run_setup.bat`), run
+>   only for an installation that existed before the run; a fresh install is warmed up instead. `HP_CI_LANE` is the
+>   only control the question looks at: a run with `NOINPUT` or `HP_NONINTERACTIVE` alone still reaches the
+>   question, which then reads no answer and declines, so it ends as REQ-020.4. The uv probe is `uv.exe --version`;
+>   when the download that follows fails, the run goes on with the next provider of REQ-009.
+> - Log contract: `[ERROR] Corrupt conda binary detected at: <path>`, `[ERROR] Corrupt conda binary in CI; cache must
+>   be cleared.`, `[ERROR] Corrupt conda env; user declined rebuild.`, `[INFO] Self-healing: corrupt conda evicted
+>   from <path>.`, `[ERROR] Could not delete corrupt conda dir; files may be locked.`, `[ERROR] Fresh Miniconda
+>   install failed after self-healing eviction.`, `[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.`
+>   and `[WARN] Cached uv.exe failed health check; clearing and re-downloading.`
+> - Tests (`tests/selftest.ps1`): the rows `self.corrupt.conda.real_detect`, `.real_ci`, `.real_ask`, `.real_decline`
+>   and `.real_locked` start the bootstrapper with a private `PUBLIC` folder whose `conda.bat` exits 1, so the real
+>   health check fails with no Miniconda and no network (REQ-020.1 to .4 and .6; `.real_ask` answers `n` on the
+>   standard input of a run without `HP_CI_LANE`, `.real_locked` holds a file of the installation open). Their
+>   siblings `self.corrupt.conda.detect`, `.heal.decline`, `.heal.accept` and `.override_exit` reach the same
+>   branches through test hooks that skip the health check and run only where Miniconda is on disk; `.heal.accept`
+>   skips the deletion and the download, so the fresh install of REQ-020.5 and the exit code of REQ-020.9 are shown
+>   by inspection of `run_setup.bat`. `self.corrupt.uv.real_probe` puts a file that cannot start in place of
+>   `uv.exe` and requires the warning, the removal and the step that follows (REQ-020.8); `self.corrupt.uv.detect`
+>   is its hook-based sibling and downloads for real.
 
 ---
 
@@ -1127,16 +1184,33 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 
 ## [REQ-023] Venv Fallback Canary Probe
 
-- After the REQ-009 Tier 3 venv fallback (`:try_venv_fallback`) creates `.venv` and confirms the interpreter file exists, the bootstrapper verifies the interpreter actually runs (`python -c "import sys"`) before declaring the tier ready.
-- A venv can be "created" (directory and `python.exe` present) yet still be non-functional (missing DLLs, broken symlinks, execution-policy blocks). Without this check, a silently broken venv would reach PyInstaller and fail later with a more confusing error, or be reported as bootstrap success when the environment cannot actually run code.
-- If the probe fails, the venv tier is declined (as if creation itself had failed) and the bootstrap falls through to the next REQ-009 provider (system Python).
-- Log contract:
-  - `[WARN] venv fallback: interpreter created but failed canary probe (import sys).`
-- CI test flag: `HP_TEST_FORCE_VENV_CANARY_FAIL=1` simulates a failing probe after a real, successful venv creation.
-- Test NDJSON row: `self.venv.canary_fail` (in `tests/selfapps_ux_hardening.ps1`).
-- The venv fallback tier's retry-on-transient-failure behavior (when plain venv creation fails
-  outright, distinct from this canary probe) is part of the REQ-013 Network Resilience
-  requirement above, not this one -- this section covers only the post-creation health check.
+**Goal.** The bootstrapper should not select a virtual environment that cannot run Python code.
+
+- **REQ-023.1** [major] The bootstrapper **shall**, after the venv fallback (REQ-009) has created the `.venv`
+  folder and the interpreter file in it exists, run that interpreter once with a command that imports the module
+  `sys`, before the venv is selected as the Python provider.
+- **REQ-023.2** [major] The bootstrapper **shall** select the venv as the Python provider only when the command of
+  REQ-023.1 exits with code 0.
+- **REQ-023.3** [major] The bootstrapper **shall**, when the command of REQ-023.1 does not exit with code 0, write a
+  warning to the setup log that the interpreter was created but failed the probe.
+- **REQ-023.4** [major] The bootstrapper **shall**, when the command of REQ-023.1 does not exit with code 0,
+  continue with the next provider of the REQ-009 chain, as it does when the venv cannot be created.
+
+> **Notes (non-normative).**
+> - Rationale: a venv can be created (the folder and `python.exe` are there) and still not run, because of missing
+>   DLLs, broken links or an execution-policy block. Without this check a broken venv would reach PyInstaller and
+>   fail later with a more confusing error, or be reported as setup success for an environment that cannot run code.
+> - Mechanism: `:try_venv_fallback` runs `"%HP_PY%" -c "import sys"` and clears `HP_PY` on a failure, so a later
+>   check does not take the failed tier for a selected provider. Log contract: `[WARN] venv fallback: interpreter
+>   created but failed canary probe (import sys).`; the next provider then logs its own `[WARN] Attempting system
+>   Python fallback (degraded)...` line.
+> - The retry of a plain venv creation that fails outright (the `--without-pip` retry and the `get-pip.py` download)
+>   is part of REQ-013 Network Resilience, not this requirement: this section covers only the check after creation.
+> - Tests (`tests/selfapps_ux_hardening.ps1`): `self.venv.canary_fail` (REQ-023.2 to .4) lets the venv be created for
+>   real and forces only the probe to fail, then requires the warning, that the venv is not selected and that the
+>   system Python tier is attempted next. `self.venv.fallback` (REQ-009) shows the other half: a healthy venv passes
+>   the probe and is selected. No row makes the real probe command fail, so REQ-023.1 is shown by inspection of
+>   `run_setup.bat`.
 
 ---
 
