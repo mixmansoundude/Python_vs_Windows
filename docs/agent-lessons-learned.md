@@ -226,6 +226,32 @@ red on every lane. Use `> log 2>&1` inside a cmd string; `*>` is correct only in
 
 ---
 
+## A `try/catch` around a cmdlet does not catch its non-terminating errors, so an unmeasurable value reads as 0 (REQ-025.4)
+
+The free-space reading was `try { [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }`, meant to print
+nothing when the drive cannot be read. `Get-PSDrive` reports a drive it cannot find with `WriteError`, a NON-terminating
+error, so the `catch` never ran; `$null.Free / 1GB` is 0 and the line printed `0`, which the batch file took for "0 GB
+free". A program folder on a network share (no drive letter) would have been told "Only ~0 GB free disk space detected".
+The first run of `self.stub.low_disk_unreadable` showed it on Windows (run `41213903374`, `contract-uv`: `warningLines` 2,
+`unreadableLogged` false, run otherwise fine). Locally: `pwsh -Command "try { (Get-PSDrive -Name Q).Free } catch { 'CAUGHT' }"`
+prints the error and not `CAUGHT`. **Rule: when a `catch` is the "unknown" branch of a one-line helper, put
+`-ErrorAction Stop` on the cmdlet and emit a value only when the property exists (`if ($null -ne $d.Free)`); never let a
+missing property flow into arithmetic.** To test the branch, ask for something that does not exist through a hook
+(`HP_TEST_FORCE_DISK_READ_FAIL` swaps the drive name for `@`), because a CI runner's own drive can always be read, and give the
+row a positive line to find (the DEBUG line in `~setup.log`): "no warning" alone also passes when the check never ran.
+
+**The first fix made the empty reading reachable, and the next line of the batch file could not survive it** (run
+`41237307501`, all eight lanes). The comparison was `if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (`: cmd expands `%HP_FREE_GB%`
+when it reads the line, before it tests `defined`, so an empty value left `if LSS 2 (` and the batch file stopped on a syntax
+error with exit code 255 (it would have done the same whenever PowerShell printed nothing, but no test had ever made it).
+The row was green anyway: it checked the warning and the DEBUG line and recorded `bootstrapOk false`, `exitCode 255` in its
+details without asserting them. **Rules: (1) a one-line `if defined X if %X% ...` guards nothing, test `defined` on its own line and `goto`
+past the line that expands the variable (the repo's goto-dispatch rule, "Provider-cascade dispatch is goto-based on purpose");
+(2) a row about an error path must assert that the run still ends the way the user needs (state `ok`, exit 0), and a row whose
+details hold a failing value that its pass condition ignores is a false green: read the details of every new row, not its colour.**
+
+---
+
 ## A static "this text exists" row can pass on dead code -- test the behavior of both branches
 
 `batch.req005.warn_gate` checked that `run_setup.bat` contained `if not defined DEP_SOURCE (` and the
