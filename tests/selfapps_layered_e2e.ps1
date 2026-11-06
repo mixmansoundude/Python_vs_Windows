@@ -178,6 +178,10 @@ Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 # No other override -- pipreqs, Tier 1 autopep723 merge, and REQ-005 heuristics all run normally.
 $prevCascade = if (Test-Path Env:HP_TEST_CASCADE_ANSWER) { $env:HP_TEST_CASCADE_ANSWER } else { $null }
 $env:HP_TEST_CASCADE_ANSWER = 'Y'
+# Item 97: the --hidden-import repair loop (mechanism 3) starts the program again, so it asks first and a non-interactive run
+# (every CI lane) declines. HP_TEST_REPAIR_ANSWER=Y consents deterministically, like the cascade answer above.
+$prevRepairAnswer = [Environment]::GetEnvironmentVariable('HP_TEST_REPAIR_ANSWER')
+[Environment]::SetEnvironmentVariable('HP_TEST_REPAIR_ANSWER', 'Y')
 
 # derived requirement (CLAUDE.md Item 37): point run_setup.bat's own inline HP_NDJSON
 # emission at the SAME shared file this test's own Write-NdjsonRow already writes to ($nd), so
@@ -222,6 +226,7 @@ try {
     $runExit = $LASTEXITCODE
 } finally {
     if ($null -eq $prevCascade) { Remove-Item Env:HP_TEST_CASCADE_ANSWER -ErrorAction SilentlyContinue } else { $env:HP_TEST_CASCADE_ANSWER = $prevCascade }
+    [Environment]::SetEnvironmentVariable('HP_TEST_REPAIR_ANSWER', $prevRepairAnswer)
     if ($null -eq $prevNdjson) { Remove-Item Env:HP_NDJSON -ErrorAction SilentlyContinue } else { $env:HP_NDJSON = $prevNdjson }
     if ($pushedLocation) { Pop-Location }
 }

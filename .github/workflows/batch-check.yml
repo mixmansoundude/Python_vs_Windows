@@ -1476,6 +1476,18 @@ jobs:
         run: |
           & tests\selfapps_hint_norerun.ps1
 
+      # Item 97 (README REQ-018.1, REQ-018.2 and REQ-005.13): the --hidden-import repair loop asks before it starts the
+      # program again. Seven gate rows run the real :hidden_import_consent block under cmd.exe (each non-interactive
+      # signal declines without reading the console, a test answer decides and beats the signals, a known-idempotent
+      # program is allowed without a question, the answer is asked once), and two default bootstraps of one small
+      # failing program count its starts (declined: exactly one; accepted: the repair runs, and only after the log says
+      # it was accepted). Real lane only, gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the repair loop asks before it starts the program again (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_repair_consent.ps1
+
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2700,6 +2712,10 @@ jobs:
             tests/~selftest_hint_*/~run.out.txt
             tests/~selftest_hint_*/~run.err.txt
             tests/~selftest_hint_*/~bootstrap.status.json
+            tests/~repair_consent_evidence.txt
+            tests/~selftest_repair_*/~setup.log
+            tests/~selftest_repair_*/~repair_*.log
+            tests/~selftest_repair_*/~repair_ledger.jsonl
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt

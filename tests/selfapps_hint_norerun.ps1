@@ -3,8 +3,8 @@
 # failed run already printed; the bootstrapper does not start the program one more time to collect them.
 #
 # Tags. The two count rows carry the goal REQ-018, not REQ-018.1 or REQ-018.2: they show that no start is silent,
-# which the failure hints used to violate, but the repair loop's own starts are announced and not asked about
-# (Item 97, open question 7), so neither shall is proven yet. Tag a row with them only when it shows the consent.
+# which the failure hints used to violate. The consent itself (the question before the repair loop's first extra start,
+# Item 97) is shown by selfapps_repair_consent.ps1, whose rows carry REQ-018.1 and REQ-018.2.
 #
 # History. After a failed EXE verification run, :exe_smokerun_hints used to launch dist\<env>.exe again (through
 # ~exe_hint_rerun.ps1) only to capture its error text. That start was beyond the single automatic run of REQ-018.1, nobody
@@ -20,12 +20,16 @@
 # where announced is the number of "Verifying the built standalone EXE" lines (the verification run and the repair loop each
 # announce before they start the program) and rebuilds is the number of "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import="
 # lines (the loop makes one run after each rebuild, covered by its announcement). A start beyond that is a silent one.
-# Before the fix: the plain failure started the program 3 times against 2 announcements, the repaired one 4 against 2 + 1.
+# Before Items 96 and 97 (main when this script was written): the plain failure started the program 3 times against 2
+# announcements, the repaired one 4 against 2 + 1. With the hint fix alone they are 2 against 2 and 3 against 2 + 1; with
+# the repair question as well, a non-interactive run declines it, so the plain failure is 1 against 1 and the repaired
+# scenario below answers yes through HP_TEST_REPAIR_ANSWER to keep the repair under test.
 #
 # Scenarios, one fresh folder each (both programs write the ledger first, then fail):
-#   plain     the program opens a data file that does not exist (exit 1). Nothing can be repaired, so the repair loop makes
-#             its one run and ends. Rows: self.launch.count.failed_run (starts accounted for), self.hint.datafile.capture
-#             (the data-file hint still names the missing file, so the hint is read from real captured text).
+#   plain     the program opens a data file that does not exist (exit 1). Nothing can be repaired; before Item 97 the repair
+#             loop made its one diagnostic run and ended, now a non-interactive run declines the question and the program is
+#             started once. Rows: self.launch.count.failed_run (starts accounted for), self.hint.datafile.capture (the
+#             data-file hint still names the missing file, so the hint is read from real captured text).
 #   repaired  the program imports an installed package by a computed name (the same shape as selfapps_hidden_import.ps1), so
 #             the first run fails with ModuleNotFoundError, the loop adds --hidden-import and rebuilds, and the rebuilt EXE
 #             then fails on the same missing data file. Rows: self.launch.count.repaired_run (starts accounted for),
@@ -220,6 +224,9 @@ function Invoke-HintScenario {
         $consoleName = '~hint_' + $Scenario + '.log'
         Set-Content -LiteralPath (Join-Path $dir '~hint_launch.cmd') -Value @('@echo off', "call run_setup.bat > $consoleName 2>&1 < nul", 'exit /b %ERRORLEVEL%') -Encoding ASCII
         $vars = [ordered]@{ HP_SKIP_PIPREQS = '1'; HINT_LEDGER = (Join-Path $dir '~hint_ledger.jsonl') }
+        # Item 97: the repair loop asks before it starts the program again and a non-interactive run declines. The repaired
+        # scenario is about what the hint says AFTER a repair, so it consents; the plain scenario keeps the default answer.
+        if ($Scenario -eq 'repaired') { $vars['HP_TEST_REPAIR_ANSWER'] = 'Y' }
         if (-not [Environment]::GetEnvironmentVariable('HP_CI_LANE')) { $vars['HP_CI_LANE'] = 'test' }
         $saved = @{}
         foreach ($k in @($vars.Keys)) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, [string]$vars[$k]) }
