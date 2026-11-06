@@ -95,6 +95,10 @@ class RepositoryInventory(unittest.TestCase):
         tools = {_norm(v) for v in _repo_tools().values()}
         embedded_only = sorted(n for n, d in payloads.items() if _norm(d) not in tools)
         self.assertEqual(embedded_only, ["HP_CONDARC", "HP_PRINT_PYVER"])
+        # The README names them too: a renamed or swapped embedded-only payload with the same count must fail here.
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
+        for name in embedded_only:
+            self.assertIn("`%s`" % name, readme, "README does not name the embedded-only payload %s" % name)
 
 
 class SyntheticCases(unittest.TestCase):

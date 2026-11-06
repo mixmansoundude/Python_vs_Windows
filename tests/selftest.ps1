@@ -2073,8 +2073,10 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
   New-Item -ItemType Directory -Force -Path $uvRealBin | Out-Null
   $uvRealExe = Join-Path $uvRealBin 'uv.exe'
   Set-Content -LiteralPath $uvRealExe -Value 'this is not a program' -Encoding Ascii
+  # HP_CI_TEST_CONDA_DL is cleared because with no uv the run reaches the Miniconda URL probe, which downloads about 150 MB
+  # (HP_OFFLINE_MODE only guards the real install download); the same clearing is done for the corrupt-conda scenarios above.
   $uvRealSaved = Set-ChildEnv @{ HP_TEST_CORRUPT_UV = $null; HP_TEST_FORCE_UV_FAIL = $null; PVW_UV_EXE = $null; PVW_PROVIDER = $null
-                                 HP_OFFLINE_MODE = '1'; HP_CI_LANE = $ciLaneValue }
+                                 HP_CI_TEST_CONDA_DL = $null; HP_OFFLINE_MODE = '1'; HP_CI_LANE = $ciLaneValue }
   Push-Location $uvRealDir
   try {
     cmd /c "call run_setup.bat > ~corrupt_uv_real.log 2>&1"
