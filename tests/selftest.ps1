@@ -308,7 +308,7 @@ $litterListed = ($litterNames -contains 'hello_stub.py') -and ($litterNames -con
 $litterRecord = ($litterNames -contains '~dependency_source.txt')
 Write-NdjsonRow ([ordered]@{
   id   = 'self.litter.appfolder'
-  req  = 'REQ-015'
+  req  = 'REQ-015.6'
   pass = ($litterListed -and $litterRecord -and ($litterFound.Count -eq 0))
   desc = 'Default bootstrap leaves no non-tilde file of its own in the app folder'
   details = [ordered]@{

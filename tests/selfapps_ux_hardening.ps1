@@ -1,5 +1,6 @@
 # ASCII only
 # selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config), REQ-016 (postflight), REQ-013 (connectivity), REQ-014 (system gate).
+# Row tags name the README sub-id a row fully proves (REQ-014.n, REQ-015.n, REQ-016.n); a row that proves only part of a shall keeps the requirement number.
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -58,8 +59,10 @@ if ($platform -ne 'Win32NT') {
         'self.ux.gitignore.merge',
         'self.ux.gitignore.preserve',
         'self.ux.gitignore.idem',
+        'self.ux.gitignore.create',
         'self.ux.gitattributes.merge',
         'self.ux.gitattributes.idem',
+        'self.ux.gitattributes.append',
         'self.ux.gitattributes.migrate'
     )) {
         Write-NdjsonRow ([ordered]@{
@@ -86,7 +89,7 @@ if ($platform -ne 'Win32NT') {
             details = $skipDetails
         })
     }
-    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt', 'self.ux.system.gate.real', 'self.ux.system.gate.accept')) {
+    foreach ($id in @('self.ux.system.gate.n', 'self.ux.system.gate.prompt', 'self.ux.system.gate.real', 'self.ux.system.gate.accept', 'self.ux.system.gate.empty', 'self.ux.system.gate.ci')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-014'
@@ -129,30 +132,54 @@ try {
 
 $sig1  = '# Automated Python Bootstrapper Standard Ignores'
 $sigGa = '# Automated Python Bootstrapper Attributes'
+# The entries README REQ-015.1 and REQ-015.2 list, each compared as a whole line.
+$giEntries = @('.*_env/', '.venv/', '.uv/', '.cache/', '.conda/', 'dist/', 'build/', '*~', '~*')
+$gaEntries = @('*.bat -text', '*.cmd -text', '*.exe binary')
+function Get-TrimmedLines {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return ,@() }
+    return ,@(Get-Content -LiteralPath $Path -Encoding Ascii | ForEach-Object { $_.TrimEnd() })
+}
+function Get-MissingEntries {
+    param([string[]]$Lines, [string[]]$Entries)
+    return ,@($Entries | Where-Object { $Lines -notcontains $_ })
+}
+function Read-RunLog {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) { return (Get-Content -LiteralPath $Path -Raw -Encoding Ascii) }
+    return ''
+}
+$logGiAppend = 'REQ-015: Appending standard ignores to .gitignore.'
+$logGaAppend = 'REQ-015: Appending standard attributes to .gitattributes.'
 
 $giText = ''
 if (Test-Path -LiteralPath $giPath) {
     $giText = Get-Content -LiteralPath $giPath -Raw -Encoding Ascii
 }
 
-# Test 1: signature appended to .gitignore
+# Test 1: an existing .gitignore gets the signature and every standard entry, and the run says so (REQ-015.1, REQ-015.9)
 $giMerged = $giText -match [regex]::Escape($sig1)
+$giMissing = Get-MissingEntries -Lines (Get-TrimmedLines $giPath) -Entries $giEntries
+$run1Text = Read-RunLog (Join-Path $gitconfigDir '~gitconfig_run1.log')
+$giLogged = $run1Text -match [regex]::Escape($logGiAppend)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitignore.merge'
-    req     = 'REQ-015'
-    pass    = $giMerged
-    desc    = 'Standard ignores signature appended to .gitignore'
-    details = [ordered]@{ sigFound = $giMerged; run1Exit = $exit1 }
+    req     = 'REQ-015.1, REQ-015.9'
+    pass    = ($giMerged -and ($giMissing.Count -eq 0) -and $giLogged)
+    desc    = 'Existing .gitignore gets the signature and every standard entry, and the run logs the append'
+    details = [ordered]@{ sigFound = $giMerged; missingEntries = $giMissing; logFound = $giLogged; run1Exit = $exit1 }
 })
 
-# Test 2: original /node_modules/ content preserved
+# Test 2: the user's own line is still the first line of the file after the merge (REQ-015.3, with self.ux.gitattributes.append)
 $giPreserved = $giText -match [regex]::Escape('/node_modules/')
+$giFirstLines = Get-TrimmedLines $giPath
+$giFirstKept = ($giFirstLines.Count -ge 1) -and ($giFirstLines[0] -eq '/node_modules/')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitignore.preserve'
-    req     = 'REQ-015'
-    pass    = $giPreserved
+    req     = 'REQ-015.3'
+    pass    = ($giPreserved -and $giFirstKept)
     desc    = 'Pre-existing .gitignore content preserved after merge'
-    details = [ordered]@{ nodeModulesFound = $giPreserved }
+    details = [ordered]@{ nodeModulesFound = $giPreserved; firstLineUnchanged = $giFirstKept }
 })
 
 # Run 2: idempotency check
@@ -168,13 +195,15 @@ if (Test-Path -LiteralPath $giPath) {
     $giText2 = Get-Content -LiteralPath $giPath -Raw -Encoding Ascii
 }
 $sigCount1 = ([regex]::Matches($giText2, [regex]::Escape($sig1))).Count
+$run2Text = Read-RunLog (Join-Path $gitconfigDir '~gitconfig_run2.log')
+$run2QuietGi = -not ($run2Text -match [regex]::Escape($logGiAppend))
 $giIdem = ($sigCount1 -eq 1)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitignore.idem'
-    req     = 'REQ-015'
-    pass    = $giIdem
-    desc    = 'Standard ignores signature appears exactly once after two runs'
-    details = [ordered]@{ sigCount = $sigCount1 }
+    req     = 'REQ-015.4, REQ-015.9'
+    pass    = ($giIdem -and $run2QuietGi)
+    desc    = 'Standard ignores signature appears exactly once after two runs, and the second run logs no append'
+    details = [ordered]@{ sigCount = $sigCount1; secondRunQuiet = $run2QuietGi }
 })
 
 # Test 4: .gitattributes created with signature and *.bat/*.cmd -text (not eol=crlf).
@@ -188,23 +217,65 @@ if (Test-Path -LiteralPath $gaPath) {
 $gaMerged   = $gaText -match [regex]::Escape($sigGa)
 $gaBatText  = $gaText -match [regex]::Escape('*.bat -text')
 $gaCmdText  = $gaText -match [regex]::Escape('*.cmd -text')
+$gaMissing  = Get-MissingEntries -Lines (Get-TrimmedLines $gaPath) -Entries $gaEntries
+$gaLogged   = $run1Text -match [regex]::Escape($logGaAppend)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitattributes.merge'
-    req     = 'REQ-015'
-    pass    = ($gaMerged -and $gaBatText -and $gaCmdText)
-    desc    = 'Standard attributes signature appended to .gitattributes'
-    details = [ordered]@{ sigFound = $gaMerged; batTextFound = $gaBatText; cmdTextFound = $gaCmdText }
+    req     = 'REQ-015.2, REQ-015.9'
+    pass    = ($gaMerged -and $gaBatText -and $gaCmdText -and ($gaMissing.Count -eq 0) -and $gaLogged)
+    desc    = 'A missing .gitattributes is created with the signature and every standard entry, and the run logs the append'
+    details = [ordered]@{ sigFound = $gaMerged; batTextFound = $gaBatText; cmdTextFound = $gaCmdText; missingEntries = $gaMissing; logFound = $gaLogged }
 })
 
 # Test 5: .gitattributes idempotent (signature once after two runs)
 $sigCount2 = ([regex]::Matches($gaText, [regex]::Escape($sigGa))).Count
+$run2QuietGa = -not ($run2Text -match [regex]::Escape($logGaAppend))
 $gaIdem = ($sigCount2 -eq 1)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitattributes.idem'
-    req     = 'REQ-015'
-    pass    = $gaIdem
-    desc    = 'Attributes signature appears exactly once after two runs'
-    details = [ordered]@{ sigCount = $sigCount2 }
+    req     = 'REQ-015.4, REQ-015.9'
+    pass    = ($gaIdem -and $run2QuietGa)
+    desc    = 'Attributes signature appears exactly once after two runs, and the second run logs no append'
+    details = [ordered]@{ sigCount = $sigCount2; secondRunQuiet = $run2QuietGa }
+})
+
+# Fresh folder, the other way round: NO .gitignore, and a .gitattributes that already holds the user's own lines.
+# REQ-015.1 (a missing .gitignore is created), REQ-015.2 and REQ-015.3 (the entries are added after the user's lines,
+# which stay as they were, line for line at the top of the file).
+$freshDir = Join-Path $here '~selftest_gitconfig_fresh'
+if (Test-Path -LiteralPath $freshDir) { Remove-Item -LiteralPath $freshDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $freshDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $freshDir -Force
+$freshGiPath = Join-Path $freshDir '.gitignore'
+$freshGaPath = Join-Path $freshDir '.gitattributes'
+$userGaLines = @('# my own attributes', '*.md text')
+Set-Content -LiteralPath $freshGaPath -Value $userGaLines -Encoding Ascii
+Push-Location -LiteralPath $freshDir
+try {
+    cmd /c 'run_setup.bat > ~gitconfig_fresh.log 2>&1'
+} finally {
+    Pop-Location
+}
+$freshGiLines = Get-TrimmedLines $freshGiPath
+$freshGaLines = Get-TrimmedLines $freshGaPath
+$freshGiMissing = Get-MissingEntries -Lines $freshGiLines -Entries $giEntries
+$freshGaMissing = Get-MissingEntries -Lines $freshGaLines -Entries $gaEntries
+$freshGiSig = $freshGiLines -contains $sig1
+$freshGaSig = $freshGaLines -contains $sigGa
+$freshUserKept = ($freshGaLines.Count -ge 2) -and ($freshGaLines[0] -eq $userGaLines[0]) -and ($freshGaLines[1] -eq $userGaLines[1])
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.gitignore.create'
+    req     = 'REQ-015.1'
+    pass    = ((Test-Path -LiteralPath $freshGiPath) -and $freshGiSig -and ($freshGiMissing.Count -eq 0))
+    desc    = 'A missing .gitignore is created with the signature and every standard entry'
+    details = [ordered]@{ exists = (Test-Path -LiteralPath $freshGiPath); sigFound = $freshGiSig; missingEntries = $freshGiMissing }
+})
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.ux.gitattributes.append'
+    req     = 'REQ-015.2, REQ-015.3'
+    pass    = ($freshGaSig -and ($freshGaMissing.Count -eq 0) -and $freshUserKept)
+    desc    = 'An existing .gitattributes keeps its own first lines and gets the signature and every standard entry after them'
+    details = [ordered]@{ sigFound = $freshGaSig; missingEntries = $freshGaMissing; userLinesKeptAtTop = $freshUserKept; firstLines = @($freshGaLines | Select-Object -First 3) }
 })
 
 # Test 6 (CLAUDE.md Item 60): migrate a PRE-EXISTING .gitattributes already carrying the
@@ -242,10 +313,12 @@ $migrateCmdText   = $migrateGaText -match [regex]::Escape('*.cmd -text')
 $migrateBatStale  = $migrateGaText -match [regex]::Escape('*.bat eol=crlf')
 $migrateCmdStale  = $migrateGaText -match [regex]::Escape('*.cmd eol=crlf')
 $migratePreserved = $migrateGaText -match [regex]::Escape('# some user content')
+$migrateLines = Get-TrimmedLines $migrateGaPath
+$migrateOtherKept = ($migrateLines -contains '*.md text') -and ($migrateLines -contains '*.exe binary') -and ($migrateLines -contains $sigGa)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.gitattributes.migrate'
-    req     = 'REQ-015'
-    pass    = ($migrateBatText -and $migrateCmdText -and -not $migrateBatStale -and -not $migrateCmdStale -and $migratePreserved)
+    req     = 'REQ-015.5'
+    pass    = ($migrateBatText -and $migrateCmdText -and -not $migrateBatStale -and -not $migrateCmdStale -and $migratePreserved -and $migrateOtherKept)
     desc    = 'Pre-existing eol=crlf rule migrated to -text; other content untouched'
     details = [ordered]@{
         batTextFound   = $migrateBatText
@@ -253,6 +326,7 @@ Write-NdjsonRow ([ordered]@{
         batStaleFound  = $migrateBatStale
         cmdStaleFound  = $migrateCmdStale
         otherPreserved = $migratePreserved
+        otherLinesKept = $migrateOtherKept
     }
 })
 
@@ -294,13 +368,21 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
         # "Command Prompt" is the REQ-016-mandated term for Windows beginners; rephrase only with a req update.
         $pfCmdPrompt = $bootText -match [regex]::Escape('Command Prompt')
         $pfStdBuf    = $bootText -match [regex]::Escape('buffering difference')
-        $pfContent = ($pfExe -and $pfKeep -and $pfDelete -and $pfRunApp -and $pfCmdPrompt -and $pfStdBuf)
+        # REQ-016.2 and REQ-016.4 name a sentence each, not a word: the flash advice and its "keeps the window open"
+        # result, and the slow-start heading.
+        $pfFlash     = $bootText -match [regex]::Escape('If the window flashes and closes instantly')
+        $pfKeepOpen  = $bootText -match [regex]::Escape('This keeps the window open')
+        $pfSlow      = $bootText -match [regex]::Escape('STARTUP MAY BE SLOW')
+        $pfContent = ($pfExe -and $pfKeep -and $pfDelete -and $pfRunApp -and $pfCmdPrompt -and $pfStdBuf -and $pfFlash -and $pfKeepOpen -and $pfSlow)
         $pfDetails.exeSectionFound     = $pfExe
         $pfDetails.keepSectionFound    = $pfKeep
         $pfDetails.deleteSectionFound  = $pfDelete
         $pfDetails.runAppSectionFound  = $pfRunApp
         $pfDetails.cmdPromptFound      = $pfCmdPrompt
         $pfDetails.stdBufferingFound   = $pfStdBuf
+        $pfDetails.flashAdviceFound    = $pfFlash
+        $pfDetails.keepsOpenFound      = $pfKeepOpen
+        $pfDetails.slowStartFound      = $pfSlow
     } else {
         # Defensive: never false-fail if the stdout capture is absent; fall back to the log line.
         $pfDetails.bootLogMissing = $true
@@ -308,7 +390,7 @@ if (-not (Test-Path -LiteralPath $envsmokeLog)) {
     $pfFound = ($pfLogLine -and $pfContent)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.ux.postflight'
-        req     = 'REQ-016'
+        req     = 'REQ-016.1, REQ-016.2, REQ-016.3, REQ-016.4'
         pass    = $pfFound
         desc    = 'Post-flight briefing: log line plus panel (EXE + keep + delete + RUNNING YOUR APP + Command Prompt + stdout buffering)'
         details = $pfDetails
@@ -660,13 +742,21 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $sysRealPromptFound = $sysRealText -match [regex]::Escape($sysPromptStr)
     $sysRealDeclineLog  = $sysRealText -match [regex]::Escape('[INFO] REQ-014: System Python consent: user declined.')
     $sysRealAbortLog    = $sysRealText -match [regex]::Escape('[INFO] REQ-014: System Python fallback aborted: consent not granted.')
-    $sysRealPass = ($sysRealPromptFound -and $sysRealDeclineLog -and $sysRealAbortLog)
+    # REQ-014.3: a decline must leave the system Python unused, not only log that it declined. The provider line is what
+    # an accept logs (self.ux.system.gate.accept), and the final state of an accept is degraded_env.
+    $sysRealSelected = $sysRealText -match [regex]::Escape('Selected Python provider: System Python')
+    $sysRealState = $null
+    $sysRealStatePath = Join-Path $sysRealDir '~bootstrap.status.json'
+    if (Test-Path -LiteralPath $sysRealStatePath) {
+        try { $sysRealState = [string]((Get-Content -LiteralPath $sysRealStatePath -Raw -Encoding Ascii | ConvertFrom-Json).state) } catch { $sysRealState = 'unparseable' }
+    }
+    $sysRealPass = ($sysRealPromptFound -and $sysRealDeclineLog -and $sysRealAbortLog -and (-not $sysRealSelected) -and ($sysRealState -ne 'degraded_env'))
     Write-NdjsonRow ([ordered]@{
         id      = 'self.ux.system.gate.real'
-        req     = 'REQ-014'
+        req     = 'REQ-014.3, REQ-014.5'
         pass    = $sysRealPass
-        desc    = 'System Python consent gate: default (no-flag) fallback chain reaches consent gate; decline keeps build'
-        details = [ordered]@{ promptFound = $sysRealPromptFound; declineLogFound = $sysRealDeclineLog; abortLogFound = $sysRealAbortLog }
+        desc    = 'System Python consent gate: default (no-flag) fallback chain reaches consent gate; decline leaves the system Python unused'
+        details = [ordered]@{ promptFound = $sysRealPromptFound; declineLogFound = $sysRealDeclineLog; abortLogFound = $sysRealAbortLog; systemSelected = $sysRealSelected; state = $sysRealState }
     })
 }
 
@@ -731,13 +821,113 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
             $sysAcceptExit  = $st.exitCode
         } catch { }
     }
-    $sysAcceptPass = ($sysAcceptConsentLog -and $sysAcceptSelected)
+    # REQ-014.1: the warning that the system Python is shared and the question are printed BEFORE the provider is
+    # selected, not only somewhere in the log.
+    $sysAcceptWarned   = $sysAcceptText -match [regex]::Escape('may pollute shared packages')
+    $sysAcceptAskedAt  = $sysAcceptText.IndexOf($sysPromptStr)
+    $sysAcceptSelAt    = $sysAcceptText.IndexOf('[BOOT] REQ-009: Selected Python provider: System Python (degraded).')
+    $sysAcceptOrdered  = ($sysAcceptAskedAt -ge 0) -and ($sysAcceptSelAt -gt $sysAcceptAskedAt)
+    $sysAcceptPass = ($sysAcceptConsentLog -and $sysAcceptSelected -and $sysAcceptWarned -and $sysAcceptOrdered)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.ux.system.gate.accept'
-        req     = 'REQ-014, REQ-019.2'
+        req     = 'REQ-014.1, REQ-014.2, REQ-014.5, REQ-019.2'
         pass    = $sysAcceptPass
-        desc    = 'System Python consent ACCEPT routes into Tier 4 system provider in a default no-flag run (REQ-009 provider independence)'
-        details = [ordered]@{ consentAcceptLog = $sysAcceptConsentLog; systemSelected = $sysAcceptSelected; state = $sysAcceptState; exitCode = $sysAcceptExit }
+        desc    = 'System Python consent ACCEPT routes into Tier 4 system provider in a default no-flag run (REQ-009 provider independence), after the warning and the question'
+        details = [ordered]@{ consentAcceptLog = $sysAcceptConsentLog; systemSelected = $sysAcceptSelected; warned = $sysAcceptWarned; askedBeforeSelected = $sysAcceptOrdered; state = $sysAcceptState; exitCode = $sysAcceptExit }
+    })
+}
+
+# ===== REQ-014.3 / REQ-014.4: no answer, and the CI marker, in the same default fallback chain =====
+# The scenario of self.ux.system.gate.real (every earlier provider fails, offline) with NO answer hook, so the gate resolves
+# the answer itself. Standard input is closed (< nul), as in selfapps_offers_noninteractive.ps1, so a read that does happen
+# gets end-of-file at once instead of hanging the job. The two branches log DIFFERENT lines, which is what tells them apart
+# (a closed input would also decline quickly in the CI branch's place):
+#   empty  no CI marker: the gate reads the keyboard, finds nothing and logs "empty input; declining" (REQ-014.3)
+#   ci     only the CI marker: the gate declines without a read and logs "user declined" (REQ-014.4)
+# The wrapper clears the answer hook and the other signals itself, in the launched shell, because a variable the job set
+# is not reliably removed from a child by SetEnvironmentVariable (docs/agent-lessons-learned.md).
+# Skipped in the conda-only lane, where the other providers are switched off by design.
+function Invoke-SysGateRun {
+    param([string]$Name, [string[]]$SetLines)
+    $dir = Join-Path $here ('~selftest_sysgate_' + $Name)
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $dir -Force
+    Set-Content -LiteralPath (Join-Path $dir 'app.py') -Value 'print("hello")' -Encoding Ascii
+    $wrapperLines = @(
+        '@echo off',
+        'set "HP_CI_LANE="', 'set "NOINPUT="', 'set "HP_NONINTERACTIVE="',
+        'set "HP_TEST_SYSCON_ANSWER="', 'set "HP_TEST_FORCE_CONSENT_CHECK="',
+        'set "HP_OFFLINE_MODE=1"', 'set "HP_TEST_FORCE_CONDA_FAIL=1"', 'set "HP_TEST_FORCE_VENV_FAIL=1"'
+    ) + $SetLines + @('call run_setup.bat > ~sysgate_console.log 2>&1 < nul', 'exit /b %ERRORLEVEL%')
+    Set-Content -LiteralPath (Join-Path $dir '~sysgate_launch.cmd') -Value $wrapperLines -Encoding Ascii
+    $started = Get-Date
+    $proc = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', 'call ~sysgate_launch.cmd') -WorkingDirectory $dir -NoNewWindow -PassThru
+    $finished = $proc.WaitForExit(600000)
+    if (-not $finished) {
+        & taskkill.exe /F /T /PID $proc.Id 2>&1 | Out-Null
+        $null = $proc.WaitForExit(30000)
+    }
+    $text = ''
+    $consolePath = Join-Path $dir '~sysgate_console.log'
+    if (Test-Path -LiteralPath $consolePath) { $text = Get-Content -LiteralPath $consolePath -Raw -Encoding Ascii }
+    $state = $null
+    $statePath = Join-Path $dir '~bootstrap.status.json'
+    if (Test-Path -LiteralPath $statePath) {
+        try { $state = [string]((Get-Content -LiteralPath $statePath -Raw -Encoding Ascii | ConvertFrom-Json).state) } catch { $state = 'unparseable' }
+    }
+    return [pscustomobject]@{ Finished = [bool]$finished; Seconds = [int]((Get-Date) - $started).TotalSeconds; Text = $text; State = $state }
+}
+$sysEmptyCi = @(
+    @{ Name = 'empty'; SetLines = @() },
+    @{ Name = 'ci'; SetLines = @('set "HP_CI_LANE=test"') }
+)
+$sysEmptyCiRuns = @{}
+if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+    foreach ($scenario in $sysEmptyCi) { $sysEmptyCiRuns[$scenario.Name] = Invoke-SysGateRun -Name $scenario.Name -SetLines $scenario.SetLines }
+}
+foreach ($scenarioName in @('empty', 'ci')) {
+    if ($env:HP_FORCE_CONDA_ONLY -eq '1') { continue }
+    $run = $sysEmptyCiRuns[$scenarioName]
+    $asked      = $run.Text -match [regex]::Escape($sysPromptStr)
+    $abortLog   = $run.Text -match [regex]::Escape('[INFO] REQ-014: System Python fallback aborted: consent not granted.')
+    $emptyLog   = $run.Text -match [regex]::Escape('[INFO] REQ-014: System Python consent: empty input; declining.')
+    $declineLog = $run.Text -match [regex]::Escape('[INFO] REQ-014: System Python consent: user declined.')
+    $acceptLog  = $run.Text -match [regex]::Escape('[INFO] REQ-014: System Python consent: user accepted.')
+    $selected   = $run.Text -match [regex]::Escape('Selected Python provider: System Python')
+    $unused     = (-not $selected) -and (-not $acceptLog) -and ($run.State -ne 'degraded_env')
+    if ($scenarioName -eq 'empty') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.ux.system.gate.empty'
+            req     = 'REQ-014.3'
+            pass    = ($run.Finished -and $asked -and $emptyLog -and (-not $declineLog) -and $abortLog -and $unused)
+            desc    = 'System Python consent gate: no answer at all (no CI marker, standard input closed) declines and leaves the system Python unused'
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; emptyInputLog = $emptyLog; declinedLog = $declineLog; abortLogFound = $abortLog; systemUnused = $unused; state = $run.State }
+        })
+    } else {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.ux.system.gate.ci'
+            req     = 'REQ-014.4'
+            pass    = ($run.Finished -and $asked -and $declineLog -and (-not $emptyLog) -and $abortLog -and $unused)
+            desc    = 'System Python consent gate: with only the CI marker set the gate declines without reading an answer'
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; declinedLog = $declineLog; emptyInputLog = $emptyLog; abortLogFound = $abortLog; systemUnused = $unused; state = $run.State }
+        })
+    }
+}
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.system.gate.empty'
+        req     = 'REQ-014'
+        pass    = $true
+        desc    = 'System Python consent gate with no answer (skipped in the conda-only lane)'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-blocks-system-fallback' }
+    })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.ux.system.gate.ci'
+        req     = 'REQ-014'
+        pass    = $true
+        desc    = 'System Python consent gate with only the CI marker (skipped in the conda-only lane)'
+        details = [ordered]@{ skip = $true; reason = 'HP_FORCE_CONDA_ONLY-blocks-system-fallback' }
     })
 }
 

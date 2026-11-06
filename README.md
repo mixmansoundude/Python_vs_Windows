@@ -938,42 +938,62 @@ blip or a temporary outage.
 
 ## [REQ-014] System Python Consent Gate
 
-- Before using system Python as the last-resort execution provider (REQ-009 Tier 4), the bootstrapper must obtain explicit user consent.
-- Without consent, the bootstrapper aborts rather than silently running under an unmanaged system Python.
-- **This consent prompt is the sole gate on the system tier.** It is reached in the default (no-flag) run whenever uv, conda, the embedded-Python download, and venv all fail -- it is not behind an opt-in environment variable. The bootstrapper echoes the prompt string unconditionally (so it is visible even on non-interactive auto-decline), then resolves the answer; an empty/declined answer aborts the tier and keeps the current build.
-- Log contract:
-  - `[INFO] REQ-014: System Python fallback aborted: consent not granted.`
-  - `[INFO] REQ-014: System Python consent: user accepted.`
-  - `[INFO] REQ-014: System Python consent: user declined.`
-- CI test flags: `HP_TEST_FORCE_CONSENT_CHECK=1` directly triggers the consent gate at startup for branch coverage; `HP_TEST_SYSCON_ANSWER=Y|N` deterministically answers the prompt (and, like other interactive gates, `HP_CI_LANE` auto-declines with no `set /p` to avoid a CI hang).
+**Goal.** The bootstrapper should not run the user's program under the system Python, which the user's other programs share, unless the user has agreed to it.
+
+- **REQ-014.1** [critical] The bootstrapper **shall**, before it selects the system Python as the Python provider (REQ-009), warn the user that the system Python is shared and ask whether to proceed.
+- **REQ-014.2** [critical] The bootstrapper **shall** select the system Python as the Python provider only when the user answers the question of REQ-014.1 with yes.
+- **REQ-014.3** [critical] The bootstrapper **shall**, when the user answers the question of REQ-014.1 with anything other than yes, or gives no answer, not use the system Python for the run.
+- **REQ-014.4** [major] The bootstrapper **shall**, in a run that carries the CI marker `HP_CI_LANE`, decline the system Python without waiting for an answer.
+- **REQ-014.5** [major] The bootstrapper **shall**, in a run with no environment variable set, ask the question of REQ-014.1 whenever every other provider of the REQ-009 chain has failed.
+
+> **Notes (non-normative).**
+> - Rationale: the system Python belongs to the machine, not to the program. Installing into it or building with it can break other programs, so it is the last provider and it needs the user's word. It is not behind an opt-in environment variable (REQ-019): a double-click user would never set one, and the last-resort tier would then be unreachable. The legacy `HP_ALLOW_SYSTEM_FALLBACK` is accepted and ignored.
+> - Mechanism (`:system_python_consent_gate`, called from `:try_system_fallback`): the warning and the question are printed first and unconditionally, so they are on the screen and in the console log even when the answer is not read from the keyboard. An answer whose first letter is `y` or `Y` is yes; any other answer and an empty one (a closed standard input gives an empty one) is a decline. Only the CI marker is looked at to skip the wait: `NOINPUT` and `HP_NONINTERACTIVE` alone still reach the read, which finds an empty answer and declines. A decline clears the interpreter path that was prepared for an accept, so a later step cannot take the declined tier for a selected provider.
+> - Log contract: `[INFO] REQ-014: System Python consent: user accepted.`, `[INFO] REQ-014: System Python consent: user declined.`, `[INFO] REQ-014: System Python consent: empty input; declining.` and `[INFO] REQ-014: System Python fallback aborted: consent not granted.`; an accept ends in `[BOOT] REQ-009: Selected Python provider: System Python (degraded).`
+> - Tests (`tests/selfapps_ux_hardening.ps1`, skipped in the conda-only lane, where the other providers are switched off by design): `self.ux.system.gate.accept` (REQ-014.1, REQ-014.2, REQ-014.5) fails every earlier provider, answers yes and requires that the question is printed before the system Python is selected; `self.ux.system.gate.real` (REQ-014.3, REQ-014.5) answers no and requires that no system provider line is logged and the final state is not `degraded_env`; `self.ux.system.gate.empty` (REQ-014.3) gives no answer at all (standard input closed, no CI marker) and requires the empty-input decline; `self.ux.system.gate.ci` (REQ-014.4) sets only the CI marker and requires the decline line of the automatic branch, which the keyboard branch never logs. `self.ux.system.gate.prompt` and `.n` call the gate directly and stay at the requirement number.
 
 ---
 
 ## [REQ-015] Idempotent Git Config Merge
 
-- At bootstrap time, the bootstrapper appends standard `.gitignore` and `.gitattributes` entries to the working directory.
-- Uses a sentinel comment line to detect existing entries; never duplicates content already present.
-- `.gitignore` additions: tilde-prefix work files (`~*`), env directories (`.venv/`, `.uv/`, `.*_env/`, `.cache/`, `.conda/`), build artifacts (`dist/`, `build/`).
-- Tilde-prefixed files: a file the bootstrapper writes for its own bookkeeping shall start with `~`, and a file the user is meant to keep or share shall not. Tilde files are git-ignored, and deleting one shall not lose the user's work.
-- `.gitattributes` additions: `*.bat -text`, `*.cmd -text`, `*.exe binary`. (`-text`, not `eol=crlf`: `eol=crlf` only affects `git checkout`, never what a raw/GitHub-served download returns -- see this repo's own CRLF distribution fix.)
-- Silent if no changes needed; logs when appending.
-- Log contract:
-  - `[INFO] REQ-015: Appending standard ignores to .gitignore.`
-  - `[INFO] REQ-015: Appending standard attributes to .gitattributes.`
+**Goal.** The bootstrapper should keep the files it creates out of the user's git history and keep git from changing the line endings of the user's batch files, without changing what the user already wrote in `.gitignore` and `.gitattributes`.
+
+- **REQ-015.1** [minor] The bootstrapper **shall** ensure that the `.gitignore` in the program folder lists the standard ignore entries: `.*_env/`, `.venv/`, `.uv/`, `.cache/`, `.conda/`, `dist/`, `build/`, `*~` and `~*`.
+- **REQ-015.2** [minor] The bootstrapper **shall** ensure that the `.gitattributes` in the program folder lists the standard attribute entries: `*.bat -text`, `*.cmd -text` and `*.exe binary`.
+- **REQ-015.3** [minor] The bootstrapper **shall** leave the lines that were already in `.gitignore` and `.gitattributes` unchanged when it adds its entries.
+- **REQ-015.4** [minor] The bootstrapper **shall** add its entries to a file only once, however many times it runs in the program folder.
+- **REQ-015.5** [minor] The bootstrapper **shall** replace the lines `*.bat eol=crlf` and `*.cmd eol=crlf` in an existing `.gitattributes` with `*.bat -text` and `*.cmd -text`, and change no other line.
+- **REQ-015.6** [minor] The bootstrapper **shall** give every file it writes for its own bookkeeping a name that starts with `~`.
+- **REQ-015.7** [minor] The bootstrapper **shall not** give a name that starts with `~` to a file the user is meant to keep or share.
+- **REQ-015.8** [minor] The bootstrapper **shall** work in a way that deleting a file whose name starts with `~` does not lose the user's work.
+- **REQ-015.9** [minor] The bootstrapper **shall** write one line to the setup log for each of the two files it adds entries to, and no such line when it adds nothing.
+
+> **Notes (non-normative).**
+> - Rationale: the files the bootstrapper makes (`~*` bookkeeping files, environment folders, `dist/`, `build/`) are noise in a user's repository. `*.bat -text`, not `eol=crlf`, because `eol=crlf` changes only what `git checkout` writes and never what a raw download of the file returns, so the batch files of the user's own project would still arrive with the wrong line endings (the same defect this repository's `run_setup.bat` had; `docs/agent-lessons-learned.md`).
+> - Mechanism (`:merge_git_config`): a signature comment line (`# Automated Python Bootstrapper Standard Ignores`, `# Automated Python Bootstrapper Attributes`) marks a block already added; the block is appended only when the signature is missing, and a missing file is created by the append. The replacement of REQ-015.5 runs on every run, whether or not the block was just added, and matches only the two exact stale lines (`~migrate_gitattributes.ps1`), because an older copy of the bootstrapper wrote the signature together with the stale lines and the signature check alone would never fix them.
+> - Log contract: `[INFO] REQ-015: Appending standard ignores to .gitignore.` and `[INFO] REQ-015: Appending standard attributes to .gitattributes.`
+> - Tests (`tests/selfapps_ux_hardening.ps1`, `tests/selftest.ps1`): `self.ux.gitignore.merge` and `.create` (REQ-015.1) add the entries to an existing file and make a missing one; `self.ux.gitattributes.merge` and `.append` (REQ-015.2) do the same for `.gitattributes`; `self.ux.gitignore.preserve` and `self.ux.gitattributes.append` (REQ-015.3) each require the user's lines in one of the two files; `self.ux.gitignore.idem` and `self.ux.gitattributes.idem` (REQ-015.4) run twice; `self.ux.gitattributes.migrate` (REQ-015.5) seeds an older copy's content; `self.litter.appfolder` (REQ-015.6) lists the program folder after a default run and fails on any file whose name does not start with `~` and is not on the list of files the user keeps. The merge and idempotency rows also carry REQ-015.9 for the log lines. No row names REQ-015.7 or REQ-015.8: the list of files the user keeps is written by hand in the row, and no row deletes the `~` files and runs again.
 
 ---
 
 ## [REQ-016] Post-flight Briefing
 
-- After a successful full EXE build, the bootstrapper prints a scannable summary panel identifying the output EXE, files to keep, and files safe to delete.
-- The panel always includes a **RUNNING YOUR APP** section covering the two most common beginner confusions with frozen Windows executables: (1) the console window flashing closed before output is visible (run from an already-open Command Prompt to keep it open), and (2) in-place progress output appearing all at once due to stdout buffering differences between the EXE and the script.
-- The panel sets realistic startup expectations: a one-file EXE can take noticeably longer to start than running the script (it self-extracts on each launch, more so when large or extra-bundled libraries are present), so a slow first appearance is not mistaken for a hang.
-- The **RUNNING YOUR APP** section always shows the exact command to run the app directly via the prepared interpreter (`"<env python>" "<entry>"`) alongside the double-click instructions, regardless of whether EXE verification succeeded -- building the EXE at all already proves the interpreter works, which is what makes that command valid.
-- When the packaged EXE could not be verified (its smoke run exited non-zero), the panel instead shows a **caveat** explaining that the Python environment was set up and packaging completed without a fatal error, without claiming dependency installation was itself verified (a partial/failed dependency install can still reach this point). The bootstrap still completes (the environment is usable).
-- The terminal window is **retained** on both success and error so the user can read the output before it closes.
-- Log contract:
-  - `[INFO] REQ-016: Post-flight briefing printed.`
-  - `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
+**Goal.** The bootstrapper should leave the user, at the end of a run, knowing which program to run, which files to keep, which files are safe to delete and what to do when the program seems not to run.
+
+- **REQ-016.1** [minor] The bootstrapper **shall**, after a run that built the standalone EXE, print a briefing that names the EXE, the files to keep and the files that are safe to delete.
+- **REQ-016.2** [minor] The bootstrapper **shall** tell the user in the briefing that a console window that closes at once is kept open by running the EXE from an already-open Command Prompt.
+- **REQ-016.3** [minor] The bootstrapper **shall** tell the user in the briefing that progress output which updates in place can appear all at once in the EXE, because of a difference in output buffering.
+- **REQ-016.4** [minor] The bootstrapper **shall** tell the user in the briefing that a one-file EXE unpacks itself at every start and can take noticeably longer to start than the script.
+- **REQ-016.5** [major] The bootstrapper **shall** show in the briefing the exact command that runs the program with the prepared interpreter, next to the double-click instructions.
+- **REQ-016.6** [major] The bootstrapper **shall** show the command of REQ-016.5 whether or not the EXE could be verified.
+- **REQ-016.7** [major] The bootstrapper **shall**, when the EXE could not be verified, print the briefing with a caveat that says the environment was set up and packaging finished without a fatal error, and **shall not** claim that the installation of the dependencies was verified.
+- **REQ-016.8** [minor] The bootstrapper **shall** keep its terminal window open at the end of a run, whether the run succeeded or failed, until the user presses a key, except in a run that carries the CI marker `HP_CI_LANE`.
+
+> **Notes (non-normative).**
+> - Rationale: the audience is a beginner who was handed Python code. A frozen EXE brings two common confusions (a window that flashes shut, output that appears late) and a slow first appearance that looks like a hang. A partial or failed dependency install can still reach the briefing, so the caveat does not vouch for the installation.
+> - Mechanism (`:print_postflight_briefing`, called when `dist\<env>.exe` exists and the cached EXE was not reused; the no-EXE briefing and the cached-EXE note are REQ-027). Section names the tests match: `Your standalone application is ready:`, `SETUP COMPLETE -- WITH A CAVEAT`, `RUNNING YOUR APP`, `STARTUP MAY BE SLOW`, `KEEP these files`, `SAFE TO DELETE`.
+> - Log contract: `[INFO] REQ-016: Post-flight briefing printed.` and, with a caveat, `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
+> - Tests: `self.ux.postflight` (`tests/selfapps_ux_hardening.ps1`, reads the real-environment smoke run) checks the EXE, keep, delete, Command Prompt, buffering and slow-start text (REQ-016.1 to REQ-016.4); `self.postflight.runline.verbatim` (`tests/selfapps_postflight_runline.ps1`) runs the printed command as printed (REQ-016.5). The caveat rows (`tests/selfapps_gui_timeout_hint.ps1`, `tests/selfapps_hidden_import*.ps1`) keep the requirement number: none of them checks the REQ-016.7 sentences or the command of REQ-016.6. REQ-016.8 is read from the code: every CI lane carries the CI marker, so no row reaches a `pause`.
 
 ---
 
@@ -1477,36 +1497,19 @@ PY
 
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
-**Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
-needing to grep the batch file or a research pass to find out; re-audited 2026-07-25 against the
-file's actual current contents rather than trusting the previous count, which had drifted --
-`HP_EXE_SMOKERUN` and `HP_PEP723_WRITEBACK` had gained canonical sources without this paragraph
-ever being updated). Of the 21 embedded `HP_*` payloads, 18 have a canonical `tools/` source file
-*and* a dedicated `PayloadSync` unit test that asserts the embedded base64 is byte-for-byte in
-sync with that source (`HP_AUTOPEP_MERGE` -> `tools/autopep_merge.py`, `HP_COLLECT_SUBMODULES` ->
-`tools/collect_submodules.py`, `HP_DEP_CHECK` -> `tools/dep_check.py`, `HP_DETECT_PY` ->
-`tools/detect_python.py`, `HP_DETECT_VISA` -> `tools/detect_visa.py`, `HP_EMBED_EXTRACT` ->
-`tools/embed_extract.ps1`, `HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_ENV_STATE`
--> `tools/env_state.py`, `HP_EXE_SMOKERUN` -> `tools/exe_smokerun.ps1`, `HP_FAILFAST_PROBE` ->
-`tools/failfast_probe.ps1`, `HP_FIND_ENTRY` -> `tools/find_entry.py`, `HP_HIDDEN_IMPORT_SCAN` ->
-`tools/hidden_import_scan.py`, `HP_INSTALLER_TIMEOUT` -> `tools/run_installer_with_timeout.ps1`,
-`HP_PARSE_WARN` -> `tools/parse_warn.py`, `HP_PEP723_WRITEBACK` -> `tools/pep723_writeback.py`,
-`HP_PREP_REQUIREMENTS` -> `tools/prep_requirements.py`, `HP_PVW_IDEMPOTENT` ->
-`tools/pvw_known_idempotent.py`, `HP_PYPROJ_DEPS` -> `tools/pyproj_deps.py`; each is exercised by
-the matching `tests/test_*.py` file). `HP_PREP_REQUIREMENTS` is a deliberate partial case: its
-canonical source is a byte-for-byte decode of the currently embedded payload with NO header
-comment added (unlike the other 17), since this payload's CMD 8191-char line budget is the
-tightest in the whole file (304-char margin) -- even a minimal "canonical source" pointer would
-cost more margin than is safely available; see the `PayloadSync` test in
-`tests/test_heuristics.py` for the full reasoning. The remaining 3 (`HP_CONDARC`, `HP_FAST_CHECK`,
-`HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to sync against --
-`HP_CONDARC` is static config text, not code, so this doesn't apply to it; `HP_FAST_CHECK` at
-least has its *logic* covered by `tests/test_fast_check_pattern.py` (extracted and tested in
-place, just not against a separate source file). `HP_PRINT_PYVER` is a trivial one-liner
-(`print(f"python-{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")`) with no
-branching logic to test. Any *new* embedded payload should default to the
-canonical-source-plus-`PayloadSync` pattern from the start rather than adding a 4th embedded-only
-exception.
+**Payload inventory and PayloadSync coverage** (counted from `run_setup.bat` on 2026-11-06;
+`tests/test_payload_inventory.py` recounts it on every run and fails when this paragraph and the file disagree,
+because the count had drifted twice by hand). Of the 31 embedded `HP_*` payloads, 29 have a canonical `tools/`
+source file (21 Python, 8 PowerShell) *and* a unit test in the matching `tests/test_*.py` file that asserts the
+embedded base64 is byte-for-byte in sync with that source. `HP_PREP_REQUIREMENTS` is a deliberate partial case: its canonical source is a byte-for-byte decode of the
+currently embedded payload with NO header comment added, since this payload's CMD 8191-char line budget is the
+tightest in the whole file -- even a minimal "canonical source" pointer would cost more margin than is safely
+available; see the `PayloadSync` test in `tests/test_heuristics.py` for the full reasoning. The remaining 2
+(`HP_CONDARC`, `HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to sync against --
+`HP_CONDARC` is static config text, not code, and `HP_PRINT_PYVER` is a trivial one-liner
+(`print(f"python-{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")`) with no branching logic to
+test. Any *new* embedded payload should default to the canonical-source-plus-`PayloadSync` pattern from the start
+rather than adding a third embedded-only exception.
 
 ## How CI decides pass/fail
 

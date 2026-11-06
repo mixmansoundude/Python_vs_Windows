@@ -111,8 +111,9 @@ self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
-self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
-self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate,
+self.ux.system.gate.empty, self.ux.system.gate.ci,
+self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem, self.ux.gitignore.create,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate, self.ux.gitattributes.append,
 self.ux.postflight,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
@@ -316,13 +317,14 @@ confirmed `true` via real CI (PR #421).
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
 ```
-self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
-self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate,
+self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem, self.ux.gitignore.create,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate, self.ux.gitattributes.append,
 self.ux.postflight,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
+self.ux.system.gate.empty, self.ux.system.gate.ci,
 self.sysbuild.decline, self.sysbuild.nuitka_prompt,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
@@ -332,6 +334,13 @@ self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 `.merge`/`.idem` -- pre-seeds a `.gitattributes` already carrying the signature AND the disproven
 `eol=crlf` rule (simulating a user re-running a newer bootstrapper copy), asserting the new
 `HP_MIGRATE_GITATTRIBUTES` payload replaces only the exact stale lines in place.
+
+`self.ux.system.gate.empty` and `.ci` (README REQ-014.3, REQ-014.4) run the bootstrapper with every earlier provider failed
+and no answer given: `.empty` has standard input closed and no CI marker (the keyboard branch reads an empty answer and
+declines), `.ci` sets only `HP_CI_LANE` (the automatic branch declines without reading). They are told apart by the log line
+each branch writes. Both are skipped in the conda-only lane, like the other system-gate rows. `self.ux.gitignore.create` and
+`self.ux.gitattributes.append` (REQ-015.1 to .3) start from a folder with no `.gitignore` and from a `.gitattributes` that
+already holds a user line.
 
 ## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
 

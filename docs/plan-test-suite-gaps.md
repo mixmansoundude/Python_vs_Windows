@@ -92,6 +92,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-009 | 13 | 13 | 0 | 21 |
 | REQ-012 | 6 | 5 | 1 | 1 |
+| REQ-014 | 5 | 5 | 0 | 7 |
+| REQ-015 | 9 | 7 | 2 | 1 |
+| REQ-016 | 8 | 5 | 3 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
 | REQ-018 | 37 | 25 | 12 | 14 |
 | REQ-019 | 3 | 3 | 0 | 0 |
@@ -105,11 +108,11 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-108 of 132 numbered shalls are named by at least one row tag.
+125 of 154 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-018.2, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.2, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
-Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011, REQ-013, REQ-014, REQ-015, REQ-016.
+Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011, REQ-013.
 
 **What is left, in the order I would take it** (each is one pull request and one AGENTS.md loop):
 
@@ -152,9 +155,11 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
-4. **Convert the remaining sections** (REQ-007, 008, 013 to 016 and the requirements the last line of the table
-   lists) to goal and shalls, each in the change that works on its tests. Done in the change that adds REQ-003.6
-   (the same working folder for every run of the program): REQ-017, REQ-020 and REQ-023.
+4. **Convert the remaining sections** (REQ-007, 008, 013 and the requirements the last line of the table lists) to
+   goal and shalls, each in the change that works on its tests. Done in the change that adds REQ-003.6 (the same
+   working folder for every run of the program): REQ-017, REQ-020 and REQ-023. Done in the change that adds the
+   system-gate, git-config and briefing rows: REQ-014, REQ-015 and REQ-016 (`gap:` and `inspection:` entries
+   for REQ-015.7, .8 and REQ-016.6 to .8 say what no row shows).
 
 ---
 
@@ -412,7 +417,7 @@ that is not tilde-prefixed and not in a short allow-list (the user's own files, 
 `.uv_env`, `runtime.txt`, `requirements.txt`, `.gitignore`, `.gitattributes`, the spec file if any
 **(to verify exact set)**). Start with `dependency_source.txt` on the allow-list marked "Item 76", and
 remove it in Item 76's PR, which turns the check from a ratchet into a lock. Row id
-`self.litter.appfolder`, `req = 'REQ-015'`.
+`self.litter.appfolder`, `req = 'REQ-015.6'`.
 
 **Lane and cost.** `real` (gating) is reasonable from the start because it reads files an existing
 bootstrap already produced; zero extra bootstraps. **(to verify)** the allow-list against a real
