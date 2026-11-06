@@ -110,6 +110,7 @@ self.prime.exe.build, self.prime.exe.run,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
+self.ux.connectivity.empty, self.ux.connectivity.noinput, self.ux.connectivity.nonint,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.ux.system.gate.empty, self.ux.system.gate.ci,
 self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem, self.ux.gitignore.create,
@@ -323,6 +324,7 @@ self.ux.postflight,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
+self.ux.connectivity.empty, self.ux.connectivity.noinput, self.ux.connectivity.nonint,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.ux.system.gate.empty, self.ux.system.gate.ci,
 self.sysbuild.decline, self.sysbuild.nuitka_prompt,
@@ -334,6 +336,11 @@ self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 `.merge`/`.idem` -- pre-seeds a `.gitattributes` already carrying the signature AND the disproven
 `eol=crlf` rule (simulating a user re-running a newer bootstrapper copy), asserting the new
 `HP_MIGRATE_GITATTRIBUTES` payload replaces only the exact stale lines in place.
+
+`self.ux.connectivity.empty`, `.noinput` and `.nonint` (README REQ-013.7, REQ-013.8) run the forced no-internet question three ways with standard input closed and
+no program staged: `.empty` sets no signal (the question reads the keyboard, prints `Your choice [y/n]:` and logs the empty-answer line; `HP_CI_LANE` is set and
+does not skip the read), `.noinput` sets `NOINPUT` and `.nonint` sets `HP_NONINTERACTIVE` (no read, so no `Your choice` prompt and the decline line). A launcher
+`.cmd` clears the other signals in the launched shell. Non-Windows hosts write a skip row for each.
 
 `self.ux.system.gate.empty` and `.ci` (README REQ-014.3, REQ-014.4) run the bootstrapper with every earlier provider failed
 and no answer given: `.empty` has standard input closed and no CI marker (the keyboard branch reads an empty answer and

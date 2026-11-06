@@ -30,7 +30,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     foreach ($id in @('self.dl.conda.fallback', 'self.dl.uv.fallback')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
-            req     = 'REQ-003'
+            req     = 'REQ-013'
             pass    = $true
             desc    = 'Download fallback URL test (skipped on non-Windows)'
             details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
@@ -59,7 +59,7 @@ if ($condaDlFallbackEnv -eq '1') {
     $condaPass = $condaFallbackTried -and $condaFallbackSucceeded
     Write-NdjsonRow ([ordered]@{
         id      = 'self.dl.conda.fallback'
-        req     = 'REQ-003'
+        req     = 'REQ-013.13'
         pass    = $condaPass
         desc    = 'Miniconda fallback URL tried and succeeded when primary fails'
         details = [ordered]@{
@@ -72,7 +72,7 @@ if ($condaDlFallbackEnv -eq '1') {
     $condaPass = $true
     Write-NdjsonRow ([ordered]@{
         id      = 'self.dl.conda.fallback'
-        req     = 'REQ-003'
+        req     = 'REQ-013'
         pass    = $true
         desc    = 'Miniconda fallback URL tried and succeeded when primary fails'
         details = [ordered]@{ skip = $true; reason = 'HP_TEST_CONDA_DL_FALLBACK-not-set' }
@@ -90,7 +90,7 @@ if ($uvForcedFail) {
     $uvPass = $true
     Write-NdjsonRow ([ordered]@{
         id      = 'self.dl.uv.fallback'
-        req     = 'REQ-003'
+        req     = 'REQ-013'
         pass    = $true
         desc    = 'uv fallback URL tried and uv binary acquired after fallback'
         details = [ordered]@{ skip = $true; reason = 'HP_TEST_FORCE_UV_FAIL'; uvForcedFail = $true }
@@ -99,7 +99,7 @@ if ($uvForcedFail) {
     $uvPass = $uvFallbackTried -and $uvAcquired
     Write-NdjsonRow ([ordered]@{
         id      = 'self.dl.uv.fallback'
-        req     = 'REQ-003'
+        req     = 'REQ-013.13'
         pass    = $uvPass
         desc    = 'uv fallback URL tried and uv binary acquired after fallback'
         details = [ordered]@{

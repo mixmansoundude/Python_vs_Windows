@@ -906,33 +906,35 @@ program that is valid.
 
 ## [REQ-013] Network Resilience
 
-The bootstrapper shall detect connectivity problems and be robust against transient network
-failures during environment and dependency acquisition -- retrying before giving up on a step,
-and falling through to the next REQ-009 provider tier rather than failing outright on a single
-blip or a temporary outage.
+**Goal.** The bootstrapper should detect connectivity problems and survive transient network failures while it acquires the environment and the dependencies, retrying a failed step before it gives up and moving on to the next provider of REQ-009 instead of failing on a single blip or a short outage.
 
-- **Connectivity detection**: when a primary download fails (Miniconda or uv), the bootstrapper
-  checks internet reachability before cascading to a fallback URL -- first an ICMP ping, then a
-  lightweight HTTPS probe if ICMP is blocked. If both fail, it prompts the user to confirm
-  offline mode or retry. In offline mode, internet-dependent steps (uv download, Miniconda
-  download) are skipped; an already-cached Miniconda or uv install is used as-is.
-- **Transient-failure retry**: conda environment creation, conda's bulk dependency install, the
-  embedded-Python fallback tier's download and directory-swap steps, and the venv fallback
-  tier's pip bootstrap (via a downloaded `get-pip.py`, used when a plain venv creation attempt
-  fails outright) each retry on a detected transient failure before falling through to the next
-  provider tier. Download steps retry across a primary URL and a PowerShell fallback method;
-  Miniconda, uv, and get-pip.py additionally retry across a secondary URL before giving up (the
-  embedded-Python download has no second host to retry against -- see CLAUDE.md's Known
-  Findings for why).
-- Mechanism detail for each retry point (exact log lines, CI test flags, subroutine names) is
-  intentionally not enumerated here -- see `docs/agent-lessons-learned.md` and CLAUDE.md's
-  Closed Backlog, which are the authoritative source for implementation-level specifics.
-- Log contract (illustrative, not exhaustive):
-  - `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.`
-  - `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`
-- CI test flag: `HP_TEST_OFFLINE=1` simulates ping failure for connectivity-check branch
-  coverage; per-mechanism retry test flags are documented alongside their subroutines in
-  `docs/agent-lessons-learned.md`.
+- **REQ-013.1** [major] The bootstrapper **shall**, when the download of Miniconda or uv from its primary URL fails, check whether the internet is reachable before it tries the secondary URL.
+- **REQ-013.2** [major] The bootstrapper **shall** treat the internet as reachable when an ICMP echo request, or, if that gets no answer, an HTTPS request to the conda host, gets an answer.
+- **REQ-013.3** [major] The bootstrapper **shall** repeat each probe of REQ-013.2 that gets no answer once before it concludes that there is no internet.
+- **REQ-013.4** [major] The bootstrapper **shall**, when it concludes that there is no internet, warn the user and ask whether to retry after fixing the connection or to proceed offline.
+- **REQ-013.5** [major] The bootstrapper **shall**, when the user answers that it should retry, repeat the check of REQ-013.2, and **shall** ask the question of REQ-013.4 again while the internet is still unreachable.
+- **REQ-013.6** [major] The bootstrapper **shall** proceed in offline mode when the user answers that it should proceed offline.
+- **REQ-013.7** [major] The bootstrapper **shall** proceed in offline mode when the user gives an empty answer.
+- **REQ-013.8** [major] The bootstrapper **shall**, in a run with `NOINPUT` or `HP_NONINTERACTIVE` set, proceed in offline mode without waiting for an answer.
+- **REQ-013.9** [major] The bootstrapper **shall**, in offline mode, not download uv, and **shall** write a line to the setup log that says so.
+- **REQ-013.10** [major] The bootstrapper **shall**, in offline mode, not download Miniconda, and **shall** write a line to the setup log that says so.
+- **REQ-013.11** [major] The bootstrapper **shall**, in offline mode, not download `get-pip.py`, and **shall** write a line to the setup log that says so.
+- **REQ-013.12** [major] The bootstrapper **shall**, in offline mode, use a Miniconda or uv that is already installed as it is.
+- **REQ-013.13** [major] The bootstrapper **shall**, when the primary URL of a download of Miniconda, uv or `get-pip.py` fails and offline mode was not chosen, try the secondary URL of that download before it gives up on the download.
+- **REQ-013.14** [minor] The bootstrapper **shall** retry a download that fails with a transient error, up to three more times with a pause between the tries, before it treats the URL as failed.
+- **REQ-013.15** [minor] The bootstrapper **shall**, when `curl` fails to download Miniconda, `get-pip.py` or the embedded Python from a URL, try the same URL with Windows PowerShell before it treats the URL as failed.
+- **REQ-013.16** [major] The bootstrapper **shall**, when the download of the embedded Python (REQ-009) fails, download it again once before the embedded tier fails.
+- **REQ-013.17** [major] The bootstrapper **shall**, when the checksum check or the extraction of the embedded Python fails, download it again once before the embedded tier fails.
+- **REQ-013.18** [minor] The bootstrapper **shall**, when replacing the embedded Python folder with the requested version fails, try the replacement again, up to three attempts in all, with a short pause between them.
+- **REQ-013.19** [major] The bootstrapper **shall**, when creating a plain venv in the venv fallback (REQ-009) fails outright, create it once more without pip and install pip into it from a downloaded `get-pip.py`.
+
+> **Notes (non-normative).**
+> - Rationale: a dropped packet or a slow answer on a shared network is enough to fail one request, and a beginner should not have to know that running the file again would have worked. The bootstrapper retries where a retry is cheap and says so when the network itself is the problem. The retry of a failed conda environment creation is REQ-022.1 and the retry of conda's bulk dependency install is REQ-005.2; they are not repeated here.
+> - Mechanism of the check (`:check_net_after_dl_fail`, called after a failed primary download of uv or Miniconda): `ping -n 1 8.8.8.8`, then `curl` to `https://conda.anaconda.org` with a 5 second connect limit and an 8 second total limit; each probe is tried twice. The ping and the HTTPS request are separate because a corporate network often blocks ICMP. `get-pip.py` has no check of its own: it is downloaded deep inside a fallback tier, where the only question that should stop a user is the system Python consent of REQ-014, so a failed `get-pip.py` download declines the tier quietly.
+> - The question is printed unconditionally, so it is on the screen and in the console log even when the answer is not read from the keyboard. A `y` answer repeats the check. `HP_CI_LANE` alone does not skip the read of the answer (open question 2): the rows that pipe answers to this question run with it set. A closed standard input gives an empty answer, which is a decline.
+> - Download methods: `curl` is called with `--retry 3 --retry-delay 5 --max-time 120` (curl itself decides which errors are transient: a timeout, a refused or dropped connection, a 5xx answer). Windows PowerShell (`Invoke-WebRequest`) is the second method for Miniconda, `get-pip.py` and the embedded Python; the uv download uses `curl` only. The embedded Python has no secondary URL (REQ-009). The directory swap of REQ-013.18 retries because another program (an antivirus scan) can hold a file in the old folder for a moment, not because of the network.
+> - Log contract: `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.` (also `... reachable via HTTPS (ICMP blocked). ...`), `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`, `[INFO] REQ-013: Connectivity prompt: user chose offline (N).`, `[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline.`, `[INFO] REQ-013: Connectivity restored after retry.`, `[INFO] REQ-013: Still offline after Y; re-prompting.`, `[INFO] REQ-013: Offline mode: skipping uv download.` (and `... Miniconda download.`, `... get-pip.py download.`), `[WARN] embed fallback: download failed; retrying once.`, `[WARN] venv fallback: python -m venv failed; retrying once with --without-pip.`
+> - Tests (`tests/selfapps_ux_hardening.ps1` unless stated; each runs a bootstrap in a scratch folder with the check forced and no program, so it ends at once): `self.ux.connectivity.online` (REQ-013.2) uses the runner's own network and is repeated up to three times, only while the product itself reports no internet; `.prompt.shown` (REQ-013.4) requires the exact warning and question; `.offline.n` (REQ-013.4, REQ-013.6) and `.override` (REQ-013.6) answer no, the second through the explicit answer and requiring that the empty-answer line is absent; `.empty` (REQ-013.7) closes standard input and requires the empty-answer line; `.noinput` and `.nonint` (REQ-013.8) each set one of the two signals and require the decline without the empty-answer line; `.retry` (REQ-013.5) answers yes and then no; `.offline.uv.skip` (REQ-013.9) requires the skip line, or the line of the lane that bypasses uv by design; `self.dl.conda.fallback` and `self.dl.uv.fallback` (`tests/selfapps_dl_fallback.ps1`, REQ-013.13) make the primary URL fail and require the secondary URL to be tried and to deliver; `self.embed.dl.retry` (REQ-013.16) fails the first download and requires the second to finish the tier; `self.venv.nopip_retry` (REQ-013.19) fails the plain venv creation and requires the retry, the pip bootstrap, the venv as provider and the program running. `.offline.conda.skip` keeps the requirement number: it also passes when no Miniconda download was attempted, which is every lane that has Miniconda installed.
 
 ---
 

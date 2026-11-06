@@ -1,6 +1,6 @@
 # ASCII only
 # selfapps_ux_hardening.ps1 - UX Hardening tests: REQ-015 (git config), REQ-016 (postflight), REQ-013 (connectivity), REQ-014 (system gate).
-# Row tags name the README sub-id a row fully proves (REQ-014.n, REQ-015.n, REQ-016.n); a row that proves only part of a shall keeps the requirement number.
+# Row tags name the README sub-id a row fully proves (REQ-013.n, REQ-014.n, REQ-015.n, REQ-016.n); a row that proves only part of a shall keeps the requirement number.
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -80,7 +80,7 @@ if ($platform -ne 'Win32NT') {
         desc    = 'Post-flight briefing test skipped on non-Windows host'
         details = $skipDetails
     })
-    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online', 'self.ux.connectivity.retry', 'self.ux.connectivity.override')) {
+    foreach ($id in @('self.ux.connectivity.offline.n', 'self.ux.connectivity.prompt.shown', 'self.ux.connectivity.offline.uv.skip', 'self.ux.connectivity.offline.conda.skip', 'self.ux.connectivity.online', 'self.ux.connectivity.retry', 'self.ux.connectivity.override', 'self.ux.connectivity.empty', 'self.ux.connectivity.noinput', 'self.ux.connectivity.nonint')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
             req     = 'REQ-013'
@@ -437,14 +437,14 @@ $connOfflineLog = $connText -match [regex]::Escape('[INFO] REQ-013: Connectivity
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.offline.n'
-    req     = 'REQ-013'
+    req     = 'REQ-013.4, REQ-013.6'
     pass    = ($connPromptFound -and $connOfflineLog)
     desc    = 'Connectivity guard: N response triggers offline mode'
     details = [ordered]@{ promptFound = $connPromptFound; offlineLogFound = $connOfflineLog }
 })
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.prompt.shown'
-    req     = 'REQ-013'
+    req     = 'REQ-013.4'
     pass    = $connPromptFound
     desc    = 'Connectivity guard: exact prompt string appears in output'
     details = [ordered]@{ promptFound = $connPromptFound }
@@ -463,7 +463,7 @@ $uvForcedFailSkip = $connText -match [regex]::Escape('[WARN] uv: HP_TEST_FORCE_U
 $uvOfflinePass    = $uvOfflineLog -or $uvCondaOnlySkip -or $uvForcedFailSkip
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.offline.uv.skip'
-    req     = 'REQ-013'
+    req     = 'REQ-013.9'
     pass    = $uvOfflinePass
     desc    = 'Connectivity guard: offline mode skips uv download (or uv legitimately bypassed)'
     details = [ordered]@{ offlineLogFound = $uvOfflineLog; condaOnlySkip = $uvCondaOnlySkip; forcedFailSkip = $uvForcedFailSkip }
@@ -543,7 +543,7 @@ $env:HP_TEST_FORCE_CONNECTIVITY_CHECK = ''
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.online'
-    req     = 'REQ-013'
+    req     = 'REQ-013.2'
     pass    = $connReachableFound
     desc    = 'Connectivity guard: reachable network cascades to fallback (internet reachable branch)'
     details = [ordered]@{ reachableLogFound = $connReachableFound; attempts = $connAttempts; noInternetSeen = $connNoInternetSeen }
@@ -591,7 +591,7 @@ $connRetryDecline = $connRetryText -match [regex]::Escape('REQ-013: Connectivity
 $connRetryFound   = $connRetryFired -and $connRetryDecline
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.retry'
-    req     = 'REQ-013'
+    req     = 'REQ-013.5'
     pass    = $connRetryFound
     desc    = 'Connectivity guard: Y answer re-prompts while still offline, then N exits offline'
     details = [ordered]@{ retryBranchFired = $connRetryFired; declineAfterRetry = $connRetryDecline }
@@ -634,7 +634,7 @@ $connOverrideEmptyLog    = $connOverrideText -match [regex]::Escape('REQ-013: Co
 $connOverridePass        = ($connOverridePromptFound -and $connOverrideDeclineLog -and (-not $connOverrideEmptyLog))
 Write-NdjsonRow ([ordered]@{
     id      = 'self.ux.connectivity.override'
-    req     = 'REQ-013'
+    req     = 'REQ-013.6'
     pass    = $connOverridePass
     desc    = 'Connectivity guard: HP_TEST_CNDF_ANSWER=N resolves via the explicit-decline path, not the empty-input fallback'
     details = [ordered]@{
@@ -643,6 +643,83 @@ Write-NdjsonRow ([ordered]@{
         emptyLogFound   = $connOverrideEmptyLog
     }
 })
+
+# ===== REQ-013.7 / REQ-013.8: the question when no answer is read, and when no answer is asked for =====
+# The scenario of self.ux.connectivity.offline.n with no answer on standard input and a forced "no internet" outcome, run
+# three ways. Standard input is closed (< nul), as in selfapps_offers_noninteractive.ps1, so a read that does happen gets
+# end-of-file at once instead of hanging the job. The branches log DIFFERENT things, which is what tells them apart:
+#   empty    no signal: the question reads the keyboard (its "Your choice [y/n]:" prompt is printed), finds nothing and logs
+#            "empty input; defaulting offline" (REQ-013.7). HP_CI_LANE is set, as in every other row of this section: the
+#            question does not skip the read for it (open question 2), and this row is where that is shown.
+#   noinput  NOINPUT set: no read, so the "Your choice" prompt is absent and the log says "user chose offline (N)" (REQ-013.8)
+#   nonint   HP_NONINTERACTIVE set: the same
+# The wrapper clears the answer hook and the other signal itself, in the launched shell, because a variable the job set is not
+# reliably removed from a child by SetEnvironmentVariable (docs/agent-lessons-learned.md). No program is staged, so the run
+# ends at no_python_files right after the check.
+function Invoke-ConnGateRun {
+    param([string]$Name, [string[]]$SetLines)
+    $dir = Join-Path $here ('~selftest_connectivity_' + $Name)
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $dir -Force
+    $wrapperLines = @(
+        '@echo off',
+        'set "NOINPUT="', 'set "HP_NONINTERACTIVE="', 'set "HP_TEST_CNDF_ANSWER="',
+        'set "HP_CI_LANE=test"', 'set "HP_TEST_OFFLINE=1"', 'set "HP_TEST_FORCE_CONNECTIVITY_CHECK=1"'
+    ) + $SetLines + @('call run_setup.bat > ~conn_gate_console.log 2>&1 < nul', 'exit /b %ERRORLEVEL%')
+    Set-Content -LiteralPath (Join-Path $dir '~conn_gate_launch.cmd') -Value $wrapperLines -Encoding Ascii
+    $started = Get-Date
+    $proc = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', 'call ~conn_gate_launch.cmd') -WorkingDirectory $dir -NoNewWindow -PassThru
+    $finished = $proc.WaitForExit(300000)
+    if (-not $finished) {
+        & taskkill.exe /F /T /PID $proc.Id 2>&1 | Out-Null
+        $null = $proc.WaitForExit(30000)
+    }
+    $text = ''
+    $consolePath = Join-Path $dir '~conn_gate_console.log'
+    if (Test-Path -LiteralPath $consolePath) { $text = Get-Content -LiteralPath $consolePath -Raw -Encoding Ascii }
+    return [pscustomobject]@{ Finished = [bool]$finished; Seconds = [int]((Get-Date) - $started).TotalSeconds; Text = $text }
+}
+$connGateScenarios = @(
+    @{ Name = 'empty'; SetLines = @() },
+    @{ Name = 'noinput'; SetLines = @('set "NOINPUT=1"') },
+    @{ Name = 'nonint'; SetLines = @('set "HP_NONINTERACTIVE=1"') }
+)
+$connGateRuns = @{}
+foreach ($scenario in $connGateScenarios) { $connGateRuns[$scenario.Name] = Invoke-ConnGateRun -Name $scenario.Name -SetLines $scenario.SetLines }
+foreach ($scenarioName in @('empty', 'noinput', 'nonint')) {
+    $run = $connGateRuns[$scenarioName]
+    $asked      = $run.Text -match [regex]::Escape($connPromptStr)
+    $readPrompt = $run.Text -match [regex]::Escape('Your choice [y/n]:')
+    $emptyLog   = $run.Text -match [regex]::Escape('REQ-013: Connectivity prompt: empty input; defaulting offline.')
+    $declineLog = $run.Text -match [regex]::Escape('REQ-013: Connectivity prompt: user chose offline (N).')
+    $retryLog   = $run.Text -match [regex]::Escape('REQ-013: Still offline after Y; re-prompting.')
+    if ($scenarioName -eq 'empty') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.ux.connectivity.empty'
+            req     = 'REQ-013.7'
+            pass    = ($run.Finished -and $asked -and $readPrompt -and $emptyLog -and (-not $declineLog) -and (-not $retryLog))
+            desc    = 'Connectivity guard: no answer at all (no signal, standard input closed) proceeds offline'
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; readPromptFound = $readPrompt; emptyInputLog = $emptyLog; declinedLog = $declineLog; retryLog = $retryLog }
+        })
+    } elseif ($scenarioName -eq 'noinput') {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.ux.connectivity.noinput'
+            req     = 'REQ-013.8'
+            pass    = ($run.Finished -and $asked -and (-not $readPrompt) -and $declineLog -and (-not $emptyLog) -and (-not $retryLog))
+            desc    = 'Connectivity guard: with NOINPUT set the question is shown, no answer is read and the run proceeds offline'
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; readPromptFound = $readPrompt; declinedLog = $declineLog; emptyInputLog = $emptyLog; retryLog = $retryLog }
+        })
+    } else {
+        Write-NdjsonRow ([ordered]@{
+            id      = 'self.ux.connectivity.nonint'
+            req     = 'REQ-013.8'
+            pass    = ($run.Finished -and $asked -and (-not $readPrompt) -and $declineLog -and (-not $emptyLog) -and (-not $retryLog))
+            desc    = 'Connectivity guard: with HP_NONINTERACTIVE set the question is shown, no answer is read and the run proceeds offline'
+            details = [ordered]@{ finished = $run.Finished; seconds = $run.Seconds; promptFound = $asked; readPromptFound = $readPrompt; declinedLog = $declineLog; emptyInputLog = $emptyLog; retryLog = $retryLog }
+        })
+    }
+}
 
 # ===== REQ-014: System Python Consent Gate =====
 $sysGateDir = Join-Path $here '~selftest_sysgate'
@@ -1144,7 +1221,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $venvNoPipPass = ($venvNoPipRetryFound -and $venvNoPipBootstrapOk -and $venvNoPipProvider -and $venvNoPipAppRan)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.venv.nopip_retry'
-        req     = 'REQ-023b'
+        req     = 'REQ-013.19'
         pass    = $venvNoPipPass
         desc    = 'REQ-023b: venv fallback retries with --without-pip and bootstraps pip via get-pip.py when plain venv creation fails'
         details = [ordered]@{
@@ -1404,7 +1481,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $embedRetryPass = ($embedRetryHookFired -and $embedRetryWarnFired -and $embedRetryExtracted -and $embedRetryReady -and $embedRetryAppRan)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.embed.dl.retry'
-        req     = 'REQ-009'
+        req     = 'REQ-009, REQ-013.16'
         pass    = $embedRetryPass
         desc    = 'REQ-009 Tier 5: first download attempt deterministically fails (no network touched), second (real) attempt succeeds end-to-end'
         details = [ordered]@{
