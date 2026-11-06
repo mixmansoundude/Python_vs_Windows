@@ -4092,6 +4092,29 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   latest green run's `expected-rows.txt`; a lane that keeps writing many rows no list has is losing protection.
 - Detail and the rule for adding an id: `docs/agent-interconnect.md`, "Expected-row baseline (Item 98)".
 
+### Item 100 (closed 2026-11-06, PR #520; an Item 35 slice, the "wider" Pages-publish gap CodeRabbit raised on PR #471)
+
+- **The problem.** `publish_diag` ("Publish diagnostics to Pages") starts under `if: always()`, but its step "Prep site directories"
+  made the `_site` folders and only then wrote `SITE`, `DIAG`, `ARTIFACTS` and `SHORTSHA` to `$GITHUB_OUTPUT`. GitHub's pwsh shell
+  runs with `$ErrorActionPreference = 'stop'`, so one failing `New-Item` (a full disk, which is what run `19236437263` died of, or a
+  name the file system refuses) ended the step with no outputs. About twenty later steps read `steps.prep.outputs.*`: an empty
+  `ARTIFACTS` turned bash's `"${ARTIFACTS}/iterate"` into `/iterate`, an empty `SITE` pointed "Upload Pages artifact" at the
+  repository root. CLAUDE.md Item 35 had carried this as "a future slice should generalize the `_site_prep_failed` fallback to a
+  single shared early step" since 2026-08-30.
+- **What shipped.** The four values are written first. They depend only on the working folder, the run id and the commit, never on
+  the folders existing, so no per-consumer fallback is needed (the two `_site_prep_failed` fallbacks already in the job are now
+  only a second line of defence). A folder failure still fails that one step; every later step sees the right paths and fails or
+  skips on its own terms.
+- **Tests.** `tests/test_publish_diag_prep.py` (12 cases): the step text is run through real `pwsh` the way the runner does it, once
+  normally (the folders, both `.nojekyll` files and the four outputs) and once with a run id of 300 characters so the per-run
+  folder name is refused on Linux and Windows alike (the step must stop at that folder and still leave all four outputs). The old
+  step is kept in the test as a harness check: it must lose every output on that input and work on a normal one, so the harness
+  cannot go quiet. Static rules: every output written before the first file-system line, every `steps.prep.outputs.NAME` the
+  workflow reads is a name the step writes, the step keeps `id: prep`, `shell: pwsh` and `if: ${{ !cancelled() }}`. It runs inside
+  `self.pytest.unit`, which the aggregate gate holds a PR on in every lane.
+- **Not done on purpose.** No change to the job graph, to `selftest-gate` or to any other `publish_diag` step. A write to
+  `$GITHUB_OUTPUT` itself failing (the disk is then full beyond saving) is not covered by any step order.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
