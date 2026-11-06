@@ -457,6 +457,16 @@ file used as proof that a section completed must be checked as deleted, not only
 on a file another program holds open left the old summary in place, and it passed for this run's (`FileShare.Read`
 reproduces it on a Windows runner). Prove a gate's failure path with a deliberately red row on a throwaway commit and
 read the job steps and both NDJSON files of that run, then revert the row with a new commit.
+(5) **The general fix is a list of rows that must exist, checked by the gate itself** (Item 98,
+`tests/expected_rows/<lane>.txt`, `tools/check_expected_rows.py`): a gate that only reads `pass:false` rows is blind to
+every absent row, whatever the cause (a crash before the first row, a parse error, a step that stopped running, a
+conditional that went false). Rules that kept the list honest: take it from rows that appeared in EVERY one of several
+green runs of that lane (a conditional row must not be listed); list ids, not counts (a count hides one row replaced by
+another); do not list what the code does not always write; a lane's own declared infrastructure skip
+(`self.cache.corrupted`) waives that lane only and the report says so; the check starts from a failing exit code and a
+cleared `$LASTEXITCODE`, because a missing python leaves the aggregator's stale 0 behind; a removed or renamed row
+must leave the list in the same change (a unit test checks the lists against `docs/agent-ndjson.md`). Prove it the
+same way as any gate: one throwaway id nobody writes, read the red run, then remove it.
 
 ---
 
