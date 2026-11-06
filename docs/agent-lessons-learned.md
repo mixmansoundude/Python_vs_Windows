@@ -226,6 +226,32 @@ red on every lane. Use `> log 2>&1` inside a cmd string; `*>` is correct only in
 
 ---
 
+## A `try/catch` around a cmdlet does not catch its non-terminating errors, so an unmeasurable value reads as 0 (REQ-025.4)
+
+The free-space reading was `try { [math]::Floor((Get-PSDrive -Name $letter).Free / 1GB) } catch { '' }`, meant to print
+nothing when the drive cannot be read. `Get-PSDrive` reports a drive it cannot find with `WriteError`, a NON-terminating
+error, so the `catch` never ran; `$null.Free / 1GB` is 0 and the line printed `0`, which the batch file took for "0 GB
+free". A program folder on a network share (no drive letter) would have been told "Only ~0 GB free disk space detected".
+The first run of `self.stub.low_disk_unreadable` showed it on Windows (run `41213903374`, `contract-uv`: `warningLines` 2,
+`unreadableLogged` false, run otherwise fine). Locally: `pwsh -Command "try { (Get-PSDrive -Name Q).Free } catch { 'CAUGHT' }"`
+prints the error and not `CAUGHT`. **Rule: when a `catch` is the "unknown" branch of a one-line helper, put
+`-ErrorAction Stop` on the cmdlet and emit a value only when the property exists (`if ($null -ne $d.Free)`); never let a
+missing property flow into arithmetic.** To test the branch, ask for something that does not exist through a hook
+(`HP_TEST_FORCE_DISK_READ_FAIL` swaps the drive name for `@`), because a CI runner's own drive can always be read, and give the
+row a positive line to find (the DEBUG line in `~setup.log`): "no warning" alone also passes when the check never ran.
+
+**The first fix made the empty reading reachable, and the next line of the batch file could not survive it** (run
+`41237307501`, all eight lanes). The comparison was `if defined HP_FREE_GB if %HP_FREE_GB% LSS 2 (`: cmd expands `%HP_FREE_GB%`
+when it reads the line, before it tests `defined`, so an empty value left `if LSS 2 (` and the batch file stopped on a syntax
+error with exit code 255 (it would have done the same whenever PowerShell printed nothing, but no test had ever made it).
+The row was green anyway: it checked the warning and the DEBUG line and recorded `bootstrapOk false`, `exitCode 255` in its
+details without asserting them. **Rules: (1) a one-line `if defined X if %X% ...` guards nothing, test `defined` on its own line and `goto`
+past the line that expands the variable (the repo's goto-dispatch rule, "Provider-cascade dispatch is goto-based on purpose");
+(2) a row about an error path must assert that the run still ends the way the user needs (state `ok`, exit 0), and a row whose
+details hold a failing value that its pass condition ignores is a false green: read the details of every new row, not its colour.**
+
+---
+
 ## A static "this text exists" row can pass on dead code -- test the behavior of both branches
 
 `batch.req005.warn_gate` checked that `run_setup.bat` contained `if not defined DEP_SOURCE (` and the
@@ -708,6 +734,17 @@ command via `&` and captures `$LASTEXITCODE` to branch on programmatically (rath
 that failure genuinely fail the step), explicitly control the step's own final exit status at the
 end of the block** (an explicit `exit 0`, or reset `$LASTEXITCODE`) -- do not assume "the script's
 result is just a variable I read" is enough.
+
+**A step output written at the END of a `pwsh` step is lost when anything before it throws (Item 100).** GitHub's pwsh shell
+runs with `$ErrorActionPreference = 'stop'`, so the first failing cmdlet (a `New-Item` on a full disk or a refused name) ends the
+step and the `echo "NAME=value" >> $env:GITHUB_OUTPUT` lines below it never run; every later step that reads
+`steps.<id>.outputs.NAME` then gets an empty string, which in bash turns `"${DIR}/x"` into `/x`. `publish_diag`'s "Prep site
+directories" did exactly that for the Pages publish. **Rule: compute and write every output whose value does not depend on the work
+itself (paths, ids, short shas) FIRST, then do the work.** A job that must survive a failing step gets nothing from `if: always()`
+on its later steps if the values they read were never written. `tests/test_publish_diag_prep.py` shows the test shape: run the
+step's own text through `pwsh` with `$ErrorActionPreference = 'stop'`, once with an input that makes the work fail (a path
+component of 300 characters is refused on Linux and Windows) and read `GITHUB_OUTPUT`; keep the old step as a harness check that
+must lose its outputs on that input, so the test cannot go quiet.
 
 **Never use "Re-run failed jobs" on a run of `batch-check.yml`.** It re-runs `publish_diag` too, which uploads a
 second artifact named `github-pages` to the same run, and `actions/deploy-pages` then fails with "Multiple artifacts
