@@ -410,7 +410,7 @@ if ($scenario -eq 'real_warnfix') {
     $rwPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $warnInstallFired -and $warnRebuildFired -and (-not $infraError)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.exe.warnfix.real_warnfix'
-        req     = 'REQ-007'
+        req     = 'REQ-007.11'
         pass    = $rwPass
         desc    = 'Warnfix installed xlrd (not heuristic-covered); EXE succeeded'
         details = [ordered]@{
@@ -434,7 +434,7 @@ if ($scenario -eq 'real_warnfix_delayed') {
     $rwdPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $warnInstallFired -and $warnRebuildFired -and (-not $infraError)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.exe.warnfix.real_warnfix_delayed'
-        req     = 'REQ-007'
+        req     = 'REQ-007.11'
         pass    = $rwdPass
         desc    = 'Warnfix processed delayed xlrd import; installed xlrd; EXE succeeded'
         details = [ordered]@{
@@ -546,7 +546,7 @@ Write-NdjsonRow ([ordered]@{
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.pass'
-    req     = 'REQ-007'
+    req     = 'REQ-007.11'
     pass    = $successPass
     desc    = 'EXE succeeded after warn-driven rebuild; no infra errors'
     details = [ordered]@{

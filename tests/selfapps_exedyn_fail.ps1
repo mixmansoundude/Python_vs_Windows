@@ -114,7 +114,7 @@ $xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $recoveryDeclined
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.smokerun.exedyn.xfail'
-    req     = 'REQ-003'
+    req     = 'REQ-003, REQ-007.14'
     pass    = $xfailPass
     desc    = 'EXE smokerun XFAIL: dynamic import not bundled causes non-zero exit (expected failure)'
     details = [ordered]@{
@@ -136,7 +136,7 @@ $hintMentionsRequirements = $combined -match '\[HINT\]\[HIDDEN_IMPORT\][^\r\n]*r
 $hintActionable = $hintNamesModule -and (-not $hintMentionsFlag) -and $hintMentionsRequirements
 Write-NdjsonRow ([ordered]@{
     id      = 'self.hint.hidden_import.wording'
-    req     = 'REQ-003'
+    req     = 'REQ-003, REQ-007.9'
     pass    = $hintActionable
     desc    = 'The hidden-import hint names the module and points at requirements.txt, not at a PyInstaller flag'
     details = [ordered]@{

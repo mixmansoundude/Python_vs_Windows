@@ -90,6 +90,8 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-003 | 6 | 2 | 4 | 18 |
 | REQ-005 | 18 | 14 | 4 | 32 |
+| REQ-007 | 20 | 17 | 3 | 13 |
+| REQ-008 | 23 | 17 | 6 | 9 |
 | REQ-009 | 13 | 13 | 0 | 21 |
 | REQ-012 | 6 | 5 | 1 | 1 |
 | REQ-013 | 19 | 10 | 9 | 4 |
@@ -109,11 +111,11 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-136 of 173 numbered shalls are named by at least one row tag.
+170 of 216 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-012.5, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
-Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011.
+Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-010, REQ-011.
 
 **What is left, in the order I would take it** (each is one pull request and one AGENTS.md loop):
 
@@ -163,7 +165,10 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    system-gate, git-config and briefing rows: REQ-014, REQ-015 and REQ-016 (`gap:` and `inspection:` entries
    for REQ-015.7, .8 and REQ-016.6 to .8 say what no row shows). Done in the change that adds the connectivity rows:
    REQ-013 (nine `gap:` and `inspection:` entries say what no row shows; `self.ux.connectivity.empty`, `.noinput` and
-   `.nonint` are new). REQ-007 and REQ-008 remain.
+   `.nonint` are new). Done in the change that retags the NI-VISA rows: REQ-008 (six `gap:`, `unit:` and `inspection:` entries
+   say what no row shows; `self.nivisa.not_required` is new). Done in the change that retags the executable rows: REQ-007 (three
+   `gap:` and `unit:` entries; `self.sysbuild.ci_marker` is new, `self.exe.smokerun.xfail` now also requires that the setup ends
+   with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision).
 
 ---
 

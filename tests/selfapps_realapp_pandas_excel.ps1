@@ -367,7 +367,7 @@ $exeOk2 = ($exeChanged2 -eq $expectExeChanged)
 $pass = ($run2.Exit -eq 0) -and ($state2 -ceq 'ok') -and $reused2 -and (-not $notReusing2) -and $exeOk2 -and ($smoke2 -eq 0) -and ($token2 -ceq 'realapp-ok total=32 rows=3') -and (-not $reinstall2) -and (-not $pipreqsRan2)
 if (-not $pass) { $anyRed = $true }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.realapp.fastpath_rerun'; req = 'REQ-007'; pass = [bool]$pass
+    id = 'self.realapp.fastpath_rerun'; req = 'REQ-007.3'; pass = [bool]$pass
     desc = 'Running the unchanged folder again reuses the cached EXE without a rescan or reinstall, and the EXE runs again'
     details = [ordered]@{
         exitCode = $run2.Exit; seconds = $run2.Seconds; state = $state2; reusedLogged = [bool]$reused2; notReusingLogged = [bool]$notReusing2
@@ -401,7 +401,7 @@ $editConsistent = ($termcolor3 -and $termcolorInReq3 -and $termcolorInHeader3)
 $pass = ($run3.Exit -eq 0) -and ($state3 -ceq 'ok') -and $notReusingOk -and $rebuilt3 -and ($smoke3 -eq 0) -and ($token3 -ceq 'realapp-ok total=32 rows=3') -and ($source3 -ne '') -and $editConsistent
 if (-not $pass) { $anyRed = $true }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.realapp.edit_rerun'; req = 'REQ-007'; pass = [bool]$pass
+    id = 'self.realapp.edit_rerun'; req = 'REQ-007.4, REQ-007.6'; pass = [bool]$pass
     desc = 'After requirements.txt is edited the cached EXE is not reused, the EXE is rebuilt and runs, and the added package is installed and kept in both requirements.txt and the PEP 723 header'
     details = [ordered]@{
         exitCode = $run3.Exit; seconds = $run3.Seconds; state = $state3; notReusingLogged = [bool]$notReusing3; expectNotReusing = $expectNotReusing

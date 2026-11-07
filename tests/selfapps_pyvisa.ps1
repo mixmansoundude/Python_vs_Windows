@@ -64,7 +64,9 @@ $detectPass      = ($log -match 'Detected pyvisa')
 # derived requirement: branch and outcome require explicit [VISA] terminal signals, not indirect log substrings.
 # Old fuzzy matches ('NI-VISA', 'NI-VISA install may be required', etc.) allowed false-green when no action was taken.
 $nisaPass        = ($log -match '\[VISA\]')
-$nisaOutcomePass = ($log -match '\[VISA\] present') -or ($log -match '\[VISA\] install_success') -or ($log -match '\[VISA\] skipped') -or ($log -match '\[VISA\] install_failed')
+# REQ-008.1: a top-folder import with no opt-out must end in one of these three; a [VISA] skipped line is the wrong answer here
+# (the opt-out has its own scenario below), so it no longer counts.
+$nisaOutcomePass = ($log -match '\[VISA\] present') -or ($log -match '\[VISA\] install_success') -or ($log -match '\[VISA\] install_failed')
 
 $detectDetails = [ordered]@{ exitCode = $exitCode; detectFound = $detectPass }
 if (-not $log)      { $detectDetails.logMissing = $true }
@@ -76,7 +78,7 @@ if ($errorMessage)  { $nisaDetails.error = $errorMessage }
 
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.detect'
-    req     = 'REQ-008'
+    req     = 'REQ-008.21'
     pass    = $detectPass
     desc    = 'pyvisa import detected and logged by bootstrapper'
     details = $detectDetails
@@ -92,9 +94,9 @@ Write-NdjsonRow ([ordered]@{
 
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.outcome'
-    req     = 'REQ-008'
+    req     = 'REQ-008.1, REQ-008.22'
     pass    = $nisaOutcomePass
-    desc    = 'NI-VISA terminal signal present ([VISA] present / install_success / skipped / install_failed)'
+    desc    = 'NI-VISA install outcome for a top-folder pyvisa import is logged ([VISA] present / install_success / install_failed)'
     details = [ordered]@{ exitCode = $exitCode; outcomeFound = $nisaOutcomePass }
 })
 
@@ -104,8 +106,7 @@ Write-NdjsonRow ([ordered]@{
 $installerRcMatch = [regex]::Match($log, '\[VISA\] installer exit code:\s*(-?\d+)')
 $nisaReasonPass = ($installerRcMatch.Success) `
     -or ($log -match [regex]::Escape('[VISA] install_failed (download)')) `
-    -or ($log -match [regex]::Escape('[VISA] present')) `
-    -or ($log -match '\[VISA\] skipped')
+    -or ($log -match [regex]::Escape('[VISA] present'))
 $nisaReasonDetails = [ordered]@{ exitCode = $exitCode; reasonFound = $nisaReasonPass }
 if ($installerRcMatch.Success) { $nisaReasonDetails.installerRc = $installerRcMatch.Groups[1].Value }
 # REQ-008 diagnostic: surface download provenance so a non-zero installer rc is classifiable
@@ -118,9 +119,9 @@ if ($dlSizeMatch.Success) { $nisaReasonDetails.installerSize = $dlSizeMatch.Grou
 if ($peMatch.Success)     { $nisaReasonDetails.peCheck       = $peMatch.Groups[1].Value }
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.reason'
-    req     = 'REQ-008'
+    req     = 'REQ-008.23'
     pass    = $nisaReasonPass
-    desc    = 'NI-VISA install path emits a classifiable diagnostic (installer exit code or download/skip reason)'
+    desc    = 'NI-VISA install path emits a classifiable diagnostic (installer exit code, or download failure, or driver already present)'
     details = $nisaReasonDetails
 })
 
@@ -129,13 +130,17 @@ Write-NdjsonRow ([ordered]@{
 # install_failed (post_check_timeout) with installer exit code -125202, the code the field report
 # saw, so the assertion is live there; a run where the install did not fail records skip=true.
 $visaFailed = ($log -match [regex]::Escape('[VISA] install_failed'))
+# REQ-008.18: the notice says the driver was not installed. REQ-008.19: the same line says the pyvisa package is installed
+# anyway and that setup continues. REQ-008.20: the run really did continue, to a finished status after the failure.
 $visaWarnShown = ($log -match '\[WARN\][^\r\n]*NI-VISA driver (failed to install|could not be downloaded)') -and ($log -match 'real instruments')
-$visaWarnPass = (-not $visaFailed) -or $visaWarnShown
-$visaWarnDetails = [ordered]@{ exitCode = $exitCode; installFailed = $visaFailed; warnShown = $visaWarnShown }
+$visaWarnWords = ($log -match '\[WARN\][^\r\n]*NI-VISA driver (failed to install|could not be downloaded)[^\r\n]*pyvisa package is installed anyway[^\r\n]*Setup continues\.')
+$visaContinued = ($log -match '\[VISA\] install_failed[\s\S]*\[STATUS\] Run Status: SUCCESS') -and ($exitCode -eq 0)
+$visaWarnPass = (-not $visaFailed) -or ($visaWarnShown -and $visaWarnWords -and $visaContinued)
+$visaWarnDetails = [ordered]@{ exitCode = $exitCode; installFailed = $visaFailed; warnShown = $visaWarnShown; warnWords = $visaWarnWords; continuedToSuccess = $visaContinued }
 if (-not $visaFailed) { $visaWarnDetails.skip = $true; $visaWarnDetails.reason = 'install-did-not-fail' }
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.warn'
-    req     = 'REQ-008'
+    req     = 'REQ-008.18, REQ-008.19, REQ-008.20'
     pass    = $visaWarnPass
     desc    = 'A failed NI-VISA install prints a console WARN that the driver is missing and what that means'
     details = $visaWarnDetails
@@ -178,7 +183,7 @@ $disNoInstall = -not (($disLog -match [regex]::Escape('[VISA] present')) -or ($d
 $disabledPass = ($disDetected -and $disSkipped -and $disNoInstall)
 Write-NdjsonRow ([ordered]@{
     id      = 'pyvisa.nivisa.disabled'
-    req     = 'REQ-008'
+    req     = 'REQ-008.4'
     pass    = $disabledPass
     desc    = 'HP_SKIP_NIVISA=1 skips NI-VISA install even when pyvisa import detected'
     details = [ordered]@{ exitCode = $disExit; detected = $disDetected; skippedDisabled = $disSkipped; noInstallAttempt = $disNoInstall }

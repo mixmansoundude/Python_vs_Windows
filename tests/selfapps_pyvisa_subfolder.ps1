@@ -116,14 +116,15 @@ $d = Invoke-VisaScenario -Name 'declined' -Files $subFiles -EnvSet @{ HP_VISA_DE
 $dFound = $d.Setup -match $foundSub
 $dPrompt = $d.Console -match [regex]::Escape($promptText)
 $dSkipped = $d.Console -match [regex]::Escape('[VISA] skipped (subfolder_only)')
+$dPathInPrompt = $d.Console -match [regex]::Escape('looks needed only by a file in a subfolder: archive\old_tool.py')
 $dNoInstall = (& $noInstallStep $d.Console) -and (& $noInstallStep $d.Setup) -and (-not (Test-Path -LiteralPath (Join-Path $d.Work '~ni-visa-runtime.exe')))
-$dPass = $dFound -and $dPrompt -and $dSkipped -and $dNoInstall
+$dPass = $dFound -and $dPrompt -and $dPathInPrompt -and $dSkipped -and $dNoInstall
 Write-NdjsonRow ([ordered]@{
     id      = 'self.nivisa.subfolder.declined'
-    req     = 'REQ-008'
+    req     = 'REQ-008.7, REQ-008.8, REQ-008.9, REQ-008.11, REQ-008.13'
     pass    = $dPass
     desc    = 'An import visa that sits only in a subfolder is logged by path, the prompt is shown, and a non-interactive run declines without an install step even when a consent answer is inherited from the caller'
-    details = [ordered]@{ exit = $d.Exit; foundLine = $dFound; promptEchoed = $dPrompt; skippedSubfolderOnly = $dSkipped; noInstallStep = $dNoInstall }
+    details = [ordered]@{ exit = $d.Exit; foundLine = $dFound; promptEchoed = $dPrompt; pathInPrompt = $dPathInPrompt; skippedSubfolderOnly = $dSkipped; noInstallStep = $dNoInstall }
 })
 
 # ---- topfolder: a match next to run_setup.bat keeps today's behavior --------------------------------
@@ -135,7 +136,7 @@ $tNoSubfolderSkip = -not ($t.Console -match [regex]::Escape('[VISA] skipped (sub
 $tPass = $tFound -and $tNoPrompt -and $tDisabled -and $tNoSubfolderSkip
 Write-NdjsonRow ([ordered]@{
     id      = 'self.nivisa.topfolder.noprompt'
-    req     = 'REQ-008'
+    req     = 'REQ-008.16'
     pass    = $tPass
     desc    = 'An import pyvisa next to run_setup.bat is logged as a top folder match and goes straight to the install branch with no prompt'
     details = [ordered]@{ exit = $t.Exit; foundLine = $tFound; noPrompt = $tNoPrompt; reachedInstallBranch = $tDisabled; noSubfolderSkip = $tNoSubfolderSkip }
@@ -150,7 +151,7 @@ $oNoInstall = (& $noInstallStep $o.Console) -and (& $noInstallStep $o.Setup)
 $oPass = $oFound -and $oTimedPrompt -and $oSkipped -and $oNoInstall
 Write-NdjsonRow ([ordered]@{
     id      = 'self.nivisa.subfolder.timeout'
-    req     = 'REQ-008'
+    req     = 'REQ-008.11'
     pass    = $oPass
     desc    = 'With the timed prompt forced and nobody answering, the subfolder-only NI-VISA install is declined after the timeout'
     details = [ordered]@{ exit = $o.Exit; foundLine = $oFound; timedPromptShown = $oTimedPrompt; skippedSubfolderOnly = $oSkipped; noInstallStep = $oNoInstall }
@@ -166,7 +167,7 @@ $aNotDeclined = -not ($a.Console -match [regex]::Escape('[VISA] skipped (subfold
 $aPass = $aFound -and $aPrompt -and $aAcceptedLine -and $aReachedBranch -and $aNotDeclined
 Write-NdjsonRow ([ordered]@{
     id      = 'self.nivisa.subfolder.accepted'
-    req     = 'REQ-008'
+    req     = 'REQ-008.10'
     pass    = $aPass
     desc    = 'Answering yes to the subfolder prompt lets the run into the NI-VISA install branch'
     details = [ordered]@{ exit = $a.Exit; foundLine = $aFound; promptEchoed = $aPrompt; acceptedLogged = $aAcceptedLine; reachedInstallBranch = $aReachedBranch; notDeclined = $aNotDeclined }

@@ -10,6 +10,7 @@ No importable functions exist -- exercised end-to-end via a real `pwsh` subproce
 tests/test_migrate_gitattributes.py's own harness.
 """
 import base64
+import os
 import re
 import shutil
 import subprocess
@@ -77,6 +78,56 @@ class FreshnessBehavior(unittest.TestCase):
         (self.root / "requirements.txt").write_text("requests==3.0\n")
         rc, out, err = _run_check(self.root)
         self.assertNotEqual(out, "fresh", err)
+
+    def test_newer_timestamp_alone_stays_fresh(self):
+        # REQ-007.5: the decision is the content, not the clock. Touching a file so that it
+        # looks newer than the EXE, without changing a byte, must not cause a rebuild.
+        _run_check(self.root, mode="write")
+        entry = self.root / "entry.py"
+        future = entry.stat().st_mtime + 86400
+        os.utime(entry, (future, future))
+        os.utime(self.root / "requirements.txt", (future, future))
+        rc, out, err = _run_check(self.root)
+        self.assertEqual(out, "fresh", err)
+
+    def test_nested_py_change_is_not_fresh(self):
+        # REQ-007.4: every .py in the folder counts, in a subfolder too.
+        pkg = self.root / "pkg" / "inner"
+        pkg.mkdir(parents=True)
+        (pkg / "mod.py").write_text("X = 1\n")
+        _run_check(self.root, mode="write")
+        (pkg / "mod.py").write_text("X = 2\n")
+        rc, out, err = _run_check(self.root)
+        self.assertNotEqual(out, "fresh", err)
+
+    def test_pyproject_and_runtime_change_are_not_fresh(self):
+        # REQ-007.4: pyproject.toml and runtime.txt are part of the hashed set.
+        for name in ("pyproject.toml", "runtime.txt"):
+            with self.subTest(name=name):
+                (self.root / name).write_text("one\n")
+                _run_check(self.root, mode="write")
+                rc, out, err = _run_check(self.root)
+                self.assertEqual(out, "fresh", err)
+                (self.root / name).write_text("two\n")
+                rc, out, err = _run_check(self.root)
+                self.assertNotEqual(out, "fresh", err)
+                (self.root / name).unlink()
+
+    def test_change_in_ignored_folders_and_helpers_stays_fresh(self):
+        # REQ-007.4: the folders the bootstrapper itself writes (.git, .github, dist, .venv,
+        # .uv_env, __pycache__, .conda) and its own ~*.py helpers are not part of the program.
+        ignored = [".git", ".github", "dist", ".venv", ".uv_env", "__pycache__", ".conda"]
+        for folder in ignored:
+            (self.root / folder).mkdir(exist_ok=True)
+            (self.root / folder / "x.py").write_text("A = 1\n")
+        (self.root / "~helper.py").write_text("A = 1\n")
+        _run_check(self.root, mode="write")
+        for folder in ignored:
+            (self.root / folder / "x.py").write_text("A = 2\n")
+        (self.root / "~helper.py").write_text("A = 2\n")
+        (self.root / "dist" / "newfile.py").write_text("B = 1\n")
+        rc, out, err = _run_check(self.root)
+        self.assertEqual(out, "fresh", err)
 
     def test_rewrite_after_change_is_fresh_again(self):
         _run_check(self.root, mode="write")
