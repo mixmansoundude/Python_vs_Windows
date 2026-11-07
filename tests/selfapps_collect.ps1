@@ -121,7 +121,7 @@ if ($exeExists) {
 $collectPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $collectLineFired -and $collectPlotly -and (-not $infraError)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.collect.submodules'
-    req     = 'REQ-005'
+    req     = 'REQ-005, REQ-007.11'
     pass    = $collectPass
     desc    = 'Pre-build --collect-submodules double-gate emitted plotly flag (used+installed); EXE built and ran'
     details = [ordered]@{

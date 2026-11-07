@@ -162,7 +162,7 @@ $pass = ($run1Exit -eq 0) -and ($run2Exit -eq 0) -and $hashContentValid -and $mt
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.fastpath.hash.backdated_mtime'
-    req     = 'REQ-018'
+    req     = 'REQ-018, REQ-007.5'
     pass    = $pass
     desc    = 'EXE fast path content-hash freshness detects a genuine change even when the changed file mtime is backdated below the EXE'
     details = [ordered]@{

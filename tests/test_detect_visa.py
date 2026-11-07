@@ -61,6 +61,25 @@ class VisaDetection(unittest.TestCase):
     def test_import_visa_returns_1(self):
         self.assertEqual(_run({"app.py": "import visa\n"}), "1")
 
+    def test_from_visa_import_returns_1(self):
+        # Item 102: older code written against the visa package name says `from visa import ...`
+        # (the same module as pyvisa); it needs the driver exactly like `import visa` does.
+        self.assertEqual(_run({"app.py": "from visa import ResourceManager\n"}), "1")
+
+    def test_from_visa_import_below_a_subfolder_returns_2(self):
+        self.assertEqual(_run({"pkg/mod.py": "from visa import ResourceManager\n"}), "2")
+
+    def test_from_visa_submodule_import_returns_1(self):
+        self.assertEqual(_run({"app.py": "from visa.constants import StatusCode\n"}), "1")
+
+    def test_from_lookalike_packages_are_not_matches(self):
+        # The same word-boundary rule as the plain imports: a package that merely starts with
+        # the letters is a different package.
+        for line in ("from pyvista import Plotter", "from vision import camera", "from visas import x",
+                     "from pyviscoelastic import y"):
+            with self.subTest(line=line):
+                self.assertEqual(_run({"app.py": line + "\n"}), "0")
+
     def test_nested_directory_is_scanned(self):
         # Still scanned (the README documents it); a match only below a subfolder is
         # reported as "2", not "1", so the batch can ask before installing the driver.

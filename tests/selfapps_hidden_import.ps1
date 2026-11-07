@@ -150,7 +150,7 @@ if ($exeExists) {
 $hiddenPass = $exeExists -and ($exeExit -eq 0) -and $tokenFound -and $addingFired -and $collectLogged -and $collectPaired -and $recoveredFired -and (-not $infraError)
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.hidden_import'
-    req     = 'REQ-016'
+    req     = 'REQ-016, REQ-007.11, REQ-007.13'
     pass    = $hiddenPass
     desc    = 'EXE failed on a dynamically-imported installed module; strict --hidden-import recovery rebuilt and verified it (paired with --collect-submodules, CLAUDE.md Item 28)'
     details = [ordered]@{

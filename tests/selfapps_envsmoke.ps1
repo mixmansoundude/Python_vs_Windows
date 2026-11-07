@@ -571,7 +571,7 @@ $exePath = Join-Path $app ("dist\\$exeEnvName.exe")
 $exeExists = Test-Path -LiteralPath $exePath
 Write-NdjsonRow ([ordered]@{
     id='self.exe.build'
-    req='REQ-003'
+    req='REQ-003, REQ-007.1, REQ-007.2, REQ-007.15'
     pass=$exeExists
     desc='PyInstaller produced standalone EXE'
     details=[ordered]@{ exePath=$exePath; exists=$exeExists }
@@ -650,7 +650,7 @@ $fastSetupText = if (Test-Path -LiteralPath $setupLog) {
 $fastPathDetected = ($fastSetupText -match 'Fast path: reusing')
 Write-NdjsonRow ([ordered]@{
     id='self.fastpath'
-    req='REQ-003'
+    req='REQ-003, REQ-007.3'
     pass=(($fastExit -eq 0) -and $fastPathDetected)
     desc='Second run reuses existing EXE via fast path'
     details=[ordered]@{ exitCode=$fastExit; fastPathDetected=$fastPathDetected }

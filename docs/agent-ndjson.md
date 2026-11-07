@@ -262,7 +262,7 @@ self.stub.lock_held_message, self.stub.lock_held_decline, self.stub.lock_held_ke
 self.stub.lock_stale_evict, self.stub.lock_indeterminate, self.stub.lock_evict_blocked,
 self.stub.low_disk_warn, self.stub.low_disk_continues, self.stub.low_disk_absent, self.stub.low_disk_unreadable,
 self.pipreqs.warn.gated,
-self.dep.diff.trace, self.litter.appfolder, self.elevation.logged,
+self.dep.diff.trace, self.litter.appfolder, self.elevation.logged, self.nivisa.not_required,
 self.warn.onedrive, self.warn.path_negative, self.warn.sysdir,
 self.guardrail.g1, self.guardrail.g2, self.guardrail.g3,
 self.pep723.valid, self.pep723.uvformat, self.pep723.malformed, self.pep723.pyproject.merge,
@@ -327,7 +327,7 @@ self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.ov
 self.ux.connectivity.empty, self.ux.connectivity.noinput, self.ux.connectivity.nonint,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
 self.ux.system.gate.empty, self.ux.system.gate.ci,
-self.sysbuild.decline, self.sysbuild.nuitka_prompt,
+self.sysbuild.decline, self.sysbuild.nuitka_prompt, self.sysbuild.ci_marker,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 ```
@@ -1641,7 +1641,7 @@ names the file that triggered the install branch. Four real runs, each in its ow
 folder would take the cached-EXE fast path and never reach the VISA step); the gate sits after the
 `HP_SKIP_NIVISA` and already-installed checks, so a runner without NI-VISA reaches it, and `accepted` really
 enters the install branch like `selfapps_pyvisa.ps1` does (any ending counts). `declined` (CI lane auto-decline: the
-`found in: archive\old_tool.py (subfolder)` line in `~setup.log`, the prompt echoed on the console,
+`found in: archive\old_tool.py (subfolder)` line in `~setup.log`, the prompt echoed on the console with the file named in it,
 `[VISA] skipped (subfolder_only)`, no download, no installer file; run with a stale `HP_VISA_DECISION=Y` inherited from the
 caller, which must not stand in for the answer), `accepted` (`HP_TEST_VISA_ANSWER=Y`: the
 accepted line, then a `[VISA]` install-branch line, no `subfolder_only`; runs LAST because it may really install

@@ -154,7 +154,7 @@ if ($statusText) {
 $exhaustPass = ($addingCount -eq 3) -and $exhaustedFired -and (-not $recoveredFired) -and (-not $infraError) -and ($statusState -eq 'ok')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.hidden_import.exhaust'
-    req     = 'REQ-016'
+    req     = 'REQ-016, REQ-007.13'
     pass    = $exhaustPass
     desc    = 'Strict --hidden-import recovery exhausts after 3 attempts when the app never actually succeeds'
     details = [ordered]@{
