@@ -138,6 +138,19 @@ function Invoke-WordingRun {
 }
 
 $noticePhrase = 'Fast path: not reusing'
+# REQ-007.6: the whole notice (what it says and why) appears exactly once in the setup log of the run, and before the
+# line that announces the build.
+$noticeFull = 'Fast path: not reusing .+ because your \.py or requirements files changed since it was built, or no build record was found; it will be rebuilt\.'
+$buildStartPhrase = 'Building standalone executable'
+function Get-NoticeFacts {
+    param([string]$Text)
+    $found = [regex]::Matches($Text, $noticeFull)
+    $buildAt = $Text.IndexOf($buildStartPhrase)
+    return [pscustomobject]@{
+        Count       = $found.Count
+        BeforeBuild = ($found.Count -ge 1) -and ($buildAt -ge 0) -and ($found[0].Index -lt $buildAt)
+    }
+}
 $allPass = $true
 
 try {
@@ -174,7 +187,8 @@ try {
     $r2 = Invoke-WordingRun -Tag 'run2'
     $exe2 = Get-ExeFacts
     $c2 = $r2.Console + "`n" + $r2.Setup
-    $r2Notice    = $c2 -match [regex]::Escape($noticePhrase)
+    $n2          = Get-NoticeFacts $r2.Setup
+    $r2Notice    = ($n2.Count -eq 1) -and $n2.BeforeBuild
     $r2Rebuilt   = $exe2.Exists -and (($exe2.Sha -ne $exeBefore2.Sha) -or ($exe2.Ticks -ne $exeBefore2.Ticks))
     $r2NewOutput = $r2.RunOut -match 'wording-app-v2'
     $r2Names     = ($r2.Diff -match [regex]::Escape('requirements.txt')) -and ($r2.Diff -match [regex]::Escape('requirements.auto.txt'))
@@ -186,7 +200,8 @@ try {
     $r3 = Invoke-WordingRun -Tag 'run3'
     $exe3 = Get-ExeFacts
     $c3 = $r3.Console + "`n" + $r3.Setup
-    $r3Notice    = $c3 -match [regex]::Escape($noticePhrase)
+    $n3          = Get-NoticeFacts $r3.Setup
+    $r3Notice    = ($n3.Count -eq 1) -and $n3.BeforeBuild
     $r3Rebuilt   = $exe3.Exists -and (($exe3.Sha -ne $exeBefore3.Sha) -or ($exe3.Ticks -ne $exeBefore3.Ticks))
     $r3NewOutput = $r3.RunOut -match 'wording-app-v3'
     # Only requirements.auto.txt is missing here, so the placeholder must name that file and must not
@@ -202,8 +217,8 @@ try {
         desc    = 'A stale cached EXE is rebuilt with one line saying it is not being reused; a first build prints no such line'
         details = [ordered]@{
             run1NoNotice = $r1NoNotice
-            run2Exit = $r2.Exit; run2Notice = $r2Notice; run2Rebuilt = $r2Rebuilt; run2NewOutput = $r2NewOutput
-            run3Exit = $r3.Exit; run3Notice = $r3Notice; run3Rebuilt = $r3Rebuilt; run3NewOutput = $r3NewOutput
+            run2Exit = $r2.Exit; run2Notice = $r2Notice; run2NoticeCount = $n2.Count; run2NoticeBeforeBuild = $n2.BeforeBuild; run2Rebuilt = $r2Rebuilt; run2NewOutput = $r2NewOutput
+            run3Exit = $r3.Exit; run3Notice = $r3Notice; run3NoticeCount = $n3.Count; run3NoticeBeforeBuild = $n3.BeforeBuild; run3Rebuilt = $r3Rebuilt; run3NewOutput = $r3NewOutput
             run2Log = $r2.Log; run3Log = $r3.Log
         }
     })

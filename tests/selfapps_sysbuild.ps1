@@ -71,9 +71,11 @@ function Invoke-SysBuildRun {
     $env:HP_CI_LANE               = 'test'
     if ($Builder) { $env:PVW_BUILDER = $Builder } else { Remove-Item Env:PVW_BUILDER -ErrorAction SilentlyContinue }
     $runLog = Join-Path $dir '~sysbuild_test.log'
+    $rc = $null
     Push-Location -LiteralPath $dir
     try {
         if ($NoAnswer) { cmd /c "run_setup.bat > ~sysbuild_test.log 2>&1 < nul" } else { cmd /c "run_setup.bat > ~sysbuild_test.log 2>&1" }
+        $rc = $LASTEXITCODE
     } finally {
         Pop-Location
         $env:HP_OFFLINE_MODE          = $saved.off
@@ -85,7 +87,7 @@ function Invoke-SysBuildRun {
         if ($null -eq $saved.pb) { Remove-Item Env:PVW_BUILDER             -ErrorAction SilentlyContinue } else { $env:PVW_BUILDER             = $saved.pb }
     }
     $text = if (Test-Path -LiteralPath $runLog) { Get-Content -LiteralPath $runLog -Raw -Encoding Ascii } else { '' }
-    return [pscustomobject]@{ Dir = $dir; Text = $text }
+    return [pscustomobject]@{ Dir = $dir; Text = $text; Exit = $rc }
 }
 
 $run = Invoke-SysBuildRun -Name '~selftest_sysbuild' -Builder ''
@@ -98,14 +100,20 @@ $promptShown = $txt -match [regex]::Escape('installs PyInstaller into your syste
 $declineLog  = $txt -match [regex]::Escape('[INFO] REQ-007: system-Python EXE build consent: declined.')
 $skipLog     = $txt -match [regex]::Escape('system-Python EXE build not consented; skipping PyInstaller packaging')
 $noExe       = -not (Test-Path -LiteralPath (Join-Path $workDir 'dist'))
+# REQ-007.18: the setup goes on after the decline. It ends with exit code 0, runs the program through the interpreter
+# in place of the EXE and reports success.
+$exitOk      = ($run.Exit -eq 0)
+$ranInterp   = $txt -match [regex]::Escape('Running entry script smoke test via system interpreter.')
+$statusOk    = $txt -match [regex]::Escape('[STATUS] Run Status: SUCCESS (Exit Code: 0)')
+$continued   = $exitOk -and $ranInterp -and $statusOk
 
-$pass = $promptShown -and $declineLog -and $skipLog -and $noExe
+$pass = $promptShown -and $declineLog -and $skipLog -and $noExe -and $continued
 Write-NdjsonRow ([ordered]@{
     id      = 'self.sysbuild.decline'
     req     = 'REQ-007.16, REQ-007.18'
     pass    = $pass
     desc    = 'REQ-007: system-Python EXE build is consent-gated; decline skips the build with a logged reason and no EXE'
-    details = [ordered]@{ promptShown = $promptShown; declineLog = $declineLog; skipLog = $skipLog; noExe = $noExe }
+    details = [ordered]@{ promptShown = $promptShown; declineLog = $declineLog; skipLog = $skipLog; noExe = $noExe; exit = $run.Exit; ranInterpreter = $ranInterp; statusSuccess = $statusOk }
 })
 
 # PVW_BUILDER=nuitka (Item 71): the system-Python build then installs Nuitka, not PyInstaller, so the question that asks

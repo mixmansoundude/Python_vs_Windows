@@ -97,7 +97,11 @@ $smokerunPassed = $combined -match [regex]::Escape($smokerunPassPhrase)
 # xfailPass: smokerun fired AND did NOT report exit 0, and the failing EXE did not stop the setup (REQ-007.7:
 # the bootstrap itself still ends with exit code 0)
 $setupContinued = ($runExit -eq 0)
-$xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $setupContinued
+# REQ-007.7 also says the user is guided to run the program directly: the post-flight panel for an unverified EXE
+# names the interpreter command, and the log records that the briefing advised a direct run.
+$guidedDirect = ($combined -match [regex]::Escape('You can also run it directly via the interpreter at any time:')) -and
+                ($combined -match [regex]::Escape('Post-flight briefing printed; EXE unverified, advised direct run.'))
+$xfailPass = $smokerunFired -and (-not $smokerunPassed) -and $setupContinued -and $guidedDirect
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.smokerun.xfail'
@@ -109,6 +113,7 @@ Write-NdjsonRow ([ordered]@{
         smokerunFired  = $smokerunFired
         smokerunPassed = $smokerunPassed
         setupContinued = $setupContinued
+        guidedDirectRun = $guidedDirect
         xfailPass      = $xfailPass
         log            = $bootstrapLog
     }
