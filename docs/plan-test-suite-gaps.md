@@ -142,11 +142,14 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    `HP_NONINTERACTIVE` or only `HP_CI_LANE` is set (`self.offers.noinput`, `.nonint`, `.cilane`, plus
    `self.offers.control`, the same offers reaching their prompts with none of the three set;
    `tests/selfapps_offers_noninteractive.ps1`, real lane, `tests/test_offers_noninteractive.py` pins the gates as
-   text). What is left, by size of the user-visible risk:
-   REQ-018.14, .16, .20, .21 and .22 (the runtime-install
-   offer: asked once, not offered for system Python, still-missing result, failed install or rebuild, package list
-   in the prompt), REQ-018.5 and .7 (the throwaway-check warning and the 30 second cap on the re-verification run),
-   REQ-012.5 (the neutral note when EXE verification is skipped),
+   text). Done 2026-11-07 (Item 99): REQ-018.14, .16, .20, .21 and .22 (the runtime-install offer: asked once, not
+   offered for system Python, still-missing result, failed install or rebuild, package list in the prompt;
+   `self.runtime.install.once`, `.notoffered`, `.listing`, `.stillmissing`, `.failed`, `.rebuildfailed`,
+   `tests/selfapps_runtime_install_edges.ps1`, contract-uv lane, through the hook `HP_TEST_FORCE_RTI_REBUILD_FAIL`),
+   REQ-018.5 (`self.launch.warning.throwaway`, the throwaway-check warning before the verification run of a build and of a
+   rebuild) and REQ-012.5 (`self.skiphooks.exe_only.panel`, the neutral note when EXE verification is skipped), the last
+   two in `tests/selfapps_skiphooks_single.ps1`. What is left, by size of the user-visible risk:
+   REQ-018.7 (the 30 second cap on the re-verification run),
    REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the header is never removed from; a merge that
    cannot run falls back with a warning) and REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the
    working files go). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is

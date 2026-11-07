@@ -4213,8 +4213,41 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   the three guards are green and `self.workdir.repair` and `.optbuild` are red for the right reason (start 2 ran in `...\dist`, the data
   file did not open by its relative name; in `repair` the loop's own start died on that file, so `--hidden-import=colorama` was never
   added and only 2 starts were recorded where the fixed flow makes 3). No listed row was missing in any lane.
+- **Fix run.** `42341378682` (head `e19f0e3`): all eight lanes read, none red (rows written: cache 107, real 291, conda-full 183,
+  justme-test 102, uv 142, contract-uv 97, contract-uv-fail 93, uv-dl-fallback 94) and no listed row missing. On `conda-full` the five
+  `self.workdir.*` rows are green with `startsOutsideEntryFolder` 0 and `startsWithoutData` 0: `repair` recorded 3 frozen starts (the
+  loop's own start no longer dies on the data file, so `--hidden-import=colorama` was added and the repaired EXE ran), `optbuild`
+  2 frozen starts, `verify` one frozen and one interpreter start (the checkpoint).
 - **Not changed on purpose.** A frozen EXE's own `sys.argv[0]`-relative files still land beside the EXE (`docs/agent-interconnect.md`,
   "Single-verification smoke model"), and a plain double-click of `dist\<env>.exe` starts in `dist\` whatever the bootstrapper does.
+
+### Item 99 (closed 2026-11-07, PR #525; assigned 2026-10-31 from the `gap:` entries of `tests/test_req_shall_trace.py`)
+
+- **The problem.** Seven README shalls had no row that could fail for them: REQ-018.5 (the throwaway-check warning before the
+  verification run), REQ-012.5 (the neutral panel note when the EXE verification is skipped by request) and the edges of the
+  runtime-install offer, REQ-018.14 (asked once per invocation, before any change, within 30 seconds), .16 (not offered for a system
+  Python, no interpreter or a fallback-built EXE, and the log says so), .20 (the check run's answer when the module is STILL missing),
+  .21 (a failed install or rebuild stops that step and starts no provider cascade) and .22 (the prompt lists every package, `cv2` as
+  `opencv-python`, `PIL` as `pillow`). Each had a `gap:` entry in `UNTRACED_SHALLS` saying what was missing.
+- **What shipped.** Eight rows and one hook. `self.skiphooks.exe_only.panel` and `self.launch.warning.throwaway` in
+  `tests/selfapps_skiphooks_single.ps1` (real lane; a third bootstrap of the `HP_SKIP_ENTRY_SMOKE` folder after a source change gives
+  the rebuild whose verification run the warning must precede). Six `self.runtime.install.*` rows in the new
+  `tests/selfapps_runtime_install_edges.ps1` (contract-uv lane, the lane with the most wall-clock headroom; its own gating step): gate
+  rows cut the real `:runtime_install_offer` block out of `run_setup.bat` and run it under cmd.exe with a driver of stubs (a control
+  scenario with a uv provider IS asked, so a driver that never offers cannot pass), and three real default bootstraps cover a package
+  still missing after the install (`xlsxwriter` installs, a name with a trailing underscore cannot), an install that fails, and a
+  rebuild that fails through the new hook `HP_TEST_FORCE_RTI_REBUILD_FAIL` (read only in `:rti_rebuild`, it gives PyInstaller an option
+  it rejects). The seven `gap:` entries are gone from `UNTRACED_SHALLS`; the accept row of `selfapps_runtime_install.ps1` now also
+  carries REQ-018.20 for the `verified` half.
+- **How it is kept honest.** `tests/test_edge_rows.py` pins the scripts, the cut (labels, calls, variables, once-per-bootstrap guard,
+  gate order, the single `choice /C YN /T 30 /D N` line, the provider set), the hook, the texts the rows look for (live `call :log` or
+  echo lines of the batch file), the workflow step and uploads and the registry, runs each judging function of both scripts through real
+  `pwsh` on synthetic runs, and has a mutation case per rule on a unique anchor. Its first drafts found a variable-name collision in the
+  script's own judge (`$calls` over `$Calls`, PowerShell names ignore case), see `docs/agent-lessons-learned.md`.
+- **Left alone on purpose.** REQ-018.16's "when no interpreter was selected": the scan returns before it reads anything when `HP_PY` is
+  undefined, so a real run logs no line for that case; the gate row shows the line only for the block called directly with no provider
+  (a README wording question for the README owner, not a code change). The status of a bootstrap after a failed rebuild is recorded in
+  the row details, not asserted. Item 105 (Ctrl+C read as a yes in three timed gates) was found on the way and filed separately.
 
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 

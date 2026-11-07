@@ -1285,7 +1285,11 @@ indefinitely instead of being caught at 30s -- an explicit owner decision ("if i
 was received then extend or stop the timeout... don't change the timeout" otherwise).
 `:warn_user_code_launch` takes a `main`/`hidden_import` parameter with different wording per
 caller, since `:hidden_import_recover`'s own separate, still-unconditional 30s check is
-deliberately NOT migrated to this activity-aware behavior.
+deliberately NOT migrated to this activity-aware behavior. All four wordings keep the two halves that
+`self.launch.warning.throwaway` (README REQ-018.5, `tests/selfapps_skiphooks_single.ps1`) counts on one console line,
+`Verifying the built standalone EXE` and `do not start real work in it`; the row needs exactly one such line before the
+program's own output for a fresh build and for a rebuild after a source change, and none for a cached-EXE repeat
+(`tests/test_edge_rows.py` `warning_batch_problems` pins the four wordings and their two halves).
 
 ### Process-ID display for stuck-program recovery
 
@@ -1484,6 +1488,22 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
   `rebuild_failed`, `verified`, `still_missing`, `not_verified`), `site`, `provider`, `depSource`, `packages`;
   `pass` is always true because a state is a finding. The verdicts live in `tests/selfapps_runtime_install.ps1`
   (`self.runtime.install.accept`/`.decline`/`.pyproject`, real lane).
+- **Edge rows (Item 99, README REQ-018.14, .16, .20, .21, .22)**: `tests/selfapps_runtime_install_edges.ps1` (six
+  `self.runtime.install.*` rows, `contract-uv` lane, gating) cuts `:runtime_install_offer` out of `run_setup.bat`, from its label
+  to `:rti_install_one`, and runs it under cmd.exe with a driver that defines `:log`, `:rti_row`, `:emit_from_base64` (copies the
+  real `tools/runtime_module_scan.py`) and replaces the one `choice` line with a recorded stub answering errorlevel 2. **Touch
+  the labels `:runtime_install_offer` / `:rti_install_one`, add a `call` or a `goto` that leaves the cut, or make the block read a
+  new variable, and the driver no longer runs it**: `tests/test_edge_rows.py` (`offer_problems`) says which, locally, and names
+  the script to update (`ALLOWED_CALLS`, `YES_ONLY_CALLS` and the driver's cleared variables). The block must keep: the
+  once-per-bootstrap guard as its first line, `HP_RTI_OFFERED` set before the question and where the offer is not made, one
+  gate order (test answer, `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`, then the console), exactly one live `choice /C YN /T 30
+  /D N` line, only providers uv, conda, venv and embed, and a single `Y` test as the way into `:rti_accepted`. Three real
+  bootstraps follow it: a program that catches its own `ImportError` (names joined at run time, so no static scan installs them),
+  answered yes through `HP_TEST_RTM_ANSWER`. `HP_TEST_FORCE_RTI_REBUILD_FAIL` (read only inside `:rti_rebuild`, named by the edge
+  script and its unit test as `tests/test_flag_inventory.py` requires) hands PyInstaller an option it rejects, so the rebuild
+  fails without breaking any other build; absence changes nothing (README REQ-019). The driver never runs the real `choice`
+  (Item 105 is about what it answers for Ctrl+C), and the status of a bootstrap after a failed rebuild is recorded in the row's
+  details, not asserted.
 - **Payload margin**: `HP_RUNTIME_MODULE_SCAN` has 354 characters left under the 8191 limit. Item 82's
   last-error-line extraction does not fit; give it its own payload or shrink this one first.
 - **Not covered**: a native DLL a newly installed conda package needs is not bundled (`:dll_bundle_recover`

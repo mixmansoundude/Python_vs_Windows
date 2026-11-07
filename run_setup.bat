@@ -6045,8 +6045,14 @@ set "HP_RTI_SPEC_PRE="
 if exist "%ENVNAME%.spec" set "HP_RTI_SPEC_PRE=1"
 for /f "usebackq tokens=1,2" %%A in ("~runtime_install_ok.txt") do call :rti_add_hidden "%%A"
 call :log "[INFO] Runtime install: rebuilding the standalone EXE with the new packages. This may take a minute or two..."
-"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+rem [TEST] HP_TEST_FORCE_RTI_REBUILD_FAIL: adds an option PyInstaller rejects, so this rebuild fails the way a broken
+rem build does and the rebuild_failed branch can be tested. Absent, the command line is exactly the one below.
+set "HP_RTI_TEST_BAD="
+if defined HP_TEST_FORCE_RTI_REBUILD_FAIL set "HP_RTI_TEST_BAD=--pvw-test-invalid-option"
+if defined HP_TEST_FORCE_RTI_REBUILD_FAIL call :log "[TEST] HP_TEST_FORCE_RTI_REBUILD_FAIL: the rebuild command gets an option PyInstaller rejects."
+"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% %HP_RTI_TEST_BAD% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 set "HP_RTI_REBUILD_FAILED=1"
+set "HP_RTI_TEST_BAD="
 if not exist "dist\%ENVNAME%.exe" set "HP_RTI_REBUILD_FAILED=1"
 if not defined HP_RTI_SPEC_PRE if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
 if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
