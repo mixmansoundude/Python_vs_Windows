@@ -4204,6 +4204,15 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   note that no list named them. Regenerated into scratch from #522's two green runs (`42232561657`, `42277353916`): the diff was
   exactly those 13 and 4 ids, no id removed, and the post lists regenerated to the same ids (#522 added no post-harness row).
   The two lists carry the new ids in this PR; the merged head's own run is what proves they are written (`0 missing`).
+- **And a third time, the same night (2026-11-07).** PR #523 (README REQ-013 to REQ-017, 020, 023, REQ-003.6) merged while the
+  final run of this PR was being read and added 7 pre-harness ids to every lane (`self.ux.connectivity.empty`, `.noinput`,
+  `.nonint`, `self.ux.system.gate.empty`, `.ci`, `self.ux.gitignore.create`, `self.ux.gitattributes.append`) and 7 post-harness
+  ids to every lane (`self.corrupt.conda.real_detect`, `.real_ci`, `.real_ask`, `.real_decline`, `.real_locked`, `.real_override`,
+  `self.corrupt.uv.real_probe`). Lane 3 named them in a note; regenerating from its two green runs (`42317314810`, `42278693709`,
+  both with no failing row) showed exactly those ids as additions, and the only ids "removed" were #522's, which the older of the
+  two runs predates. **Take the additions only (`comm -13` of the old list against the regenerated one) and keep every old id**: a
+  regeneration from two runs is the intersection of what BOTH wrote, so an id added by a PR that merged after the older run
+  disappears from the output. Merging main moved the base again, so the final run of this PR was read for a second head.
 - **Decided: no mechanical check that a PR regenerates the lists.** A test cannot know which rows a lane is meant to keep writing;
   the gate report already counts the `unlisted` rows per lane, and the "CI lane gating maturity" scan reads that count. The rule
   for a PR that adds rows is in `docs/agent-interconnect.md`.
