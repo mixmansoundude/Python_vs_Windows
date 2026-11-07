@@ -10,17 +10,25 @@
 #        The interpreter smoke test is skipped, the EXE verification run is NOT: a fresh bootstrap builds the EXE
 #        and the EXE runs the program once (frozen=true). The repeat reuses the unchanged cached EXE and runs it
 #        once more, so two lines in all.
+#        F3 (Item 99, REQ-018.5): the source is changed after the repeat, so the cached EXE is stale and the
+#        bootstrapper rebuilds. A build or rebuild is verified by running the EXE once, after the warning that
+#        this run is a throwaway check (do not start real work in it): the ledger gains exactly one line (three
+#        in all) and the warning is printed once, before the program's own output. The repeat (F2) builds
+#        nothing and prints no such warning.
 #   G  HP_SKIP_EXE_SMOKERUN=1 alone
 #        The EXE is built but not run. Skipping the EXE run must not leave the build unverified, so the
 #        interpreter runs the program once instead (frozen=false). The repeat reuses the cached EXE WITHOUT
 #        running it ("reusing cached EXE without running it"), so the ledger stays at one line.
+#        The post-flight panel (Item 99, REQ-012.5) shows the neutral note that the EXE verification was skipped
+#        by request, under the plain "SETUP COMPLETE" heading, and not the unverified caveat.
 #
 # derived requirement: ids stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py
 # scans text, not PowerShell).
 #
 # Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"); the behavior does not depend on
-# the provider, so one lane is enough. Four bootstraps (two builds, two repeats).
-# Emits: self.skiphooks.entry_only, self.skiphooks.exe_only
+# the provider, so one lane is enough. Five bootstraps (two builds, one rebuild, two repeats).
+# Emits: self.skiphooks.entry_only, self.skiphooks.exe_only, self.skiphooks.exe_only.panel,
+#        self.launch.warning.throwaway
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -40,16 +48,18 @@ function Write-NdjsonRow {
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-    foreach ($rowId in @('self.skiphooks.entry_only', 'self.skiphooks.exe_only')) {
+    foreach ($rowId in @('self.skiphooks.entry_only', 'self.skiphooks.exe_only', 'self.skiphooks.exe_only.panel')) {
         Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-012'; pass = $true; desc = 'Single skip hook (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     }
+    Write-NdjsonRow ([ordered]@{ id = 'self.launch.warning.throwaway'; req = 'REQ-018.5'; pass = $true; desc = 'Throwaway warning before the verification run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     exit 0
 }
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
-    foreach ($rowId in @('self.skiphooks.entry_only', 'self.skiphooks.exe_only')) {
+    foreach ($rowId in @('self.skiphooks.entry_only', 'self.skiphooks.exe_only', 'self.skiphooks.exe_only.panel')) {
         Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-012'; pass = $false; desc = 'Single skip hook: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     }
+    Write-NdjsonRow ([ordered]@{ id = 'self.launch.warning.throwaway'; req = 'REQ-018.5'; pass = $false; desc = 'Throwaway warning before the verification run: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
     exit 1
 }
 
@@ -120,6 +130,26 @@ function Invoke-HookBootstrap {
     }
 }
 
+# Item 99 (REQ-018.5): what one bootstrap log says about the warning that the verification run is a throwaway
+# check. Count is the number of lines that carry both halves of the warning, Before is true when the first such
+# line comes ahead of the first line of the program's own output (the live tee of the verification run).
+function Get-WarningFacts {
+    param([string]$Log, [string]$Marker)
+    $count = 0
+    $warnAt = -1
+    $outAt = -1
+    $i = 0
+    foreach ($line in @($Log -split "\r?\n")) {
+        $i++
+        if ($line.Contains('Verifying the built standalone EXE') -and $line.Contains('do not start real work in it')) {
+            $count++
+            if ($warnAt -lt 0) { $warnAt = $i }
+        }
+        if ($outAt -lt 0 -and $line.Contains($Marker)) { $outAt = $i }
+    }
+    return [pscustomobject]@{ Count = $count; WarnLine = $warnAt; OutputLine = $outAt; Before = (($warnAt -gt 0) -and ($outAt -gt $warnAt)) }
+}
+
 function Show-Evidence {
     param([string]$Title, [string]$Dir, [string]$LogName)
     Write-Host ("=== single skip hook evidence: {0} ===" -f $Title)
@@ -127,7 +157,7 @@ function Show-Evidence {
     if (Test-Path -LiteralPath $raw) { Get-Content -LiteralPath $raw -Encoding ASCII | ForEach-Object { Write-Host ("ledger: " + $_) } } else { Write-Host 'ledger: (no ~ledger.jsonl in the app folder)' }
     $log = Join-Path $Dir $LogName
     if (Test-Path -LiteralPath $log) {
-        Get-Content -LiteralPath $log -Encoding ASCII | Where-Object { $_ -match 'REQ-012|Fast path|Entry smoke|EXE smokerun|Building standalone|PyInstaller produced|\[ERROR\]' } | Select-Object -First 30 | ForEach-Object { Write-Host $_ }
+        Get-Content -LiteralPath $log -Encoding ASCII | Where-Object { $_ -match 'REQ-012|Fast path|Entry smoke|EXE smokerun|Verifying the built|Building standalone|PyInstaller produced|SETUP COMPLETE|skipped by request|\[ERROR\]' } | Select-Object -First 30 | ForEach-Object { Write-Host $_ }
     } else { Write-Host ("log missing: " + $LogName) }
 }
 
@@ -157,11 +187,17 @@ try {
     $exitF2 = Invoke-HookBootstrap -Dir $dirF -LogName '~hook_f2.log'
     $linesF2 = Read-Ledger -Dir $dirF
     Show-Evidence -Title 'F2 HP_SKIP_ENTRY_SMOKE alone, repeat' -Dir $dirF -LogName '~hook_f2.log'
+    # F3: change the program so the cached EXE is stale. The rebuild is verified by one more run of the EXE.
+    Add-Content -LiteralPath (Join-Path $dirF 'ledger_app.py') -Value '# changed after the first build, so the cached EXE is stale' -Encoding ASCII
+    $exitF3 = Invoke-HookBootstrap -Dir $dirF -LogName '~hook_f3.log'
+    $linesF3 = Read-Ledger -Dir $dirF
+    Show-Evidence -Title 'F3 HP_SKIP_ENTRY_SMOKE alone, rebuild after a source change' -Dir $dirF -LogName '~hook_f3.log'
 } finally {
     Restore-TestEnv $savedF
 }
 $logF1 = Read-Text -Path (Join-Path $dirF '~hook_f1.log')
 $logF2 = Read-Text -Path (Join-Path $dirF '~hook_f2.log')
+$logF3 = Read-Text -Path (Join-Path $dirF '~hook_f3.log')
 $entrySkipLogged = $logF1 -match [regex]::Escape('REQ-012: HP_SKIP_ENTRY_SMOKE set; skipping entry-script smoke test')
 $exeSmokeRanF1 = $logF1 -match [regex]::Escape('EXE smokerun: testing')
 $f1 = if ($linesF1.Count -ge 1) { $linesF1[0] } else { $null }
@@ -182,6 +218,29 @@ Write-NdjsonRow ([ordered]@{
         firstFrozen = if ($f1) { $f1.frozen } else { $null }; repeatFrozen = if ($f2) { $f2.frozen } else { $null }
         repeatReusedCachedExe = [bool]($logF2 -match [regex]::Escape('Fast path: reusing'))
         repeatRebuilt = [bool]($logF2 -match [regex]::Escape('Building standalone executable'))
+    }
+})
+
+# REQ-018.5: a build or a rebuild is verified by running the EXE once, after the warning that this run is a throwaway
+# check. F1 is a fresh build, F2 builds nothing (no warning), F3 is a rebuild after a source change.
+$wF1 = Get-WarningFacts -Log $logF1 -Marker 'ledger-ok'
+$wF2 = Get-WarningFacts -Log $logF2 -Marker 'ledger-ok'
+$wF3 = Get-WarningFacts -Log $logF3 -Marker 'ledger-ok'
+$f3 = if ($linesF3.Count -ge 3) { $linesF3[2] } else { $null }
+$rebuiltF3 = $logF3 -match [regex]::Escape('Building standalone executable')
+$warnPass = ($exitF1 -eq 0) -and ($exitF2 -eq 0) -and ($exitF3 -eq 0) -and $exeF1 -and $rebuiltF3 -and
+    ($wF1.Count -eq 1) -and $wF1.Before -and ($wF2.Count -eq 0) -and ($wF3.Count -eq 1) -and $wF3.Before -and
+    ($linesF1.Count -eq 1) -and ($linesF2.Count -eq 2) -and ($linesF3.Count -eq 3) -and ($null -ne $f3) -and ($f3.frozen -eq $true)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.launch.warning.throwaway'; req = 'REQ-018.5'; pass = [bool]$warnPass
+    desc = 'REQ-018.5: the verification run of a build or a rebuild comes after the warning that it is a throwaway check, and runs the EXE once'
+    details = [ordered]@{
+        exitFirst = $exitF1; exitRepeat = $exitF2; exitRebuild = $exitF3; exeBuilt = [bool]$exeF1; rebuilt = [bool]$rebuiltF3
+        warningsFirst = $wF1.Count; warningFirstBeforeOutput = [bool]$wF1.Before; warnLineFirst = $wF1.WarnLine; outputLineFirst = $wF1.OutputLine
+        warningsRepeat = $wF2.Count
+        warningsRebuild = $wF3.Count; warningRebuildBeforeOutput = [bool]$wF3.Before; warnLineRebuild = $wF3.WarnLine; outputLineRebuild = $wF3.OutputLine
+        ledgerLinesFirst = $linesF1.Count; ledgerLinesRepeat = $linesF2.Count; ledgerLinesRebuild = $linesF3.Count
+        rebuildFrozen = if ($f3) { $f3.frozen } else { $null }
     }
 })
 
@@ -225,5 +284,26 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not ($entryPass -and $exePass)) { exit 1 }
+# REQ-012.5: the post-flight panel of the skipped run. The panel's lines wrap over several echo statements in the
+# batch file, so the console text is read with its whitespace flattened. The plain heading must be there, or "no
+# caveat" would also pass when no panel was printed at all.
+$flatG1 = ($logG1 -replace '\s+', ' ')
+$panelHeading = $flatG1 -match [regex]::Escape('SETUP COMPLETE')
+$panelNote = $flatG1 -match [regex]::Escape('Note: EXE verification was skipped by request (HP_SKIP_EXE_SMOKERUN).')
+$caveatHeading = $flatG1 -match [regex]::Escape('SETUP COMPLETE -- WITH A CAVEAT')
+$caveatSentence = $flatG1 -match [regex]::Escape("couldn't fully verify it runs as a standalone program")
+$cantConfirm = $flatG1 -match [regex]::Escape("BUT WE CAN'T CONFIRM")
+$panelPass = ($exitG1 -eq 0) -and $exeG1 -and $exeSkipLogged -and $panelHeading -and $panelNote -and
+    (-not $caveatHeading) -and (-not $caveatSentence) -and (-not $cantConfirm)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.skiphooks.exe_only.panel'; req = 'REQ-012.5'; pass = [bool]$panelPass
+    desc = 'REQ-012.5: with HP_SKIP_EXE_SMOKERUN the post-flight panel notes that the EXE verification was skipped by request and shows no unverified caveat'
+    details = [ordered]@{
+        exitFirst = $exitG1; exeBuilt = [bool]$exeG1; skipLineLogged = [bool]$exeSkipLogged
+        panelHeading = [bool]$panelHeading; panelNote = [bool]$panelNote
+        caveatHeading = [bool]$caveatHeading; caveatSentence = [bool]$caveatSentence; cantConfirmHeading = [bool]$cantConfirm
+    }
+})
+
+if (-not ($entryPass -and $exePass -and $warnPass -and $panelPass)) { exit 1 }
 exit 0
