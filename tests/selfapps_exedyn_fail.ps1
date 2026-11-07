@@ -72,6 +72,11 @@ $bootstrapLog = '~exedyn_bootstrap.log'
 
 $prev = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
 $env:HP_SKIP_PIPREQS = '1'
+# Item 97: the --hidden-import repair loop starts the program again, so it asks first, and a non-interactive run
+# (every CI lane) declines. This scenario is about the loop declining a module that is not installed, so the test
+# answers yes through HP_TEST_REPAIR_ANSWER and the loop really runs; the question and the declined path are rows of selfapps_repair_consent.ps1.
+$prevRepairAnswer = [Environment]::GetEnvironmentVariable('HP_TEST_REPAIR_ANSWER')
+[Environment]::SetEnvironmentVariable('HP_TEST_REPAIR_ANSWER', 'Y')
 
 Push-Location $workDir
 try {
@@ -83,6 +88,7 @@ try {
     } else {
         $env:HP_SKIP_PIPREQS = $prev
     }
+    [Environment]::SetEnvironmentVariable('HP_TEST_REPAIR_ANSWER', $prevRepairAnswer)
     Pop-Location
 }
 

@@ -8,7 +8,7 @@ never sees its body at all -- only the outer `-File "path" arg...` invocation is
 and that's plain argv (env var names, output paths) with no %-pairing hazard.
 
 No importable functions exist -- exercised end-to-end via a real `pwsh` subprocess, mirroring
-tests/test_exe_hint_rerun.py's own harness.
+tests/test_exe_smokerun.py's own harness.
 """
 import base64
 import re
@@ -141,8 +141,8 @@ class SecondExpansionSafety(unittest.TestCase):
 
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
-        # See tests/test_exe_hint_rerun.py's own PayloadSync test for why CRLF/LF normalization
-        # is required here (`*.ps1 text eol=crlf` in .gitattributes).
+        # See docs/agent-lessons-learned.md, "Embedded Helper Update Workflow", for why CRLF/LF
+        # normalization is required here (`*.ps1 text eol=crlf` in .gitattributes).
         bat = (REPO / "run_setup.bat").read_text(encoding="ascii", errors="replace")
         m = re.search(r'set "HP_DLL_PCT_SANITIZE=([A-Za-z0-9+/=]+)"', bat)
         self.assertIsNotNone(m, "HP_DLL_PCT_SANITIZE payload not found in run_setup.bat")

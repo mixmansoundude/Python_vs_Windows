@@ -4008,6 +4008,8 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Not covered.** REQ-018.2 itself is credited to no row: two starts without a prompt remain (the failure-hint re-run, Item 96,
   and the repair loop's starts, Item 97), so its entry in `UNTRACED_SHALLS` stays a `gap:` entry until a row shows that nothing
   starts the program a further time without a question.
+  Closed by Items 96 and 97 (PR #522): the hint re-run is gone, the repair loop asks first, and REQ-018.2 is credited to the
+  `self.repair.*` rows (its `gap:` entry is deleted).
 
 ### Item 94b (closed 2026-10-31, PR #517; filed 2026-10-30 from the shall-tracing work)
 
@@ -4024,6 +4026,7 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   the script's literal ids and tags, the scrub, the exit codes and the gating step.
 - **Evidence.** Fix run `41191314038` (head `0866748`): the four rows true on `real`, no red row on any lane. The failing program
   is not counted by the ledger because the failure-hint re-run still starts a failed EXE a second time (Item 96).
+  Item 96 removed that re-run, and `tests/selfapps_hint_norerun.ps1` now counts every start of a failing program.
 
 ### Item 95 (closed 2026-10-31, PR #517; filed 2026-10-30 from reading the cache lane's step)
 
@@ -4091,6 +4094,76 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   NDJSON results" and `run_tests.bat` itself, Item 84). Each scan of "CI lane gating maturity" reads the `unlisted` counts of the
   latest green run's `expected-rows.txt`; a lane that keeps writing many rows no list has is losing protection.
 - Detail and the rule for adding an id: `docs/agent-interconnect.md`, "Expected-row baseline (Item 98)".
+
+### Item 96 (closed 2026-11-06, PR #522; filed 2026-10-31 while building the launch ledger of Item 94b)
+
+- **The problem.** After a failed EXE verification run, `:exe_smokerun_hints` started `dist\<env>.exe` once more through the emitted
+  helper `~exe_hint_rerun.ps1` (killed after ten seconds), only to read the error text for a hint. README REQ-018.1 allows one
+  automatic start per invocation and REQ-018.2 asks for the user's consent before any other; this start had no announcement and no
+  question, so a program that fails was started three times (the check run, this re-run, and the repair loop's own start).
+  The ledger rows of Item 94b could not count the failing program for exactly this reason.
+- **What shipped.** The hints match against `~exe_out.txt` in the app root, filled from text a run already printed: after a repair
+  rebuild that still failed, the repair loop's last output (`:hidden_import_recover_done` moves it there, so the hint describes
+  the repaired EXE's failure and no longer repeats a hidden-import hint for a module the repair already added); otherwise it is
+  built from `~run.out.txt` and `~run.err.txt`, the capture of the verification run from the app root. `:run_exe_smokerun` clears
+  an older file before the launch. `tools/exe_hint_rerun.ps1`, the payload `HP_EXE_HINT_RERUN` and
+  `tests/test_exe_hint_rerun.py` are deleted; `tests/test_hint_norerun.py` pins the batch side (no launch in the hints, the
+  sources and their order, the pre-launch clear, the hand-over conditions), each with a synthetic case that proves it can fail.
+- **Rows** (`tests/selfapps_hint_norerun.ps1`, `real` and `conda-full`, gating, a 15 minute limit per run, the start ledger written
+  to an absolute path before anything else): `self.launch.count.failed_run` and `self.launch.count.repaired_run` (every start is
+  announced or follows a rebuild: `starts <= announced + rebuilds`) are the red rows; `self.hint.datafile.capture` and
+  `self.hint.final_failure` (REQ-007) are guards that stay green on purpose, they show the replacement keeps naming the missing
+  file and, after a repair, describes the repaired EXE's failure.
+- **Evidence.** Red run `42196914468` (head `54b0e2c`, tests only): on `real` and `conda-full` both count rows red with exactly one
+  unannounced start each (3 starts for 2 announcements; 4 for 2 + 1 rebuild), both guards green, `self.pytest.unit` red on the
+  batch-reading tests only, one red row (`self.pytest.unit`) on each of the other six lanes, no listed row missing in any lane.
+- **Fix run.** `42232561657` (head `4308159`, the fix plus the main of that time): 0 red rows on all eight lanes and no listed row
+  missing. On `real` and `conda-full` both count rows are green (`failed_run`: 1 start for 1 announcement; `repaired_run`: 3 starts
+  for 2 announcements and 1 rebuild) and both guards stay green. The two starts of the repair loop in `repaired_run` ran in `dist\`
+  (`startsFromDist` 2), which is the working-folder question of Item 101. `self.pytest.unit` passed (1449 tests) on every lane.
+- **Known limit.** The second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only that
+  call ends in a failure the hint is explained from the verification run's capture, not from the DLL-repaired EXE.
+  Detail: `docs/agent-interconnect.md`, "The failure hints read text a run already printed".
+
+### Item 97 first pass (closed 2026-11-06, PR #522; filed 2026-10-31 as open question 7, answered by the maintainer the same day)
+
+- **The problem.** After a failed check run, `:hidden_import_recover` started `dist\<env>.exe` again to read an error that
+  `~run.err.txt` already held, then once after each repair rebuild (up to three in a call, and the loop can be called twice), with
+  a one-line warning and no question. README REQ-018.1 allows one automatic start and REQ-018.2 any other only with explicit,
+  risk-naming consent, while REQ-018.7 accepted the loop's 30 second run, so the README said two things about the same starts.
+  `UNTRACED_SHALLS` carried REQ-018.2 as a `gap:` entry for it. A program that is not safe to run twice (it appends a suffix to
+  every row, sends a message) repeated its work up to four times, unasked.
+- **The decision** (maintainer, 2026-10-31, in the project chat): not the option that reads the saved output first, yet. A first
+  pass that keeps the loop as it is and asks ONE question before its first extra start: default No after 30 seconds, the gate shape
+  of the other elective offers, no waiting and no repair in a non-interactive run, no question when `HP_PVW_KNOWN_IDEMPOTENT` is
+  set, and a test answer so the CI scenarios about the repair itself can say yes. The rest is recorded as the follow-ups in
+  CLAUDE.md (reading `~run.err.txt` first, "do not ask again for N runs", the known-idempotent skip on the other offers, and the
+  maintainer's idea of one up-front consent question).
+- **What shipped.** `:hidden_import_consent` (README REQ-018.2 and REQ-018.9): five heading lines that name the risk, then
+  `HP_PVW_KNOWN_IDEMPOTENT` / an answer already given in this bootstrap / `HP_TEST_REPAIR_ANSWER` / the three non-interactive
+  signals / `choice /T 30 /D N`; only an exact Y goes on. `:hidden_import_recover` calls it right after the Nuitka skip and returns
+  at once unless `HP_HIC_ALLOWED` is set, so a no starts nothing and rebuilds nothing and the usual hint for adding the package by
+  hand follows. The four scripts that make the repair run (`selfapps_hidden_import`, `selfapps_hidden_import_exhaust`,
+  `selfapps_exedyn_fail`, `selfapps_layered_e2e`) and the `repaired` scenario of `selfapps_hint_norerun` answer yes through
+  `HP_TEST_REPAIR_ANSWER`. Detail and the rules for touching it: `docs/agent-interconnect.md`, "The `--hidden-import` repair loop
+  asks before it starts the program again".
+- **Rows** (`tests/selfapps_repair_consent.ps1`, `real`, gating): `self.repair.gate.noinput|nonint|cilane|control|answers|idempotent|once`
+  run the real block cut out of `run_setup.bat` under cmd.exe with closed standard input (each signal alone, the no-signal control
+  that must show the prompt, the test answers, the known-idempotent flag, the answer kept for the loop's second call), and
+  `self.repair.consent.declined|accepted` bootstrap a failing program with a start ledger (declined: exactly one start and no
+  rebuild; accepted: the consent line comes before the loop's announcement and its first `Adding --hidden-import`).
+  `tests/test_repair_consent.py` (44 tests) and the fifth prompt in `tests/test_rerun_prompts.py` hold the shape. REQ-018.2 is
+  credited to these rows and its `gap:` entry is gone.
+- **Evidence.** Red run `42196914468` (head `54b0e2c`, tests only): on `real` all nine `self.repair.*` rows red for the right reason
+  (the gate rows `blockFound: false`, `declined` 3 starts and 1 rebuild with no question, `accepted` no question and no accepted
+  line), `self.pytest.unit` red on exactly the eight batch-reading tests, nothing else red and no listed row missing in any lane.
+- **Fix run.** `42232561657` (head `4308159`): all nine `self.repair.*` rows green on `real`, the first time the real block ran under
+  cmd.exe. The prompt text shows only in the control scenario (`promptShown` true there; false for each signal alone, the test
+  answers and the once rows), `gate.once` shows the answer kept for the loop's second call, `consent.declined` ends after 1 start
+  with no rebuild, and `consent.accepted` makes 3 starts with the consent line ahead of the first `Adding --hidden-import`. The
+  four scripts that make the repair run (they answer yes through `HP_TEST_REPAIR_ANSWER`) show no red row on any lane.
+- **README wording proposed** in the PR body for the README owner: REQ-018.2 names the repair run, REQ-018.9 lists the fifth
+  elective offer, REQ-018.35 names `HP_PVW_KNOWN_IDEMPOTENT`.
 
 ### Item 100 (closed 2026-11-06, PR #520; an Item 35 slice, the "wider" Pages-publish gap CodeRabbit raised on PR #471)
 

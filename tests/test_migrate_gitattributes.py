@@ -283,8 +283,8 @@ class LineEndingAndEncodingPreservation(unittest.TestCase):
 
 class PayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
-        # See tests/test_exe_hint_rerun.py's own PayloadSync test for why CRLF/LF normalization
-        # is required here (`*.ps1 text eol=crlf` in .gitattributes).
+        # See docs/agent-lessons-learned.md, "Embedded Helper Update Workflow", for why CRLF/LF
+        # normalization is required here (`*.ps1 text eol=crlf` in .gitattributes).
         bat = (REPO / "run_setup.bat").read_text(encoding="ascii", errors="replace")
         m = re.search(r'set "HP_MIGRATE_GITATTRIBUTES=([A-Za-z0-9+/=]+)"', bat)
         self.assertIsNotNone(m, "HP_MIGRATE_GITATTRIBUTES payload not found in run_setup.bat")

@@ -63,7 +63,10 @@ running it twice could cause harm. ***` (last line of the optimized-build offer'
 mistake is in your own program. It is not a problem with installing dependencies or with building the
 EXE. ***` (the line after the syntax-error report's heading). Scenario 5 shows both prompts with their
 sentence, and the extrapolated walkthroughs (Scenarios 32, 33 and 35) carry them too; the captured blocks of
-every other scenario were taken before the change and do not contain them.
+every other scenario were taken before the change and do not contain them. Item 97 (2026-11-06) added one question
+before the `--hidden-import` repair loop starts the program again (five heading lines, the timed `choice` text and a
+log line, all source excerpts); Scenario 35 carries it, and the captured blocks of Scenario 16 and the other repair
+scenarios were taken before it and do not contain it.
 
 **Scope:** grouped by feature area, ordered roughly the way a real user would actually encounter
 each area -- the default happy path and its immediate variations first, narrower and more advanced
@@ -2337,9 +2340,10 @@ diagnostic these tests emit, not the tests' own primary assertion target).
 Scenario 16 covers `--hidden-import` auto-recovery reaching its 3-attempt cap without resolving. In
 that same failure family -- any EXE that still fails at runtime AFTER hidden-import recovery has
 been tried (or was never applicable, e.g. a genuinely missing DATA file, not a missing module) --
-`:exe_smokerun_hints` re-runs the EXE briefly (no timeout needed; these failures exit immediately)
-purely to pattern-match its stderr and offer a targeted, actionable hint. Two real captures, from
-two different xfail scenarios:
+`:exe_smokerun_hints` pattern-matches the error text a run already printed and offers a targeted,
+actionable hint (since Item 96 it never starts the EXE again; the two captures below were taken
+before that change, when the hints read a brief re-run, and the hint lines themselves are unchanged).
+Two real captures, from two different xfail scenarios:
 
 **A missing bundled data file** (real capture, `FileNotFoundError`):
 
@@ -2861,6 +2865,14 @@ print('colorama via importlib ok:', _mod.__name__)
 [INFO] EXE smokerun: testing dist\<env>.exe
 [WARN] Verifying the built standalone EXE (PyInstaller) now: if it stays completely silent for about 30 seconds it will be force-stopped, but any output (including a prompt waiting on your input) keeps it running as long as needed. If your program is interactive, try answering its prompts through to its own quit/exit option now so we can confirm it exits cleanly. Either way, do not start real work in it yet or any unsaved work will be lost.
 [WARN] EXE smokerun: exited 1 (non-zero)
+
+*** The check run of your program failed, exit code 1. ***
+*** It may only be missing a package that the EXE build could not see. ***
+*** To find out, the repair starts your program again to read its error, and again after each rebuild. ***
+*** That is up to four more starts, and up to eight if a library file has to be added too. ***
+*** Each start repeats whatever your program does, so say no if running it twice could cause harm. ***
+  Start your program again to try the repair? [Y/N, defaults to N after 30s]
+[INFO] Repair loop: accepted. Your program will be started again to look for a missing package.
 [REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama --collect-submodules=colorama; rebuilding EXE (iter 1/3).
 [INFO] PyInstaller produced dist\<env>.exe
 [INFO] EXE smokerun: testing dist\<env>.exe
@@ -2940,6 +2952,22 @@ The gate that makes this rebuild worth attempting at all -- the failure must be 
 interpreter, and the EXE must have been built by PyInstaller, not Tier A's Nuitka fallback -- is
 covered in full in `docs/agent-lessons-learned.md`'s "--hidden-import auto-recovery must stay
 STRICT" entry; Scenario 16 covers the case where three rebuilds still don't resolve it.
+
+**Saying no (Item 97, source excerpt, `[Extrapolated Branch]` like the rest of the panel):** the question above is asked once
+per run, before the repair loop's first extra start, with the default No after 30 seconds. A no, a timeout, and a run
+that is not interactive (`NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE` set) start nothing and rebuild nothing, so the
+failed check run stays the only start of the program, and the usual hint for adding the package by hand follows:
+
+```
+  Start your program again to try the repair? [Y/N, defaults to N after 30s]
+[INFO] Repair loop: declined. Your program was not started again and nothing was rebuilt.
+[HINT][HIDDEN_IMPORT] Hidden import likely missing: colorama
+[HINT][HIDDEN_IMPORT] Consider adding: --hidden-import=colorama
+```
+
+A non-interactive run prints the five heading lines and then only `[INFO] Repair loop: not asked in a non-interactive run, so
+your program is not started again and nothing is rebuilt.`; with `HP_PVW_KNOWN_IDEMPOTENT` set (the user's own word that the
+program is safe to run more than once) no question is asked and the repair goes ahead.
 
 ### Scenario 36: Full walkthrough -- `HP_PVW_KNOWN_IDEMPOTENT`, with the actual input and output files
 
