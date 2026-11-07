@@ -176,7 +176,10 @@ ran). The lists close that: one file per selftest matrix lane, one row id per li
   `self.offers.*`, `self.preflight.attribution`, `self.runtime.install.risk`) to `real`, and two of them to `conda-full`,
   and no list named them, so a script that stopped writing them would have stayed green. A PR that adds rows a lane is
   meant to keep writing regenerates that lane's list (two green runs that contain the rows) or says why not in its body.
-  The gate's own report counts the `unlisted` rows per lane; that count is what shows the drift.
+  The gate's own report counts the `unlisted` rows per lane; that count is what shows the drift. It happened again the next day
+  (#522 added 13 ids to `real` and 4 to `conda-full` while Item 103 was open): the cheap check is to regenerate into a scratch
+  copy of the baseline folder from the last two green runs and `diff -r` it against `tests/expected_rows`, which shows added ids
+  only when nothing was removed.
 
 ### The post-harness half (Item 104): a second artifact, a second list, a second exit code
 

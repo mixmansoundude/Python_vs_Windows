@@ -4197,6 +4197,13 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `conda-full.txt` named none of them, so a script that stopped writing them would have kept the gate green.
 - **What shipped.** Both lists were regenerated with `tools/check_expected_rows.py generate` from four green runs (`42192398047`,
   `42231172648`, `42194500845`, `42231664711`, ids present in all four); the diff is exactly the ten ids, nothing else moved.
+- **The same drift again, caught within the day (2026-11-07).** PR #522 (Items 96 and 97) merged while this PR was open and added
+  13 ids to `real` (`self.hint.datafile.capture`, `self.hint.final_failure`, `self.launch.count.failed_run`,
+  `self.launch.count.repaired_run`, `self.repair.consent.accepted`, `.declined`, `self.repair.gate.answers`, `.cilane`, `.control`,
+  `.idempotent`, `.noinput`, `.nonint`, `.once`) and the first four of them to `conda-full`; the coordinator relayed lane 2's
+  note that no list named them. Regenerated into scratch from #522's two green runs (`42232561657`, `42277353916`): the diff was
+  exactly those 13 and 4 ids, no id removed, and the post lists regenerated to the same ids (#522 added no post-harness row).
+  The two lists carry the new ids in this PR; the merged head's own run is what proves they are written (`0 missing`).
 - **Decided: no mechanical check that a PR regenerates the lists.** A test cannot know which rows a lane is meant to keep writing;
   the gate report already counts the `unlisted` rows per lane, and the "CI lane gating maturity" scan reads that count. The rule
   for a PR that adds rows is in `docs/agent-interconnect.md`.
