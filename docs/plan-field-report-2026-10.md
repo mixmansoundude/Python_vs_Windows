@@ -661,7 +661,8 @@ is a convenience, but it also makes Item 75's real-app scenarios cheaper.
 - **EXE runs from a different folder than the `.py` (Aug 27)**: fixed in PR #470 on 2026-08-29,
   two days after that note (`:run_exe_smokerun` now uses the app root;
   `tests/selfapps_exe_cwd_consistency.ps1` proves fast path and fresh build agree). The two
-  remaining `pushd dist` sites are deliberate and documented.
+  remaining `pushd dist` sites (the optimized build's verification run and the `--hidden-import`
+  repair loop) were moved to the app root by Item 101, proved by `tests/selfapps_workdir.ps1`.
 - **Fast path ignores `%1`**: confirmed and accepted by the maintainer (fast path runs before
   entry selection). Now documented in README REQ-026. Item 67 changes what happens when `%1`
   is not a real `.py`; the decided policy is in Item 67.

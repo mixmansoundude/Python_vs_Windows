@@ -1198,9 +1198,15 @@ checkpoint can still launch an OPTIONAL second run). Touching this flow requires
   `dist\`** (CLAUDE.md Item 38, resolved) -- the same CWD `:try_fast_exe`/
   `:verify_no_exe_interpreter` and the interpreter's own run already use, so a CWD-relative-path
   app (e.g. `open("config.json")` next to the script) can no longer disagree between a fresh build
-  and a fast-path reuse. Two narrower `pushd dist` sites remain deliberately deferred
-  (`:offer_optimized_build`'s internal verify, `:hidden_import_recover`'s diagnostic re-run) --
-  each carries its own comment naming the deferral; no test depends on either site's CWD.
+  and a fast-path reuse. **Every other start of the program uses the app root too** (README REQ-003.6, Item 101): the
+  optimized build's verification run (`:offer_optimized_build`) and the `--hidden-import` repair loop's EXE runs
+  (`:hidden_import_recover`) were the last two `pushd dist` sites. Their inline launch lines now take the EXE from an
+  absolute path in an environment variable (`HP_OPTBUILD_EXE`, `HP_HIR_EXE`, each set on the line before from
+  `%CD%\dist\...` and cleared right after), so nothing changes directory around them; the loop still writes its capture
+  to `dist\~exe_out.txt`, the path the scan and the Item 96 hand-over read. A new launch of the user's program follows
+  the same shape (absolute path in a variable, no `pushd`). `tests/test_workdir_start.py` pins the batch side and
+  `tests/selfapps_workdir.ps1` (`self.workdir.*`, conda-full lane, gating) runs a program that opens a data file by a
+  relative name through all five kinds of start.
   `sys.argv[0]`-relative files (not CWD-relative) still land in `dist\` for a frozen EXE regardless
   of this fix -- an inherent EXE-vs-script difference, not something to normalize.
   If any of this vocabulary/paths changes, `harness.ps1`'s `batch.smoke.single_verify` and
@@ -1584,7 +1590,8 @@ which is filled from text that a run already printed:
 - **Otherwise the verification run's own capture.** With no hand-over, `:exe_smokerun_hints` builds `~exe_out.txt` from
   `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt: it runs from
   `dist\`, and a program that reads a file relative to its working directory would be blamed for a file that exists at the
-  app root (Item 38). Item 101 (every start of the program uses the app root) would let the loop's entry run always be used.
+  app root (Item 38). Item 101 has since moved the loop's starts to the app root, but the verification run's capture stays
+  the evidence: the loop's start passes no program arguments, so a program that needs them could fail there for another reason.
 - **Stale files**: `:run_exe_smokerun` deletes an older `~exe_out.txt` before the launch and `:hidden_import_recover_done`
   deletes it before deciding, because the subroutine can run twice per build.
 - **Known limit**: the second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only

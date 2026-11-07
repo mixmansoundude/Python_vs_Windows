@@ -748,16 +748,6 @@ but several represent real gaps worth closing before calling the path fully rele
   and the idempotency risk in a sentence or two; the maintainer asked me to review it once this has settled and to build it if
   I think it is good. (d) needs (c) first, since its Yes has to be honored by every gate.
 
-- **Item 101: every start of the user's program uses the same working folder (README REQ-003.6, maintainer 2026-10-31).** The
-  folder that holds the user's `.py` files, wherever the EXE sits, so a program that opens a file by a relative path sees the
-  same files in every run the bootstrapper makes. Item 38 moved `:run_exe_smokerun`, `:try_fast_exe` and
-  `:verify_no_exe_interpreter` to the app root; two launch sites still `pushd dist`: `:offer_optimized_build`'s own
-  verification run and `:hidden_import_recover`'s EXE runs (now asked about first, Item 97). Red first: a program that prints
-  its working folder and reads a file next to the user's `.py` by a relative path, run through each site; tag the rows
-  REQ-003.6 once the README owner's pull request that adds the shall is merged into this branch. A frozen EXE's own
-  `sys.argv[0]`-relative files still land beside the EXE (see `docs/agent-interconnect.md`, "Single-verification smoke model"),
-  and a plain double-click of `dist\<env>.exe` starts in `dist\` whatever the bootstrapper does.
-
 ### Items 64-78: Aug-Sep 2026 real-user field report (filed 2026-10-08; Items 62, 63, 64, 65, 66, 67, 68, 70, 71, 72, 73, 74, 75, 76, 77, 78, 80 and 81 shipped, see `docs/agent-closed-backlog.md`)
 
 Ranked by default-path impact. Evidence, root causes, fix shapes, the CI proof each needs, and

@@ -4188,6 +4188,34 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Not done on purpose.** No change to the job graph, to `selftest-gate` or to any other `publish_diag` step. A write to
   `$GITHUB_OUTPUT` itself failing (the disk is then full beyond saving) is not covered by any step order.
 
+### Item 101 (closed 2026-11-07, PR #525; filed 2026-10-31 from the maintainer's wording of README REQ-003.6)
+
+- **The problem.** Item 38 moved the primary verification run, the cached-EXE start and the interpreter run to the app folder, but two
+  launches still did `pushd dist`: the optimized build's own verification run (`:offer_optimized_build`) and every EXE start of the
+  `--hidden-import` repair loop (`:hidden_import_recover`). A program that opens a file by a relative name saw `dist\` there and the
+  app folder everywhere else; in the repair loop that made the first start die on the missing file before it could print the
+  `ModuleNotFoundError` the loop exists to read, so the repair never began. The maintainer's rule (2026-10-31): every run the
+  bootstrapper makes starts in the folder that holds the user's `.py` files, wherever the EXE sits.
+- **What shipped.** Both launch lines take the EXE from an absolute path in an environment variable (`HP_OPTBUILD_EXE`, `HP_HIR_EXE`,
+  set from the current folder on the line before and cleared right after) and nothing changes directory around them. The loop's
+  capture stays `dist\~exe_out.txt`, the path the scan and the Item 96 hand-over read. The two old comments that called the `pushd dist`
+  a deferred follow-up are gone. `tests/test_repair_consent.py` now finds "the first start" by the launch line instead of `pushd dist`.
+- **Rows** (`tests/selfapps_workdir.ps1`, `conda-full`, gating, 15 minute limit per bootstrap, the start ledger written to an absolute
+  path before anything else): `self.workdir.verify`, `.fastpath` and `.interpreter` are guards that stay green on purpose (they show the
+  three starts Item 38 fixed still start in the entry folder); `self.workdir.repair` and `.optbuild` were the red rows. The ledger line
+  records the working folder, who started the program (frozen or interpreter) and whether `workdir_data.txt` next to the `.py` opens by
+  its relative name. `tests/test_workdir_start.py` pins the batch side (no live `pushd dist`, an absolute path through an environment
+  variable at both launches, no directory change inside the two subroutines) and runs the script's judging functions through real
+  `pwsh` on synthetic ledgers. Until the README owner's REQ-003.6 is merged the rows carry the goal tag `REQ-003`; the shall id is
+  tagged once it exists.
+- **Evidence.** Red run `42317237016` (head `21a10a2`, tests only): `self.pytest.unit` red on exactly one test
+  (`RealFiles::test_no_start_of_the_program_runs_from_dist`) on all eight lanes and nothing else red on any lane but `conda-full`; there
+  the three guards are green and `self.workdir.repair` and `.optbuild` are red for the right reason (start 2 ran in `...\dist`, the data
+  file did not open by its relative name; in `repair` the loop's own start died on that file, so `--hidden-import=colorama` was never
+  added and only 2 starts were recorded where the fixed flow makes 3). No listed row was missing in any lane.
+- **Not changed on purpose.** A frozen EXE's own `sys.argv[0]`-relative files still land beside the EXE (`docs/agent-interconnect.md`,
+  "Single-verification smoke model"), and a plain double-click of `dist\<env>.exe` starts in `dist\` whatever the bootstrapper does.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
