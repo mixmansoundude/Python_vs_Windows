@@ -4206,8 +4206,8 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   records the working folder, who started the program (frozen or interpreter) and whether `workdir_data.txt` next to the `.py` opens by
   its relative name. `tests/test_workdir_start.py` pins the batch side (no live `pushd dist`, an absolute path through an environment
   variable at both launches, no directory change inside the two subroutines) and runs the script's judging functions through real
-  `pwsh` on synthetic ledgers. Until the README owner's REQ-003.6 is merged the rows carry the goal tag `REQ-003`; the shall id is
-  tagged once it exists.
+  `pwsh` on synthetic ledgers. The README shall REQ-003.6 reached main in PR #523 while this one was open, so the rows carry
+  `req = 'REQ-003.6'` and the gap entry for it in `tests/test_req_shall_trace.py` is gone.
 - **Evidence.** Red run `42317237016` (head `21a10a2`, tests only): `self.pytest.unit` red on exactly one test
   (`RealFiles::test_no_start_of_the_program_runs_from_dist`) on all eight lanes and nothing else red on any lane but `conda-full`; there
   the three guards are green and `self.workdir.repair` and `.optbuild` are red for the right reason (start 2 ran in `...\dist`, the data

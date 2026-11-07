@@ -64,7 +64,7 @@ $allIds = @('self.workdir.verify', 'self.workdir.fastpath', 'self.workdir.interp
 function Write-AllRows {
     param([bool]$Pass, [string]$Desc, [hashtable]$Details)
     foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-003'; pass = $Pass; desc = $Desc; details = $Details })
+        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
     }
 }
 
@@ -358,7 +358,7 @@ $proofs = @(
 $problems = @(Get-WorkdirProblems -Site 'verify' -Finished ([bool]$vA.Finished) -Ledger $vLedgerA -MinStarts 2 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.workdir.verify'; req = 'REQ-003'; pass = [bool]($problems.Count -eq 0)
+    id = 'self.workdir.verify'; req = 'REQ-003.6'; pass = [bool]($problems.Count -eq 0)
     desc = 'REQ-003.6: the verification run of a fresh EXE and the post-execution checkpoint run start the program in the folder that holds its entry file'
     details = (Get-Details -Passes @($vA) -Ledger $vLedgerA -Problems $problems -Setup $vSetupA)
 })
@@ -371,7 +371,7 @@ $proofs = @(
 $problems = @(Get-WorkdirProblems -Site 'fastpath' -Finished ([bool]($vA.Finished -and $vB.Finished)) -Ledger $vLedgerB -MinStarts 1 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.workdir.fastpath'; req = 'REQ-003'; pass = [bool]($problems.Count -eq 0)
+    id = 'self.workdir.fastpath'; req = 'REQ-003.6'; pass = [bool]($problems.Count -eq 0)
     desc = 'REQ-003.6: the run of the cached EXE on the fast path starts the program in the folder that holds its entry file'
     details = (Get-Details -Passes @($vB) -Ledger $vLedgerB -Problems $problems -Setup $vB.Console)
 })
@@ -390,7 +390,7 @@ $proofs = @(
 $problems = @(Get-WorkdirProblems -Site 'interpreter' -Finished ([bool]$iRun.Finished) -Ledger $iLedger -MinStarts 1 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.workdir.interpreter'; req = 'REQ-003'; pass = [bool]($problems.Count -eq 0)
+    id = 'self.workdir.interpreter'; req = 'REQ-003.6'; pass = [bool]($problems.Count -eq 0)
     desc = 'REQ-003.6: the run through the Python interpreter starts the program in the folder that holds its entry file'
     details = (Get-Details -Passes @($iRun) -Ledger $iLedger -Problems $problems -Setup $iSetup)
 })
@@ -410,7 +410,7 @@ $proofs = @(
 $problems = @(Get-WorkdirProblems -Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 3 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.workdir.repair'; req = 'REQ-003'; pass = [bool]($problems.Count -eq 0)
+    id = 'self.workdir.repair'; req = 'REQ-003.6'; pass = [bool]($problems.Count -eq 0)
     desc = 'REQ-003.6: every start of the --hidden-import repair loop is in the folder that holds the program entry file, so a program that opens a file by a relative name sees it'
     details = (Get-Details -Passes @($rRun) -Ledger $rLedger -Problems $problems -Setup $rSetup)
 })
@@ -430,7 +430,7 @@ $proofs = @(
 $problems = @(Get-WorkdirProblems -Site 'optbuild' -Finished ([bool]$oRun.Finished) -Ledger $oLedger -MinStarts 2 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
 Write-NdjsonRow ([ordered]@{
-    id = 'self.workdir.optbuild'; req = 'REQ-003'; pass = [bool]($problems.Count -eq 0)
+    id = 'self.workdir.optbuild'; req = 'REQ-003.6'; pass = [bool]($problems.Count -eq 0)
     desc = 'REQ-003.6: the verification run of the optimized build starts the program in the folder that holds its entry file'
     details = (Get-Details -Passes @($oRun) -Ledger $oLedger -Problems $problems -Setup $oSetup)
 })

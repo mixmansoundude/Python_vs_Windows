@@ -33,10 +33,9 @@ REGISTRY = REPO / "docs" / "agent-ndjson.md"
 PWSH = shutil.which("pwsh")
 HARD_TIMEOUT = 120  # seconds, for pwsh start-up on a busy runner
 
-# derived requirement: the shall REQ-003.6 is added to the README by another change. Until it is on main the rows carry the goal
-# tag REQ-003 (tests/test_req_trace.py rejects a tag the README lacks); once the README holds the shall the rows must carry it.
+# The rows carry the shall id. tests/test_req_trace.py rejects a tag the README lacks, and RealFiles checks the README still holds it.
 README_TEXT = (REPO / "README.md").read_text(encoding="utf-8", errors="replace")
-TAG = "REQ-003.6" if "**REQ-003.6**" in README_TEXT else "REQ-003"
+TAG = "REQ-003.6"
 ROWS = (
     "self.workdir.verify",
     "self.workdir.fastpath",
@@ -385,6 +384,9 @@ class RealFiles(unittest.TestCase):
 
     def test_the_script_is_ascii(self):
         self.script.encode("ascii")
+
+    def test_the_readme_holds_the_shall_the_rows_are_tagged_with(self):
+        self.assertIn("**%s**" % TAG, README_TEXT)
 
     def test_the_checks_are_not_vacuous_on_the_real_batch(self):
         flat = self.batch.replace("\r\n", "\n")
