@@ -97,8 +97,9 @@ if not defined HP_HIC_ALLOWED exit /b 0
 set "HP_HIDDEN_ITER=0"
 call :warn_user_code_launch hidden_import
 :hidden_import_loop
-pushd dist
-popd
+set "HP_HIR_EXE=%CD%\dist\%ENVNAME%.exe"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -Command "$p=[System.Diagnostics.Process]::Start($si)"`) do set "HP_EXE_EXIT=%%X"
+set "HP_HIR_EXE="
 exit /b 0
 :warn_user_code_launch
 exit /b 0
@@ -281,11 +282,11 @@ def call_site_problems(text):
     if nuitka < 0 or at < nuitka:
         found.append("the question is not asked after the Nuitka skip (a Nuitka EXE is never repaired, so it must not be asked about)")
     loop = next((i for i, ln in enumerate(body) if ln.strip() == ":hidden_import_loop"), -1)
-    start = next((i for i, ln in enumerate(body) if re.match(r"(?i)pushd\s+dist\b", ln.strip())), -1)
+    start = next((i for i, ln in enumerate(body) if "Process]::Start" in ln), -1)
     if loop < 0 or at > loop:
         found.append("the question is not asked before :hidden_import_loop")
     if start < 0 or at > start:
-        found.append("the question is not asked before the first start of the program (pushd dist)")
+        found.append("the question is not asked before the first start of the program (the powershell launch line)")
     first = next((i for i, ln in enumerate(body) if ln.strip() == 'set "HP_HIDDEN_REPAIRED="'), -1)
     if first < 0 or first > at:
         found.append('set "HP_HIDDEN_REPAIRED=" is not cleared before the question, so a no could be read as a repair')
@@ -470,7 +471,7 @@ class RealFiles(unittest.TestCase):
         self.assertGreater(len(live(block)), 20)
         self.assertTrue(any(HEADING in ln and is_echo(ln) for ln in block))
         recover = cut_block(self.batch, RECOVER_START, RECOVER_END)
-        self.assertTrue(any("pushd dist" in ln for ln in recover))
+        self.assertTrue(any("Process]::Start" in ln for ln in recover))
         self.assertTrue(any("defined HP_NUITKA_FALLBACK_USED" in ln for ln in recover))
 
 
