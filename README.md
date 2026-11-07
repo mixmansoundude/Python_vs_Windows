@@ -151,7 +151,9 @@ imports installed**.
 ## [REQ-003] Platform & Locations
 
 **Goal.** The bootstrapper should run on Windows 10 (1809) or newer using the `curl` and PowerShell that
-Windows ships, and should keep everything it installs in writable, non-admin locations.
+Windows ships, should keep everything it installs in writable, non-admin locations, and should start the user's
+program from the folder that holds the program, so that a data file the program opens by a relative name is
+found on every run.
 
 - **REQ-003.1** [major] The bootstrapper **shall** run on Windows 10 (version 1809) or newer, using the
   `curl` and PowerShell that Windows ships.
@@ -165,8 +167,19 @@ Windows ships, and should keep everything it installs in writable, non-admin loc
 - **REQ-003.5** [minor] The bootstrapper **shall**, when the path of the folder where it was started is 200
   characters or longer (counting the closing backslash), print a warning that names the length, write the same
   warning to the setup log, and go on with the run.
+- **REQ-003.6** [major] The bootstrapper **shall** start every run of the user's program with the folder that
+  holds the program's entry file as the working folder.
 
 > **Notes (non-normative).**
+> - REQ-003.6 covers every run the bootstrapper itself starts, whichever launch method it uses: the verification
+>   run of a fresh build, the run of the cached EXE on the fast path, the run through the Python interpreter, the
+>   post-execution checkpoint and the further runs of the elective and repair steps. The entry file is always in
+>   the folder where the bootstrapper was started (REQ-011 stops a file from another folder), so this folder is
+>   the one of REQ-003.3. A program that opens `config.json` by that bare name therefore finds the file next to
+>   its `.py` source on a fresh build and on every later run alike, even though the EXE it runs sits in `dist`.
+> - Not covered: a double-click on `dist\<env>.exe` is the user's own launch, which Windows starts in the `dist`
+>   folder, and a file located from the program's own path (`__file__`, `sys.argv[0]`) is not affected either way:
+>   the EXE's `__file__` points into PyInstaller's temporary extraction folder and `sys.argv[0]` to the EXE.
 > - Limitation: UNC/network paths (`\\server\share`) are not supported for reliable bootstrap behavior. The
 >   warning of REQ-003.4 recommends mapping the share to a drive letter and running `run_setup.bat` again,
 >   which is what the user should do. CMD cannot make a UNC path its current directory, which is why the
@@ -893,74 +906,96 @@ program that is valid.
 
 ## [REQ-013] Network Resilience
 
-The bootstrapper shall detect connectivity problems and be robust against transient network
-failures during environment and dependency acquisition -- retrying before giving up on a step,
-and falling through to the next REQ-009 provider tier rather than failing outright on a single
-blip or a temporary outage.
+**Goal.** The bootstrapper should detect connectivity problems and survive transient network failures while it acquires the environment and the dependencies, retrying a failed step before it gives up and moving on to the next provider of REQ-009 instead of failing on a single blip or a short outage.
 
-- **Connectivity detection**: when a primary download fails (Miniconda or uv), the bootstrapper
-  checks internet reachability before cascading to a fallback URL -- first an ICMP ping, then a
-  lightweight HTTPS probe if ICMP is blocked. If both fail, it prompts the user to confirm
-  offline mode or retry. In offline mode, internet-dependent steps (uv download, Miniconda
-  download) are skipped; an already-cached Miniconda or uv install is used as-is.
-- **Transient-failure retry**: conda environment creation, conda's bulk dependency install, the
-  embedded-Python fallback tier's download and directory-swap steps, and the venv fallback
-  tier's pip bootstrap (via a downloaded `get-pip.py`, used when a plain venv creation attempt
-  fails outright) each retry on a detected transient failure before falling through to the next
-  provider tier. Download steps retry across a primary URL and a PowerShell fallback method;
-  Miniconda, uv, and get-pip.py additionally retry across a secondary URL before giving up (the
-  embedded-Python download has no second host to retry against -- see CLAUDE.md's Known
-  Findings for why).
-- Mechanism detail for each retry point (exact log lines, CI test flags, subroutine names) is
-  intentionally not enumerated here -- see `docs/agent-lessons-learned.md` and CLAUDE.md's
-  Closed Backlog, which are the authoritative source for implementation-level specifics.
-- Log contract (illustrative, not exhaustive):
-  - `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.`
-  - `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`
-- CI test flag: `HP_TEST_OFFLINE=1` simulates ping failure for connectivity-check branch
-  coverage; per-mechanism retry test flags are documented alongside their subroutines in
-  `docs/agent-lessons-learned.md`.
+- **REQ-013.1** [major] The bootstrapper **shall**, when the download of Miniconda or uv from its primary URL fails, check whether the internet is reachable before it tries the secondary URL.
+- **REQ-013.2** [major] The bootstrapper **shall** treat the internet as reachable when an ICMP echo request, or, if that gets no answer, an HTTPS request to the conda host, gets an answer.
+- **REQ-013.3** [major] The bootstrapper **shall** repeat each probe of REQ-013.2 that gets no answer once before it concludes that there is no internet.
+- **REQ-013.4** [major] The bootstrapper **shall**, when it concludes that there is no internet, warn the user and ask whether to retry after fixing the connection or to proceed offline.
+- **REQ-013.5** [major] The bootstrapper **shall**, when the user answers that it should retry, repeat the check of REQ-013.2, and **shall** ask the question of REQ-013.4 again while the internet is still unreachable.
+- **REQ-013.6** [major] The bootstrapper **shall** proceed in offline mode when the user answers that it should proceed offline.
+- **REQ-013.7** [major] The bootstrapper **shall** proceed in offline mode when the user gives an empty answer.
+- **REQ-013.8** [major] The bootstrapper **shall**, in a run with `NOINPUT` or `HP_NONINTERACTIVE` set, proceed in offline mode without waiting for an answer.
+- **REQ-013.9** [major] The bootstrapper **shall**, in offline mode, not download uv, and **shall** write a line to the setup log that says so.
+- **REQ-013.10** [major] The bootstrapper **shall**, in offline mode, not download Miniconda, and **shall** write a line to the setup log that says so.
+- **REQ-013.11** [major] The bootstrapper **shall**, in offline mode, not download `get-pip.py`, and **shall** write a line to the setup log that says so.
+- **REQ-013.12** [major] The bootstrapper **shall**, in offline mode, use a Miniconda or uv that is already installed as it is.
+- **REQ-013.13** [major] The bootstrapper **shall**, when the primary URL of a download of Miniconda, uv or `get-pip.py` fails and offline mode was not chosen, try the secondary URL of that download before it gives up on the download.
+- **REQ-013.14** [minor] The bootstrapper **shall** retry a download that fails with a transient error, up to three more times with a pause between the tries, before it treats the URL as failed.
+- **REQ-013.15** [minor] The bootstrapper **shall**, when `curl` fails to download Miniconda, `get-pip.py` or the embedded Python from a URL, try the same URL with Windows PowerShell before it treats the URL as failed.
+- **REQ-013.16** [major] The bootstrapper **shall**, when the download of the embedded Python (REQ-009) fails, download it again once before the embedded tier fails.
+- **REQ-013.17** [major] The bootstrapper **shall**, when the checksum check or the extraction of the embedded Python fails, download it again once before the embedded tier fails.
+- **REQ-013.18** [minor] The bootstrapper **shall**, when replacing the embedded Python folder with the requested version fails, try the replacement again, up to three attempts in all, with a short pause between them.
+- **REQ-013.19** [major] The bootstrapper **shall**, when creating a plain venv in the venv fallback (REQ-009) fails outright, create it once more without pip and install pip into it from a downloaded `get-pip.py`.
+
+> **Notes (non-normative).**
+> - Rationale: a dropped packet or a slow answer on a shared network is enough to fail one request, and a beginner should not have to know that running the file again would have worked. The bootstrapper retries where a retry is cheap and says so when the network itself is the problem. The retry of a failed conda environment creation is REQ-022.1 and the retry of conda's bulk dependency install is REQ-005.2; they are not repeated here.
+> - Mechanism of the check (`:check_net_after_dl_fail`, called after a failed primary download of uv or Miniconda): `ping -n 1 8.8.8.8`, then `curl` to `https://conda.anaconda.org` with a 5 second connect limit and an 8 second total limit; each probe is tried twice. The ping and the HTTPS request are separate because a corporate network often blocks ICMP. `get-pip.py` has no check of its own: it is downloaded deep inside a fallback tier, where the only question that should stop a user is the system Python consent of REQ-014, so a failed `get-pip.py` download declines the tier quietly.
+> - The question is printed unconditionally, so it is on the screen and in the console log even when the answer is not read from the keyboard. A `y` answer repeats the check. `HP_CI_LANE` alone does not skip the read of the answer (open question 2): the rows that pipe answers to this question run with it set. A closed standard input gives an empty answer, which is a decline.
+> - Download methods: `curl` is called with `--retry 3 --retry-delay 5 --max-time 120` (curl itself decides which errors are transient: a timeout, a refused or dropped connection, a 5xx answer). Windows PowerShell (`Invoke-WebRequest`) is the second method for Miniconda, `get-pip.py` and the embedded Python; the uv download uses `curl` only. The embedded Python has no secondary URL (REQ-009). The directory swap of REQ-013.18 retries because another program (an antivirus scan) can hold a file in the old folder for a moment, not because of the network.
+> - Log contract: `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.` (also `... reachable via HTTPS (ICMP blocked). ...`), `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`, `[INFO] REQ-013: Connectivity prompt: user chose offline (N).`, `[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline.`, `[INFO] REQ-013: Connectivity restored after retry.`, `[INFO] REQ-013: Still offline after Y; re-prompting.`, `[INFO] REQ-013: Offline mode: skipping uv download.` (and `... Miniconda download.`, `... get-pip.py download.`), `[WARN] embed fallback: download failed; retrying once.`, `[WARN] venv fallback: python -m venv failed; retrying once with --without-pip.`
+> - Tests (`tests/selfapps_ux_hardening.ps1` unless stated; each runs a bootstrap in a scratch folder with the check forced and no program, so it ends at once): `self.ux.connectivity.online` (REQ-013.2) uses the runner's own network and is repeated up to three times, only while the product itself reports no internet; `.prompt.shown` (REQ-013.4) requires the exact warning and question; `.offline.n` (REQ-013.4, REQ-013.6) and `.override` (REQ-013.6) answer no, the second through the explicit answer and requiring that the empty-answer line is absent; `.empty` (REQ-013.7) closes standard input and requires the empty-answer line; `.noinput` and `.nonint` (REQ-013.8) each set one of the two signals and require the decline without the empty-answer line; `.retry` (REQ-013.5) answers yes and then no; `.offline.uv.skip` (REQ-013.9) requires the skip line, or the line of the lane that bypasses uv by design; `self.dl.conda.fallback` and `self.dl.uv.fallback` (`tests/selfapps_dl_fallback.ps1`, REQ-013.13) make the primary URL fail and require the secondary URL to be tried and to deliver; `self.embed.dl.retry` (REQ-013.16) fails the first download and requires the second to finish the tier; `self.venv.nopip_retry` (REQ-013.19) fails the plain venv creation and requires the retry, the pip bootstrap, the venv as provider and the program running. `.offline.conda.skip` keeps the requirement number: it also passes when no Miniconda download was attempted, which is every lane that has Miniconda installed.
 
 ---
 
 ## [REQ-014] System Python Consent Gate
 
-- Before using system Python as the last-resort execution provider (REQ-009 Tier 4), the bootstrapper must obtain explicit user consent.
-- Without consent, the bootstrapper aborts rather than silently running under an unmanaged system Python.
-- **This consent prompt is the sole gate on the system tier.** It is reached in the default (no-flag) run whenever uv, conda, the embedded-Python download, and venv all fail -- it is not behind an opt-in environment variable. The bootstrapper echoes the prompt string unconditionally (so it is visible even on non-interactive auto-decline), then resolves the answer; an empty/declined answer aborts the tier and keeps the current build.
-- Log contract:
-  - `[INFO] REQ-014: System Python fallback aborted: consent not granted.`
-  - `[INFO] REQ-014: System Python consent: user accepted.`
-  - `[INFO] REQ-014: System Python consent: user declined.`
-- CI test flags: `HP_TEST_FORCE_CONSENT_CHECK=1` directly triggers the consent gate at startup for branch coverage; `HP_TEST_SYSCON_ANSWER=Y|N` deterministically answers the prompt (and, like other interactive gates, `HP_CI_LANE` auto-declines with no `set /p` to avoid a CI hang).
+**Goal.** The bootstrapper should not run the user's program under the system Python, which the user's other programs share, unless the user has agreed to it.
+
+- **REQ-014.1** [critical] The bootstrapper **shall**, before it selects the system Python as the Python provider (REQ-009), warn the user that the system Python is shared and ask whether to proceed.
+- **REQ-014.2** [critical] The bootstrapper **shall** select the system Python as the Python provider only when the user answers the question of REQ-014.1 with yes.
+- **REQ-014.3** [critical] The bootstrapper **shall**, when the user answers the question of REQ-014.1 with anything other than yes, or gives no answer, not use the system Python for the run.
+- **REQ-014.4** [major] The bootstrapper **shall**, in a run that carries the CI marker `HP_CI_LANE`, decline the system Python without waiting for an answer.
+- **REQ-014.5** [major] The bootstrapper **shall**, in a run with no environment variable set, ask the question of REQ-014.1 whenever every other provider of the REQ-009 chain has failed.
+
+> **Notes (non-normative).**
+> - Rationale: the system Python belongs to the machine, not to the program. Installing into it or building with it can break other programs, so it is the last provider and it needs the user's word. It is not behind an opt-in environment variable (REQ-019): a double-click user would never set one, and the last-resort tier would then be unreachable. The legacy `HP_ALLOW_SYSTEM_FALLBACK` is accepted and ignored.
+> - Mechanism (`:system_python_consent_gate`, called from `:try_system_fallback`): the warning and the question are printed first and unconditionally, so they are on the screen and in the console log even when the answer is not read from the keyboard. An answer whose first letter is `y` or `Y` is yes; any other answer and an empty one (a closed standard input gives an empty one) is a decline. Only the CI marker is looked at to skip the wait: `NOINPUT` and `HP_NONINTERACTIVE` alone still reach the read, which finds an empty answer and declines. A decline clears the interpreter path that was prepared for an accept, so a later step cannot take the declined tier for a selected provider.
+> - Log contract: `[INFO] REQ-014: System Python consent: user accepted.`, `[INFO] REQ-014: System Python consent: user declined.`, `[INFO] REQ-014: System Python consent: empty input; declining.` and `[INFO] REQ-014: System Python fallback aborted: consent not granted.`; an accept ends in `[BOOT] REQ-009: Selected Python provider: System Python (degraded).`
+> - Tests (`tests/selfapps_ux_hardening.ps1`, skipped in the conda-only lane, where the other providers are switched off by design): `self.ux.system.gate.accept` (REQ-014.1, REQ-014.2, REQ-014.5) fails every earlier provider, answers yes and requires that the question is printed before the system Python is selected; `self.ux.system.gate.real` (REQ-014.3, REQ-014.5) answers no and requires that no system provider line is logged and the final state is not `degraded_env`; `self.ux.system.gate.empty` (REQ-014.3) gives no answer at all (standard input closed, no CI marker) and requires the empty-input decline; `self.ux.system.gate.ci` (REQ-014.4) sets only the CI marker and requires the decline line of the automatic branch, which the keyboard branch never logs. `self.ux.system.gate.prompt` and `.n` call the gate directly and stay at the requirement number.
 
 ---
 
 ## [REQ-015] Idempotent Git Config Merge
 
-- At bootstrap time, the bootstrapper appends standard `.gitignore` and `.gitattributes` entries to the working directory.
-- Uses a sentinel comment line to detect existing entries; never duplicates content already present.
-- `.gitignore` additions: tilde-prefix work files (`~*`), env directories (`.venv/`, `.uv/`, `.*_env/`, `.cache/`, `.conda/`), build artifacts (`dist/`, `build/`).
-- Tilde-prefixed files: a file the bootstrapper writes for its own bookkeeping shall start with `~`, and a file the user is meant to keep or share shall not. Tilde files are git-ignored, and deleting one shall not lose the user's work.
-- `.gitattributes` additions: `*.bat -text`, `*.cmd -text`, `*.exe binary`. (`-text`, not `eol=crlf`: `eol=crlf` only affects `git checkout`, never what a raw/GitHub-served download returns -- see this repo's own CRLF distribution fix.)
-- Silent if no changes needed; logs when appending.
-- Log contract:
-  - `[INFO] REQ-015: Appending standard ignores to .gitignore.`
-  - `[INFO] REQ-015: Appending standard attributes to .gitattributes.`
+**Goal.** The bootstrapper should keep the files it creates out of the user's git history and keep git from changing the line endings of the user's batch files, without changing what the user already wrote in `.gitignore` and `.gitattributes`.
+
+- **REQ-015.1** [minor] The bootstrapper **shall** ensure that the `.gitignore` in the program folder lists the standard ignore entries: `.*_env/`, `.venv/`, `.uv/`, `.cache/`, `.conda/`, `dist/`, `build/`, `*~` and `~*`.
+- **REQ-015.2** [minor] The bootstrapper **shall** ensure that the `.gitattributes` in the program folder lists the standard attribute entries: `*.bat -text`, `*.cmd -text` and `*.exe binary`.
+- **REQ-015.3** [minor] The bootstrapper **shall** leave the lines that were already in `.gitignore` and `.gitattributes` unchanged when it adds its entries.
+- **REQ-015.4** [minor] The bootstrapper **shall** add its entries to a file only once, however many times it runs in the program folder.
+- **REQ-015.5** [minor] The bootstrapper **shall** replace the lines `*.bat eol=crlf` and `*.cmd eol=crlf` in an existing `.gitattributes` with `*.bat -text` and `*.cmd -text`, and change no other line.
+- **REQ-015.6** [minor] The bootstrapper **shall** give every file it writes for its own bookkeeping a name that starts with `~`.
+- **REQ-015.7** [minor] The bootstrapper **shall not** give a name that starts with `~` to a file the user is meant to keep or share.
+- **REQ-015.8** [minor] The bootstrapper **shall** work in a way that deleting a file whose name starts with `~` does not lose the user's work.
+- **REQ-015.9** [minor] The bootstrapper **shall** write one line to the setup log for each of the two files it adds entries to, and no such line when it adds nothing.
+
+> **Notes (non-normative).**
+> - Rationale: the files the bootstrapper makes (`~*` bookkeeping files, environment folders, `dist/`, `build/`) are noise in a user's repository. `*.bat -text`, not `eol=crlf`, because `eol=crlf` changes only what `git checkout` writes and never what a raw download of the file returns, so the batch files of the user's own project would still arrive with the wrong line endings (the same defect this repository's `run_setup.bat` had; `docs/agent-lessons-learned.md`).
+> - Mechanism (`:merge_git_config`): a signature comment line (`# Automated Python Bootstrapper Standard Ignores`, `# Automated Python Bootstrapper Attributes`) marks a block already added; the block is appended only when the signature is missing, and a missing file is created by the append. The replacement of REQ-015.5 runs on every run, whether or not the block was just added, and matches only the two exact stale lines (`~migrate_gitattributes.ps1`), because an older copy of the bootstrapper wrote the signature together with the stale lines and the signature check alone would never fix them.
+> - Log contract: `[INFO] REQ-015: Appending standard ignores to .gitignore.` and `[INFO] REQ-015: Appending standard attributes to .gitattributes.`
+> - Tests (`tests/selfapps_ux_hardening.ps1`, `tests/selftest.ps1`): `self.ux.gitignore.merge` and `.create` (REQ-015.1) add the entries to an existing file and make a missing one; `self.ux.gitattributes.merge` and `.append` (REQ-015.2) do the same for `.gitattributes`; `self.ux.gitignore.preserve` and `self.ux.gitattributes.append` (REQ-015.3) each require the user's lines in one of the two files; `self.ux.gitignore.idem` and `self.ux.gitattributes.idem` (REQ-015.4) run twice; `self.ux.gitattributes.migrate` (REQ-015.5) seeds an older copy's content; `self.litter.appfolder` (REQ-015.6) lists the program folder after a default run and fails on any file whose name does not start with `~` and is not on the list of files the user keeps. The merge and idempotency rows also carry REQ-015.9 for the log lines. No row names REQ-015.7 or REQ-015.8: the list of files the user keeps is written by hand in the row, and no row deletes the `~` files and runs again.
 
 ---
 
 ## [REQ-016] Post-flight Briefing
 
-- After a successful full EXE build, the bootstrapper prints a scannable summary panel identifying the output EXE, files to keep, and files safe to delete.
-- The panel always includes a **RUNNING YOUR APP** section covering the two most common beginner confusions with frozen Windows executables: (1) the console window flashing closed before output is visible (run from an already-open Command Prompt to keep it open), and (2) in-place progress output appearing all at once due to stdout buffering differences between the EXE and the script.
-- The panel sets realistic startup expectations: a one-file EXE can take noticeably longer to start than running the script (it self-extracts on each launch, more so when large or extra-bundled libraries are present), so a slow first appearance is not mistaken for a hang.
-- The **RUNNING YOUR APP** section always shows the exact command to run the app directly via the prepared interpreter (`"<env python>" "<entry>"`) alongside the double-click instructions, regardless of whether EXE verification succeeded -- building the EXE at all already proves the interpreter works, which is what makes that command valid.
-- When the packaged EXE could not be verified (its smoke run exited non-zero), the panel instead shows a **caveat** explaining that the Python environment was set up and packaging completed without a fatal error, without claiming dependency installation was itself verified (a partial/failed dependency install can still reach this point). The bootstrap still completes (the environment is usable).
-- The terminal window is **retained** on both success and error so the user can read the output before it closes.
-- Log contract:
-  - `[INFO] REQ-016: Post-flight briefing printed.`
-  - `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
+**Goal.** The bootstrapper should leave the user, at the end of a run, knowing which program to run, which files to keep, which files are safe to delete and what to do when the program seems not to run.
+
+- **REQ-016.1** [minor] The bootstrapper **shall**, after a run that built the standalone EXE, print a briefing that names the EXE, the files to keep and the files that are safe to delete.
+- **REQ-016.2** [minor] The bootstrapper **shall** tell the user in the briefing that a console window that closes at once is kept open by running the EXE from an already-open Command Prompt.
+- **REQ-016.3** [minor] The bootstrapper **shall** tell the user in the briefing that progress output which updates in place can appear all at once in the EXE, because of a difference in output buffering.
+- **REQ-016.4** [minor] The bootstrapper **shall** tell the user in the briefing that a one-file EXE unpacks itself at every start and can take noticeably longer to start than the script.
+- **REQ-016.5** [major] The bootstrapper **shall** show in the briefing the exact command that runs the program with the prepared interpreter, next to the double-click instructions.
+- **REQ-016.6** [major] The bootstrapper **shall** show the command of REQ-016.5 whether or not the EXE could be verified.
+- **REQ-016.7** [major] The bootstrapper **shall**, when the EXE could not be verified, print the briefing with a caveat that says the environment was set up and packaging finished without a fatal error, and **shall not** claim that the installation of the dependencies was verified.
+- **REQ-016.8** [minor] The bootstrapper **shall** keep its terminal window open at the end of a run, whether the run succeeded or failed, until the user presses a key, except in a run that carries the CI marker `HP_CI_LANE`.
+
+> **Notes (non-normative).**
+> - Rationale: the audience is a beginner who was handed Python code. A frozen EXE brings two common confusions (a window that flashes shut, output that appears late) and a slow first appearance that looks like a hang. A partial or failed dependency install can still reach the briefing, so the caveat does not vouch for the installation.
+> - Mechanism (`:print_postflight_briefing`, called when `dist\<env>.exe` exists and the cached EXE was not reused; the no-EXE briefing and the cached-EXE note are REQ-027). Section names the tests match: `Your standalone application is ready:`, `SETUP COMPLETE -- WITH A CAVEAT`, `RUNNING YOUR APP`, `STARTUP MAY BE SLOW`, `KEEP these files`, `SAFE TO DELETE`.
+> - Log contract: `[INFO] REQ-016: Post-flight briefing printed.` and, with a caveat, `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
+> - Tests: `self.ux.postflight` (`tests/selfapps_ux_hardening.ps1`, reads the real-environment smoke run) checks the EXE, keep, delete, Command Prompt, buffering and slow-start text (REQ-016.1 to REQ-016.4); `self.postflight.runline.verbatim` (`tests/selfapps_postflight_runline.ps1`) runs the printed command as printed (REQ-016.5). The caveat rows (`tests/selfapps_gui_timeout_hint.ps1`, `tests/selfapps_hidden_import*.ps1`) keep the requirement number: none of them checks the REQ-016.7 sentences or the command of REQ-016.6. REQ-016.8 is read from the code: every CI lane carries the CI marker, so no row reaches a `pause`.
 
 ---
 
@@ -1006,9 +1041,15 @@ program being run, and should be able to tell a verification skipped on request 
 
 ## [REQ-017] Bootstrapper Size Limit
 
-- `run_setup.bat` is fully self-contained (all helper payloads are base64-embedded), so the single file is the entire deliverable.
-- It must stay **under 20 MB** so it can be distributed by email. CI enforces this as a tripwire to catch unbounded future growth (the current size is a tiny fraction of the limit).
-- Test NDJSON row: `self.size.tripwire` (in `tests/selfapps_size.ps1`).
+**Goal.** The bootstrapper should be small enough to be sent by email as a single file.
+
+- **REQ-017.1** [minor] The size of `run_setup.bat` **shall** be less than 20 MB (20 x 1024 x 1024 bytes).
+
+> **Notes (non-normative).**
+> - Rationale: `run_setup.bat` is fully self-contained (all helper payloads are base64-embedded), so the single file
+>   is the entire deliverable. CI enforces the limit as a tripwire against unbounded future growth; the current size
+>   is a tiny fraction of it.
+> - Test: `self.size.tripwire` (`tests/selfapps_size.ps1`, every lane) reads the size of the checked-out file.
 
 ---
 
@@ -1072,16 +1113,54 @@ set lives in `run_setup.bat`.
 
 ## [REQ-020] Cache Corruption Hardening
 
-- On startup, if a previously downloaded conda or uv binary is found, the bootstrapper validates it with a health check before use.
-- Corrupt conda binary: runs `conda.bat info`; on failure, halts with a user-friendly error message and offers to self-heal (re-download Miniconda). If the user declines, exits with code 2.
-- Corrupt uv binary: detected at startup by a version probe; the cached binary is evicted so the next run downloads a fresh copy. Bootstrap continues via the next available provider (conda if available, otherwise the embedded-Python download, venv, or system Python).
-- Log contract:
-  - `[ERROR] Corrupt conda binary detected at: <path>` (real corruption)
-  - `[WARN] Cached uv.exe failed health check; clearing and re-downloading.` (real uv corruption)
-  - `[INFO] Self-healing: corrupt conda evicted from <path>.` (user accepts self-heal)
-  - `[ERROR] Corrupt conda env; user declined rebuild.` (user declines)
-- CI test flags: `HP_TEST_CORRUPT_CONDA=1`, `HP_TEST_CORRUPT_UV=1`, `HP_TEST_HEAL_ANSWER=N`.
-- Test NDJSON rows: `self.corrupt.conda.detect`, `self.corrupt.conda.heal.decline`, `self.corrupt.conda.heal.accept`, `self.corrupt.uv.detect` (in `tests/selftest.ps1`).
+**Goal.** The bootstrapper should not use a conda or uv program left by an earlier run that no longer works, and
+should either repair it or tell the user plainly what to do.
+
+- **REQ-020.1** [major] The bootstrapper **shall**, when a conda installation that it did not install in this run
+  fails its health check, show a message that the conda installation is damaged and name its location.
+- **REQ-020.2** [major] The bootstrapper **shall**, when it shows the message of REQ-020.1 in a run in which
+  `HP_CI_LANE` is set, stop with exit code 2 without asking a question.
+- **REQ-020.3** [major] The bootstrapper **shall**, when it shows the message of REQ-020.1 in a run in which
+  neither `HP_CI_LANE` is set nor the user has named a conda in `PVW_CONDA_EXE`, ask the user whether to delete
+  the damaged installation and install a fresh one.
+- **REQ-020.4** [major] The bootstrapper **shall**, when the answer to the question of REQ-020.3 does not begin
+  with Y, stop with exit code 2 and leave the damaged installation in place.
+- **REQ-020.5** [major] The bootstrapper **shall**, when the answer to the question of REQ-020.3 begins with Y,
+  delete the damaged installation, install a fresh Miniconda in its place and continue the run.
+- **REQ-020.6** [major] The bootstrapper **shall**, when the deletion of REQ-020.5 leaves part of the
+  installation folder in place, stop with exit code 3 and tell the user that files may be locked.
+- **REQ-020.7** [major] The bootstrapper **shall**, when the damaged conda is the one the user named in
+  `PVW_CONDA_EXE`, delete nothing, name that path, say that automatic repair is not available for it and stop
+  with exit code 2.
+- **REQ-020.8** [major] The bootstrapper **shall**, when the cached `uv.exe` in `~uv_bin` fails a version probe
+  before it is used, write a warning to the setup log, remove the file and download a fresh copy in the same run.
+- **REQ-020.9** [major] The bootstrapper **shall**, when no conda installation is found after the fresh install
+  of REQ-020.5, stop with exit code 4 and report that the fresh install failed.
+
+> **Notes (non-normative).**
+> - Rationale: a Windows update or a migration can leave a Miniconda or uv from an earlier run unable to start (the
+>   example the screen gives is DLL load error 0xc000007b). Using it would fail later with a message that does not
+>   point at the cause. A conda that the user named in `PVW_CONDA_EXE` belongs to the user, so it is never deleted.
+> - Mechanism: the health check is `conda.bat info` (`:conda_binary_corrupt` and its labels in `run_setup.bat`), run
+>   only for an installation that existed before the run; a fresh install is warmed up instead. `HP_CI_LANE` is the
+>   only control the question looks at: a run with `NOINPUT` or `HP_NONINTERACTIVE` alone still reaches the
+>   question, which then reads no answer and declines, so it ends as REQ-020.4. The uv probe is `uv.exe --version`;
+>   when the download that follows fails, the run goes on with the next provider of REQ-009.
+> - Log contract: `[ERROR] Corrupt conda binary detected at: <path>`, `[ERROR] Corrupt conda binary in CI; cache must
+>   be cleared.`, `[ERROR] Corrupt conda env; user declined rebuild.`, `[INFO] Self-healing: corrupt conda evicted
+>   from <path>.`, `[ERROR] Could not delete corrupt conda dir; files may be locked.`, `[ERROR] Fresh Miniconda
+>   install failed after self-healing eviction.`, `[ERROR] Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.`
+>   and `[WARN] Cached uv.exe failed health check; clearing and re-downloading.`
+> - Tests (`tests/selftest.ps1`): the rows `self.corrupt.conda.real_detect`, `.real_ci`, `.real_ask`, `.real_decline`
+>   and `.real_locked` start the bootstrapper with a private `PUBLIC` folder whose `conda.bat` exits 1, so the real
+>   health check fails with no Miniconda and no network (REQ-020.1 to .4 and .6; `.real_ask` answers `n` on the
+>   standard input of a run without `HP_CI_LANE`, `.real_locked` holds a file of the installation open). Their
+>   siblings `self.corrupt.conda.detect`, `.heal.decline`, `.heal.accept` and `.override_exit` reach the same
+>   branches through test hooks that skip the health check and run only where Miniconda is on disk; `.heal.accept`
+>   skips the deletion and the download, so the fresh install of REQ-020.5 and the exit code of REQ-020.9 are shown
+>   by inspection of `run_setup.bat`. `self.corrupt.uv.real_probe` puts a file that cannot start in place of
+>   `uv.exe` and requires the warning, the removal and the step that follows (REQ-020.8); `self.corrupt.uv.detect`
+>   is its hook-based sibling and downloads for real.
 
 ---
 
@@ -1127,16 +1206,33 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 
 ## [REQ-023] Venv Fallback Canary Probe
 
-- After the REQ-009 Tier 3 venv fallback (`:try_venv_fallback`) creates `.venv` and confirms the interpreter file exists, the bootstrapper verifies the interpreter actually runs (`python -c "import sys"`) before declaring the tier ready.
-- A venv can be "created" (directory and `python.exe` present) yet still be non-functional (missing DLLs, broken symlinks, execution-policy blocks). Without this check, a silently broken venv would reach PyInstaller and fail later with a more confusing error, or be reported as bootstrap success when the environment cannot actually run code.
-- If the probe fails, the venv tier is declined (as if creation itself had failed) and the bootstrap falls through to the next REQ-009 provider (system Python).
-- Log contract:
-  - `[WARN] venv fallback: interpreter created but failed canary probe (import sys).`
-- CI test flag: `HP_TEST_FORCE_VENV_CANARY_FAIL=1` simulates a failing probe after a real, successful venv creation.
-- Test NDJSON row: `self.venv.canary_fail` (in `tests/selfapps_ux_hardening.ps1`).
-- The venv fallback tier's retry-on-transient-failure behavior (when plain venv creation fails
-  outright, distinct from this canary probe) is part of the REQ-013 Network Resilience
-  requirement above, not this one -- this section covers only the post-creation health check.
+**Goal.** The bootstrapper should not select a virtual environment that cannot run Python code.
+
+- **REQ-023.1** [major] The bootstrapper **shall**, after the venv fallback (REQ-009) has created the `.venv`
+  folder and the interpreter file in it exists, run that interpreter once with a command that imports the module
+  `sys`, before the venv is selected as the Python provider.
+- **REQ-023.2** [major] The bootstrapper **shall** select the venv as the Python provider only when the command of
+  REQ-023.1 exits with code 0.
+- **REQ-023.3** [major] The bootstrapper **shall**, when the command of REQ-023.1 does not exit with code 0, write a
+  warning to the setup log that the interpreter was created but failed the probe.
+- **REQ-023.4** [major] The bootstrapper **shall**, when the command of REQ-023.1 does not exit with code 0,
+  continue with the next provider of the REQ-009 chain, as it does when the venv cannot be created.
+
+> **Notes (non-normative).**
+> - Rationale: a venv can be created (the folder and `python.exe` are there) and still not run, because of missing
+>   DLLs, broken links or an execution-policy block. Without this check a broken venv would reach PyInstaller and
+>   fail later with a more confusing error, or be reported as setup success for an environment that cannot run code.
+> - Mechanism: `:try_venv_fallback` runs `"%HP_PY%" -c "import sys"` and clears `HP_PY` on a failure, so a later
+>   check does not take the failed tier for a selected provider. Log contract: `[WARN] venv fallback: interpreter
+>   created but failed canary probe (import sys).`; the next provider then logs its own `[WARN] Attempting system
+>   Python fallback (degraded)...` line.
+> - The retry of a plain venv creation that fails outright (the `--without-pip` retry and the `get-pip.py` download)
+>   is part of REQ-013 Network Resilience, not this requirement: this section covers only the check after creation.
+> - Tests (`tests/selfapps_ux_hardening.ps1`): `self.venv.canary_fail` (REQ-023.2 to .4) lets the venv be created for
+>   real and forces only the probe to fail, then requires the warning, that the venv is not selected and that the
+>   system Python tier is attempted next. `self.venv.fallback` (REQ-009) shows the other half: a healthy venv passes
+>   the probe and is selected. No row makes the real probe command fail, so REQ-023.1 is shown by inspection of
+>   `run_setup.bat`.
 
 ---
 
@@ -1403,36 +1499,19 @@ PY
 
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
-**Payload inventory and PayloadSync coverage** (added so this is visible at a glance, instead of
-needing to grep the batch file or a research pass to find out; re-audited 2026-07-25 against the
-file's actual current contents rather than trusting the previous count, which had drifted --
-`HP_EXE_SMOKERUN` and `HP_PEP723_WRITEBACK` had gained canonical sources without this paragraph
-ever being updated). Of the 21 embedded `HP_*` payloads, 18 have a canonical `tools/` source file
-*and* a dedicated `PayloadSync` unit test that asserts the embedded base64 is byte-for-byte in
-sync with that source (`HP_AUTOPEP_MERGE` -> `tools/autopep_merge.py`, `HP_COLLECT_SUBMODULES` ->
-`tools/collect_submodules.py`, `HP_DEP_CHECK` -> `tools/dep_check.py`, `HP_DETECT_PY` ->
-`tools/detect_python.py`, `HP_DETECT_VISA` -> `tools/detect_visa.py`, `HP_EMBED_EXTRACT` ->
-`tools/embed_extract.ps1`, `HP_EMBED_PYVER_CHECK` -> `tools/embed_pyver_check.py`, `HP_ENV_STATE`
--> `tools/env_state.py`, `HP_EXE_SMOKERUN` -> `tools/exe_smokerun.ps1`, `HP_FAILFAST_PROBE` ->
-`tools/failfast_probe.ps1`, `HP_FIND_ENTRY` -> `tools/find_entry.py`, `HP_HIDDEN_IMPORT_SCAN` ->
-`tools/hidden_import_scan.py`, `HP_INSTALLER_TIMEOUT` -> `tools/run_installer_with_timeout.ps1`,
-`HP_PARSE_WARN` -> `tools/parse_warn.py`, `HP_PEP723_WRITEBACK` -> `tools/pep723_writeback.py`,
-`HP_PREP_REQUIREMENTS` -> `tools/prep_requirements.py`, `HP_PVW_IDEMPOTENT` ->
-`tools/pvw_known_idempotent.py`, `HP_PYPROJ_DEPS` -> `tools/pyproj_deps.py`; each is exercised by
-the matching `tests/test_*.py` file). `HP_PREP_REQUIREMENTS` is a deliberate partial case: its
-canonical source is a byte-for-byte decode of the currently embedded payload with NO header
-comment added (unlike the other 17), since this payload's CMD 8191-char line budget is the
-tightest in the whole file (304-char margin) -- even a minimal "canonical source" pointer would
-cost more margin than is safely available; see the `PayloadSync` test in
-`tests/test_heuristics.py` for the full reasoning. The remaining 3 (`HP_CONDARC`, `HP_FAST_CHECK`,
-`HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to sync against --
-`HP_CONDARC` is static config text, not code, so this doesn't apply to it; `HP_FAST_CHECK` at
-least has its *logic* covered by `tests/test_fast_check_pattern.py` (extracted and tested in
-place, just not against a separate source file). `HP_PRINT_PYVER` is a trivial one-liner
-(`print(f"python-{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")`) with no
-branching logic to test. Any *new* embedded payload should default to the
-canonical-source-plus-`PayloadSync` pattern from the start rather than adding a 4th embedded-only
-exception.
+**Payload inventory and PayloadSync coverage** (counted from `run_setup.bat` on 2026-11-07;
+`tests/test_payload_inventory.py` recounts it on every run and fails when this paragraph and the file disagree,
+because the count had drifted twice by hand). Of the 30 embedded `HP_*` payloads, 28 have a canonical `tools/`
+source file (21 Python, 7 PowerShell) *and* a unit test in the matching `tests/test_*.py` file that asserts the
+embedded base64 is byte-for-byte in sync with that source. `HP_PREP_REQUIREMENTS` is a deliberate partial case: its canonical source is a byte-for-byte decode of the
+currently embedded payload with NO header comment added, since this payload's CMD 8191-char line budget is the
+tightest in the whole file -- even a minimal "canonical source" pointer would cost more margin than is safely
+available; see the `PayloadSync` test in `tests/test_heuristics.py` for the full reasoning. The remaining 2
+(`HP_CONDARC`, `HP_PRINT_PYVER`) are embedded-only, with no separate canonical source to sync against --
+`HP_CONDARC` is static config text, not code, and `HP_PRINT_PYVER` is a trivial one-liner
+(`print(f"python-{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")`) with no branching logic to
+test. Any *new* embedded payload should default to the canonical-source-plus-`PayloadSync` pattern from the start
+rather than adding a third embedded-only exception.
 
 ## How CI decides pass/fail
 

@@ -1052,6 +1052,11 @@ exists, and so proves nothing (Item 82). Find the prompt's heading first and sea
 user already saw scroll past. A second Item 82 detail: `set /p` on an empty line leaves the variable
 unchanged, and `%VAR:~0,1%` of an undefined variable is not a reliable empty string in a batch file, so compare
 against the letters you accept (W, C) and let everything else mean the default.
+**Confirmed on Windows (run `42231671003`, PR #523):** the connectivity prompt and the system-Python consent gate each tested
+`"%CHOICE:~0,1%"==""` for an empty answer; with no answer (standard input closed) neither branch ever ran, both fell through to
+the decline path and logged the wrong line ("user declined" instead of "empty input; declining"). The two rows
+`self.ux.connectivity.empty` and `self.ux.system.gate.empty` went red on all eight lanes for exactly that, the behavior (decline,
+proceed offline) being right. Test `if not defined CHOICE` after clearing the variable; never a substring for emptiness.
 
 **A signal several causes can produce must be taken where only one of them acts** (Item 82 slice 2). The smoke
 runner's result file reads `-1` for a force-stopped silent program, a failed launch, a result file that was never

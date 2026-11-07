@@ -30,7 +30,7 @@ $pass = ($sizeBytes -ge 0) -and ($sizeBytes -lt $limitBytes)
 
 Write-NdjsonRow ([ordered]@{
     id='self.size.tripwire'
-    req='REQ-017'
+    req='REQ-017.1'
     pass=$pass
     desc='run_setup.bat (self-contained deliverable) stays under the 20 MB email-distribution limit'
     details=[ordered]@{
