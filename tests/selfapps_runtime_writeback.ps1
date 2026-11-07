@@ -109,7 +109,7 @@ $pass = ($exitCode -eq 0) -and $runtimeExists -and $runtimeValid -and
 
 Write-NdjsonRow ([ordered]@{
     id   = 'self.runtime.writeback'
-    req  = 'REQ-004'
+    req  = 'REQ-004.5, REQ-004.6'
     pass = $pass
     desc = 'runtime.txt written with resolved python version and log line emitted'
     details = [ordered]@{

@@ -2,8 +2,10 @@
 # selfapps_isolation.ps1 - REQ-011 directory integrity and REQ-010 session isolation tests.
 # These tests run unconditionally (no pyFileCount gate) in all non-cache lanes.
 # NDJSON rows produced:
-#   self.entry.req011.crossdir  - REQ-011: cross-dir arg must be rejected immediately
+#   self.entry.req011.crossdir  - REQ-011.1 and REQ-011.3: cross-dir arg is rejected immediately with exit 1,
+#                                 the message and state error
 #   self.entry.req011.sameDir   - REQ-011: same-dir arg must succeed
+#   self.entry.req011.case      - REQ-011.2: the same folder spelled in other letter case is accepted
 #   self.isolation.req010.pythonpath - REQ-010: PYTHONPATH cleared before Python subprocess
 param()
 $ErrorActionPreference = 'Continue'
@@ -29,6 +31,7 @@ function Write-NdjsonRow {
 # Pre-initialize pass flags so finally/allPass always has a defined value.
 $passC   = $false
 $passD   = $false
+$passE   = $false
 $pass010 = $false
 
 # ===== REQ-011: cross-dir explicit arg must abort (negative test) =====
@@ -57,19 +60,28 @@ try {
     $logCPath = Join-Path $crossBoot '~entryC_bootstrap.log'
     $logCText = if (Test-Path -LiteralPath $logCPath) { Get-Content $logCPath -Raw -Encoding Ascii } else { '' }
     $req011InLog = [bool]($logCText -match 'REQ-011')
-    $passC = ($exitC -ne 0) -and $req011InLog
+    # REQ-011.1 names the whole message and exit code 1; REQ-011.3 names the status state. The check
+    # of REQ-002.6 comes after this one, so a file from another folder must not get the usage text.
+    $fullMessage = $logCText.Contains('[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.')
+    $noUsageText = -not $logCText.Contains('Usage: run_setup.bat')
+    $statusCPath = Join-Path $crossBoot '~bootstrap.status.json'
+    $statusCState = ''
+    if (Test-Path -LiteralPath $statusCPath) {
+        try { $statusCState = [string]((Get-Content -LiteralPath $statusCPath -Raw -Encoding Ascii) | ConvertFrom-Json).state } catch { $statusCState = 'unparseable' }
+    }
+    $passC = ($exitC -eq 1) -and $req011InLog -and $fullMessage -and $noUsageText -and ($statusCState -eq 'error')
 
     Write-NdjsonRow ([ordered]@{
         id      = 'self.entry.req011.crossdir'
-        req     = 'REQ-011'
+        req     = 'REQ-011.1, REQ-011.3'
         pass    = $passC
-        desc    = 'REQ-011: cross-dir file argument must abort bootstrap (early pre-flight rejection)'
-        details = [ordered]@{ exitCode = $exitC; req011InLog = $req011InLog }
+        desc    = 'REQ-011: cross-dir file argument must abort bootstrap (early pre-flight rejection): exit 1, the full message, state error'
+        details = [ordered]@{ exitCode = $exitC; req011InLog = $req011InLog; fullMessage = $fullMessage; noUsageText = $noUsageText; statusState = $statusCState }
     })
 } catch {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.entry.req011.crossdir'
-        req     = 'REQ-011'
+        req     = 'REQ-011.1, REQ-011.3'
         pass    = $false
         desc    = 'REQ-011: cross-dir test threw an exception'
         details = [ordered]@{ error = $_.Exception.Message }
@@ -113,6 +125,55 @@ try {
         req     = 'REQ-011'
         pass    = $false
         desc    = 'REQ-011: same-dir test threw an exception'
+        details = [ordered]@{ error = $_.Exception.Message }
+    })
+}
+
+# ===== REQ-011.2: the same folder in other letter case is the same folder (positive test) =====
+# The dragged file's folder is written in capitals; the file system finds it, the comparison with the
+# folder of run_setup.bat must not tell them apart. main.py sits next to direct.py, so a run that
+# ignored the argument would choose main.py by name, and a rejected argument would print the REQ-011
+# message: either one fails the row.
+$caseDir = Join-Path $here '~entryE_boot'
+try {
+    if (Test-Path -LiteralPath $caseDir) { Remove-Item -LiteralPath $caseDir -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $caseDir | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $caseDir -Force
+    Set-Content -LiteralPath (Join-Path $caseDir 'direct.py') -Value 'print("direct")' -Encoding Ascii -NoNewline
+    Set-Content -LiteralPath (Join-Path $caseDir 'main.py') -Value 'print("main")' -Encoding Ascii -NoNewline
+    $upperArg = (Join-Path $caseDir.ToUpperInvariant() 'direct.py')
+
+    Push-Location -LiteralPath $caseDir
+    try {
+        cmd /c ".\run_setup.bat `"$upperArg`"" *> '~entryE_bootstrap.log'
+        $exitE = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+
+    $logEPath = Join-Path $caseDir '~entryE_bootstrap.log'
+    $logEText = if (Test-Path -LiteralPath $logEPath) { Get-Content $logEPath -Raw -Encoding Ascii } else { '' }
+    $setupEPath = Join-Path $caseDir '~setup.log'
+    $setupEText = if (Test-Path -LiteralPath $setupEPath) { Get-Content $setupEPath -Raw -Encoding Ascii } else { '' }
+    $caseAll = $logEText + "`n" + $setupEText
+    $caseRejected = $caseAll.Contains('Dragged files must reside')
+    $caseChoseDirect = [bool]($caseAll -match 'Chosen entry:[^\r\n]*direct\.py')
+    $caseChoseMain = [bool]($caseAll -match 'Chosen entry:[^\r\n]*main\.py')
+    $passE = ($exitE -eq 0) -and $caseChoseDirect -and (-not $caseChoseMain) -and (-not $caseRejected)
+
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.entry.req011.case'
+        req     = 'REQ-011.2'
+        pass    = $passE
+        desc    = 'REQ-011: a dragged file whose folder is written in other letter case is accepted as the same folder'
+        details = [ordered]@{ exitCode = $exitE; argument = $upperArg; choseDirect = $caseChoseDirect; choseMain = $caseChoseMain; rejected = $caseRejected }
+    })
+} catch {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.entry.req011.case'
+        req     = 'REQ-011.2'
+        pass    = $false
+        desc    = 'REQ-011: letter-case test threw an exception'
         details = [ordered]@{ error = $_.Exception.Message }
     })
 }
@@ -161,7 +222,7 @@ with open('~isolation_check.txt', 'w') as fh:
 
     Write-NdjsonRow ([ordered]@{
         id      = 'self.isolation.req010.pythonpath'
-        req     = 'REQ-010'
+        req     = 'REQ-010.1'
         pass    = $pass010
         desc    = 'REQ-010: PYTHONPATH is cleared before Python subprocesses run'
         details = [ordered]@{ exitCode = $exit010; pythonpathCleared = $pythonpathCleared }
@@ -169,7 +230,7 @@ with open('~isolation_check.txt', 'w') as fh:
 } catch {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.isolation.req010.pythonpath'
-        req     = 'REQ-010'
+        req     = 'REQ-010.1'
         pass    = $false
         desc    = 'REQ-010: isolation test threw an exception'
         details = [ordered]@{ error = $_.Exception.Message }
@@ -182,6 +243,6 @@ with open('~isolation_check.txt', 'w') as fh:
     }
 }
 
-$allPass = $passC -and $passD -and $pass010
+$allPass = $passC -and $passD -and $passE -and $pass010
 if (-not $allPass) { exit 1 }
 exit 0

@@ -39,7 +39,7 @@ function Write-NdjsonRow {
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
-        id='self.entry.picker'; req='REQ-002'; pass=$true
+        id='self.entry.picker'; req='REQ-002.14'; pass=$true
         desc='Timed entry picker degrades to alphabetical default (skipped on non-Windows)'
         details=[ordered]@{ skip=$true; reason='non-windows-host' }
     })
@@ -81,13 +81,24 @@ $pickerResolved = $combined -match [regex]::Escape('Picker entry selected: a_app
 # :record_chosen_entry prepends '.\' to a bare filename, so the log reads ".\a_app.py".
 $chosenDefault  = $combined -match 'Chosen entry:.*a_app\.py'
 
+# REQ-002.14: the list is numbered and holds both candidates, the file that is used when nothing is
+# typed is named, and the three ways to avoid the question are printed. The texts are the batch
+# file's own echo lines (:pick_entry_interactive); a reworded line is a change to this row too.
+$listNumbered   = ($combined -match '\[1\] a_app\.py') -and ($combined -match '\[2\] b_app\.py')
+$defaultNamed   = $combined -match [regex]::Escape('If you do nothing, the alphabetically-first file is used: a_app.py')
+$tipHeading     = $combined -match [regex]::Escape('Tip: to skip this question next time')
+$tipDrop        = $combined -match [regex]::Escape('Drag a .py file onto run_setup.bat')
+$tipRename      = $combined -match [regex]::Escape('Rename your main script to one of: main.py, app.py, run.py, or cli.py.')
+$tipGuard       = $combined -match [regex]::Escape('Give exactly one script an')
+$threeWays      = $tipHeading -and $tipDrop -and $tipRename -and $tipGuard
+
 # Picker ran, showed the menu, and degraded to the alphabetical default with no console
 # (no hang -> exit 0).
-$pass = ($exit -eq 0) -and $menuShown -and $pickerResolved -and $chosenDefault
+$pass = ($exit -eq 0) -and $menuShown -and $pickerResolved -and $chosenDefault -and $listNumbered -and $defaultNamed -and $threeWays
 
 Write-NdjsonRow ([ordered]@{
     id='self.entry.picker'
-    req='REQ-002'
+    req='REQ-002.14'
     pass=$pass
     desc='Timed entry picker shows menu and resolves to the alphabetical default with no console'
     details=[ordered]@{
@@ -95,6 +106,9 @@ Write-NdjsonRow ([ordered]@{
         menuShown      = $menuShown
         pickerResolved = $pickerResolved
         chosenDefault  = $chosenDefault
+        listNumbered   = $listNumbered
+        defaultNamed   = $defaultNamed
+        threeWays      = $threeWays
         log            = $bootstrapLog
     }
 })
@@ -140,12 +154,14 @@ $overflowMenuAbsent = $overflowCombined -notmatch 'Multiple Python files detecte
 $overflowLimitLogged = $overflowCombined -match [regex]::Escape('candidates exceed picker limit; keeping a_app.py (alphabetical)')
 $overflowTipShown = $overflowCombined -match [regex]::Escape('Tip: to avoid the alphabetical fallback next time')
 $overflowChosenDefault = $overflowCombined -match 'Chosen entry:.*a_app\.py'
+# REQ-002.17: the three ways to avoid the question are all printed, not only the heading of the tip.
+$overflowThreeWays = ($overflowCombined -match [regex]::Escape('Drag a .py file onto run_setup.bat')) -and ($overflowCombined -match [regex]::Escape('Rename your main script to one of: main.py, app.py, run.py, or cli.py.')) -and ($overflowCombined -match [regex]::Escape('Give exactly one script an'))
 
-$overflowPass = ($overflowExit -eq 0) -and $overflowMenuAbsent -and $overflowLimitLogged -and $overflowTipShown -and $overflowChosenDefault
+$overflowPass = ($overflowExit -eq 0) -and $overflowMenuAbsent -and $overflowLimitLogged -and $overflowTipShown -and $overflowThreeWays -and $overflowChosenDefault
 
 Write-NdjsonRow ([ordered]@{
     id='self.entry.picker.overflow'
-    req='REQ-002'
+    req='REQ-002.17'
     pass=$overflowPass
     desc='More than 9 candidate files skips the numbered menu entirely but still shows Tip guidance, keeping the alphabetical default'
     details=[ordered]@{
@@ -153,10 +169,70 @@ Write-NdjsonRow ([ordered]@{
         menuAbsent     = $overflowMenuAbsent
         limitLogged    = $overflowLimitLogged
         tipShown       = $overflowTipShown
+        threeWays      = $overflowThreeWays
         chosenDefault  = $overflowChosenDefault
         log            = $overflowLog
     }
 })
 
-if (-not $overflowPass) { exit 1 }
+# --- Third scenario: the user types a number within the wait (REQ-002.16) ---
+# Three candidates, none preferred, no __main__ guard: the alphabetical default is a_app.py (number 1).
+# The answer 2 is piped to standard input of the bootstrapper, which the timed `choice` prompt reads.
+# If choice did not read the pipe, the prompt would run out its 2 second test wait and take the default,
+# so the row passes only when b_app.py is the entry AND the program that ran printed entry-b.
+$numberDir = Join-Path $here '~selftest_entry_picker_number'
+if (Test-Path -LiteralPath $numberDir) { Remove-Item -LiteralPath $numberDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $numberDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $numberDir -Force
+foreach ($letter in 'a', 'b', 'c') {
+    Set-Content -LiteralPath (Join-Path $numberDir "${letter}_app.py") -Value "print('entry-$letter')`n" -Encoding ASCII
+}
+
+$prevForce3 = if (Test-Path Env:HP_TEST_FORCE_PICKER) { $env:HP_TEST_FORCE_PICKER } else { $null }
+$prevPip3   = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
+$env:HP_TEST_FORCE_PICKER = '1'
+$env:HP_SKIP_PIPREQS = '1'
+$numberLog = '~entry_picker_number_bootstrap.log'
+$numberExit = -1
+Push-Location -LiteralPath $numberDir
+try {
+    cmd /c "echo 2| call run_setup.bat > $numberLog 2>&1"
+    $numberExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+    if ($null -eq $prevForce3) { Remove-Item Env:HP_TEST_FORCE_PICKER -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PICKER = $prevForce3 }
+    if ($null -eq $prevPip3)   { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevPip3 }
+}
+
+$numberLogPath  = Join-Path $numberDir $numberLog
+$numberSetupLog = Join-Path $numberDir '~setup.log'
+$numberRunOut   = Join-Path $numberDir '~run.out.txt'
+$numberLogText  = if (Test-Path $numberLogPath)  { Get-Content -LiteralPath $numberLogPath  -Raw -Encoding ASCII } else { '' }
+$numberSetupTxt = if (Test-Path $numberSetupLog) { Get-Content -LiteralPath $numberSetupLog -Raw -Encoding ASCII } else { '' }
+$numberRunText  = if (Test-Path $numberRunOut)   { Get-Content -LiteralPath $numberRunOut   -Raw -Encoding ASCII } else { '' }
+$numberCombined = $numberLogText + "`n" + $numberSetupTxt
+
+$numberMenuShown = ($numberCombined -match 'Multiple Python files detected') -and ($numberCombined -match '\[1\] a_app\.py') -and ($numberCombined -match '\[3\] c_app\.py')
+$numberPickedB   = $numberCombined -match [regex]::Escape('Picker entry selected: b_app.py')
+$numberPickedA   = $numberCombined -match [regex]::Escape('Picker entry selected: a_app.py')
+$numberRanB      = ($numberRunText -match 'entry-b') -and ($numberRunText -notmatch 'entry-a')
+$numberPass = ($numberExit -eq 0) -and $numberMenuShown -and $numberPickedB -and $numberRanB
+
+Write-NdjsonRow ([ordered]@{
+    id='self.entry.picker.number'
+    req='REQ-002.16'
+    pass=$numberPass
+    desc='The number of a listed file typed at the picker selects that file, and that file is the program that runs'
+    details=[ordered]@{
+        exitCode       = $numberExit
+        menuShown      = $numberMenuShown
+        pickedB        = $numberPickedB
+        pickedDefaultA = $numberPickedA
+        ranB           = $numberRanB
+        runOutTail     = $(if ($numberRunText.Length -gt 200) { $numberRunText.Substring(0, 200) } else { $numberRunText })
+        log            = $numberLog
+    }
+})
+
+if (-not $overflowPass -or -not $numberPass) { exit 1 }
 exit 0

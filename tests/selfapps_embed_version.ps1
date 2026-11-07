@@ -243,7 +243,7 @@ $passSwap = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.s
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
     ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.embed.version.swap'; req = 'REQ-009'; pass = [bool]$passSwap
+    id = 'self.embed.version.swap'; req = 'REQ-009, REQ-004.1'; pass = [bool]$passSwap
     desc = 'README REQ-009 Tier 5: a requested minor other than the newest is downloaded, swapped into ~embed_python (not nested) and is the interpreter the program runs under'
     details = $d
 })
@@ -295,7 +295,7 @@ $passRange = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
     ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
 Write-NdjsonRow ([ordered]@{
-    id = 'self.embed.version.range'; req = 'REQ-009'; pass = [bool]$passRange
+    id = 'self.embed.version.range'; req = 'REQ-009, REQ-004.2'; pass = [bool]$passRange
     desc = 'README REQ-009 Tier 5: a requires-python range in pyproject.toml gets the newest minor the range allows from the embed table, not the range lower bound'
     details = $d
 })

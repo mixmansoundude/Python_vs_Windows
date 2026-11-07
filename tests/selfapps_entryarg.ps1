@@ -51,10 +51,10 @@ function Write-NdjsonRow {
 # right after the id key or the -Id parameter, so every call site below spells the id out in
 # quotes and never passes a variable.
 function Write-EntryArgRow {
-    param([string]$Id, [bool]$Pass, [string]$Desc, $Details)
+    param([string]$Id, [bool]$Pass, [string]$Desc, $Details, [hashtable]$Tag)
     Write-NdjsonRow ([ordered]@{
         id      = $Id
-        req     = 'REQ-002'
+        req     = $Tag.req
         pass    = $Pass
         desc    = $Desc
         details = $Details
@@ -64,24 +64,24 @@ function Write-EntryArgRow {
 # Non-Windows skip (OSVersion.Platform works under pwsh and Windows PowerShell 5.1; $IsWindows does not).
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $skipDetails = [ordered]@{ skip = $true; platform = [System.Environment]::OSVersion.Platform.ToString(); reason = 'non-windows-host' }
-    Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $true -Desc 'First argument without .py (skipped on non-Windows)' -Details $skipDetails
-    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $true -Desc 'First argument that is not a .py file stops the run (skipped on non-Windows)' -Details $skipDetails
-    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $true -Desc 'First argument that is not a file stops the run (skipped on non-Windows)' -Details $skipDetails
-    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $true -Desc 'Wildcard first argument stops the run (skipped on non-Windows)' -Details $skipDetails
-    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $true -Desc 'A folder as first argument stops the run (skipped on non-Windows)' -Details $skipDetails
-    Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $true -Desc 'Early stops release the lock (skipped on non-Windows)' -Details $skipDetails
+    Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $true -Desc 'First argument without .py (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.3, REQ-002.5' }
+    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $true -Desc 'First argument that is not a .py file stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $true -Desc 'First argument that is not a file stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $true -Desc 'Wildcard first argument stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $true -Desc 'A folder as first argument stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $true -Desc 'Early stops release the lock (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.9, REQ-011.4' }
     exit 0
 }
 
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     $missingDetails = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
-    Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $false -Desc 'First argument without .py: run_setup.bat not found' -Details $missingDetails
-    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $false -Desc 'First argument that is not a .py file: run_setup.bat not found' -Details $missingDetails
-    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $false -Desc 'First argument that is not a file: run_setup.bat not found' -Details $missingDetails
-    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $false -Desc 'Wildcard first argument: run_setup.bat not found' -Details $missingDetails
-    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $false -Desc 'A folder as first argument: run_setup.bat not found' -Details $missingDetails
-    Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $false -Desc 'Early stops release the lock: run_setup.bat not found' -Details $missingDetails
+    Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $false -Desc 'First argument without .py: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.3, REQ-002.5' }
+    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $false -Desc 'First argument that is not a .py file: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $false -Desc 'First argument that is not a file: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $false -Desc 'Wildcard first argument: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $false -Desc 'A folder as first argument: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $false -Desc 'Early stops release the lock: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.9, REQ-011.4' }
     exit 1
 }
 
@@ -209,7 +209,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $pass1 -Desc 'run_setup.bat entry (no .py) chooses entry.py over main.py; the .py is appended' -Details ([ordered]@{
         exit = $r1.Exit; exeBuilt = $exe1.Exists; helloEntry = $r1Hello; notMain = $r1NotMain
         entrySelected = $r1Selected; resolvedMsg = $r1Resolved; log = $r1.Log
-    })
+    }) -Tag @{ req = 'REQ-002.3, REQ-002.5' }
 
     $exeBase = Get-ExeFacts
 
@@ -224,7 +224,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $pass2 -Desc 'A first argument that exists but is not a .py file stops the run with a usage message and leaves the EXE alone' -Details ([ordered]@{
         exit = $r2.Exit; usage = $r2Usage; status = $r2.State; exeUntouched = $r2Untouched; noFastPath = $r2NoFast
         exeBuilt = $exeBase.Exists; log = $r2.Log
-    })
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
 
     # ---- Run 3: the 2026-08-31 command, entry file forgotten ----
     $r3 = Invoke-EntryRun -BatArgs 'arg1 arg2' -Tag 'run3'
@@ -238,7 +238,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $pass3 -Desc 'run_setup.bat arg1 arg2 (no entry file) stops with a usage message; the good EXE is not run with wrong arguments or discarded' -Details ([ordered]@{
         exit = $r3.Exit; usage = $r3Usage; status = $r3.State; exeUntouched = $r3Untouched
         noDiscard = $r3NoDiscard; noFastPath = $r3NoFast; exeBuilt = $exeBase.Exists; log = $r3.Log
-    })
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
 
     # ---- Run 4: a wildcard must never be taken as a file name ----
     $r4 = Invoke-EntryRun -BatArgs '*' -Tag 'run4'
@@ -251,7 +251,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $pass4 -Desc 'A wildcard first argument is rejected like any other non-file, never expanded to match a file' -Details ([ordered]@{
         exit = $r4.Exit; usage = $r4Usage; status = $r4.State; exeUntouched = $r4Untouched; noFastPath = $r4NoFast
         exeBuilt = $exeBase.Exists; log = $r4.Log
-    })
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
 
     # ---- A folder named like a script: `if exist` is true for a folder, so it must be screened out ----
     # The folder exists only for these two runs, so run 5 and 6 see the same folder as before.
@@ -275,7 +275,7 @@ try {
         dotPyExit = $rd1.Exit; dotPyUsage = $rd1Usage; dotPyStatus = $rd1.State
         bareExit = $rd2.Exit; bareUsage = $rd2Usage; bareStatus = $rd2.State
         exeUntouched = $rdUntouched; noFastPath = $rdNoFast; exeBuilt = $exeBase.Exists; log1 = $rd1.Log; log2 = $rd2.Log
-    })
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
 
     # ---- Run 5: cross-folder file (REQ-011 stop), then run 6: a normal run must not meet a stale lock ----
     $extPy = Join-Path $extDir 'external.py'
@@ -287,12 +287,18 @@ try {
     $r6NoLock    = -not ($c6 -match 'REQ-024')
     $r6Fast      = $c6 -match [regex]::Escape('Fast path: reusing')
     $r6Untouched = Test-ExeUntouched $exeBase
-    $pass5 = $exeBase.Exists -and ($r5.Exit -eq 1) -and $r5Req011 -and ($r6.Exit -eq 0) -and $r6NoLock -and $r6Fast -and $r6Untouched
+    # REQ-002.9 and REQ-011.4: every run of this script that follows a stop starts in the folder the
+    # stop left behind. Runs 2, 3, 4 and the two folder runs end in the usage stop, run 5 in the REQ-011
+    # stop, and each next run reaches its own message (usage, REQ-011, the reused EXE) instead of the
+    # REQ-024 line a stale lock would print. One lock line anywhere in the chain fails the row.
+    $lockRuns = @($r2, $r3, $r4, $rd1, $rd2, $r5, $r6)
+    $lockSeen = @($lockRuns | Where-Object { ($_.Console + "`n" + $_.Setup) -match 'REQ-024' }).Count
+    $pass5 = $exeBase.Exists -and ($r5.Exit -eq 1) -and $r5Req011 -and ($r6.Exit -eq 0) -and $r6NoLock -and $r6Fast -and $r6Untouched -and ($lockSeen -eq 0)
     if (-not $pass5) { $allPass = $false }
     Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $pass5 -Desc 'After an early argument stop, the next run in the same folder does not meet a stale lock and reuses the EXE' -Details ([ordered]@{
         run5Exit = $r5.Exit; run5Req011 = $r5Req011; run6Exit = $r6.Exit; run6NoLockMessage = $r6NoLock
-        run6FastPath = $r6Fast; exeUntouched = $r6Untouched; exeBuilt = $exeBase.Exists; run5Log = $r5.Log; run6Log = $r6.Log
-    })
+        run6FastPath = $r6Fast; exeUntouched = $r6Untouched; lockLinesInChain = $lockSeen; exeBuilt = $exeBase.Exists; run5Log = $r5.Log; run6Log = $r6.Log
+    }) -Tag @{ req = 'REQ-002.9, REQ-011.4' }
 } finally {
     if ($null -eq $prevSkipPipreqs) { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevSkipPipreqs }
     if ($null -eq $prevLane) { Remove-Item Env:HP_CI_LANE -ErrorAction SilentlyContinue } else { $env:HP_CI_LANE = $prevLane }
