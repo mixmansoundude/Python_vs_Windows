@@ -97,7 +97,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-015 | 9 | 7 | 2 | 1 |
 | REQ-016 | 8 | 5 | 3 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
-| REQ-018 | 37 | 25 | 12 | 14 |
+| REQ-018 | 37 | 26 | 11 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
 | REQ-020 | 9 | 7 | 2 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
@@ -109,9 +109,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-135 of 173 numbered shalls are named by at least one row tag.
+136 of 173 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.2, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-012.5, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
 Requirement numbers the README mentions that have no numbered shall yet: REQ-002, REQ-004, REQ-006, REQ-007, REQ-008, REQ-010, REQ-011.
 
@@ -132,9 +132,7 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    (`self.stub.low_disk_unreadable`, through the hook `HP_TEST_FORCE_DISK_READ_FAIL`). Its first run found a real
    bug: a drive `Get-PSDrive` cannot find is a non-terminating error, the `catch` never saw it and the missing
    figure read as 0 GB, so an unmeasurable drive (a network share) warned "~0 GB free"; fixed in the same pull
-   request (run `41213903374` was red on all eight lanes with that one row and nothing else). Done 2026-10-31 (Item 94a): REQ-018.8 and .25 and REQ-021.3 (REQ-018.2 stays a `gap:` entry: each
-   prompt now names the risk, but the failure-hint re-run and the repair loop still start the program again without
-   a prompt, see Items 96 and 97). The post-execution checkpoint, the runtime-install offer and the Miniconda choice
+   request (run `41213903374` was red on all eight lanes with that one row and nothing else). Done 2026-10-31 (Item 94a): REQ-018.8 and .25 and REQ-021.3 (REQ-018.2 stayed a `gap:` entry until Items 96 and 97 were built, #522, which tag it now). The post-execution checkpoint, the runtime-install offer and the Miniconda choice
    of the last-chance offer now say that running the program twice could cause harm (the optimized-build prompt
    already did), the syntax-error report says the mistake is in the
    user's own program and not in dependency installation or the EXE build, and four rows read the console text of
@@ -144,7 +142,7 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    `HP_NONINTERACTIVE` or only `HP_CI_LANE` is set (`self.offers.noinput`, `.nonint`, `.cilane`, plus
    `self.offers.control`, the same offers reaching their prompts with none of the three set;
    `tests/selfapps_offers_noninteractive.ps1`, real lane, `tests/test_offers_noninteractive.py` pins the gates as
-   text). What is left, by size of the user-visible risk: REQ-018.2 (no start without a prompt: Items 96 and 97),
+   text). What is left, by size of the user-visible risk:
    REQ-018.14, .16, .20, .21 and .22 (the runtime-install
    offer: asked once, not offered for system Python, still-missing result, failed install or rebuild, package list
    in the prompt), REQ-018.5 and .7 (the throwaway-check warning and the 30 second cap on the re-verification run),

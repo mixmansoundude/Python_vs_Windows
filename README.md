@@ -1499,10 +1499,10 @@ PY
 
 Update the corresponding `set "HP_*"=...` line under `:define_helper_payloads` with the new base64 text. The batch file comments point back to this section when further guidance is needed.
 
-**Payload inventory and PayloadSync coverage** (counted from `run_setup.bat` on 2026-11-06;
+**Payload inventory and PayloadSync coverage** (counted from `run_setup.bat` on 2026-11-07;
 `tests/test_payload_inventory.py` recounts it on every run and fails when this paragraph and the file disagree,
-because the count had drifted twice by hand). Of the 31 embedded `HP_*` payloads, 29 have a canonical `tools/`
-source file (21 Python, 8 PowerShell) *and* a unit test in the matching `tests/test_*.py` file that asserts the
+because the count had drifted twice by hand). Of the 30 embedded `HP_*` payloads, 28 have a canonical `tools/`
+source file (21 Python, 7 PowerShell) *and* a unit test in the matching `tests/test_*.py` file that asserts the
 embedded base64 is byte-for-byte in sync with that source. `HP_PREP_REQUIREMENTS` is a deliberate partial case: its canonical source is a byte-for-byte decode of the
 currently embedded payload with NO header comment added, since this payload's CMD 8191-char line budget is the
 tightest in the whole file -- even a minimal "canonical source" pointer would cost more margin than is safely
