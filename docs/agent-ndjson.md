@@ -110,9 +110,11 @@ self.prime.exe.build, self.prime.exe.run,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
+self.ux.connectivity.empty, self.ux.connectivity.noinput, self.ux.connectivity.nonint,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
-self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
-self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate,
+self.ux.system.gate.empty, self.ux.system.gate.ci,
+self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem, self.ux.gitignore.create,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate, self.ux.gitattributes.append,
 self.ux.postflight,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
@@ -269,7 +271,9 @@ self.corrupt.conda.detect,
 self.corrupt.conda.heal.decline,
 self.corrupt.conda.heal.accept,
 self.corrupt.conda.override_exit,
-self.corrupt.uv.detect,
+self.corrupt.conda.real_detect, self.corrupt.conda.real_ci, self.corrupt.conda.real_ask,
+self.corrupt.conda.real_decline, self.corrupt.conda.real_locked, self.corrupt.conda.real_override,
+self.corrupt.uv.detect, self.corrupt.uv.real_probe,
 diag.conda.available, diag.conda.available.gate
 ```
 
@@ -277,6 +281,15 @@ diag.conda.available, diag.conda.available.gate
 path (`:corrupt_override_exit`, distinct "fix manually, do not self-heal" messaging) -- unlike its
 three `self.corrupt.conda.*` siblings, NOT gated on Miniconda already being on disk (setting
 `PVW_CONDA_EXE` unconditionally sets `CONDA_BAT` before the install-if-missing block runs).
+
+The `self.corrupt.conda.real_*` rows and `self.corrupt.uv.real_probe` (`tests/selftest.ps1`, every lane,
+REQ-020.1 to .4, .6, .7 and .8) run the REAL health check: the hook-based rows above skip it and need Miniconda on
+disk. They give the child run a private `PUBLIC` folder whose `Documents\Miniconda3\condabin\conda.bat` is a stub that
+exits 1, with `HP_FORCE_CONDA_ONLY=1` and `HP_CI_TEST_CONDA_DL` cleared (no 150 MB probe download). `real_ask` pipes
+`n` into a run without `HP_CI_LANE`; `real_locked` answers Y with a file of the stub installation held open, so the
+deletion leaves the folder (exit 3); `real_override` names the stub in `PVW_CONDA_EXE` and requires that nothing is
+deleted. `uv.real_probe` puts a text file in place of `~uv_bin\uv.exe` with `HP_OFFLINE_MODE=1` (skipped in the
+conda-only lane): it requires the health-check warning, the removed file and the offline-download line.
 
 `self.dll_bundle.recover` (`:emit_dll_bundle_row`, all 7 outcome points inside
 `:dll_bundle_recover`) is the machine-readable record of the conda native-DLL bundling repair
@@ -305,13 +318,15 @@ confirmed `true` via real CI (PR #421).
 ## selfapps-ux-hardening NDJSON rows (selfapps_ux_hardening.ps1, non-conda-full lanes)
 
 ```
-self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem,
-self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate,
+self.ux.gitignore.merge, self.ux.gitignore.preserve, self.ux.gitignore.idem, self.ux.gitignore.create,
+self.ux.gitattributes.merge, self.ux.gitattributes.idem, self.ux.gitattributes.migrate, self.ux.gitattributes.append,
 self.ux.postflight,
 self.ux.connectivity.offline.n, self.ux.connectivity.prompt.shown,
 self.ux.connectivity.offline.uv.skip, self.ux.connectivity.offline.conda.skip,
 self.ux.connectivity.online, self.ux.connectivity.retry, self.ux.connectivity.override,
+self.ux.connectivity.empty, self.ux.connectivity.noinput, self.ux.connectivity.nonint,
 self.ux.system.gate.n, self.ux.system.gate.prompt, self.ux.system.gate.real, self.ux.system.gate.accept,
+self.ux.system.gate.empty, self.ux.system.gate.ci,
 self.sysbuild.decline, self.sysbuild.nuitka_prompt,
 self.venv.fallback, self.venv.canary_fail, self.venv.nopip_retry, self.entry.override,
 self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
@@ -321,6 +336,18 @@ self.embed.fallback.decline, self.embed.fallback.real, self.embed.dl.retry
 `.merge`/`.idem` -- pre-seeds a `.gitattributes` already carrying the signature AND the disproven
 `eol=crlf` rule (simulating a user re-running a newer bootstrapper copy), asserting the new
 `HP_MIGRATE_GITATTRIBUTES` payload replaces only the exact stale lines in place.
+
+`self.ux.connectivity.empty`, `.noinput` and `.nonint` (README REQ-013.7, REQ-013.8) run the forced no-internet question three ways with standard input closed and
+no program staged: `.empty` sets no signal (the question reads the keyboard, prints `Your choice [y/n]:` and logs the empty-answer line; `HP_CI_LANE` is set and
+does not skip the read), `.noinput` sets `NOINPUT` and `.nonint` sets `HP_NONINTERACTIVE` (no read, so no `Your choice` prompt and the decline line). A launcher
+`.cmd` clears the other signals in the launched shell. Non-Windows hosts write a skip row for each.
+
+`self.ux.system.gate.empty` and `.ci` (README REQ-014.3, REQ-014.4) run the bootstrapper with every earlier provider failed
+and no answer given: `.empty` has standard input closed and no CI marker (the keyboard branch reads an empty answer and
+declines), `.ci` sets only `HP_CI_LANE` (the automatic branch declines without reading). They are told apart by the log line
+each branch writes. Both are skipped in the conda-only lane, like the other system-gate rows. `self.ux.gitignore.create` and
+`self.ux.gitattributes.append` (REQ-015.1 to .3) start from a folder with no `.gitignore` and from a `.gitattributes` that
+already holds a user line.
 
 ## selfapps-pep723-writeback NDJSON rows (selfapps_pep723_writeback.ps1, uv-first lanes)
 

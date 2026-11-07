@@ -7428,7 +7428,9 @@ if defined HP_TEST_CNDF_ANSWER (
 ) else (
   set /p "HP_CONN_CHOICE=Your choice [y/n]: "
 )
-if "%HP_CONN_CHOICE:~0,1%"=="" (
+rem derived requirement: set /p on an empty line leaves HP_CONN_CHOICE undefined (cleared above), and a substring of an undefined variable is not
+rem an empty string in a batch file, so the old emptiness test never fired and the log said declined; test defined instead.
+if not defined HP_CONN_CHOICE (
   call :log "[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline."
   set "HP_OFFLINE_MODE=1"
   exit /b 1
@@ -7488,7 +7490,8 @@ if defined HP_TEST_SYSCON_ANSWER (
 ) else (
   set /p "HP_SYSCON_CHOICE=Your choice [y/n]: "
 )
-if "%HP_SYSCON_CHOICE:~0,1%"=="" (
+rem derived requirement: same as the connectivity prompt, set /p on an empty line leaves the answer undefined; test defined, not a substring.
+if not defined HP_SYSCON_CHOICE (
   call :log "[INFO] REQ-014: System Python consent: empty input; declining."
   exit /b 1
 )
