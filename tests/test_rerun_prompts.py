@@ -5,9 +5,10 @@ REQ-018.2 [critical] asks for the user's consent "in a prompt that names the ris
 run twice" before any run beyond the single automatic run. Four prompts offer such a run: the post-execution checkpoint
 (REQ-018.8 asks for the side-effect and idempotency risk by name), the optimized build (its sentence "so say no if
 running it twice could cause harm" is the wording the README notes quote), the install of a package the program asked
-for (REQ-018.14; the yes also covers one check run) and the Miniconda choice of the last-chance offer (REQ-018.25 says
-the program runs once more). The optimized build named the risk; the other three said only that the program runs
-again, which a person who is about to type Y cannot weigh. REQ-021.3 asks the syntax-error report to state that the
+for (REQ-018.14; the yes also covers one check run), the Miniconda choice of the last-chance offer (REQ-018.25 says
+the program runs once more) and, since Item 97, the question before the --hidden-import repair loop starts the program
+again. The optimized build named the risk; the next three said only that the program runs
+again, which a person who is about to type Y cannot weigh; the repair loop asked nothing at all. REQ-021.3 asks the syntax-error report to state that the
 mistake is in the user's program and not in dependency installation or the EXE build; the report named the file and
 the error but not whose mistake it was.
 
@@ -29,6 +30,7 @@ PROMPTS = (
     ("optimized build", "Your app is ready.", 'set "HP_OPTBUILD_RAW="'),
     ("runtime install", "Your program asked for packages that are not installed:", 'set "HP_RTI_CHOICE="'),
     ("last chance", "Your program stopped with an error, exit code", 'set "HP_LC_CHOICE="'),
+    ("repair loop", "The check run of your program failed, exit code", 'set "HP_HIC_CHOICE="'),
 )
 
 # A line that tells the user the program runs again. Only an echo line counts: a log line for a setting the user
@@ -145,11 +147,11 @@ class RealBatch(unittest.TestCase):
         self.assertEqual(preflight_problems(self.text), [])
 
     def test_the_heuristic_is_not_vacuous_on_the_real_file(self):
-        # the four prompts that exist today all say "your program" and a rerun word; if none matched, the rule above
+        # the five prompts that exist today all say "your program" and a rerun word; if none matched, the rule above
         # would pass on a file whose wording moved away from what it looks for
         hits = [ln for ln in lines_of(self.text)
                 if is_echo(ln) and "your program" in ln.lower() and RERUN.search(ln)]
-        self.assertGreaterEqual(len(hits), 4, hits)
+        self.assertGreaterEqual(len(hits), 5, hits)
 
 
 GOOD = """\
@@ -158,6 +160,10 @@ echo *** Verification finished -- see the Run Status above. ***
 echo *** You can run your program again now via the interpreter as an extra diagnostic check. (Optional) ***
 echo *** That runs your program a second time, so say no if running it twice could cause harm. ***
 set "HP_CHECKPOINT_RAW="
+echo *** The check run of your program failed, exit code %HP_EXE_EXIT%. ***
+echo *** Each try starts your program again, up to four more times. ***
+echo *** Saying yes allows those starts, so say no if running it twice could cause harm. ***
+set "HP_HIC_CHOICE="
 echo *** Your app is ready. ***
 echo *** Building it starts your program once more for up to 30 seconds, so say no if running it twice could cause harm. ***
 set "HP_OPTBUILD_RAW="
@@ -185,7 +191,8 @@ class EachRuleCanFail(unittest.TestCase):
     def test_a_prompt_without_the_marker_is_named(self):
         for name, hit in (("post-execution checkpoint", "That runs your program a second time"),
                           ("runtime install", "Saying yes also allows"),
-                          ("last chance", "Do not choose it")):
+                          ("last chance", "Do not choose it"),
+                          ("repair loop", "Saying yes allows those starts")):
             bad = "\n".join(ln for ln in GOOD.split("\n") if hit not in ln)
             found = problems(bad)
             self.assertTrue(any(f.startswith(name) for f in found), (name, found))
