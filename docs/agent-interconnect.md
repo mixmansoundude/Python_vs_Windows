@@ -180,7 +180,9 @@ ran). The lists close that: one file per selftest matrix lane, one row id per li
   (#522 added 13 ids to `real` and 4 to `conda-full` while Item 103 was open): the cheap check is to regenerate into a scratch
   copy of the baseline folder from the last two green runs and `diff -r` it against `tests/expected_rows`, which shows added ids
   only when nothing was removed. A third PR did it again (#523: 7 pre and 7 post ids in every lane): when one of the two runs
-  predates a merged PR, the regenerated list lacks that PR's ids, so add only the new ids (`comm -13`) and keep the old ones.
+  predates a merged PR, the regenerated list lacks that PR's ids, so add only the new ids (`comm -13`) and keep the old ones. A fourth (#526: one pre id, not in `conda-full`, and one post id) was
+  listed from a single green run of its PR, with this PR's own next run as the second observation: a listed id the run lacks turns the
+  gate red with the id named. A run that predates the post-harness upload has the post file only in its `test-logs` artifact under `tests/`.
 
 ### The post-harness half (Item 104): a second artifact, a second list, a second exit code
 

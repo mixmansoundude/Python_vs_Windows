@@ -890,7 +890,7 @@ rather than relying on manual memory.
   `expected-rows.txt` (artifact `selftest-gate-report-*`); a lane that keeps writing many rows no list has is losing
   protection, so regenerate that lane's list from two green runs (the rule for adding an id is in
   `docs/agent-interconnect.md`). Item 103 found the first such drift on 2026-11-06: #517 added 10 rows to `real` and
-  `conda-full` and no list named them (#522 added 13 and 4 the next day, #523 added 7 pre and 7 post ids to every lane the day after that); read `expected-post-rows.txt` (Item 104) the same way.
+  `conda-full` and no list named them (#522 added 13 and 4 the next day, #523 added 7 pre and 7 post ids to every lane the day after that, #526 one of each kind the same day); read `expected-post-rows.txt` (Item 104) the same way.
 
 ### CI wall-clock duration (slowest-lane growth)
 

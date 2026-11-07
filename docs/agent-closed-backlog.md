@@ -4213,6 +4213,12 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   two runs predates. **Take the additions only (`comm -13` of the old list against the regenerated one) and keep every old id**: a
   regeneration from two runs is the intersection of what BOTH wrote, so an id added by a PR that merged after the older run
   disappears from the output. Merging main moved the base again, so the final run of this PR was read for a second head.
+- **A fourth time, the same day.** PR #526 (README REQ-007 and REQ-008, Item 102) merged while the third head's run was green and
+  waiting for the maintainer, and added one id per list kind: `self.sysbuild.ci_marker` (pre-harness, every lane but `conda-full`,
+  whose scenario skips and writes no such row) and `self.nivisa.not_required` (post-harness, all eight lanes), both in lane 3's
+  green run `42363383235` (the post file read from its `test-logs` artifact, since that run predates the post-harness upload).
+  A second observation was not available before the merge, so this PR lists them and its own next run is the second: if either
+  row is missing there, the gate goes red with the id named, which is the check the rule asks for.
 - **Decided: no mechanical check that a PR regenerates the lists.** A test cannot know which rows a lane is meant to keep writing;
   the gate report already counts the `unlisted` rows per lane, and the "CI lane gating maturity" scan reads that count. The rule
   for a PR that adds rows is in `docs/agent-interconnect.md`.
