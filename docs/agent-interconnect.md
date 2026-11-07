@@ -142,10 +142,11 @@ folder name too long.
 
 ---
 
-## Expected-row baseline (Item 98): `tests/expected_rows/<lane>.txt`, `tools/check_expected_rows.py` and the selftest-gate job
+## Expected-row baseline (Items 98, 103, 104): `tests/expected_rows/<lane>.txt`, `tests/expected_rows_post/<lane>.txt`, `tools/check_expected_rows.py` and the selftest-gate job
 
-**Touch the lists, the tool, the "Download lane NDJSON" or "Aggregate verdicts" step of `selftest-gate`, the name of the
-lane NDJSON artifact, or remove/rename an NDJSON row, must understand the others.** The aggregate gate fails on a row with
+**Touch the lists, the tool, the "Download lane NDJSON", "Download post-harness rows" or "Aggregate verdicts" step of
+`selftest-gate`, the name of either lane artifact, the "Upload post-harness rows" step, or remove/rename an NDJSON row, must
+understand the others.** The aggregate gate fails on a row with
 `pass:false`; a row that was never written cannot be red (Item 84: a skipped section; Item 95: a health check that never
 ran). The lists close that: one file per selftest matrix lane, one row id per line, `#` comments, sorted, ASCII, LF.
 - **Flow**: "Download lane NDJSON" fetches `ci_test_results-selftest-*-<run id>-<attempt>` (the pre-harness snapshot the
@@ -169,8 +170,51 @@ ran). The lists close that: one file per selftest matrix lane, one row id per li
   `ci_test_results-selftest-<lane>-<run>-<attempt>` into its own folder, the folder name is the lane). A conditional row
   (written only for some inputs) must not be listed.
 - **Pins**: `tests/test_expected_rows.py` pins the tool, the lists (one per matrix lane, sorted, registered) and the workflow
-  wiring (download before check, exit-code initialisation, `$value` ANDs both codes, report upload). It reads the workflow as text.
+  wiring (download before check, exit-code initialisation, `$value` ANDs all codes, report upload). It reads the workflow as text.
   The gate step itself is still pinned by `tests/test_aggregate_gate.py`.
+- **A list nobody regenerates goes stale (Item 103)**: #517 added 10 rows (`self.checkpoint.risk`, `self.lastchance.risk`,
+  `self.offers.*`, `self.preflight.attribution`, `self.runtime.install.risk`) to `real`, and two of them to `conda-full`,
+  and no list named them, so a script that stopped writing them would have stayed green. A PR that adds rows a lane is
+  meant to keep writing regenerates that lane's list (two green runs that contain the rows) or says why not in its body.
+  The gate's own report counts the `unlisted` rows per lane; that count is what shows the drift. It happened again the next day
+  (#522 added 13 ids to `real` and 4 to `conda-full` while Item 103 was open): the cheap check is to regenerate into a scratch
+  copy of the baseline folder from the last two green runs and `diff -r` it against `tests/expected_rows`, which shows added ids
+  only when nothing was removed. A third PR did it again (#523: 7 pre and 7 post ids in every lane): when one of the two runs
+  predates a merged PR, the regenerated list lacks that PR's ids, so add only the new ids (`comm -13`) and keep the old ones. A fourth (#526: one pre id, not in `conda-full`, and one post id) was
+  listed from a single green run of its PR, with this PR's own next run as the second observation: a listed id the run lacks turns the
+  gate red with the id named. A run that predates the post-harness upload has the post file only in its `test-logs` artifact under `tests/`.
+
+### The post-harness half (Item 104): a second artifact, a second list, a second exit code
+
+`harness.ps1` (run by `run_tests.bat`) deletes `tests/~test-results.ndjson` and writes its `batch.*` rows into a new one;
+`selftest.ps1` (`self.stub.*` and the other bootstrap self-tests) and `selftests.ps1` then append. None of that is in the
+pre-harness snapshot, so the first lists could not see about 119 ids per lane (a harness section that stopped, the
+`self.stub.*` battery of `selftest.ps1`, `entry.helper.ok`). The same two files exist for it:
+- **Artifact**: the lane's "Upload post-harness rows" step (after "Append matrix mode meta row", `if: !cancelled()`) uploads
+  `tests/~test-results.ndjson` as `post_harness_rows-<job>-<mode>-<run>-<attempt>`, 7 days. It is a separate artifact on purpose:
+  the existing `test-logs-*` artifact is uploaded BEFORE the meta row and its `path:` list (about 55k characters) is the
+  `INPUT_PATH` limit hazard CLAUDE.md's "Persisted CI run-page warnings" names; a reader of the gate should not depend on it.
+  The meta row (`meta.env.mode`) is in the file but is not a test row, so it is not listed.
+- **Gate**: "Download post-harness rows" (same shape as the first download, `continue-on-error`, `merge-multiple` absent) and a
+  second call of the tool in "Aggregate verdicts": `--stage post --results <RUNNER_TEMP>/post-rows --baseline
+  tests/expected_rows_post`. `$postRc` starts at 2 and `$LASTEXITCODE` is cleared before EACH check (a stale 0 from the first
+  call must not answer for a second one that never started); `$value` ANDs `$rc`, `$rowsRc` and `$postRc`. The gate row
+  `diag.selftest_gate.verdict` carries `post_rows_exit` next to `expected_rows_exit`; the step summary has "Expected
+  post-harness rows" and the report artifact `expected-post-rows.txt`/`.json`. The console tag is `expected-post-rows:`.
+- **Same rules as the first stage**: ids not counts, a conditional row is not listed, the cache lane's waiver rows
+  (`self.cache.corrupted`, `self.cache.bootstrap.failed` are written to BOTH files, and "Run tests" is skipped then) waive that
+  lane's post list too. Regenerate with `generate --stage post --results <one dir per run> ... --baseline
+  tests/expected_rows_post`, where each run's folder holds `post_harness_rows-selftest-<lane>-<run>-<attempt>/` with the
+  file inside (the file is also in the `test-logs-selftest-<lane>-...` artifact under `tests/`; copy it out and name the
+  folder like the new artifact, which is how the first lists were made, from two green runs).
+- **Two kinds of overlap**: `batch.*` ids are only ever post-harness (a pre list holding one could never be satisfied; a unit
+  test refuses it). `selftests.ps1` runs twice per lane, once as its own workflow step and once inside `run_tests.bat`, so
+  its four rows (`self.harness.started`, `self.empty_repo.msg`, `self.bootstrap.state`, `self.empty_repo.no_spurious_warn`)
+  are in both lists on purpose: the post entry proves the run inside `run_tests.bat` wrote them (Item 84). The test reads the
+  ids from `tests/selftests.ps1`, so a fifth row written twice is the one place to look.
+- **Lane-specific rows**: `entry.helper.ok` is in the `cache` list only. `harness.ps1` writes it when the pre-harness file holds
+  `helper.find_entry.syntax`, and only the `cache` pre list names that id (read from the lists, not from the code).
+  It is derived from a listed row, so it is listed too; if the pre list ever drops `helper.find_entry.syntax`, drop this one.
 
 ---
 
