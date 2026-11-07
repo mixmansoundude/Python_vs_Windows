@@ -82,12 +82,18 @@ print('colorama via importlib ok:', _mod.__name__)
 Set-Content -Path (Join-Path $workDir 'app.py') -Value $appCode -Encoding ASCII
 
 $bootstrapLog = '~hidden_bootstrap.log'
+# Item 97: the --hidden-import repair loop starts the program again, so it asks first, and a non-interactive run
+# (every CI lane) declines. This scenario is about the repair itself, so the test answers yes through
+# HP_TEST_REPAIR_ANSWER; the question and the declined path are rows of selfapps_repair_consent.ps1.
+$prevRepairAnswer = [Environment]::GetEnvironmentVariable('HP_TEST_REPAIR_ANSWER')
+[Environment]::SetEnvironmentVariable('HP_TEST_REPAIR_ANSWER', 'Y')
 Push-Location $workDir
 try {
     cmd /c "call run_setup.bat > $bootstrapLog 2>&1"
     $run1Exit = $LASTEXITCODE
 } finally {
     Pop-Location
+    [Environment]::SetEnvironmentVariable('HP_TEST_REPAIR_ANSWER', $prevRepairAnswer)
 }
 
 $logPath   = Join-Path $workDir $bootstrapLog

@@ -51,7 +51,7 @@ self.fastpath,
 self.failfast.probe.fastfail, self.failfast.probe.alive, self.failfast.probe.seconds, self.failfast.probe,
 self.honest.fastpath.note, self.honest.fastpath.outcome,
 self.checkpoint.accept, self.checkpoint.decline,
-self.checkpoint.risk (real and conda-full lanes -- selfapps_postexec_checkpoint.ps1; REQ-018.8, Item 94a, and the risk half of REQ-018.2, which stays untraced:
+self.checkpoint.risk (real and conda-full lanes -- selfapps_postexec_checkpoint.ps1; REQ-018.8, Item 94a, and the risk half of REQ-018.2, whose consent half is in the selfapps-repair-consent section:
 one verdict over the accepted and the declined run, the prompt block from `Verification finished -- see the Run Status above.`
 to the line that records the decision says `running it twice could cause harm`; an empty block fails the row),
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD,
@@ -894,7 +894,8 @@ judged on evidence: per offer, its heading reached, its interactive prompt text 
 by the interactive branch) ABSENT after the heading, and its decline line present (the last-chance offer logs
 `automated` when skipped and `neither` when asked). `rti` also needs exactly one launch in `~offers_ledger.jsonl` (the
 EXE run) and neither program may have been started through the interpreter. The total for `lc` is recorded, not
-asserted: the hint re-run of a failed EXE run starts that program a second time (CLAUDE.md Item 96). `.control`: with no
+asserted: the repair loop that follows a failed EXE run starts that program a second time from `dist\` (announced;
+CLAUDE.md Item 97), and `selfapps_hint_norerun.ps1` counts starts against announcements. `.control`: with no
 signal the checkpoint, optimized-build and last-chance prompts are printed (the last-chance offer logs that it was
 asked); the missing-package prompt is a `choice` whose behavior with closed input is only recorded. Details carry, per
 program, the flags seen, finished, seconds, exit code, status state, ledger counts, the facts per offer (`reached`,
@@ -906,6 +907,81 @@ self.offers.noinput
 self.offers.nonint
 self.offers.cilane
 self.offers.control
+```
+
+## selfapps-hint-norerun NDJSON rows (selfapps_hint_norerun.ps1, real and conda-full lanes, gating)
+
+Item 96 (README REQ-018: the program starts once per invocation and a further run is asked about; REQ-007: after a failed
+EXE run the bootstrapper logs hints read from its error text). The two count rows carry the goal tag only: they show no
+start is silent. The consent the repair loop's own announced starts need is shown by the `self.repair.*` rows of
+`selfapps_repair_consent.ps1` (Item 97), which credit REQ-018.1 and REQ-018.2. After a failed EXE
+verification run, `:exe_smokerun_hints` used to start `dist\<env>.exe` again (a helper killed after ten seconds) only to
+read its error text. That start was beyond the single automatic run, no line announced it and nobody had agreed to it.
+The hints now read text a run already printed: the repair loop's last output when that loop rebuilt the EXE (it is the
+newest evidence), otherwise the verification run's own captured output.
+Two programs, each in a fresh folder, append one JSON line per start to a ledger at an ABSOLUTE path (`HINT_LEDGER`: the
+repair loop runs the EXE from `dist\`, so a ledger relative to the working directory would be split in two). Every start
+must be accounted for by the setup log: `starts <= announced + rebuilds`, where `announced` counts the "Verifying the
+built standalone EXE" lines (the verification run and the repair loop each announce before they start the program) and
+`rebuilds` counts the "[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=" lines (the loop makes one run after each
+rebuild, covered by its announcement). `plain` (opens a data file that does not exist, exit 1, nothing can be
+repaired): `.failed_run` (every start accounted for; before the fix 3 starts against 2 announcements) and
+`.datafile.capture` (the data-file hint names `hint_missing_data.json`, read from the captured text). `repaired`
+(imports an installed package by a runtime string, so the first run fails with ModuleNotFoundError, the loop adds
+`--hidden-import` and rebuilds, and the rebuilt EXE then fails on the missing data file): `.repaired_run` (before the
+fix 4 starts against 2 + 1) and `.final_failure` (the hint describes the failure of the repaired EXE, the missing file,
+and does not repeat the hidden-import hint for a module the repair had already added). Each row also needs its
+precondition (the verification run failed, the program really ran, the repair fired where it should). Details carry
+finished, seconds, exit code, the counts (starts, announced, rebuilds, allowed, unannounced), the starts that came from
+`dist\` and through the interpreter, and, only when something is wrong, `problems` plus a log excerpt. Each run has a 15
+minute limit. Skips on non-Windows.
+
+```
+self.launch.count.failed_run
+self.hint.datafile.capture
+self.launch.count.repaired_run
+self.hint.final_failure
+```
+
+## selfapps-repair-consent NDJSON rows (selfapps_repair_consent.ps1, real lane only, gating)
+
+Item 97 (README REQ-018.1: the program starts at most once per invocation, except a further run consented to under
+REQ-018.2; REQ-018.2: that consent is asked in a prompt that names the risk; REQ-005.13: `HP_PVW_KNOWN_IDEMPOTENT` is
+the user's declaration that the script is safe to run more than once). After a failed EXE verification run,
+`:hidden_import_recover` used to start `dist\<env>.exe` again to read the error, then once more after each repair
+rebuild (at most three), announcing each start with one warning line and asking nothing. It now calls
+`:hidden_import_consent` first: one question (heading "The check run of your program failed, exit code N", the sentence
+"running it twice could cause harm", `choice /T 30 /D N`), declined without reading the console in a non-interactive
+run (`NOINPUT`, `HP_NONINTERACTIVE` or `HP_CI_LANE`), allowed without a question when `HP_PVW_KNOWN_IDEMPOTENT` is set,
+decided by `HP_TEST_REPAIR_ANSWER` (Y or N, checked first) in CI scenarios that exercise the repair itself, and asked
+once per bootstrap (`HP_HIC_ANSWER`, kept for the second call the batch makes after a DLL repair). Seven gate rows cut
+`:hidden_import_consent` out of `run_setup.bat` (up to `:run_exe_smokerun`), wrap it in a driver batch file with a stub
+`:log` and run it with cmd.exe and closed standard input: `.noinput`, `.nonint` and `.cilane` (one signal each; the
+question is made, no prompt text is printed, the log says it was not asked, the repair is not allowed), `.control` (no
+signal: the interactive branch is taken, and an unanswered question is a no), `.answers` (Y allows, N declines, and the
+answer beats all three signals), `.idempotent` (allowed, no heading, tagged REQ-005.13) and `.once` (a second call keeps
+the first answer, yes or no). The driver clears the five variables the block reads and writes back what the block saw,
+so a row cannot pass on an environment it did not intend. Two bootstraps of one program (it appends a ledger line, then
+imports the installed `colorama` by a runtime name, so the first EXE run fails with ModuleNotFoundError): `.declined`
+(no answer, a non-interactive run: the question is shown with the risk sentence, the log says it was not asked, nothing
+is rebuilt and the ledger holds exactly one line, which also needs the Item 96 fix, because the failure hint used to
+start the failed EXE a third time) and `.accepted` (the test answers yes: the log says accepted BEFORE the loop's
+announcement and before the first `--hidden-import`, the EXE is rebuilt, verified after recovery, and every start is
+accounted for by `announced + rebuilds`). Details carry the facts read (counts, positions in the setup log, the starts
+that came from `dist\`) and, only when something is wrong, `problems` and a log excerpt; the console, log and result file
+of each gate scenario are in `tests/~repair_consent_evidence.txt`. Each bootstrap has a 15 minute limit and each gate
+scenario three minutes. Skips on non-Windows.
+
+```
+self.repair.gate.noinput
+self.repair.gate.nonint
+self.repair.gate.cilane
+self.repair.gate.control
+self.repair.gate.answers
+self.repair.gate.idempotent
+self.repair.gate.once
+self.repair.consent.declined
+self.repair.consent.accepted
 ```
 
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
@@ -1057,8 +1133,8 @@ through the interpreter (`Entry smoke exit=0`, `from-single` in `~run.out.txt`) 
 `fastpath_stub`: run 1 builds (EXE over 1 MB, source hash file written), the EXE is replaced with a text file, run 2 forces
 the interactive fail-fast probe; the row passes only when the probe started the stub (`Launching your program now via the
 cached standalone EXE`), said it could not be started with a reason, discarded and rebuilt it (a real EXE over 1 MB again,
-`Entry smoke exit=0`) and never claimed the program was still running. The third helper (`~exe_hint_rerun.ps1`) has no
-bootstrapper scenario, only `tests/test_unlaunchable_exe.py`. Skips on non-Windows.
+`Entry smoke exit=0`) and never claimed the program was still running. A third helper (`~exe_hint_rerun.ps1`) existed
+until Item 96 removed it, so no launch point is left without a scenario. Skips on non-Windows.
 
 ```
 self.unlaunchable.smoke_stub
@@ -1520,7 +1596,7 @@ run's `~install_<name>_bootstrap.log` and `~sub.ndjson`, the names the `test-log
 be uploaded). `self.runtime.install.wording` (README REQ-018.37) is one verdict over the accept, pyproject and pep723 runs: the
 echoed prompt says `adds them to this program's own environment and to requirements.txt`, never `but does not edit`, and the
 setup log has `Runtime install: added xlsxwriter to requirements.txt.`; each run's three values are in `details`.
-`self.runtime.install.risk` (the risk half of README REQ-018.2, tagged with the goal only because REQ-018.2 stays untraced; Item 94a) is a second verdict over the accept and decline consoles: the prompt block
+`self.runtime.install.risk` (the risk half of README REQ-018.2, tagged with the goal only; the REQ-018.2 consent rows are `self.repair.*`, Item 97; Item 94a) is a second verdict over the accept and decline consoles: the prompt block
 (from `Your program asked for packages that are not installed:` to the `Runtime install: accepted|declined` line) exists in both and
 says `running it twice could cause harm`, because a yes also starts the program once more to check; the block text is in `details`.
 All six skip with `skip=true, reason=non-windows-host` off Windows. Expected red for `pyproject` and `pep723` on the commit that adds
@@ -1599,7 +1675,7 @@ normal uv bootstrap): `self.lastchance.worked` (answer W: the prompt, `Last chan
 EXE kept, row state `worked`, `passType` `user_confirmed`, site `exe`); `self.lastchance.errline` (no answer in an
 automated run resolves to `automated` with no wait, and the error line `Error: a<b>c&d|e%PATH%^f "q" end` is shown
 intact on the console and in the setup log, with the same non-tilde top-level names as the `worked` run and no
-file named after the operators); `self.lastchance.risk` (README REQ-018.25 and the risk half of REQ-018.2, which stays untraced; Item 94a: read from the console of the
+file named after the operators); `self.lastchance.risk` (README REQ-018.25 and the risk half of REQ-018.2, whose consent rows are `self.repair.*`, Item 97; Item 94a: read from the console of the
 `worked` and `errline` runs, the text between `[C]` and `[N]` says the program runs `once more` and that `running it twice could
 cause harm`, so the user is told before choosing; no extra bootstrap); `self.lastchance.enter` (interpreter site via `HP_SKIP_EXE_SMOKERUN`, a bare Enter
 at the real `set /p` means `neither`, and `HP_TEST_FORCE_EMIT_FAIL=HP_LAST_ERROR_LINE` only drops the last-line part:

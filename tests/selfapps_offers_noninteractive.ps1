@@ -30,8 +30,8 @@
 # The ledger: each program appends one JSON line per launch to ~offers_ledger.jsonl with frozen=true for the EXE. The
 # rti rows need exactly one launch (the EXE verification run) and neither program may have been started through the
 # interpreter, which is what an accepted checkpoint or install would do. The total for lc is RECORDED, not asserted: the
-# hint re-run of a failed EXE run starts that program a second time (Item 96 in CLAUDE.md), and this script is about the
-# offers.
+# repair loop that follows a failed EXE run starts that program a second time from dist (announced, Item 97 in CLAUDE.md),
+# and this script is about the offers. Starts are counted against their announcements by selfapps_hint_norerun.ps1.
 #
 # The control run for rti reaches the missing-package prompt through `choice`, whose behavior with closed standard input
 # is not asserted: the row records whether its prompt text was shown and how it ended.
