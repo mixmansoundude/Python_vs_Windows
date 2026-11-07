@@ -46,7 +46,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform.ToString()
     Write-NdjsonRow ([ordered]@{
         id      = 'self.postflight.runline.verbatim'
-        req     = 'REQ-016'
+        req     = 'REQ-016.5'
         pass    = $true
         desc    = 'Post-flight run line runs as printed (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; platform = $platform; reason = 'non-windows-host' }
@@ -65,7 +65,7 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.postflight.runline.verbatim'
-        req     = 'REQ-016'
+        req     = 'REQ-016.5'
         pass    = $false
         desc    = 'Post-flight run line runs as printed: run_setup.bat not found'
         details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
@@ -131,7 +131,7 @@ if ($printed -and ($printed -match '^"([^"]+)"\s+"([^"]+)"$')) {
 if (-not $exe) {
     Write-NdjsonRow ([ordered]@{
         id      = 'self.postflight.runline.verbatim'
-        req     = 'REQ-016'
+        req     = 'REQ-016.5'
         pass    = $false
         desc    = 'Post-flight run line runs as printed: the printed line was not found in the bootstrap console output'
         details = [ordered]@{ bootExit = $bootExit; bootLogLines = $bootLines.Count; printed = $printed }
@@ -250,7 +250,7 @@ if ($envRoot -and $exe.StartsWith($envRoot, [System.StringComparison]::OrdinalIg
 $details = [ordered]@{ printed = (Get-Snippet $printed); source = $source; interpreterKind = $kind; bootExit = $bootExit }
 Write-NdjsonRow ([ordered]@{
     id      = 'self.postflight.runline.verbatim'
-    req     = 'REQ-016'
+    req     = 'REQ-016.5'
     pass    = [bool]$verbatim.ran
     desc    = 'The run line the post-flight briefing prints runs the app when used exactly as printed (cmd.exe, straight quotes)'
     details = [ordered]@{

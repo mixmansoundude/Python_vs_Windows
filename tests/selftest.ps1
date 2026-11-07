@@ -308,7 +308,7 @@ $litterListed = ($litterNames -contains 'hello_stub.py') -and ($litterNames -con
 $litterRecord = ($litterNames -contains '~dependency_source.txt')
 Write-NdjsonRow ([ordered]@{
   id   = 'self.litter.appfolder'
-  req  = 'REQ-015'
+  req  = 'REQ-015.6'
   pass = ($litterListed -and $litterRecord -and ($litterFound.Count -eq 0))
   desc = 'Default bootstrap leaves no non-tilde file of its own in the app folder'
   details = [ordered]@{
@@ -1826,18 +1826,178 @@ $overrideLogPath = Join-Path $overrideDir $overrideLogName
 $overrideLines = if (Test-Path $overrideLogPath) { Get-Content -LiteralPath $overrideLogPath -Encoding ASCII } else { @() }
 $overrideMsgFound = ($overrideLines | Where-Object { $_ -like '*Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.*' }).Count -gt 0
 $overrideGuidanceFound = ($overrideLines | Where-Object { $_ -like '*Automatic self-healing is not available for user-managed conda.*' }).Count -gt 0
+# REQ-020.7 also requires the path the user named to be shown.
+$overridePathNamed = ($overrideLines | Where-Object { $_.Contains($fakeCondaExe) }).Count -gt 0
 Write-NdjsonRow ([ordered]@{
   id      = 'self.corrupt.conda.override_exit'
   req     = 'REQ-020'
-  pass    = ($overrideExit -eq 2 -and $overrideMsgFound -and $overrideGuidanceFound)
+  pass    = ($overrideExit -eq 2 -and $overrideMsgFound -and $overrideGuidanceFound -and $overridePathNamed)
   desc    = 'PVW_CONDA_EXE + HP_TEST_CORRUPT_CONDA=1: self-heal skipped for user-managed conda, exits 2 with manual-fix guidance'
-  details = [ordered]@{ exitCode = $overrideExit; msgFound = $overrideMsgFound; guidanceFound = $overrideGuidanceFound }
+  details = [ordered]@{ exitCode = $overrideExit; msgFound = $overrideMsgFound; guidanceFound = $overrideGuidanceFound; pathNamed = $overridePathNamed }
 })
-if ($overrideExit -eq 2 -and $overrideMsgFound -and $overrideGuidanceFound) {
+if ($overrideExit -eq 2 -and $overrideMsgFound -and $overrideGuidanceFound -and $overridePathNamed) {
   $summary.Add('Corrupt conda PVW_CONDA_EXE override: PASS')
 } else {
   $summary.Add('Corrupt conda PVW_CONDA_EXE override: FAIL')
 }
+
+# --- REQ-020, real health check (no Miniconda, no network) ---
+# The rows above reach :conda_binary_corrupt through HP_TEST_CORRUPT_CONDA, which skips the health check itself, and
+# they only run where Miniconda is on disk. These rows use a private PUBLIC folder that holds a stub conda.bat which
+# exits 1, so the bootstrapper's own `conda.bat info` check fails for real in every lane. HP_FORCE_CONDA_ONLY=1 keeps uv
+# out of the way, HP_CI_TEST_CONDA_DL is cleared so the Miniconda URL probe does not download 150 MB, and the stub
+# folder is private so nothing of the runner's Miniconda is touched.
+function Set-ChildEnv {
+  param([hashtable]$Vars)
+  $saved = @{}
+  foreach ($name in $Vars.Keys) {
+    $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+    if ($null -eq $Vars[$name]) {
+      Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
+    } else {
+      Set-Item -LiteralPath ('Env:' + $name) -Value ([string]$Vars[$name])
+    }
+  }
+  return $saved
+}
+function Restore-ChildEnv {
+  param([hashtable]$Saved)
+  foreach ($name in $Saved.Keys) {
+    if ($null -eq $Saved[$name]) {
+      Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
+    } else {
+      Set-Item -LiteralPath ('Env:' + $name) -Value ([string]$Saved[$name])
+    }
+  }
+}
+function Invoke-RealCorrupt {
+  param([string]$Name, [hashtable]$Vars, [string]$Stdin, [switch]$LockFile)
+  $dir = Join-Path $TestsDir ('~selftest_corrupt_real_' + $Name)
+  $pub = Join-Path $TestsDir ('~selftest_corrupt_real_pub_' + $Name)
+  foreach ($p in @($dir, $pub)) { if (Test-Path -LiteralPath $p) { Remove-Item -Recurse -Force -LiteralPath $p -ErrorAction SilentlyContinue } }
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $root = Join-Path $pub 'Documents\Miniconda3'
+  $condabin = Join-Path $root 'condabin'
+  New-Item -ItemType Directory -Force -Path $condabin | Out-Null
+  $fakeBat = Join-Path $condabin 'conda.bat'
+  Set-Content -LiteralPath $fakeBat -Value '@exit /b 1' -Encoding Ascii
+  Copy-Item -Path $BatchPath -Destination $dir -Force
+  Set-Content -LiteralPath (Join-Path $dir 'app_corrupt_real.py') -Value 'print("should-not-reach")' -Encoding Ascii
+  # A second file of the installation. With -LockFile it is held open (readable, not deletable), so the bootstrapper's
+  # own deletion of the folder has to leave it behind.
+  $lockPath = Join-Path $root 'marker.txt'
+  Set-Content -LiteralPath $lockPath -Value 'file of the installation' -Encoding Ascii
+  $lock = $null
+  if ($LockFile) {
+    $lock = [System.IO.File]::Open($lockPath, 'Open', 'Read', 'Read')
+  }
+  $logName = '~corrupt_real_bootstrap.log'
+  $envVars = @{ PUBLIC = $pub; HP_FORCE_CONDA_ONLY = '1'; HP_CI_TEST_CONDA_DL = $null; HP_TEST_CORRUPT_CONDA = $null
+                HP_TEST_HEAL_ANSWER = $null; HP_TEST_SKIP_EVICT = $null; PVW_CONDA_EXE = $null; HP_TEST_FORCE_CONDA_FAIL = $null }
+  foreach ($k in $Vars.Keys) { $envVars[$k] = $Vars[$k] }
+  if ($envVars['PVW_CONDA_EXE'] -eq '{FAKEBAT}') { $envVars['PVW_CONDA_EXE'] = $fakeBat }
+  $saved = Set-ChildEnv $envVars
+  Push-Location $dir
+  try {
+    if ($PSBoundParameters.ContainsKey('Stdin')) {
+      cmd /c "echo $Stdin| call run_setup.bat > $logName 2>&1"
+    } else {
+      cmd /c "call run_setup.bat > $logName 2>&1"
+    }
+    $code = $LASTEXITCODE
+  } finally {
+    Pop-Location
+    Restore-ChildEnv $saved
+    if ($null -ne $lock) { $lock.Dispose() }
+  }
+  $logPath = Join-Path $dir $logName
+  $lines = if (Test-Path -LiteralPath $logPath) { @(Get-Content -LiteralPath $logPath -Encoding ASCII) } else { @() }
+  return [pscustomobject]@{
+    Exit = $code; Lines = $lines; FakeBat = $fakeBat; Root = $root; LockPath = $lockPath
+    BatStillThere = (Test-Path -LiteralPath $fakeBat); LockStillThere = (Test-Path -LiteralPath $lockPath)
+    MarkerStillThere = (Test-Path -LiteralPath $lockPath)
+  }
+}
+function Test-AnyLine {
+  param($Lines, [string]$Text)
+  return (@($Lines | Where-Object { $_.Contains($Text) }).Count -gt 0)
+}
+
+$ciLaneValue = if ($env:HP_CI_LANE) { $env:HP_CI_LANE } else { 'selftest' }
+# REQ-020.1 and REQ-020.2: damaged conda, CI marker, no question, exit 2.
+$crCi = Invoke-RealCorrupt -Name 'ci' -Vars @{ HP_CI_LANE = $ciLaneValue }
+$crCiNamed = Test-AnyLine $crCi.Lines ('Corrupt conda binary detected at: ' + $crCi.FakeBat)
+$crCiStop = Test-AnyLine $crCi.Lines 'Corrupt conda binary in CI; cache must be cleared.'
+$crCiAsked = Test-AnyLine $crCi.Lines 'Would you like to delete it and rebuild?'
+$crCiHook = Test-AnyLine $crCi.Lines 'HP_TEST_CORRUPT_CONDA'
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.corrupt.conda.real_detect'
+  req  = 'REQ-020.1'
+  pass = ($crCiNamed -and -not $crCiHook)
+  desc = 'REQ-020.1: a conda.bat that fails its health check is reported as damaged and its location is named (real check, no test hook)'
+  details = [ordered]@{ exitCode = $crCi.Exit; namedWithPath = $crCiNamed; hookLine = $crCiHook }
+})
+if (($crCiNamed -and -not $crCiHook)) { $summary.Add('Real corrupt conda detect: PASS') } else { $summary.Add('Real corrupt conda detect: FAIL') }
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.corrupt.conda.real_ci'
+  req  = 'REQ-020.2'
+  pass = ($crCi.Exit -eq 2 -and $crCiStop -and -not $crCiAsked -and $crCi.BatStillThere -and -not $crCiHook)
+  desc = 'REQ-020.2: damaged conda in a run with the CI marker stops with exit code 2 and asks nothing'
+  details = [ordered]@{ exitCode = $crCi.Exit; stopLine = $crCiStop; asked = $crCiAsked; installationKept = $crCi.BatStillThere; hookLine = $crCiHook }
+})
+if (($crCi.Exit -eq 2 -and $crCiStop -and -not $crCiAsked -and $crCi.BatStillThere -and -not $crCiHook)) { $summary.Add('Real corrupt conda CI exit: PASS') } else { $summary.Add('Real corrupt conda CI exit: FAIL') }
+
+# REQ-020.3 and REQ-020.4: no CI marker, the question is asked, an answer of n stops with exit code 2.
+$crAsk = Invoke-RealCorrupt -Name 'ask' -Vars @{ HP_CI_LANE = $null } -Stdin 'n'
+$crAskAsked = Test-AnyLine $crAsk.Lines 'Would you like to delete it and rebuild?'
+$crAskDeclined = Test-AnyLine $crAsk.Lines 'Corrupt conda env; user declined rebuild.'
+$crAskEvicted = Test-AnyLine $crAsk.Lines 'Self-healing: corrupt conda evicted'
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.corrupt.conda.real_ask'
+  req  = 'REQ-020.3'
+  pass = ($crAskAsked)
+  desc = 'REQ-020.3: damaged conda in a run without the CI marker asks whether to delete it and install a fresh one'
+  details = [ordered]@{ exitCode = $crAsk.Exit; asked = $crAskAsked }
+})
+if (($crAskAsked)) { $summary.Add('Real corrupt conda asks: PASS') } else { $summary.Add('Real corrupt conda asks: FAIL') }
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.corrupt.conda.real_decline'
+  req  = 'REQ-020.4'
+  pass = ($crAsk.Exit -eq 2 -and $crAskAsked -and $crAskDeclined -and -not $crAskEvicted -and $crAsk.BatStillThere)
+  desc = 'REQ-020.4: an answer other than Y stops with exit code 2 and leaves the damaged installation in place'
+  details = [ordered]@{ exitCode = $crAsk.Exit; asked = $crAskAsked; declinedLine = $crAskDeclined; evicted = $crAskEvicted; installationKept = $crAsk.BatStillThere }
+})
+if (($crAsk.Exit -eq 2 -and $crAskAsked -and $crAskDeclined -and -not $crAskEvicted -and $crAsk.BatStillThere)) { $summary.Add('Real corrupt conda decline: PASS') } else { $summary.Add('Real corrupt conda decline: FAIL') }
+
+# REQ-020.6: the answer is Y, a file in the installation is held open, so the deletion leaves the folder and the run stops.
+$crLock = Invoke-RealCorrupt -Name 'locked' -Vars @{ HP_CI_LANE = $ciLaneValue; HP_TEST_HEAL_ANSWER = 'Y' } -LockFile
+$crLockMsg = Test-AnyLine $crLock.Lines 'Could not delete corrupt conda dir; files may be locked.'
+$crLockEvicted = Test-AnyLine $crLock.Lines 'Self-healing: corrupt conda evicted'
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.corrupt.conda.real_locked'
+  req  = 'REQ-020.6'
+  pass = ($crLock.Exit -eq 3 -and $crLockMsg -and -not $crLockEvicted -and $crLock.LockStillThere)
+  desc = 'REQ-020.6: when the deletion leaves part of the damaged installation behind the run stops with exit code 3 and says files may be locked'
+  details = [ordered]@{ exitCode = $crLock.Exit; lockedMessage = $crLockMsg; evicted = $crLockEvicted; lockedFileKept = $crLock.LockStillThere }
+})
+if (($crLock.Exit -eq 3 -and $crLockMsg -and -not $crLockEvicted -and $crLock.LockStillThere)) { $summary.Add('Real corrupt conda locked: PASS') } else { $summary.Add('Real corrupt conda locked: FAIL') }
+
+# REQ-020.7: the conda is the one the user named in PVW_CONDA_EXE (a stub that exits 1): nothing is deleted, the path
+# is named, and the run stops with exit code 2 even though no CI marker question is involved.
+$crOv = Invoke-RealCorrupt -Name 'override' -Vars @{ HP_CI_LANE = $ciLaneValue; PVW_CONDA_EXE = '{FAKEBAT}' }
+$crOvNoRepair = Test-AnyLine $crOv.Lines 'Automatic self-healing is not available for user-managed conda.'
+$crOvStop = Test-AnyLine $crOv.Lines 'Corrupt user-managed conda (PVW_CONDA_EXE); fix manually.'
+$crOvNamed = Test-AnyLine $crOv.Lines $crOv.FakeBat
+$crOvAsked = Test-AnyLine $crOv.Lines 'Would you like to delete it and rebuild?'
+$crOvPass = ($crOv.Exit -eq 2 -and $crOvNoRepair -and $crOvStop -and $crOvNamed -and -not $crOvAsked -and $crOv.BatStillThere -and $crOv.MarkerStillThere)
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.corrupt.conda.real_override'
+  req  = 'REQ-020.7'
+  pass = $crOvPass
+  desc = 'REQ-020.7: a damaged conda named in PVW_CONDA_EXE is never deleted, its path is named, and the run stops with exit code 2'
+  details = [ordered]@{ exitCode = $crOv.Exit; noRepairLine = $crOvNoRepair; stopLine = $crOvStop; pathNamed = $crOvNamed; asked = $crOvAsked; condaKept = $crOv.BatStillThere; markerKept = $crOv.MarkerStillThere }
+})
+if ($crOvPass) { $summary.Add('Real corrupt conda override: PASS') } else { $summary.Add('Real corrupt conda override: FAIL') }
 
 # --- UV binary corruption eviction test (REQ-020 Task 4) ---
 # Arrange: create fake ~uv_bin\uv.exe + HP_TEST_CORRUPT_UV=1 simulates corrupt cached uv binary.
@@ -1890,6 +2050,55 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     details = [ordered]@{ exitCode = $uvTestExit; evictMsgFound = $uvEvictMsgFound }
   })
   if ($uvEvictMsgFound) { $summary.Add('Corrupt uv detect: PASS') } else { $summary.Add('Corrupt uv detect: FAIL') }
+}
+
+# REQ-020.8: a cached uv.exe that cannot start (a text file stands in for a damaged program) is removed and the run goes
+# on to the download step. HP_OFFLINE_MODE=1 keeps the row off the network: the download step then reports that it was
+# skipped, which is the evidence that the run got there. Skipped in the conda-only lane, where uv is never tried.
+if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
+  Write-NdjsonRow ([ordered]@{
+    id   = 'self.corrupt.uv.real_probe'
+    req  = 'REQ-020.8'
+    pass = $true
+    desc = 'REQ-020.8: real uv.exe version probe test skipped in conda-only lane'
+    details = [ordered]@{ skipped = $true; reason = 'HP_FORCE_CONDA_ONLY=1' }
+  })
+} else {
+  $uvRealDir = Join-Path $TestsDir '~selftest_corrupt_uv_real'
+  if (Test-Path -LiteralPath $uvRealDir) { Remove-Item -Recurse -Force -LiteralPath $uvRealDir }
+  New-Item -ItemType Directory -Force -Path $uvRealDir | Out-Null
+  Copy-Item -Path $BatchPath -Destination $uvRealDir -Force
+  Set-Content -LiteralPath (Join-Path $uvRealDir 'app_corrupt_uv_real.py') -Value 'print("corrupt-uv-real")' -Encoding Ascii
+  $uvRealBin = Join-Path $uvRealDir '~uv_bin'
+  New-Item -ItemType Directory -Force -Path $uvRealBin | Out-Null
+  $uvRealExe = Join-Path $uvRealBin 'uv.exe'
+  Set-Content -LiteralPath $uvRealExe -Value 'this is not a program' -Encoding Ascii
+  # HP_CI_TEST_CONDA_DL is cleared because with no uv the run reaches the Miniconda URL probe, which downloads about 150 MB
+  # (HP_OFFLINE_MODE only guards the real install download); the same clearing is done for the corrupt-conda scenarios above.
+  $uvRealSaved = Set-ChildEnv @{ HP_TEST_CORRUPT_UV = $null; HP_TEST_FORCE_UV_FAIL = $null; PVW_UV_EXE = $null; PVW_PROVIDER = $null
+                                 HP_CI_TEST_CONDA_DL = $null; HP_OFFLINE_MODE = '1'; HP_CI_LANE = $ciLaneValue }
+  Push-Location $uvRealDir
+  try {
+    cmd /c "call run_setup.bat > ~corrupt_uv_real.log 2>&1"
+    $uvRealExit = $LASTEXITCODE
+  } finally {
+    Pop-Location
+    Restore-ChildEnv $uvRealSaved
+  }
+  $uvRealSetup = Join-Path $uvRealDir '~setup.log'
+  $uvRealLines = if (Test-Path -LiteralPath $uvRealSetup) { @(Get-Content -LiteralPath $uvRealSetup -Encoding ASCII) } else { @() }
+  $uvRealWarn = Test-AnyLine $uvRealLines 'Cached uv.exe failed health check; clearing and re-downloading.'
+  $uvRealSkip = Test-AnyLine $uvRealLines 'Offline mode: skipping uv download'
+  $uvRealHook = Test-AnyLine $uvRealLines 'HP_TEST_CORRUPT_UV'
+  $uvRealStubGone = -not (Test-Path -LiteralPath $uvRealExe)
+  Write-NdjsonRow ([ordered]@{
+    id   = 'self.corrupt.uv.real_probe'
+    req  = 'REQ-020.8'
+    pass = ($uvRealWarn -and $uvRealSkip -and $uvRealStubGone -and -not $uvRealHook)
+    desc = 'REQ-020.8: a cached uv.exe that cannot start fails the real version probe, is removed, and the run goes on to the download step'
+    details = [ordered]@{ exitCode = $uvRealExit; warnLine = $uvRealWarn; reachedDownload = $uvRealSkip; stubRemoved = $uvRealStubGone; hookLine = $uvRealHook }
+  })
+  if ($uvRealWarn -and $uvRealSkip -and $uvRealStubGone -and -not $uvRealHook) { $summary.Add('Real corrupt uv probe: PASS') } else { $summary.Add('Real corrupt uv probe: FAIL') }
 }
 
 # --- Conda bulk install retry test ---
