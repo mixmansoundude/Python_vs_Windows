@@ -198,7 +198,7 @@ if ($scenario -eq 'mei_genuine') {
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.smokerun.exedata.xfail'
-    req     = 'REQ-003'
+    req     = 'REQ-003, REQ-007.9'
     pass    = $xfailPass
     desc    = $desc
     details = $details

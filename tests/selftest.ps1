@@ -361,7 +361,7 @@ $elevMatches = [regex]::Matches($elevText, '\[INFO\] Elevated: (yes|no)\b')
 $elevOnce = ($elevMatches.Count -eq 1)
 Write-NdjsonRow ([ordered]@{
   id   = 'self.elevation.logged'
-  req  = 'REQ-008'
+  req  = 'REQ-008.17'
   pass = $elevOnce
   desc = 'The setup log states once per run whether the process is elevated'
   details = [ordered]@{
@@ -369,6 +369,25 @@ Write-NdjsonRow ([ordered]@{
     value = if ($elevMatches.Count -ge 1) { $elevMatches[0].Groups[1].Value } else { $null }
   }
 })
+# README REQ-008.3: a program that imports neither pyvisa nor visa gets no driver install. The stub program imports nothing,
+# so its initial bootstrap must say once that nothing was found and once that the NI-VISA step was not required, and must
+# not write any line that belongs to an install attempt (present, install_*, download, installer).
+$visaNoneLines = [regex]::Matches($elevText, [regex]::Escape('[INFO] No pyvisa/visa imports detected.'))
+$visaNotRequiredLines = [regex]::Matches($elevText, [regex]::Escape('[VISA] skipped (not_required)'))
+$visaAttemptLines = [regex]::Matches($elevText, '\[VISA\] (present|install_|download method|installer)')
+$visaNotRequiredPass = ($visaNoneLines.Count -eq 1) -and ($visaNotRequiredLines.Count -eq 1) -and ($visaAttemptLines.Count -eq 0)
+Write-NdjsonRow ([ordered]@{
+  id   = 'self.nivisa.not_required'
+  req  = 'REQ-008.3'
+  pass = $visaNotRequiredPass
+  desc = 'A program that imports neither pyvisa nor visa gets no NI-VISA install: the setup log says it was not required and has no install line'
+  details = [ordered]@{
+    noImportLines    = $visaNoneLines.Count
+    notRequiredLines = $visaNotRequiredLines.Count
+    installLines     = $visaAttemptLines.Count
+  }
+})
+if ($visaNotRequiredPass) { $summary.Add('self.nivisa.not_required: PASS') } else { $summary.Add('self.nivisa.not_required: FAIL') }
 $stubEnvName = Split-Path -Leaf $stubDir
 $stubEnvNameNormalized = $stubEnvName -replace '[^A-Za-z0-9_-]', '_'
 if ([string]::IsNullOrWhiteSpace($stubEnvNameNormalized) -or $stubEnvNameNormalized.Trim('_').Length -eq 0) {

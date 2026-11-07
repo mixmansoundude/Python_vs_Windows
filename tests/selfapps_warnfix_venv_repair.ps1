@@ -222,7 +222,7 @@ $pass = $preconditionOk -and $venvProviderLog -and $warnInstallFired -and $warnR
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.warnfix.venv_repair'
-    req     = 'REQ-007'
+    req     = 'REQ-007.15'
     pass    = $pass
     desc    = 'Warnfix repair-install under venv mode genuinely installs the missing module (CLAUDE.md Item 36)'
     details = [ordered]@{

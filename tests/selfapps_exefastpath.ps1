@@ -131,7 +131,7 @@ $pass = ($run1Exit -eq 0) -and ($run2Exit -eq 0) -and $fastPathFellBack -and (-n
 
 Write-NdjsonRow ([ordered]@{
     id      = 'self.exe.fastpath.graceful'
-    req     = 'REQ-007'
+    req     = 'REQ-007.7, REQ-007.10'
     pass    = $pass
     desc    = 'Reused fast-path EXE that fails is discarded and rebuilt; bootstrap stays graceful'
     details = [ordered]@{
