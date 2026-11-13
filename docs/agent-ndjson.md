@@ -809,9 +809,23 @@ skipping the EXE run must not leave the build unverified, and the repeat logs `r
 and launches nothing (the ledger stays at one line). Details also record whether the `entry_only` repeat reused the
 cached EXE or rebuilt (informational, not asserted). Skips on non-Windows.
 
+Item 99 added two rows to the same script. `self.launch.warning.throwaway` (README REQ-018.5) reads the console of the
+`HP_SKIP_ENTRY_SMOKE` scenario three times: the fresh build, the repeat that reuses the cached EXE and, new, a rebuild after
+a comment line is appended to the program (so the cached EXE is stale). A build or rebuild is verified by running the EXE once,
+so the warning that this run is a throwaway check ("Verifying the built standalone EXE ... do not start real work in it") must
+be printed exactly once in the first and the third log, before the program's own output (`ledger-ok`), and not at all in the
+repeat; the ledger must grow by one line per verification (one, two, three lines) and the last line must be a frozen start.
+`self.skiphooks.exe_only.panel` (README REQ-012.5) reads the `HP_SKIP_EXE_SMOKERUN` console with its whitespace flattened (the
+panel wraps sentences over several echo lines): the plain `SETUP COMPLETE` heading and the note that the EXE verification was
+skipped by request must be there, and neither the unverified caveat (`WITH A CAVEAT`, `couldn't fully verify it runs as a
+standalone program`) nor `BUT WE CAN'T CONFIRM`; the plain heading is required so "no caveat" cannot pass when no panel was
+printed.
+
 ```
 self.skiphooks.entry_only
 self.skiphooks.exe_only
+self.skiphooks.exe_only.panel
+self.launch.warning.throwaway
 ```
 
 ## selfapps-runtests-contract NDJSON rows (selfapps_runtests_contract.ps1, every lane, gating)
@@ -1009,6 +1023,40 @@ self.repair.gate.idempotent
 self.repair.gate.once
 self.repair.consent.declined
 self.repair.consent.accepted
+```
+
+## selfapps-workdir NDJSON rows (selfapps_workdir.ps1, conda-full lane only, gating)
+
+Item 101 (README REQ-003.6: every run of the user's program starts with the folder that holds its entry file as the
+working folder, so a program that opens a file by a relative name sees the same files in every run). Every launch in
+`run_setup.bat` does now. Item 38 had moved the verification run, the cached-EXE run and the interpreter runs to the app
+folder; Item 101 moved the last two, the verification run of the optimized build (`:offer_optimized_build`) and the runs of
+the `--hidden-import` repair loop (`:hidden_import_recover`), which used to `pushd dist`. Both launch lines now name the EXE
+by an absolute path in an environment variable (`HP_OPTBUILD_EXE`, `HP_HIR_EXE`), and the loop's capture file is still
+`dist\~exe_out.txt`. A small program appends one JSON line per start to a ledger at an ABSOLUTE path (`WORKDIR_LEDGER`, a
+relative one would be split over the folders under test) BEFORE anything can fail: the working folder, whether it is the
+entry folder (`os.path.samefile`, so a short 8.3 name or letter case cannot fool it), whether the EXE or the interpreter
+started it, and whether `workdir_data.txt` next to the `.py` file can be opened by its relative name. One fresh folder per
+scenario. `.verify` (default bootstrap with the post-execution checkpoint accepted: the verification run of the fresh EXE
+and the checkpoint run through the interpreter), `.fastpath` (the same folder again: the cached EXE is reused and started)
+and `.interpreter` (PyInstaller and Nuitka forced to fail, so the interpreter runs the program) cover the launches Item 38
+had already moved; `.repair` (the program reads the data file and then imports an installed package by a runtime string, so
+the first EXE run fails with ModuleNotFoundError; the repair question is answered yes; every start of the loop must see the
+data file, which is why the loop's first start, in `dist\`, used to fail on the missing file and the repair never
+happened) and `.optbuild` (`PVW_BUILDER=both` with a stub `nuitka.py` next to the program that copies the EXE PyInstaller
+built; the verification run of the optimized build is one more start, which must be in the entry folder) were the two
+rows that read red before the fix. Each row also needs its preconditions from the setup log or console (the checkpoint
+was accepted, the cached EXE was reused, the repair line, the swap line, the number of starts), so a bootstrap that
+never reached the step cannot pass. Details carry finished, seconds, exit codes, the counts of starts (all, EXE,
+interpreter, outside the entry folder, without the data file) and, only when something is wrong, `problems` plus a log
+excerpt. Each bootstrap has a 15 minute limit. Skips on non-Windows.
+
+```
+self.workdir.verify
+self.workdir.fastpath
+self.workdir.interpreter
+self.workdir.repair
+self.workdir.optbuild
 ```
 
 ## selfapps-dep-source-matrix NDJSON rows (selfapps_dep_source_matrix.ps1, real lane only, gating)
@@ -1638,6 +1686,40 @@ self.runtime.install.pyproject
 self.runtime.install.pep723
 self.runtime.install.wording
 self.runtime.install.risk
+```
+
+## selfapps-runtime-install-edges NDJSON rows (selfapps_runtime_install_edges.ps1, contract-uv lane only, GATING)
+
+Item 99, README REQ-018.14, REQ-018.16, REQ-018.20, REQ-018.21 and REQ-018.22: the edges of the consented install of a
+package a program asked for at run time (the main road, a yes that installs and a no that changes nothing, is
+`selfapps_runtime_install.ps1` above). Two kinds of scenario. **Gate rows** cut the real `:runtime_install_offer` block out of
+`run_setup.bat` (up to `:rti_install_one`), wrap it in a driver batch file with stubs for what it calls (`:log`, `:rti_row`,
+`:emit_from_base64`, which copies the real helper `tools/runtime_module_scan.py`, and the console `choice` line, which is
+recorded and answered with errorlevel 2, a no) and run it with `cmd.exe` and closed standard input, one scenario per decision;
+`tests/test_edge_rows.py` pins what the cut needs (labels, calls, variable reads). **Run rows** are three real default
+bootstraps of a program that catches its own `ImportError`, prints the traceback and exits 0 (module names joined at run time, so
+no static scan installs them first), answered yes through `HP_TEST_RTM_ANSWER`.
+`self.runtime.install.once` (REQ-018.14): in one bootstrap the question is printed once for two calls (sites `exe` and
+`interpreter`), the console branch asks through a `choice` line bounded by `/T 30` that defaults to `N`, a real yes run prints the
+question before the first `Runtime install: installing` line and nothing is changed before the answer.
+`self.runtime.install.notoffered` (REQ-018.16): a system Python, no provider and an EXE built by the fallback build system are
+not asked, the log says `Runtime install: not offered`, the state is `not_offered`; a control run with a uv provider IS asked, so a
+driver that never offers cannot pass. `self.runtime.install.listing` (REQ-018.22): the prompt lists every package, `cv2` as
+`opencv-python`, `PIL` as `pillow`, any other module under its own name. `self.runtime.install.stillmissing` (REQ-018.20): one name
+installs and one cannot (a trailing underscore, which uv refuses before it asks an index), so the check run still names a module
+and the log says it still reports a missing module, not `verified`. `self.runtime.install.failed` (REQ-018.21): the only package
+cannot be installed, so nothing is added to `requirements.txt`, no rebuild and no check run follow. `self.runtime.install.rebuildfailed`
+(REQ-018.21): the package installs and `HP_TEST_FORCE_RTI_REBUILD_FAIL` gives the rebuild an option PyInstaller refuses, so the
+log reports the failed rebuild and the check run does not start. None of the three run rows starts a provider cascade; the
+bootstrap's status after a failed rebuild is recorded, not asserted. The driver rows skip with `skip=true` off Windows.
+
+```
+self.runtime.install.once
+self.runtime.install.notoffered
+self.runtime.install.listing
+self.runtime.install.stillmissing
+self.runtime.install.failed
+self.runtime.install.rebuildfailed
 ```
 
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)

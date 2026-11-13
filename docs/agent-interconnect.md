@@ -182,7 +182,7 @@ ran). The lists close that: one file per selftest matrix lane, one row id per li
   only when nothing was removed. A third PR did it again (#523: 7 pre and 7 post ids in every lane): when one of the two runs
   predates a merged PR, the regenerated list lacks that PR's ids, so add only the new ids (`comm -13`) and keep the old ones. A fourth (#526: one pre id, not in `conda-full`, and one post id) was
   listed from a single green run of its PR, with this PR's own next run as the second observation: a listed id the run lacks turns the
-  gate red with the id named. A run that predates the post-harness upload has the post file only in its `test-logs` artifact under `tests/`.
+  gate red with the id named. A fifth (#525: 6 `self.runtime.install.*` ids in `contract-uv`, 2 in `real`, 5 `self.workdir.*` in `conda-full`) merged while #524 was green and waiting, so the lists got the 13 ids in a merge-main commit (additions only, read from two green runs of #525's own branch, `42363117371` and `42384855330`). A run that predates the post-harness upload has the post file only in its `test-logs` artifact under `tests/`.
 
 ### The post-harness half (Item 104): a second artifact, a second list, a second exit code
 
@@ -1242,9 +1242,15 @@ checkpoint can still launch an OPTIONAL second run). Touching this flow requires
   `dist\`** (CLAUDE.md Item 38, resolved) -- the same CWD `:try_fast_exe`/
   `:verify_no_exe_interpreter` and the interpreter's own run already use, so a CWD-relative-path
   app (e.g. `open("config.json")` next to the script) can no longer disagree between a fresh build
-  and a fast-path reuse. Two narrower `pushd dist` sites remain deliberately deferred
-  (`:offer_optimized_build`'s internal verify, `:hidden_import_recover`'s diagnostic re-run) --
-  each carries its own comment naming the deferral; no test depends on either site's CWD.
+  and a fast-path reuse. **Every other start of the program uses the app root too** (README REQ-003.6, Item 101): the
+  optimized build's verification run (`:offer_optimized_build`) and the `--hidden-import` repair loop's EXE runs
+  (`:hidden_import_recover`) were the last two `pushd dist` sites. Their inline launch lines now take the EXE from an
+  absolute path in an environment variable (`HP_OPTBUILD_EXE`, `HP_HIR_EXE`, each set on the line before from
+  `%CD%\dist\...` and cleared right after), so nothing changes directory around them; the loop still writes its capture
+  to `dist\~exe_out.txt`, the path the scan and the Item 96 hand-over read. A new launch of the user's program follows
+  the same shape (absolute path in a variable, no `pushd`). `tests/test_workdir_start.py` pins the batch side and
+  `tests/selfapps_workdir.ps1` (`self.workdir.*`, conda-full lane, gating) runs a program that opens a data file by a
+  relative name through all five kinds of start.
   `sys.argv[0]`-relative files (not CWD-relative) still land in `dist\` for a frozen EXE regardless
   of this fix -- an inherent EXE-vs-script difference, not something to normalize.
   If any of this vocabulary/paths changes, `harness.ps1`'s `batch.smoke.single_verify` and
@@ -1323,7 +1329,11 @@ indefinitely instead of being caught at 30s -- an explicit owner decision ("if i
 was received then extend or stop the timeout... don't change the timeout" otherwise).
 `:warn_user_code_launch` takes a `main`/`hidden_import` parameter with different wording per
 caller, since `:hidden_import_recover`'s own separate, still-unconditional 30s check is
-deliberately NOT migrated to this activity-aware behavior.
+deliberately NOT migrated to this activity-aware behavior. All four wordings keep the two halves that
+`self.launch.warning.throwaway` (README REQ-018.5, `tests/selfapps_skiphooks_single.ps1`) counts on one console line,
+`Verifying the built standalone EXE` and `do not start real work in it`; the row needs exactly one such line before the
+program's own output for a fresh build and for a rebuild after a source change, and none for a cached-EXE repeat
+(`tests/test_edge_rows.py` `warning_batch_problems` pins the four wordings and their two halves).
 
 ### Process-ID display for stuck-program recovery
 
@@ -1522,6 +1532,22 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
   `rebuild_failed`, `verified`, `still_missing`, `not_verified`), `site`, `provider`, `depSource`, `packages`;
   `pass` is always true because a state is a finding. The verdicts live in `tests/selfapps_runtime_install.ps1`
   (`self.runtime.install.accept`/`.decline`/`.pyproject`, real lane).
+- **Edge rows (Item 99, README REQ-018.14, .16, .20, .21, .22)**: `tests/selfapps_runtime_install_edges.ps1` (six
+  `self.runtime.install.*` rows, `contract-uv` lane, gating) cuts `:runtime_install_offer` out of `run_setup.bat`, from its label
+  to `:rti_install_one`, and runs it under cmd.exe with a driver that defines `:log`, `:rti_row`, `:emit_from_base64` (copies the
+  real `tools/runtime_module_scan.py`) and replaces the one `choice` line with a recorded stub answering errorlevel 2. **Touch
+  the labels `:runtime_install_offer` / `:rti_install_one`, add a `call` or a `goto` that leaves the cut, or make the block read a
+  new variable, and the driver no longer runs it**: `tests/test_edge_rows.py` (`offer_problems`) says which, locally, and names
+  the script to update (`ALLOWED_CALLS`, `YES_ONLY_CALLS` and the driver's cleared variables). The block must keep: the
+  once-per-bootstrap guard as its first line, `HP_RTI_OFFERED` set before the question and where the offer is not made, one
+  gate order (test answer, `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`, then the console), exactly one live `choice /C YN /T 30
+  /D N` line, only providers uv, conda, venv and embed, and a single `Y` test as the way into `:rti_accepted`. Three real
+  bootstraps follow it: a program that catches its own `ImportError` (names joined at run time, so no static scan installs them),
+  answered yes through `HP_TEST_RTM_ANSWER`. `HP_TEST_FORCE_RTI_REBUILD_FAIL` (read only inside `:rti_rebuild`, named by the edge
+  script and its unit test as `tests/test_flag_inventory.py` requires) hands PyInstaller an option it rejects, so the rebuild
+  fails without breaking any other build; absence changes nothing (README REQ-019). The driver never runs the real `choice`
+  (Item 105 is about what it answers for Ctrl+C), and the status of a bootstrap after a failed rebuild is recorded in the row's
+  details, not asserted.
 - **Payload margin**: `HP_RUNTIME_MODULE_SCAN` has 354 characters left under the 8191 limit. Item 82's
   last-error-line extraction does not fit; give it its own payload or shrink this one first.
 - **Not covered**: a native DLL a newly installed conda package needs is not bundled (`:dll_bundle_recover`
@@ -1628,7 +1654,8 @@ which is filled from text that a run already printed:
 - **Otherwise the verification run's own capture.** With no hand-over, `:exe_smokerun_hints` builds `~exe_out.txt` from
   `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt: it runs from
   `dist\`, and a program that reads a file relative to its working directory would be blamed for a file that exists at the
-  app root (Item 38). Item 101 (every start of the program uses the app root) would let the loop's entry run always be used.
+  app root (Item 38). Item 101 has since moved the loop's starts to the app root, but the verification run's capture stays
+  the evidence: the loop's start passes no program arguments, so a program that needs them could fail there for another reason.
 - **Stale files**: `:run_exe_smokerun` deletes an older `~exe_out.txt` before the launch and `:hidden_import_recover_done`
   deletes it before deciding, because the subroutine can run twice per build.
 - **Known limit**: the second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only

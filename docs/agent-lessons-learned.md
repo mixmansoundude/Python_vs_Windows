@@ -1411,3 +1411,35 @@ cache keyed on names (the dep-check) cannot see an edited pin, so the merge rais
 proof is a script that runs one folder several times (`tests/selfapps_dep_merge_later.ps1`), because one bootstrap per
 folder (the matrix) can only show a cold run. Removing from a PEP 723 header needs `uv remove --script` (`uv add --script`
 only adds); removing a name that is not in the header exits 2, so only names the merge saw in the header are removed.
+
+---
+
+## A judging helper of a test script can be wrong in a way no scenario shows: PowerShell variable names are case-insensitive (Item 99)
+
+`Get-GateProblems` in `tests/selfapps_runtime_install_edges.ps1` took a parameter `$Calls` and built a local `$calls` from the
+driver's result file. PowerShell variable names ignore case, so the local overwrote the parameter, `$calls -ne $Calls` could never be
+true and every gate scenario passed its call-count check (the same with `$headings` and `$Headings`). Nothing the script does would ever
+show it, because the scenarios that pass are the ones with the right answer. **Rules: a script that judges real runs keeps its judging in
+functions that take plain values and return a list of problems; `tests/test_edge_rows.py` runs each of them through real `pwsh` on a
+synthetic run that MUST be red for each comparison (`gate_calls_mismatch`, `gate_headings_mismatch` are the two that found this); and a
+parameter and a local never differ only by case (`$callsSeen`).** The unit test's driver evaluates each wanted function alone
+(`Invoke-Expression` of its AST text), so a judge that reads a script-scope variable fails loudly instead of passing.
+
+## A mutation case that replaces "the first match" can edit the wrong block when the file repeats a line (Item 99)
+
+`run_setup.bat` holds the same `choice /C YN /N /T 30 /D N /M` text in `:hidden_import_consent` and `:runtime_install_offer`, and the
+same `call :emit_from_base64 "~runtime_module_scan.py" HP_RUNTIME_MODULE_SCAN` in `:scan_runtime_missing_module` and
+`:runtime_install_offer`. The first drafts of two "each rule can fail" cases mutated the earlier occurrence, so the pin under test never
+saw the change and the cases reported no finding. A case that passes for the wrong block is the dangerous one, because it proves
+nothing and looks like proof. **Rule: `mutate()` in `tests/test_edge_rows.py` asserts the anchor occurs exactly once (name a neighbouring
+line that only the block under test has), and a case asserts that the finding names the rule being tested, not only that something is
+reported.** The same applies to any test that edits a copy of `run_setup.bat` text.
+
+## A gate that cuts real code out of the batch file must replace the console read, and the read has to be decided on purpose (Item 99)
+
+The cut-out technique of `selfapps_conda_transient.ps1`, `selfapps_repair_consent.ps1` and `selfapps_runtime_install_edges.ps1` runs the
+real block under cmd.exe. The one line that reads the console (`choice`) is replaced by a call of a stub that records its arguments and
+answers errorlevel 2, because a real `choice` with closed standard input may answer nothing a test can rely on, and an answer of 0 is
+read as a yes by every timed gate without the Item 97 guard (Item 105). A scenario that wants the console branch (no test answer, none
+of the three non-interactive signals) therefore asserts the recorded arguments (`/C YN`, `/T 30`, `/D N`) and the decline, which is the
+shall (a bounded wait that defaults to N), and not what a person's keystroke would do.

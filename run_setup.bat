@@ -3941,17 +3941,13 @@ rem already documents for HP_FAILFAST_PROBE. Without this, a program that requir
 rem arguments to start would always fail this verification, regardless of whether the
 rem Nuitka build itself is fine.
 set "HP_OPTBUILD_VERIFY_EXIT=-1"
-rem CLAUDE.md Active Backlog Item 38: this internal verification of the elective Nuitka-optimized
-rem build still runs from dist\ (current working directory (CWD) = dist), unlike
-rem :run_exe_smokerun's own primary verification (now app root, see that subroutine's own
-rem comment). Deliberately left as a documented, deferred follow-up rather than folded into this
-rem slice -- no existing test depends on this specific CWD either way (selfapps_optimized_build.ps1's
-rem stub app does no file I/O at all), and this is a narrower-blast-radius, opt-in-only code path,
-rem not the widely-hit primary verification path Item 38 was actually about. Re-derive whether to
-rem unify this too the next time this subroutine is touched.
-pushd dist
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%HP_OPTBUILD_TMP%';if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Out-Null;$se.Result|Out-Null;if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
-popd
+rem Item 101, README REQ-003.6: this verification run starts from the folder that holds the entry
+rem file, like every other start of the program, so a program that opens a file by a relative
+rem path sees the same files here as in the primary verification. The working folder is no longer
+rem dist, so the EXE is named by its absolute path in an environment variable.
+set "HP_OPTBUILD_EXE=%CD%\dist\%HP_OPTBUILD_TMP%"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_OPTBUILD_EXE;if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Out-Null;$se.Result|Out-Null;if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
+set "HP_OPTBUILD_EXE="
 if not defined HP_OPTBUILD_VERIFY_EXIT set "HP_OPTBUILD_VERIFY_EXIT=-1"
 if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (
   call :log "[WARN] Optimized build verification did not pass (exit %HP_OPTBUILD_VERIFY_EXIT%); your app is still ready to use as-is."
@@ -5378,19 +5374,15 @@ rem run the EXE with a 30s cap and capture combined output for the scan. A cap i
 rem essential here: once recovery fixes a missing import the app may proceed into a
 rem long-running phase (server/GUI), and an uncapped run would hang the bootstrapper.
 set "HP_EXE_EXIT="
-rem CLAUDE.md Active Backlog Item 38: this --hidden-import auto-recovery diagnostic re-run still
-rem runs from dist\ (current working directory (CWD) = dist), unlike :run_exe_smokerun's own
-rem primary verification (now app root). Deliberately left as a documented, deferred follow-up --
-rem the write (~exe_out.txt, inside dist\) and the later read-back (explicit "dist\~exe_out.txt")
-rem a few lines below are already internally consistent with each other regardless of which CWD is
-rem chosen, and no test depends on this specific CWD (selfapps_hidden_import*.ps1's stub apps
-rem locate their own token file via sys.argv[0], not a CWD-relative path, so they are unaffected
-rem either way -- see docs/agent-interconnect.md "Single-verification smoke model"). Re-derive
-rem whether to unify this too the next time this subroutine is touched.
-pushd dist
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName='%ENVNAME%.exe';$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)|Set-Content -Path '~exe_out.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+rem Item 101, README REQ-003.6: this run starts from the folder that holds the entry file, like
+rem every other start of the program, so a program that opens a file by a relative path sees the
+rem same files here as in the primary verification. The EXE is named by its absolute path in an
+rem environment variable, and its output goes to dist\~exe_out.txt, which the scan below and the
+rem Item 96 hand-over in :hidden_import_recover_done already read.
+set "HP_HIR_EXE=%CD%\dist\%ENVNAME%.exe"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_HIR_EXE;$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)|Set-Content -Path 'dist\~exe_out.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+set "HP_HIR_EXE="
 if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
-popd
 if "%HP_EXE_EXIT%"=="0" goto :hidden_import_recover_done
 if %HP_HIDDEN_ITER% GEQ 3 goto :hidden_import_recover_done
 call :emit_from_base64 "~hidden_import_scan.py" HP_HIDDEN_IMPORT_SCAN
@@ -6053,8 +6045,14 @@ set "HP_RTI_SPEC_PRE="
 if exist "%ENVNAME%.spec" set "HP_RTI_SPEC_PRE=1"
 for /f "usebackq tokens=1,2" %%A in ("~runtime_install_ok.txt") do call :rti_add_hidden "%%A"
 call :log "[INFO] Runtime install: rebuilding the standalone EXE with the new packages. This may take a minute or two..."
-"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
+rem [TEST] HP_TEST_FORCE_RTI_REBUILD_FAIL: adds an option PyInstaller rejects, so this rebuild fails the way a broken
+rem build does and the rebuild_failed branch can be tested. Absent, the command line is exactly the one below.
+set "HP_RTI_TEST_BAD="
+if defined HP_TEST_FORCE_RTI_REBUILD_FAIL set "HP_RTI_TEST_BAD=--pvw-test-invalid-option"
+if defined HP_TEST_FORCE_RTI_REBUILD_FAIL call :log "[TEST] HP_TEST_FORCE_RTI_REBUILD_FAIL: the rebuild command gets an option PyInstaller rejects."
+"%HP_PY%" -m PyInstaller -y --onefile --clean --log-level WARN %HP_PYI_EXPAT% %HP_PYI_COLLECT% %HP_PYI_DLLBIND% %HP_PYI_HIDDEN_IMPORTS% %HP_PYI_HID_COLLECT% %HP_RTI_TEST_BAD% --name "%ENVNAME%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 set "HP_RTI_REBUILD_FAILED=1"
+set "HP_RTI_TEST_BAD="
 if not exist "dist\%ENVNAME%.exe" set "HP_RTI_REBUILD_FAILED=1"
 if not defined HP_RTI_SPEC_PRE if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
 if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
