@@ -627,7 +627,9 @@ rem --- CI fast path (entry tests only) ---
 call :rotate_log
 rem HP_* variables represent "Helper Payload" assets emitted on demand -- now decoded
 rem earlier, right before :merge_git_config, not here; see that call site's own comment.
-for %%I in ("%CD%") do set "ENVNAME=%%~nI"
+rem derived requirement: CLAUDE.md Item 107 -- %%~nxI keeps the whole folder name. %%~nI drops everything after the last
+rem dot, so a folder Report.v2.1 got the environment Report_v2, while README REQ-004.7 writes every dot as an underscore.
+for %%I in ("%CD%") do set "ENVNAME=%%~nxI"
 rem derived requirement: conda env names reject characters like '~'; self env smoke
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
 rem CLAUDE.md Item 26: '&' is special-cased to the bare word 'and' BEFORE the blanket

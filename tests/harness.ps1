@@ -278,7 +278,8 @@ for ($k = 0; $k -lt $Lines.Count; $k++) {
 }
 $pauseGated = ($pauseHits.Count -ge 1) -and ($ungatedPauses.Count -eq 0)
 Write-Result 'batch.ux.pause.gated' 'REQ-016: all pause statements gated on HP_CI_LANE' $pauseGated @{ pauseCount = $pauseHits.Count; ungated = $ungatedPauses }
-$envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nI"')
+# Item 107: %%~nxI keeps the whole folder name; %%~nI cut it at its last dot (Report.v2.1 became Report_v2).
+$envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nxI"')
 Write-Result "env.foldername" "Env name equals folder name" $envLine @{} 
 $instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")
 Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{}
