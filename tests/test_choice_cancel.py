@@ -77,6 +77,14 @@ GATES = {
     },
 }
 
+# The label each question sends a declined or interrupted read to (the fix of Item 105 is the guard lines that reach it).
+DECLINE_LABELS = {
+    "cascade": ":cascade_consent_ci_decline",
+    "visa": ":visa_gate_decline",
+    "install": ":rti_gate_decline",
+    "repair": ":hic_gate_declined",
+}
+
 # What the driver defines for the cut-out blocks: the labels it holds stubs for and the variables it sets itself.
 STUB_LABELS = [":log", ":rti_row", ":rti_install_one", ":rti_rebuild", ":run_exe_smokerun", ":verify_no_exe_interpreter",
                ":emit_from_base64", ":choice_stub"]
@@ -271,6 +279,37 @@ def verdict_problems(key, block):
             at = next((i for i, ln in enumerate(body) if re.search(r"\bcall :log\b", ln) and re.search(log_pattern, ln)), -1)
             if at < 0 or at + 1 >= len(body) or body[at + 1].strip() != want:
                 found.append("the line after the %r log line is not %r, which the script reads as RC" % (log_pattern, want))
+    return found
+
+
+def guard_problems(batch):
+    """The fix itself: the two live lines after each question's console read send errorlevel 2 (N, and an error, which choice.exe
+    reports as 255) AND errorlevel 0 (Ctrl+C or Ctrl+Break) to the gate's decline label, before any line can accept. `if errorlevel 2`
+    alone is true for 2 and above, so it never catches 0, and the lines that follow it took 0 for a yes."""
+    found = []
+    for key, g in GATES.items():
+        block = cut_block(batch, g["Start"], g["End"])
+        if block is None:
+            found.append("%s: the block between %s and %s cannot be cut" % (key, g["Start"], g["End"]))
+            continue
+        # raw lines, not live ones: nothing may run between choice and the lines that read its errorlevel, and a comment is not
+        # known to leave the errorlevel alone either, so the two guards are the two lines directly after the read
+        reads = [i for i, ln in enumerate(block) if re.match(r"(?i)\s*choice\s", ln)]
+        if len(reads) != 1:
+            found.append("%s: %d line(s) start with choice; expected exactly one" % (key, len(reads)))
+            continue
+        after = [ln.strip() for ln in block[reads[0] + 1:reads[0] + 3]]
+        first = re.fullmatch(r"(?i)if errorlevel 2 goto (:\w+)", after[0]) if after else None
+        if not first:
+            found.append("%s: the line right after the console read is not 'if errorlevel 2 goto <decline label>' (nothing, not even a "
+                         "comment, may sit between choice and the lines that read its errorlevel): %r" % (key, after[:1]))
+            continue
+        label = first.group(1)
+        if label.lower() != DECLINE_LABELS[key].lower():
+            found.append("%s: errorlevel 2 goes to %s; expected the decline label %s" % (key, label, DECLINE_LABELS[key]))
+        if len(after) < 2 or not re.fullmatch(r"(?i)if not errorlevel 1 goto %s" % re.escape(label), after[1]):
+            found.append("%s: the second line after the console read is not 'if not errorlevel 1 goto %s', so errorlevel 0 (Ctrl+C or "
+                         "Ctrl+Break) is taken for a yes: %r" % (key, label, after[1:2]))
     return found
 
 
@@ -661,6 +700,9 @@ class RealFiles(unittest.TestCase):
     def test_the_blocks_have_what_the_script_assumes(self):
         self.assertEqual(batch_problems(self.batch, self.script), [])
 
+    def test_every_timed_question_declines_errorlevel_0_as_well_as_2(self):
+        self.assertEqual(guard_problems(self.batch), [])
+
     def test_the_script_has_its_rows_tables_stubs_and_exit_codes(self):
         self.assertEqual(script_problems(self.script), [])
 
@@ -782,6 +824,51 @@ class BatchRulesCanFail(unittest.TestCase):
         self.assertTrue(any("visa" in f and "NEED_VISA=1" in f for f in self.problems(text)))
         text = mutate(self.batch, 'call :log "[INFO] REQ-009: cascade consent: declined."\nexit /b 1', 'call :log "[INFO] REQ-009: cascade consent: declined."\nexit /b 0')
         self.assertTrue(any("cascade" in f and "exit /b 1" in f for f in self.problems(text)))
+
+    def test_a_gate_without_its_errorlevel_0_guard_is_caught(self):
+        for key, label in DECLINE_LABELS.items():
+            with self.subTest(gate=key):
+                found = guard_problems(mutate(self.batch, "if not errorlevel 1 goto %s\n" % label, ""))
+                self.assertEqual([f.split(":")[0] for f in found], [key], found)
+                self.assertIn("Ctrl+C", found[0])
+
+    def test_a_gate_without_its_errorlevel_2_line_is_caught(self):
+        for key, label in DECLINE_LABELS.items():
+            with self.subTest(gate=key):
+                found = guard_problems(mutate(self.batch, "if errorlevel 2 goto %s\n" % label, ""))
+                self.assertEqual([f.split(":")[0] for f in found], [key], found)
+                self.assertIn("if errorlevel 2 goto", found[0])
+
+    def test_guards_in_the_wrong_order_or_for_the_wrong_label_are_caught(self):
+        text = mutate(self.batch, "if errorlevel 2 goto :visa_gate_decline\nif not errorlevel 1 goto :visa_gate_decline\n",
+                      "if not errorlevel 1 goto :visa_gate_decline\nif errorlevel 2 goto :visa_gate_decline\n")
+        self.assertTrue(any(f.startswith("visa:") and "if errorlevel 2 goto" in f for f in guard_problems(text)))
+        text = mutate(self.batch, "if not errorlevel 1 goto :rti_gate_decline\n", "if not errorlevel 1 goto :rti_gate_resolve\n")
+        self.assertTrue(any(f.startswith("install:") and "if not errorlevel 1 goto :rti_gate_decline" in f for f in guard_problems(text)))
+        text = mutate(self.batch, "if errorlevel 2 goto :cascade_consent_ci_decline\nif not errorlevel 1 goto :cascade_consent_ci_decline\n",
+                      "if errorlevel 2 goto :cascade_consent_resolve\nif not errorlevel 1 goto :cascade_consent_resolve\n")
+        self.assertTrue(any(f.startswith("cascade:") and "expected the decline label" in f for f in guard_problems(text)))
+
+    def test_a_guard_that_sends_errorlevel_0_to_the_accept_is_caught(self):
+        text = mutate(self.batch, "if not errorlevel 1 goto :visa_gate_decline\n", "if not errorlevel 1 goto :visa_gate_accept\n")
+        self.assertTrue(any(f.startswith("visa:") for f in guard_problems(text)))
+
+    def test_anything_between_the_read_and_the_guards_is_caught_even_a_comment(self):
+        text = mutate(self.batch, 'Install and check? [Y/N, defaults to N after 30s] "\n', 'Install and check? [Y/N, defaults to N after 30s] "\nrem a comment\n')
+        found = guard_problems(text)
+        self.assertEqual([f.split(":")[0] for f in found], ["install"], found)
+        self.assertIn("not even a comment", found[0])
+
+    def test_a_second_choice_line_or_a_missing_one_is_reported_by_the_guard_rule_too(self):
+        text = mutate(self.batch, "if not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"\n",
+                      "if not errorlevel 1 goto :rti_gate_decline\nchoice /C YN /N /T 30 /D N\nset \"HP_RTI_CHOICE=Y\"\n")
+        self.assertTrue(any(f.startswith("install:") and "2 line(s) start with choice" in f for f in guard_problems(text)))
+        text = mutate(self.batch, 'choice /C YN /N /T 30 /D N /M "  Install and check?', 'rem choice /C YN /N /T 30 /D N /M "  Install and check?')
+        self.assertTrue(any(f.startswith("install:") and "0 line(s) start with choice" in f for f in guard_problems(text)))
+
+    def test_a_block_that_cannot_be_cut_is_reported_by_the_guard_rule_too(self):
+        text = mutate(self.batch, ":rti_install_one\n", ":rti_install_two\n")
+        self.assertTrue(any(f.startswith("install:") and "cannot be cut" in f for f in guard_problems(text)))
 
     def test_a_block_with_a_character_the_driver_cannot_carry_is_caught(self):
         self.assertTrue(block_problems([":start", "echo done!"], {"labels": [], "vars": set()}, set()))

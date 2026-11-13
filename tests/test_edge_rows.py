@@ -1287,12 +1287,14 @@ class EachRuleCanFail(unittest.TestCase):
             self.assertTrue(any(word in f for f in offer_problems(text, self.names)), old)
 
     def test_a_second_choice_line_is_caught(self):
-        text = mutate(self.batch, "if errorlevel 2 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"",
-                      "if errorlevel 2 goto :rti_gate_decline\nchoice /C YN /N /T 30 /D N\nset \"HP_RTI_CHOICE=Y\"")
+        # Item 105 put a second guard line (errorlevel 0, Ctrl+C) between the errorlevel 2 line and the line that accepts
+        text = mutate(self.batch, "if not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"",
+                      "if not errorlevel 1 goto :rti_gate_decline\nchoice /C YN /N /T 30 /D N\nset \"HP_RTI_CHOICE=Y\"")
         self.assertTrue(any("exactly one live choice line" in f for f in offer_problems(text, self.names)))
 
     def test_a_no_from_choice_that_goes_on_is_caught(self):
-        text = mutate(self.batch, "if errorlevel 2 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"", "set \"HP_RTI_CHOICE=Y\"")
+        text = mutate(self.batch, "if errorlevel 2 goto :rti_gate_decline\nif not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"",
+                      "if not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"")
         self.assertTrue(any("errorlevel 2" in f for f in offer_problems(text, self.names)))
 
     def test_a_system_python_that_is_offered_is_caught(self):

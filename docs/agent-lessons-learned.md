@@ -1443,7 +1443,25 @@ reported.** The same applies to any test that edits a copy of `run_setup.bat` te
 
 The cut-out technique of `selfapps_conda_transient.ps1`, `selfapps_repair_consent.ps1` and `selfapps_runtime_install_edges.ps1` runs the
 real block under cmd.exe. The one line that reads the console (`choice`) is replaced by a call of a stub that records its arguments and
-answers errorlevel 2, because a real `choice` with closed standard input may answer nothing a test can rely on, and an answer of 0 is
-read as a yes by every timed gate without the Item 97 guard (Item 105). A scenario that wants the console branch (no test answer, none
-of the three non-interactive signals) therefore asserts the recorded arguments (`/C YN`, `/T 30`, `/D N`) and the decline, which is the
-shall (a bounded wait that defaults to N), and not what a person's keystroke would do.
+answers errorlevel 2, because a real `choice` with closed standard input may answer nothing a test can rely on, and an answer of 0
+(Ctrl+C) is now a decline at every timed gate, which `tests/selfapps_choice_cancel.ps1` proves with its own stub (Item 105). A scenario
+that wants the console branch (no test answer, none of the three non-interactive signals) therefore asserts the recorded arguments
+(`/C YN`, `/T 30`, `/D N`) and the decline, which is the shall (a bounded wait that defaults to N), and not what a person's keystroke
+would do.
+
+## `choice` leaves errorlevel 0 for Ctrl+C, and `if errorlevel 2` means "2 or more": a timed yes/no gate needs a second guard line (Item 105)
+
+`choice /C YN ... /T 30 /D N` returns 1 for Y, 2 for N (and for the timeout default), 255 for an error and 0 for Ctrl+C or Ctrl+Break.
+`if errorlevel N` is true for any code of N or more, so `if errorlevel 2 goto :decline` catches 2 and 255 but not 0, and three gates
+(`:cascade_consent_gate`, `:visa_subfolder_gate`, `:runtime_install_offer`) went on to their accept line with 0. A person who pressed
+Ctrl+C at the question and answered N to cmd's "Terminate batch job (Y/N)?" took the batch into a provider cascade, an NI-VISA install
+or an install plus a rebuild, which README REQ-018.15 and REQ-008.11 say only an explicit yes may start. **Rule: a timed `choice` gate has
+two guard lines directly after the read, `if errorlevel 2 goto <decline>` and `if not errorlevel 1 goto <decline>`, and only a code of
+exactly 1 reaches the accept line** (`:hidden_import_consent` had both from the start). Nothing sits between the `choice` line and the
+first guard, not even a `rem`: whether a comment resets errorlevel was not checked, and the rule is that the code `choice` left is the
+code the guards read, so the explanation goes above the `choice` line. A static pin alone would not have found it: the old batch passed
+every pin that looked for the `errorlevel 2` line. The proof is a driver row per gate that answers each of 1, 2, 0 and 255 and must see
+the accept only for 1 (`tests/selfapps_choice_cancel.ps1`); `tests/test_choice_cancel.py` pins the two lines, their order, their target
+and that nothing sits between. Adding the guard moved a line that two mutation cases in `tests/test_edge_rows.py` used as an anchor, and
+they failed with "anchor not found" and not with a finding: when a fix inserts a line into a block that mutation cases edit, run them
+before pushing and keep each anchor to one unique line.
