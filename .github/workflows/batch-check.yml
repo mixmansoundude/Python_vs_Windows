@@ -1364,6 +1364,18 @@ jobs:
         run: |
           & tests\selfapps_noflag_default.ps1
 
+      # Item 46 Batch 6 (README REQ-016.8, REQ-024, REQ-009): a failed Miniconda install must not end the run. :tci_both_failed
+      # called :die, which releases the lock and waits for a key press, but its caller goes on with the next provider. Two
+      # default-order runs with no HP_* flag and closed standard input, one control (no installer file) and one whose JustMe
+      # install is forced to fail without network: the lock folder must still be in place when the venv provider starts and no
+      # "Press any key" may sit between the failure message and that provider. Real lane only, gating from its first run
+      # (AGENTS.md, "New tests gate immediately"); a red proof run of this step is how the fix is shown to matter.
+      - name: "Self-test: a failed Miniconda install keeps the lock and does not wait for a key (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_conda_install_fail.ps1
+
       # Item 94b (REQ-018.9): in a non-interactive run every elective offer (post-execution checkpoint, optimized
       # build, missing-package install, last-chance offer) declines without reading the console. One signal at a
       # time (NOINPUT, HP_NONINTERACTIVE, HP_CI_LANE), plus a control run with none of them that must reach the
@@ -1515,6 +1527,18 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_runtime_install_edges.ps1
+
+      # Item 46 Batch 6 (README REQ-009): the uv to conda cascade that cannot install Miniconda keeps the uv build. A program that
+      # fails under uv, the last-chance offer answered C, a local stub as the Miniconda download and the JustMe install forced to
+      # fail: the cascade must say it is unavailable and the status file must still read ok. contract-uv only (the lane with the
+      # most wall-clock headroom; the cascade and the uv provider are the same on every uv lane). Gating from its first run.
+      - name: "Self-test: a cascade that cannot install Miniconda keeps the uv build (contract-uv only)"
+        if: ${{ matrix.mode == 'contract-uv' && !cancelled() }}
+        shell: pwsh
+        env:
+          CONDA_INSTALL_FAIL_SCENARIO: cascade
+        run: |
+          & tests\selfapps_conda_install_fail.ps1
 
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
@@ -2730,6 +2754,8 @@ jobs:
             tests\~selftest_noflag_evidence\~noflag_ledger.jsonl
             tests/~selftest_noflag_evidence/~bootstrap.status.json
             tests\~selftest_noflag_evidence\~bootstrap.status.json
+            tests/~selftest_installfail_evidence/*
+            tests\~selftest_installfail_evidence\*
             tests/~selftest_offers_*/~offers_console.log
             tests/~selftest_offers_*/~offers_env.txt
             tests/~selftest_offers_*/~offers_env0.txt
