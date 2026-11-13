@@ -167,6 +167,8 @@ choice should never come out empty. A person who names a file should get that fi
   nine candidates, print no list, use the alphabetical default and print the three ways of REQ-002.14.
 - **REQ-002.18** [major] The bootstrapper **shall**, in a non-interactive run, ask no entry question and use the
   alphabetical default of REQ-002.12.
+- **REQ-002.19** [minor] The bootstrapper **shall** ask the question of REQ-002.14 at most once in a run, and
+  use the file the user chose, or the default when nothing was typed, in every later step of that run.
 
 > **Notes (non-normative).**
 > - Order of precedence, highest first: a named file (REQ-002.3), `main.py`, `app.py`, `run.py` and `cli.py`, the
@@ -182,6 +184,9 @@ choice should never come out empty. A person who names a file should get that fi
 >   whether to offer the list of REQ-002.14.
 > - The 30 seconds of REQ-002.15 are the `HP_PICK_T` setting of `:pick_entry_interactive`; the test setting
 >   `HP_TEST_FORCE_PICKER` shortens it to 2 seconds, so no row waits the full time.
+>   The bootstrapper chooses the entry file twice in one run (before the dependency phase and again before the
+>   build); `:pick_entry_interactive` keeps the answer in `HP_PICKED_ENTRY` so that the second choice does not ask
+>   again (backlog Item 109).
 
 ---
 
