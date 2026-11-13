@@ -4249,6 +4249,45 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   (a README wording question for the README owner, not a code change). The status of a bootstrap after a failed rebuild is recorded in
   the row details, not asserted. Item 105 (Ctrl+C read as a yes in three timed gates) was found on the way and filed separately.
 
+### Item 107 (closed 2026-11-13, PR #527; found 2026-11-07 while writing the REQ-004 rows)
+
+- **The problem.** README REQ-004.7 writes every character outside `A-Za-z0-9_-` as `_` in the environment name, dots included.
+  The batch file took the folder name with `%%~nI`, which drops everything after the LAST dot (that is a file extension to cmd), so a
+  folder `Report.v2.1` was given the environment name `Report_v2` and a folder `app.v2` the name `app`: two different folders could
+  share an environment and an EXE name. `tests/harness.ps1`'s static row `env.foldername` pinned the old spelling.
+- **What shipped.** `for %%I in ("%CD%") do set "ENVNAME=%%~nxI"`, so the whole folder name reaches the sanitizing lines that follow;
+  `env.foldername` now pins `%%~nxI`. Side effect to know: a folder whose name has a dot gets a different environment and EXE name
+  after the fix, so its first run rebuilds the EXE once (the cached EXE is looked up by the new name).
+- **Rows.** `self.envname.dotted` (`tests/selfapps_envname.ps1`, req `REQ-004.7, REQ-004.12`; every lane runs it) passes only when the
+  log says `Environment name: Report_v2_1`, fails on the old `Report_v2` and records the name it saw as `observedName`. Red run
+  `42409621915` (head `72fbaa2`, tests only): red on all eight lanes with `sawExpected` false and exit code 0. That row did not yet
+  record which wrong name it saw (the test-logs artifact does not hold that scenario's folder either), so the cause rests on the
+  line of code above; `observedName` was added in the next commit so the following run shows it.
+- **Not changed on purpose.** `:ci_skip_entry` (the `HP_CI_SKIP_ENV` path) still ignores a dragged file argument by design, which is
+  why `self.entry.req011.case` (REQ-011.2) proves only the cross-folder pre-flight comparison (its first premise, that the skip-env run
+  would then use the other spelling, was wrong and was corrected after the first run read red on every lane).
+
+### Item 109 (closed 2026-11-13, PR #527; found by the first run of `self.entry.picker.number`)
+
+- **The problem.** `:determine_entry` runs twice in one normal bootstrap (once in `:after_env_mode_selection`, once in
+  `:after_env_bootstrap`). When several equally good entry files exist, `:pick_entry_interactive` therefore asked the question twice;
+  with a typed answer the second question got no input, `choice` timed out and the DEFAULT replaced the file the user had chosen, so
+  the program that ran was not the one picked. README REQ-002.14 and .15 say nothing about the second run, because nobody had a row
+  that counted the questions. `choice` reads piped standard input, so the row could pipe the number and count.
+- **What shipped.** `HP_PICKED_ENTRY`: set at the end of `:pick_entry_interactive` after the log line `Picker entry selected`, cleared
+  ONCE near the top of the file (next to `HP_HIC_ANSWER`, so a value inherited from the terminal can never stand in for an answer), and
+  read as the first lines of the subroutine (`if defined HP_PICKED_ENTRY set "HP_ENTRY=..."` then `exit /b 0`), before the non-interactive
+  gates. New README shall REQ-002.19 [minor]: the question of REQ-002.14 is asked at most once in a run and the chosen file is used in
+  every later step.
+- **Rows and tests.** `self.entry.picker.number` (`tests/selfapps_entry_picker.ps1`, req `REQ-002.16, REQ-002.19`) now also records
+  `asked` (the number of times the menu text was printed) and `pickerRuns`, and passes only when both are 1; it was red on `conda-full`
+  in run `42409621915` (`pickedB` and `pickedDefaultA` both true, `ranB` false: the typed `2` was logged and then the default replaced it,
+  and the program that ran printed `entry-a`). `tests/test_picker_gate.py` (`PickerAsksOnce`,
+  `once_problems`) pins the memory (one clear, before the subroutine; set after the log line; read before the gates) with a mutation
+  case per rule.
+- **Left alone.** A provider cascade re-enters `:determine_entry` a third time; the memory covers it too, by the same read.
+  Item 108 (the picker lists `._` files) is a separate defect in the same subroutine.
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

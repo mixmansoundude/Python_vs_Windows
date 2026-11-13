@@ -265,6 +265,23 @@ wording is the contract (`batch.wording.nuitka_duration`), not for proving a con
 
 ---
 
+## A row's premise has to be checked against the path its test mode takes, and a count is what shows a question asked twice (Items 107, 109)
+
+Two first-run findings of the REQ-002/004/011 rows, both on every lane or on conda-full the first time they ran. (1) `self.entry.req011.case`
+assumed that a dragged file spelled in another letter case would reach entry selection and be chosen. The scenario runs with
+`HP_CI_SKIP_ENV=1`, and `:ci_skip_entry` ignores the dragged-file argument by design (it uses system Python and picks by precedence), so
+the row was red for a reason that is not a product defect; the REQ-011 pre-flight, which runs BEFORE that path, is what the shall is about,
+and the row now proves that comparison only (`spellingDiffers`, `pastPreflight`, `rejected`). Before writing a row about a feature, read
+which labels the test mode skips. (2) `self.entry.picker.number` piped a number to the picker and checked the chosen file; it found that
+`:determine_entry` runs twice per bootstrap, the second picker got no input and the default replaced the answer. A row that checks "the
+result is the typed one" can pass by luck when both questions answer the same; counting the questions (`asked`, `pickerRuns`) is what
+makes a once-per-run rule testable. The same applies to any question asked inside a subroutine that more than one call site reaches
+(see `docs/agent-interconnect.md`, "The entry picker asks once per bootstrap"). (3) `for %%I in ("%CD%") do set "X=%%~nI"` is a file-name
+parse: `%%~nI` drops the part after the last dot, `%%~nxI` keeps the whole name; a folder name is not a file name, and a static row that
+pins the old spelling (`env.foldername`) has to change with the fix or goes red after the harness.
+
+---
+
 ## `rem` needs a space after it -- `rem-word` is parsed as a command, not a comment
 
 cmd.exe only treats a line as a comment when `rem` is followed by whitespace (or EOL) --

@@ -1346,6 +1346,20 @@ cached EXE fail fast and get discarded.
   two hours; `self.entryarg.stops_release_lock`).
 - Regression: `tests/selfapps_entryarg.ps1` (`real` lane, gating).
 
+### The entry picker asks once per bootstrap because `:determine_entry` runs twice (Item 109, REQ-002.19)
+
+**Touch `:pick_entry_interactive`, either `:determine_entry` call site (`:after_env_mode_selection`, `:after_env_bootstrap`) or the
+provider cascade's re-entry, must understand this.** A normal bootstrap chooses the entry file twice (before the dependency phase and
+again before the build; a cascade tier a third time). The subroutine's answer is therefore kept in `HP_PICKED_ENTRY`, set once after the
+`Picker entry selected` log line and read as the first lines of the subroutine (copied into `HP_ENTRY`, then `exit /b 0`), BEFORE the
+`NOINPUT`/`HP_NONINTERACTIVE`/`HP_CI_LANE` gates. The variable is cleared ONCE near the top of the file next to `HP_HIC_ANSWER`, never
+inside the subroutine: a value inherited from the calling terminal would otherwise be taken for the user's answer, and a clear inside it
+would erase the answer on the second call. Before the fix the second call asked again with nothing typed, `choice` timed out and the
+default replaced the file the user had chosen, so the program that ran was not the one picked (found by `self.entry.picker.number`,
+which now counts the menus shown). Any new place that asks the user something inside a function `:determine_entry` or `:after_env_*`
+calls must make the same once-per-bootstrap decision (compare `HP_RTI_OFFERED`, `HP_VISA_DECISION`, `HP_HIC_ANSWER`).
+`tests/test_picker_gate.py` (`PickerAsksOnce`) pins the clear, the set and the read.
+
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 
 `:print_no_exe_briefing`'s header now dispatches on `HP_NOEXE_VERIFY_FAILED` (set in both branches

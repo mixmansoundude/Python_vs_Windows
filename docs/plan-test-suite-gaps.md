@@ -88,8 +88,8 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | Requirement | Shalls | Named by a row | Not named | Rows tagged with the number only |
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
-| REQ-002 | 18 | 17 | 1 | 7 |
-| REQ-003 | 6 | 2 | 4 | 18 |
+| REQ-002 | 19 | 18 | 1 | 7 |
+| REQ-003 | 6 | 3 | 3 | 18 |
 | REQ-004 | 12 | 10 | 2 | 8 |
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-006 | 2 | 2 | 0 | 3 |
@@ -98,13 +98,13 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-009 | 13 | 13 | 0 | 21 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
-| REQ-012 | 6 | 5 | 1 | 1 |
+| REQ-012 | 6 | 6 | 0 | 1 |
 | REQ-013 | 19 | 10 | 9 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
 | REQ-015 | 9 | 7 | 2 | 1 |
 | REQ-016 | 8 | 5 | 3 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
-| REQ-018 | 37 | 26 | 11 | 16 |
+| REQ-018 | 37 | 32 | 5 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
 | REQ-020 | 9 | 7 | 2 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-206 of 255 numbered shalls are named by at least one row tag.
+215 of 256 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-003.6, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-012.5, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.5, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.14, REQ-018.16, REQ-018.19, REQ-018.20, REQ-018.21, REQ-018.22, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -176,7 +176,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision). Done in the change that converts
    the last five sections: REQ-002 (18 shalls), REQ-004 (12), REQ-006 (2), REQ-010 (3) and REQ-011 (4); `tests/test_picker_gate.py`
    (the 30 second wait and the three non-interactive signals of the entry picker) and the `gap:` entries for REQ-004.3 and .4 say what
-   no row shows. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`.
+   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109). Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`.
 
 ---
 
