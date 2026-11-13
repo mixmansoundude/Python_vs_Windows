@@ -510,6 +510,16 @@ another); do not list what the code does not always write; a lane's own declared
 cleared `$LASTEXITCODE`, because a missing python leaves the aggregator's stale 0 behind; a removed or renamed row
 must leave the list in the same change (a unit test checks the lists against `docs/agent-ndjson.md`). Prove it the
 same way as any gate: one throwaway id nobody writes, read the red run, then remove it.
+(6) **A list built once drifts, and a file the harness rewrites needs its own list** (Items 103 and 104). Within a week of
+Item 98 a PR added 10 rows to two lanes and no list named them (Item 103), and the first lists could not see the rows of
+`run_tests.bat` at all, because `harness.ps1` deletes the file the pre-harness snapshot was taken from and writes a new one
+(about 119 ids per lane, Item 104). Rules: when a gate reads a file that a later step rewrites, snapshot the file after the
+last writer and give that snapshot its own artifact, list and exit code; a second check that follows a first in one
+PowerShell step must clear `$LASTEXITCODE` and start from its own failing value (`$postRc = 2`), or the first check's 0 answers
+for a second that never ran; and an invariant such as "no id in both lists" needs the exception written down where it comes
+from (`selftests.ps1` runs twice per lane, so its four rows belong in both; the first version of the unit test forbade any
+overlap and the freshly generated lists failed it). Generated lists come from the artifacts of runs that contain every row
+the PR knowingly added; read the generator's id counts against the previous lists before committing them.
 
 ---
 
