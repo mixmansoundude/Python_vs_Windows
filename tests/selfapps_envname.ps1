@@ -198,8 +198,14 @@ $sawBadPattern = switch ($scenario) {
     'ampersand' { $combined -match '(?m)^[^\r\n]*Environment name:[^\r\n]*&' }
     'longname'  { $combined -match '(?m)^[^\r\n]*Environment name:[^\r\n]*&' }
     'longtrim'  { $combined -match '(?m)^[^\r\n]*Environment name:[^\r\n]*&' }
+    # Item 107: the name the batch file gave before the fix, the folder name cut at its last dot.
+    'dotted'    { $combined -cmatch '(?m)^[^\r\n]*Environment name:[ \t]+Report_v2[ \t]*(?:\r?$)' }
     default     { $combined -match 'Environment name:\s+-' }
 }
+# The first name the run logged, whatever it is, so a red row says what the batch file made of the folder name.
+$observedName = $null
+$observedMatch = [regex]::Match($combined, '(?m)^[^\r\n]*Environment name:[ \t]+([^\r\n \t]+)[ \t]*(?:\r?$)')
+if ($observedMatch.Success) { $observedName = $observedMatch.Groups[1].Value }
 
 # derived requirement (CodeRabbit finding on PR #417): the 'longname' scenario's whole point is
 # proving the 64-char truncation branch actually ran, not just that SOME value was logged --
@@ -292,6 +298,7 @@ if ($scenario -eq 'ampersand') {
             exitCode      = $exit
             folderName    = $folderName
             expectedName  = $expectedName
+            observedName  = $observedName
             sawExpected   = $sawExpected
             sawBadPattern = $sawBadPattern
             log           = $bootstrapLog

@@ -18,7 +18,14 @@
 # in docs/demo-bootstrapper-output.md's picker scenario ("a real coverage gap, not yet a
 # dedicated test").
 #
-# Lane: conda-full only (one real bootstrap; behavior is provider-independent).
+# Third scenario (self.entry.picker.number): the answer 2 is piped to the prompt. It must select b_app.py, be asked
+# for once only, and the program that runs must be b_app.py (Item 109: the question used to be asked twice per run and
+# the second, unanswered question took the default).
+#
+# Fourth scenario (self.entry.picker.metafile): a file named like a macOS metadata file (starts with ._) is not listed
+# (README REQ-002.13, Item 108).
+#
+# Lane: conda-full only (one real bootstrap per scenario; behavior is provider-independent).
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -216,11 +223,15 @@ $numberMenuShown = ($numberCombined -match 'Multiple Python files detected') -an
 $numberPickedB   = $numberCombined -match [regex]::Escape('Picker entry selected: b_app.py')
 $numberPickedA   = $numberCombined -match [regex]::Escape('Picker entry selected: a_app.py')
 $numberRanB      = ($numberRunText -match 'entry-b') -and ($numberRunText -notmatch 'entry-a')
-$numberPass = ($numberExit -eq 0) -and $numberMenuShown -and $numberPickedB -and $numberRanB
+# Item 109: the question is asked once per run and the typed answer is the one that is used. Counted from the
+# console log (one heading per question) and from the setup log (one line per question that was resolved).
+$numberAsked      = [regex]::Matches($numberLogText, 'Multiple Python files detected').Count
+$numberPickerRuns = [regex]::Matches($numberSetupTxt, [regex]::Escape('Picker entry selected:')).Count
+$numberPass = ($numberExit -eq 0) -and $numberMenuShown -and $numberPickedB -and $numberRanB -and ($numberAsked -eq 1) -and ($numberPickerRuns -eq 1)
 
 Write-NdjsonRow ([ordered]@{
     id='self.entry.picker.number'
-    req='REQ-002.16'
+    req='REQ-002.16, REQ-002.19'
     pass=$numberPass
     desc='The number of a listed file typed at the picker selects that file, and that file is the program that runs'
     details=[ordered]@{
@@ -228,11 +239,67 @@ Write-NdjsonRow ([ordered]@{
         menuShown      = $numberMenuShown
         pickedB        = $numberPickedB
         pickedDefaultA = $numberPickedA
+        asked          = $numberAsked
+        pickerRuns     = $numberPickerRuns
         ranB           = $numberRanB
         runOutTail     = $(if ($numberRunText.Length -gt 200) { $numberRunText.Substring(0, 200) } else { $numberRunText })
         log            = $numberLog
     }
 })
 
-if (-not $overflowPass -or -not $numberPass) { exit 1 }
+# --- Fourth scenario: a file that starts with ._ is not a candidate (REQ-002.13, Item 108) ---
+# macOS leaves ._name.py next to name.py on a copy through a network share or a zip. find_entry.py skips such a
+# file; the picker built its own list with `dir` and offered it. Two real candidates and one metadata file: the list
+# must hold the two real files only, so the number of the second one is 2 whatever the metadata file is called.
+$metaDir = Join-Path $here '~selftest_entry_picker_metafile'
+if (Test-Path -LiteralPath $metaDir) { Remove-Item -LiteralPath $metaDir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $metaDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $metaDir -Force
+foreach ($metaName in 'a_app.py', 'b_app.py', '._a_app.py') {
+    Set-Content -LiteralPath (Join-Path $metaDir $metaName) -Value "print('entry')`n" -Encoding ASCII
+}
+
+$prevForce4 = if (Test-Path Env:HP_TEST_FORCE_PICKER) { $env:HP_TEST_FORCE_PICKER } else { $null }
+$prevPip4   = if (Test-Path Env:HP_SKIP_PIPREQS) { $env:HP_SKIP_PIPREQS } else { $null }
+$env:HP_TEST_FORCE_PICKER = '1'
+$env:HP_SKIP_PIPREQS = '1'
+$metaLog = '~entry_picker_metafile_bootstrap.log'
+$metaExit = -1
+Push-Location -LiteralPath $metaDir
+try {
+    cmd /c "call run_setup.bat > $metaLog 2>&1"
+    $metaExit = $LASTEXITCODE
+} finally {
+    Pop-Location
+    if ($null -eq $prevForce4) { Remove-Item Env:HP_TEST_FORCE_PICKER -ErrorAction SilentlyContinue } else { $env:HP_TEST_FORCE_PICKER = $prevForce4 }
+    if ($null -eq $prevPip4)   { Remove-Item Env:HP_SKIP_PIPREQS -ErrorAction SilentlyContinue } else { $env:HP_SKIP_PIPREQS = $prevPip4 }
+}
+
+$metaLogPath = Join-Path $metaDir $metaLog
+$metaLogText = if (Test-Path $metaLogPath) { Get-Content -LiteralPath $metaLogPath -Raw -Encoding ASCII } else { '' }
+$metaMenuShown   = $metaLogText -match 'Multiple Python files detected'
+# The premise: both real files are listed, with whatever numbers they were given.
+$metaRealListed  = ($metaLogText -match '\[\d\] a_app\.py') -and ($metaLogText -match '\[\d\] b_app\.py')
+# The finding: a list entry for the metadata file, with whatever number it was given.
+$metaMetaListed  = $metaLogText -match '\[\d\] \._a_app\.py'
+# The result: the two real files are the whole list, so they are entries 1 and 2.
+$metaNumbered    = ($metaLogText -match '\[1\] a_app\.py') -and ($metaLogText -match '\[2\] b_app\.py')
+$metaPass = ($metaExit -eq 0) -and $metaMenuShown -and $metaRealListed -and (-not $metaMetaListed) -and $metaNumbered
+
+Write-NdjsonRow ([ordered]@{
+    id='self.entry.picker.metafile'
+    req='REQ-002.13'
+    pass=$metaPass
+    desc='A file whose name starts with ._ is not offered by the entry picker'
+    details=[ordered]@{
+        exitCode      = $metaExit
+        menuShown     = $metaMenuShown
+        realListed    = $metaRealListed
+        metaListed    = $metaMetaListed
+        numbered      = $metaNumbered
+        log           = $metaLog
+    }
+})
+
+if (-not $overflowPass -or -not $numberPass -or -not $metaPass) { exit 1 }
 exit 0

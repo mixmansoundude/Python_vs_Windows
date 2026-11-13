@@ -53,7 +53,7 @@ to the line that records the decision says `running it twice could cause harm`; 
 self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self.entry.entryD, self.entry.entryE,
 self.entry.guard, self.entry.fallback, self.entry.fallback.guard, self.entry.ignored,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
-self.entry.picker.overflow, self.entry.picker.number,
+self.entry.picker.overflow, self.entry.picker.number, self.entry.picker.metafile,
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.entry.req011.case, self.isolation.req010.pythonpath,
 entry.single.direct, entry.expected, helper.invoke,
 self.envname.hyphen, self.envname.ampersand, self.envname.longname, self.envname.longtrim,

@@ -131,17 +131,21 @@ try {
 
 # ===== REQ-011.2: the same folder in other letter case is the same folder (positive test) =====
 # The dragged file's folder is written in capitals; the file system finds it, the comparison with the
-# folder of run_setup.bat must not tell them apart. main.py sits next to direct.py, so a run that
-# ignored the argument would choose main.py by name, and a rejected argument would print the REQ-011
-# message: either one fails the row.
+# folder of run_setup.bat must not tell them apart. A rejected argument prints the REQ-011 message and
+# exits 1. This run uses HP_CI_SKIP_ENV, whose entry step ignores the argument by design (:ci_skip_entry
+# picks its own file), so the row proves the pre-flight comparison only: what is chosen as the entry is
+# the business of REQ-002.3 (self.entry.override), not of this shall. The first version of this row
+# also required the dragged file to be chosen, which this mode never does (run 42409621915, every lane).
 $caseDir = Join-Path $here '~entryE_boot'
 try {
     if (Test-Path -LiteralPath $caseDir) { Remove-Item -LiteralPath $caseDir -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $caseDir | Out-Null
     Copy-Item -LiteralPath (Join-Path $repo 'run_setup.bat') -Destination $caseDir -Force
     Set-Content -LiteralPath (Join-Path $caseDir 'direct.py') -Value 'print("direct")' -Encoding Ascii -NoNewline
-    Set-Content -LiteralPath (Join-Path $caseDir 'main.py') -Value 'print("main")' -Encoding Ascii -NoNewline
+    $realArg = (Join-Path $caseDir 'direct.py')
     $upperArg = (Join-Path $caseDir.ToUpperInvariant() 'direct.py')
+    # The premise: the spelling really differs from the folder's own, and only in letter case.
+    $caseSpellingDiffers = ($upperArg -cne $realArg) -and ($upperArg -ieq $realArg)
 
     Push-Location -LiteralPath $caseDir
     try {
@@ -157,16 +161,17 @@ try {
     $setupEText = if (Test-Path -LiteralPath $setupEPath) { Get-Content $setupEPath -Raw -Encoding Ascii } else { '' }
     $caseAll = $logEText + "`n" + $setupEText
     $caseRejected = $caseAll.Contains('Dragged files must reside')
-    $caseChoseDirect = [bool]($caseAll -match 'Chosen entry:[^\r\n]*direct\.py')
-    $caseChoseMain = [bool]($caseAll -match 'Chosen entry:[^\r\n]*main\.py')
-    $passE = ($exitE -eq 0) -and $caseChoseDirect -and (-not $caseChoseMain) -and (-not $caseRejected)
+    # The pre-flight comparison comes before the skip-mode entry step, so this line is written only after the
+    # argument was accepted; without it an early stop for another reason would also read as "not rejected".
+    $casePastPreflight = $setupEText.Contains('CI self-test: skipping environment bootstrap')
+    $passE = ($exitE -eq 0) -and $caseSpellingDiffers -and $casePastPreflight -and (-not $caseRejected)
 
     Write-NdjsonRow ([ordered]@{
         id      = 'self.entry.req011.case'
         req     = 'REQ-011.2'
         pass    = $passE
         desc    = 'REQ-011: a dragged file whose folder is written in other letter case is accepted as the same folder'
-        details = [ordered]@{ exitCode = $exitE; argument = $upperArg; choseDirect = $caseChoseDirect; choseMain = $caseChoseMain; rejected = $caseRejected }
+        details = [ordered]@{ exitCode = $exitE; argument = $upperArg; spellingDiffers = $caseSpellingDiffers; pastPreflight = $casePastPreflight; rejected = $caseRejected }
     })
 } catch {
     Write-NdjsonRow ([ordered]@{
