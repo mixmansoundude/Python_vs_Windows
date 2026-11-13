@@ -27,6 +27,10 @@
 # stops reproducing the symptom cannot make a row pass or fail vacuously. HP_NDJSON points at a
 # private file per scenario so the bootstrapper's own rows do not land in the lane artifact.
 #
+# Item 99 (README REQ-018.20): the accept row also carries that tag. The check run after a yes is the one the yes
+# covers, and the log says "verified" when its output no longer names the module; the other half of the shall (the log
+# says the module is still named) is the row self.runtime.install.stillmissing in selfapps_runtime_install_edges.ps1.
+#
 # Lane: real only (uv provider; the install and the environment check use .uv_env).
 param()
 $ErrorActionPreference = 'Continue'
@@ -330,7 +334,7 @@ $aPass = ($a.RunExit -eq 0) -and $aFirstRunTrace -and $aPrompted -and $aInstalle
          ($a.StatusState -eq 'ok')
 Write-NdjsonRow ([ordered]@{
     id      = 'self.runtime.install.accept'
-    req     = 'REQ-018.17'
+    req     = 'REQ-018.17, REQ-018.20'
     pass    = $aPass
     desc    = 'a yes installs the missing package, adds it to requirements.txt, rebuilds the EXE with it and the check run is clean'
     details = [ordered]@{
