@@ -1413,7 +1413,11 @@ show it, because the scenarios that pass are the ones with the right answer. **R
 functions that take plain values and return a list of problems; `tests/test_edge_rows.py` runs each of them through real `pwsh` on a
 synthetic run that MUST be red for each comparison (`gate_calls_mismatch`, `gate_headings_mismatch` are the two that found this); and a
 parameter and a local never differ only by case (`$callsSeen`).** The unit test's driver evaluates each wanted function alone
-(`Invoke-Expression` of its AST text), so a judge that reads a script-scope variable fails loudly instead of passing.
+(`Invoke-Expression` of its AST text) under `Set-StrictMode -Version 1.0`, and every variable of the driver itself carries a `$__`
+prefix, so a judge that reads a variable it does not own fails loudly instead of passing. Neither half is automatic:
+`Invoke-Expression` runs the text in the driver's own scope, so without the prefix the judge sees the driver's `$cases`, `$c`, `$h`
+and reads them silently, and without strict mode an unset variable reads `$null` (a comparison against it can pass). The first
+driver had neither (CodeRabbit, PR #525); `JudgeDriverIsStrict` in `tests/test_edge_rows.py` keeps both.
 
 ## A mutation case that replaces "the first match" can edit the wrong block when the file repeats a line (Item 99)
 

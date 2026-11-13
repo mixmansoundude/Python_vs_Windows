@@ -1608,10 +1608,11 @@ which is filled from text that a run already printed:
   not 0 and not -1). It is the newest evidence, so the hint describes the repaired EXE's failure and does not repeat the
   hidden-import hint for a module the repair already added.
 - **Otherwise the verification run's own capture.** With no hand-over, `:exe_smokerun_hints` builds `~exe_out.txt` from
-  `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt: it runs from
-  `dist\`, and a program that reads a file relative to its working directory would be blamed for a file that exists at the
-  app root (Item 38). Item 101 has since moved the loop's starts to the app root, but the verification run's capture stays
-  the evidence: the loop's start passes no program arguments, so a program that needs them could fail there for another reason.
+  `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt. It used to run
+  from `dist\` (Item 38), where a program that reads a file relative to its working directory was blamed for a file that
+  exists at the app root; Item 101 moved the loop's starts to the app root, so that reason is gone. What keeps the
+  verification run's capture as the evidence is that the loop's start passes no program arguments, so a program that needs
+  them could fail there for another reason.
 - **Stale files**: `:run_exe_smokerun` deletes an older `~exe_out.txt` before the launch and `:hidden_import_recover_done`
   deletes it before deciding, because the subroutine can run twice per build.
 - **Known limit**: the second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only

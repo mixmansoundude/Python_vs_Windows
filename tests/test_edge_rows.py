@@ -600,23 +600,26 @@ def shall_entry_problems(text):
 
 DRIVER = r"""
 $ErrorActionPreference = 'Stop'
-$tokens = $null; $errs = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:ER_SCRIPT, [ref]$tokens, [ref]$errs)
-if ($errs.Count -gt 0) { throw ('parse errors: ' + $errs[0].Message) }
-$want = @($env:ER_WANT -split ',')
-$defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
-if (@($defs).Count -ne $want.Count) { throw 'a judging function is missing from the script' }
-foreach ($f in $defs) { Invoke-Expression $f.Extent.Text }
-$cases = Get-Content -LiteralPath $env:ER_CASES -Raw | ConvertFrom-Json
-$all = New-Object System.Collections.ArrayList
-foreach ($c in $cases) {
-    $h = @{}
-    foreach ($p in $c.args.PSObject.Properties) { $h[$p.Name] = $p.Value }
-    $r = @(& $c.fn @h)
-    if ($r.Count -eq 1 -and ($r[0].PSObject.TypeNames -contains 'System.Management.Automation.PSCustomObject')) { $res = $r[0] } else { $res = $r }
-    [void]$all.Add([ordered]@{ name = $c.name; result = $res })
+# A judging function may use only its parameters and its own locals. Strict mode makes a read of a variable nobody set an error
+# (and not $null), and the driver's own variables start with two underscores, so no judge can read one of them by accident.
+Set-StrictMode -Version 1.0
+$__tokens = $null; $__errs = $null
+$__ast = [System.Management.Automation.Language.Parser]::ParseFile($env:ER_SCRIPT, [ref]$__tokens, [ref]$__errs)
+if ($__errs.Count -gt 0) { throw ('parse errors: ' + $__errs[0].Message) }
+$__want = @($env:ER_WANT -split ',')
+$__defs = $__ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $__want -contains $n.Name }, $true)
+if (@($__defs).Count -ne $__want.Count) { throw 'a judging function is missing from the script' }
+foreach ($__f in $__defs) { Invoke-Expression $__f.Extent.Text }
+$__cases = Get-Content -LiteralPath $env:ER_CASES -Raw | ConvertFrom-Json
+$__all = New-Object System.Collections.ArrayList
+foreach ($__c in $__cases) {
+    $__h = @{}
+    foreach ($__p in $__c.args.PSObject.Properties) { $__h[$__p.Name] = $__p.Value }
+    $__r = @(& $__c.fn @__h)
+    if ($__r.Count -eq 1 -and ($__r[0].PSObject.TypeNames -contains 'System.Management.Automation.PSCustomObject')) { $__res = $__r[0] } else { $__res = $__r }
+    [void]$__all.Add([ordered]@{ name = $__c.name; result = $__res })
 }
-ConvertTo-Json -InputObject @($all) -Compress -Depth 8
+ConvertTo-Json -InputObject @($__all) -Compress -Depth 8
 """
 
 
@@ -1067,6 +1070,33 @@ class WarningFacts(unittest.TestCase):
     def test_a_warning_with_no_output_after_it_is_not_before_the_output(self):
         facts = self.r["warn_no_output"]
         self.assertEqual((facts["Count"], facts["OutputLine"], facts["Before"]), (1, -1, False))
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class JudgeDriverIsStrict(unittest.TestCase):
+    """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
+    loudly instead of reading $null (or a variable of the driver) and quietly passing."""
+
+    def run_probe(self, body, args):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "judge.ps1"
+            script.write_text("function Get-Probe {\n    param($Value)\n%s\n}\n" % body, encoding="ascii")
+            return run_cases(script, ["Get-Probe"], [{"name": "probe", "fn": "Get-Probe", "args": args}], d)["probe"]
+
+    def test_a_judge_that_uses_only_its_own_values_runs(self):
+        self.assertEqual(self.run_probe("    $own = $Value + 1\n    return $own", {"Value": 41}), [42])
+
+    def test_a_judge_that_reads_a_variable_nobody_set_fails(self):
+        with self.assertRaises(AssertionError) as ctx:
+            self.run_probe("    return $neverSetByAnyone", {"Value": 1})
+        self.assertIn("pwsh failed", str(ctx.exception))
+
+    def test_a_judge_cannot_read_a_variable_of_the_driver(self):
+        # the earlier driver called these $cases, $c, $h, $want, $all, $ast and $defs, and every judge could see them
+        for name in ("cases", "c", "h", "want", "all", "ast", "defs", "tokens", "errs", "r", "res", "p", "f"):
+            with self.subTest(name=name):
+                with self.assertRaises(AssertionError):
+                    self.run_probe("    return $%s" % name, {"Value": 1})
 
 
 def mutate(text, old, new):
