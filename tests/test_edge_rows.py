@@ -1383,7 +1383,9 @@ class EachRuleCanFail(unittest.TestCase):
         self.assertEqual(workflow_problems(mutated), ["no step runs tests\\selfapps_runtime_install_edges.ps1"])
 
     def test_a_step_on_another_lane_is_caught(self):
-        mutated = mutate(self.workflow, EDGES_STEP_IF, "if: ${{ !cancelled() && matrix.mode == 'real' }}")
+        # the step name goes into the anchor: other contract-uv steps carry the same if line, and mutate() wants exactly one match
+        anchor = '- name: "Self-test: the runtime install offer, its edges (contract-uv only)"\n        ' + EDGES_STEP_IF
+        mutated = mutate(self.workflow, anchor, anchor.replace("'contract-uv'", "'real'"))
         self.assertTrue(any("contract-uv lane" in f for f in workflow_problems(mutated)))
 
     def test_a_step_that_cannot_fail_is_caught(self):
