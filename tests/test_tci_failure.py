@@ -184,6 +184,27 @@ def mutate(text, anchor, replacement):
     return text.replace(anchor, replacement)
 
 
+# A synthetic batch file that holds only the block under test, in its good shape. The mutation cases below edit this
+# copy, never run_setup.bat, so each one can only fail for the rule it names (and not because the real file moved).
+GOOD_TCI = "\r\n".join([
+    ":tci_justme",
+    "call :log \"[INFO] trying JustMe.\"",
+    "goto :eof",
+    ":tci_both_failed",
+    "rem the terminal message must not imply AllUsers was attempted when it was only skipped",
+    "if defined HP_CONDA_ALLUSERS_ATTEMPTED (",
+    "  call :log \"[ERROR] Miniconda install failed (both AllUsers and JustMe).\"",
+    ") else (",
+    "  call :log \"[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed).\"",
+    ")",
+    "goto :eof",
+    "",
+    ":conda_base_update",
+    "goto :eof",
+    "",
+])
+
+
 class ScriptShape(unittest.TestCase):
     def setUp(self):
         self.text = SCRIPT.read_text(encoding="utf-8")
@@ -256,19 +277,34 @@ class BatchSide(unittest.TestCase):
     def test_tci_both_failed_does_not_end_the_run(self):
         self.assertEqual(tci_problems(self.batch), [])
 
+    def test_synthetic_clean_block_passes(self):
+        self.assertEqual(tci_problems(GOOD_TCI), [])
+
     def test_tci_with_die_is_caught(self):
-        bad = mutate(self.batch,
+        bad = mutate(GOOD_TCI,
                      'call :log "[ERROR] Miniconda install failed (both AllUsers and JustMe)."',
                      'call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."')
         found = tci_problems(bad)
         self.assertTrue(any("still calls :die" in f for f in found), found)
 
     def test_tci_silent_block_is_caught(self):
-        bad = mutate(self.batch,
+        bad = mutate(GOOD_TCI,
                      'call :log "[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)."',
                      "rem nothing")
         found = tci_problems(bad)
         self.assertTrue(any("no longer reports" in f for f in found), found)
+
+    def test_tci_missing_return_is_caught(self):
+        # The block's own goto :eof is the one directly under the closing bracket of the if/else; the other two in the
+        # fixture belong to the neighbouring labels and must not be mistaken for it.
+        bad = mutate(GOOD_TCI, ")\r\ngoto :eof\r\n\r\n:conda_base_update", ")\r\n\r\n:conda_base_update")
+        found = tci_problems(bad)
+        self.assertTrue(any("no longer returns" in f for f in found), found)
+
+    def test_tci_label_missing_is_caught(self):
+        bad = mutate(GOOD_TCI, ":tci_both_failed", ":tci_both_done")
+        found = tci_problems(bad)
+        self.assertTrue(any("must exist exactly once" in f for f in found), found)
 
 
 class WorkflowSide(unittest.TestCase):
