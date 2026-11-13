@@ -60,19 +60,26 @@ if ($scenario -ne 'fallback' -and $scenario -ne 'cascade') {
     Write-Host ('CONDA_INSTALL_FAIL_SCENARIO must be fallback or cascade, got: ' + $scenario)
     exit 1
 }
-$allIds = if ($scenario -eq 'cascade') { @('self.conda.installfail.cascade') } else { @('self.conda.installfail.control', 'self.conda.installfail.lock', 'self.conda.installfail.nopause') }
+# Rows for a run that cannot start (not Windows, run_setup.bat missing). The ids stay literal here too, at the call site,
+# because the registry scan reads the script text and a shared id variable would hide them.
+function Write-PreflightRows {
+    param([bool]$Pass, [string]$Desc, [hashtable]$Details)
+    if ($scenario -eq 'cascade') {
+        Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.cascade'; req = 'REQ-009'; pass = $Pass; desc = $Desc; details = $Details })
+        return
+    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.control'; req = 'REQ-024'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.lock'; req = 'REQ-024'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.nopause'; req = 'REQ-009'; pass = $Pass; desc = $Desc; details = $Details })
+}
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-009'; pass = $true; desc = 'Failed Miniconda install does not end the run (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
-    }
+    Write-PreflightRows -Pass $true -Desc 'Failed Miniconda install does not end the run (skipped on non-Windows)' -Details ([ordered]@{ skip = $true; reason = 'non-windows-host' })
     exit 0
 }
 $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path -LiteralPath $batchPath)) {
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-009'; pass = $false; desc = 'Failed Miniconda install does not end the run: run_setup.bat not found'; details = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath } })
-    }
+    Write-PreflightRows -Pass $false -Desc 'Failed Miniconda install does not end the run: run_setup.bat not found' -Details ([ordered]@{ error = 'run_setup.bat not found at ' + $batchPath })
     exit 1
 }
 

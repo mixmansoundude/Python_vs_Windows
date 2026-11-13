@@ -430,6 +430,13 @@ recurring traps that have actually bitten us:
   success. `:die` itself sets `HP_BOOTSTRAP_STATE=error` unconditionally as its first action
   (before `:write_status`), so this is centralized at the source rather than needing a companion
   `set` at every one of its ~26 call sites.
+  - **`:die` is the END-of-run routine, so it must never be called from a subroutine whose caller goes
+    on** (Item 46 Batch 6): it sets state `error`, writes the status file, releases the lock folder
+    (REQ-024) and waits for a key press (REQ-016.8). `:tci_both_failed` called it while both callers
+    continued with another provider, so a run that went on to succeed had shown a key-press prompt,
+    given up its lock and reported `error`. A failure that is only the end of one TIER is a `call :log`
+    plus the return; the `:die` belongs at the point where nothing else can be tried.
+    `self.conda.installfail.*` reads the lock folder and the console text at the next provider's start.
   - **`:warn_build_incomplete`** is a non-pausing sibling of `:die` for the 3 PyInstaller-build-
     failure sites reached only AFTER the Nuitka fallback has ALSO failed, where genuinely useful
     verification work still follows (interpreter-fallback verification decides real
@@ -1433,7 +1440,10 @@ same `call :emit_from_base64 "~runtime_module_scan.py" HP_RUNTIME_MODULE_SCAN` i
 saw the change and the cases reported no finding. A case that passes for the wrong block is the dangerous one, because it proves
 nothing and looks like proof. **Rule: `mutate()` in `tests/test_edge_rows.py` asserts the anchor occurs exactly once (name a neighbouring
 line that only the block under test has), and a case asserts that the finding names the rule being tested, not only that something is
-reported.** The same applies to any test that edits a copy of `run_setup.bat` text.
+reported.** The same applies to any test that edits a copy of `run_setup.bat` text. It applies to the workflow too: a new
+step that repeats another step's `if:` line text (`if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}`) made
+`tests/test_edge_rows.py::test_a_step_on_another_lane_is_caught` fail its exactly-once assertion, so write the new step's
+condition in another order (`matrix.mode == 'contract-uv' && !cancelled()`).
 
 ## A gate that cuts real code out of the batch file must replace the console read, and the read has to be decided on purpose (Item 99)
 

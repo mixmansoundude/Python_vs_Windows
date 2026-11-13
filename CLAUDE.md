@@ -732,12 +732,12 @@ but several represent real gaps worth closing before calling the path fully rele
   one.
 
   **Status**: Bucket B (3 PyInstaller-build-failure sites -> `:warn_build_incomplete`) and Bucket A
-  Batches 1/2/3/5 plus one Batch-4 site are merged (PR #468 and a same-session follow-on). **Still
-  open**: Batch 6 (`:tci_both_failed`'s two failure sites, inside `:try_conda_install` -- needs a
-  new caller-side coordination flag rather than a drop-in `goto` since they sit inside a `call`ed
-  subroutine with their own `goto :eof`; deliberately deferred, since Batch 1's own fix already
-  shrunk its remaining value to "one fewer redundant pause in an already-rare scenario"); the rest
-  of Batch 4 (6 sites, individually traced and reclassified as falling through into benign,
+  Batches 1/2/3/5/6 plus one Batch-4 site are merged (PR #468, a same-session follow-on, and PR #528
+  for Batch 6). Batch 6 needed no coordination flag: both callers of `:try_conda_install` go on (the
+  main flow with the next provider, the cascade with the uv build), so `:tci_both_failed`'s two
+  `call :die` became `call :log` with the same text and the end-of-run routine (state `error`, lock
+  released, key press) no longer runs in the middle of a run; rows `self.conda.installfail.*`.
+  **Still open**: the rest of Batch 4 (6 sites, individually traced and reclassified as falling through into benign,
   silently-degraded continuations rather than a redundant-`:die` cascade -- not fixed); and
   candidate (c), converting `:die` to a genuine halt, deferred per the maintainer decision above. A
   known, unfixed, near-zero-exposure quirk surfaced along the way: `:after_env_skip` writes

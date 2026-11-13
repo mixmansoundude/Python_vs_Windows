@@ -542,7 +542,9 @@ self.gribapi_hook_probe.hidden_import
 
 Covers `:tci_both_failed` (both Miniconda AllUsers and JustMe install types fail), previously zero
 CI coverage. `HP_TEST_FORCE_JUSTME_FAIL=1` + `HP_TEST_NOT_ELEVATED=1` deterministically reaches
-`:tci_both_failed -> :die` without depending on a genuinely broken installer/ACL environment.
+`:tci_both_failed` without depending on a genuinely broken installer/ACL environment. Since Item 46 Batch 6 that
+block only logs the failure; state `error` here comes from the next `:die`, `conda.bat not found after bootstrap`, which
+runs because this scenario is conda-only.
 **Placement is load-bearing**: wired immediately BEFORE the provider-cascade-exec step in the `uv`
 lane, so Miniconda genuinely does not exist on the runner yet when this test's own install attempt
 runs (Miniconda installs to a shared, machine-wide path -- an earlier step installing it first

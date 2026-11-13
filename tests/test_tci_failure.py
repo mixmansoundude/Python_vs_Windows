@@ -37,12 +37,16 @@ def code_lines(text):
 def script_problems(text):
     """Rules about the script itself."""
     found = []
-    rows = dict(re.findall(r"id = '(self\.conda\.installfail\.[a-z]+)'; req = '([^']+)'", text))
+    seen = {}
+    for rid, tag in re.findall(r"id = '(self\.conda\.installfail\.[a-z]+)'; req = '([^']+)'", text):
+        seen.setdefault(rid, []).append(tag)
+    rows = {rid: tags[0] for rid, tags in seen.items() if len(set(tags)) == 1}
     if rows != ROW_TAGS:
-        found.append("row ids and tags are %r, expected %r" % (rows, ROW_TAGS))
-    ids = re.findall(r"id = '(self\.conda\.installfail\.[a-z]+)'", text)
-    if len(ids) != len(set(ids)):
-        found.append("a row id is written at more than one call site: %r" % ids)
+        found.append("row ids and tags are %r, expected %r (a tag that differs between two sites of one id drops the id)" % (rows, ROW_TAGS))
+    for rid, tags in seen.items():
+        # Two sites per id: the row itself and the preflight helper (not Windows, run_setup.bat missing); both literal.
+        if len(tags) != 2:
+            found.append("row id %s is written at %d call sites, expected 2 (the row and the preflight helper)" % (rid, len(tags)))
     for line in re.findall(r"^\s*#.*req\s*=\s*'", text, re.MULTILINE):
         found.append("a comment contains the req = '...' shape, which the trace readers count as a tag: %r" % line.strip())
     lines = code_lines(text)
@@ -191,12 +195,18 @@ class ScriptShape(unittest.TestCase):
         self.text.encode("ascii")
 
     def test_wrong_tag_is_caught(self):
-        bad = mutate(self.text, "id = 'self.conda.installfail.lock'; req = 'REQ-024'", "id = 'self.conda.installfail.lock'; req = 'REQ-099'")
+        bad = mutate(self.text, "id = 'self.conda.installfail.lock'; req = 'REQ-024'; pass = $lockPass", "id = 'self.conda.installfail.lock'; req = 'REQ-099'; pass = $lockPass")
         self.assertTrue(any("row ids and tags" in f for f in script_problems(bad)))
 
     def test_renamed_id_is_caught(self):
-        bad = mutate(self.text, "id = 'self.conda.installfail.cascade'", "id = 'self.conda.installfail.cascaded'")
+        bad = mutate(self.text, "id = 'self.conda.installfail.cascade'; req = 'REQ-009'; pass = $pass", "id = 'self.conda.installfail.cascaded'; req = 'REQ-009'; pass = $pass")
         self.assertTrue(any("row ids and tags" in f for f in script_problems(bad)))
+
+    def test_preflight_id_from_a_variable_is_caught(self):
+        bad = mutate(self.text, "Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.control'; req = 'REQ-024'; pass = $Pass;",
+                     "Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-024'; pass = $Pass;")
+        found = script_problems(bad)
+        self.assertTrue(any("call sites, expected 2" in f for f in found), found)
 
     def test_comment_with_tag_shape_is_caught(self):
         bad = mutate(self.text, "# derived requirement: ids stay literal", "# example: req = 'REQ-001' would count\n# derived requirement: ids stay literal")
@@ -242,6 +252,23 @@ class BatchSide(unittest.TestCase):
     def test_missing_log_text_is_caught(self):
         bad = mutate(self.batch, "Attempting venv fallback...", "Trying a venv...")
         self.assertTrue(any("Attempting venv fallback" in f for f in batch_text_problems(bad)))
+
+    def test_tci_both_failed_does_not_end_the_run(self):
+        self.assertEqual(tci_problems(self.batch), [])
+
+    def test_tci_with_die_is_caught(self):
+        bad = mutate(self.batch,
+                     'call :log "[ERROR] Miniconda install failed (both AllUsers and JustMe)."',
+                     'call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."')
+        found = tci_problems(bad)
+        self.assertTrue(any("still calls :die" in f for f in found), found)
+
+    def test_tci_silent_block_is_caught(self):
+        bad = mutate(self.batch,
+                     'call :log "[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)."',
+                     "rem nothing")
+        found = tci_problems(bad)
+        self.assertTrue(any("no longer reports" in f for f in found), found)
 
 
 class WorkflowSide(unittest.TestCase):

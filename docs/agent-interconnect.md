@@ -748,9 +748,15 @@ one root cause and could previously stack 4-5 back-to-back `[ERROR]`/pause pairs
 reaching `:try_conda_create` and dying there too. Each of the 5 `call :die` lines now also
 `goto :after_env_mode_selection`. **Same limitation as above** -- collapses worst-case 5-6 stacked
 pauses down to 2 (the first specific site, plus the same `:after_env_mode_selection` sink), not 1.
-`:try_conda_install`'s own two failure sites (`:tci_both_failed`, Batch 6, not yet fixed) fall
-through INTO this chain's own top as their caller resumes -- Batch 1 already shrinks Batch 6's
-remaining blast radius as a side effect (confirmed via `tests/selfapps_conda_bothfail.ps1`). A
+`:try_conda_install`'s own two failure sites (`:tci_both_failed`, Batch 6) now `call :log` and
+return (they were `call :die`, the END-of-run routine: state `error`, status file, lock released, key press), because both
+callers go on: the main flow falls into this chain's own top as it resumes and then tries embedded Python, venv and system,
+and the cascade keeps the uv build. The `:die` that sets state `error` under conda-only mode is now the chain's own first
+site (`conda.bat not found after bootstrap`), which is what `tests/selfapps_conda_bothfail.ps1` reads. Rows
+`self.conda.installfail.control|lock|nopause` (real) and `.cascade` (contract-uv) in `tests/selfapps_conda_install_fail.ps1`
+read the lock folder at the venv provider's start, the console text between the failure and that provider, and the status
+after a cascade that could not install Miniconda. A new `call :die` inside a subroutine whose caller continues is the
+same defect. A
 second, independent `:try_conda_install` call site (`:cascade_acquire_conda`, the REQ-009 cascade's
 own on-demand Miniconda acquisition) does NOT re-enter this chain at all -- its own fall-through
 proceeds fairly directly to a conda-create attempt that already `goto`s correctly.

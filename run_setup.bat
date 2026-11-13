@@ -6995,9 +6995,9 @@ rem derived requirement: [Active Backlog item 16] the terminal message must not 
 rem genuinely attempted-then-failed when it was only ever skipped (not elevated) -- mirrors the
 rem same HP_CONDA_ALLUSERS_ATTEMPTED distinction :tci_justme already makes above.
 if defined HP_CONDA_ALLUSERS_ATTEMPTED (
-  call :die "[ERROR] Miniconda install failed (both AllUsers and JustMe)."
+  call :log "[ERROR] Miniconda install failed (both AllUsers and JustMe)."
 ) else (
-  call :die "[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)."
+  call :log "[ERROR] Miniconda install failed (AllUsers skipped -- not elevated; JustMe also failed)."
 )
 goto :eof
 
