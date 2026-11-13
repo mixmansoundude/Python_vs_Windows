@@ -4286,7 +4286,23 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `once_problems`) pins the memory (one clear, before the subroutine; set after the log line; read before the gates) with a mutation
   case per rule.
 - **Left alone.** A provider cascade re-enters `:determine_entry` a third time; the memory covers it too, by the same read.
-  Item 108 (the picker lists `._` files) is a separate defect in the same subroutine.
+  Item 108 (the picker lists `._` files) is a separate defect in the same subroutine, closed next.
+
+### Item 108 (closed 2026-11-13, PR #527; found while writing the REQ-002 rows)
+
+- **The problem.** `:pick_entry_interactive` built its list with `dir /b /a-d *.py | findstr /v /b /c:"~" | sort`. A macOS AppleDouble
+  file such as `._main.py` (a metadata copy a Mac writes next to the real file on a USB stick or a zip) was offered as a candidate, while
+  `find_entry.py` skips it (`self.entry.ignored` shows that half). A person who typed its number ran a metadata file that is not a
+  program. README REQ-002.13: the bootstrapper shall not take a file whose name starts with `~` or `._` as a candidate for the entry.
+- **What shipped.** One more stage in the menu line: `findstr /v /b /l /c:"._"` (`/l`, so the dot is literal and not a regex character).
+  `tests/test_picker_gate.py` (`PickerMenuFilter`, `menu_filter_problems`) pins both stages, the `~` one and the `._` one, and a mutation
+  case per stage proves the pin can fail; it was read red against the old line first.
+- **Row.** `self.entry.picker.metafile` (`tests/selfapps_entry_picker.ps1`, req REQ-002.13): a folder with `a_app.py`, `b_app.py` and
+  `._a_app.py`, the picker forced with `HP_TEST_FORCE_PICKER` and the number piped; it passes only when the menu is shown, both real files
+  are listed as `[1] a_app.py` and `[2] b_app.py`, and `._a_app.py` is not listed. Red run `43399944717` (head `eeeaa69`, before the fix):
+  red on `conda-full` with `menuShown` true, `realListed` true, `metaListed` true and `numbered` false, and no other red row on any of
+  the eight lanes. The test-logs artifact does not carry the picker scenario folders (the upload path list is at its length limit, see
+  CLAUDE.md "Persisted CI run-page warnings"), so the row's own details are the evidence.
 
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 

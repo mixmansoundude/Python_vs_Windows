@@ -3543,8 +3543,10 @@ if defined HP_NONINTERACTIVE exit /b 0
 if defined HP_CI_LANE if not defined HP_TEST_FORCE_PICKER exit /b 0
 rem choice.exe drives the timed prompt; on a stripped image without it, keep the default.
 where choice >nul 2>&1 || exit /b 0
+rem derived requirement: CLAUDE.md Item 108 -- find_entry.py skips a name that starts with ~ or ._ -- a macOS metadata copy -- so
+rem the list drops both as well, or its number would run a metadata file as the program.
 if exist "~entry.menu" del "~entry.menu" >nul 2>&1
-(for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul ^| findstr /v /b /c:"~" ^| sort') do echo %%F) > "~entry.menu"
+(for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul ^| findstr /v /b /c:"~" ^| findstr /v /b /l /c:"._" ^| sort') do echo %%F) > "~entry.menu"
 set "HP_PICK_N=0"
 for /f "usebackq delims=" %%F in ("~entry.menu") do set /a HP_PICK_N+=1
 if %HP_PICK_N% LSS 2 ( del "~entry.menu" >nul 2>&1 & exit /b 0 )

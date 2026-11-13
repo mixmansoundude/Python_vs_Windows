@@ -1359,6 +1359,8 @@ default replaced the file the user had chosen, so the program that ran was not t
 which now counts the menus shown). Any new place that asks the user something inside a function `:determine_entry` or `:after_env_*`
 calls must make the same once-per-bootstrap decision (compare `HP_RTI_OFFERED`, `HP_VISA_DECISION`, `HP_HIC_ANSWER`).
 `tests/test_picker_gate.py` (`PickerAsksOnce`) pins the clear, the set and the read.
+The list itself is built by one pipeline (`dir /b /a-d *.py`, then `findstr /v /b /c:"~"`, then `findstr /v /b /l /c:"._"`, then `sort`) whose two filters must
+stay equal to what `find_entry.py` skips (README REQ-002.13); `PickerMenuFilter` pins both stages and `self.entry.picker.metafile` shows a `._` copy is not listed (Item 108).
 
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 

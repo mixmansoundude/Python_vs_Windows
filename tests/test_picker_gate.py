@@ -1,11 +1,12 @@
-"""REQ-002.15, REQ-002.18 and REQ-002.19: the entry picker waits 30 seconds and defaults, a non-interactive run is never
-asked, and the question is asked once per run.
+"""REQ-002.13, REQ-002.15, REQ-002.18 and REQ-002.19: the entry picker waits 30 seconds and defaults, a non-interactive
+run is never asked, the question is asked once per run, and its list holds no tilde or ._ file.
 
 No row can wait the full 30 seconds (self.entry.picker shortens the wait to 2 seconds with HP_TEST_FORCE_PICKER) and the
 rows that run the picker set the CI marker, so the other two non-interactive signals, NOINPUT and HP_NONINTERACTIVE, are
 read here from the batch file. These checks are static reads of :pick_entry_interactive; the rows
 self.entry.picker, self.entry.picker.number, self.entry.picker.metafile and self.entry.fallback show the behavior around
-them (self.entry.picker.number is the row that found the second question, Item 109).
+them (self.entry.picker.number is the row that found the second question, Item 109; self.entry.picker.metafile is the
+row that found the ._ file in the list, Item 108).
 """
 import re
 import unittest
@@ -124,6 +125,25 @@ def once_problems(text: str, block: str) -> List[str]:
     return problems
 
 
+MENU_FILTERS = (
+    ('findstr /v /b /c:"~"', "a tilde file (the bootstrapper's own temp file)"),
+    ('findstr /v /b /l /c:"._"', "a ._ file (a macOS metadata copy, which find_entry.py skips too)"),
+)
+
+
+def menu_filter_problems(block: str) -> List[str]:
+    """REQ-002.13 (Item 108): the list the picker shows holds the files find_entry.py would choose among.
+
+    find_entry.py skips a name that starts with ~ or ._, and the picker builds its own list with dir, so the same two
+    names must be dropped on the line that writes ~entry.menu; a ._ file in the list could be chosen by number and run.
+    """
+    build = next((ln for ln in _lines(block) if ln.startswith("(for /f") and "~entry.menu" in ln), "")
+    if not build:
+        return ["the line that builds ~entry.menu is missing"]
+    return ["the list the picker shows may hold %s: %r is not on the line that builds it" % (why, stage)
+            for stage, why in MENU_FILTERS if stage not in build]
+
+
 def _menu_line_block() -> str:
     text = BATCH.read_text(encoding="utf-8", errors="replace")
     start = re.search(r"^:pick_menu_line[ \t]*\r?$", text, re.MULTILINE)
@@ -143,7 +163,7 @@ if defined NOINPUT exit /b 0
 if defined HP_NONINTERACTIVE exit /b 0
 if defined HP_CI_LANE if not defined HP_TEST_FORCE_PICKER exit /b 0
 where choice >nul 2>&1 || exit /b 0
-(for /f "delims=" %%F in ('dir /b') do echo %%F) > "~entry.menu"
+(for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul ^| findstr /v /b /c:"~" ^| findstr /v /b /l /c:"._" ^| sort') do echo %%F) > "~entry.menu"
 set "HP_PICK_T=30"
 if defined HP_TEST_FORCE_PICKER set "HP_PICK_T=2"
 choice /C 123456789 /N /T %HP_PICK_T% /D %HP_PICK_DEFAULT% /M "x"
@@ -251,6 +271,35 @@ class PickerAsksOnce(unittest.TestCase):
     def test_no_clear_fails(self) -> None:
         mutated = GOOD.replace('set "HP_PICKED_ENTRY="\n:pick_entry_interactive', ":pick_entry_interactive")
         self.assertTrue(any("exactly once" in p for p in once_problems(mutated, picker_block(mutated))))
+
+
+class PickerMenuFilter(unittest.TestCase):
+    """REQ-002.13: the picker's list leaves out the files find_entry.py leaves out (Item 108)."""
+
+    def test_the_real_batch_file_filters_both_names(self) -> None:
+        block = picker_block(BATCH.read_text(encoding="utf-8", errors="replace"))
+        self.assertEqual([], menu_filter_problems(block))
+
+    def test_a_good_synthetic_block_passes(self) -> None:
+        self.assertEqual([], menu_filter_problems(picker_block(GOOD)))
+
+    def test_a_list_without_the_metadata_filter_fails(self) -> None:
+        mutated = GOOD.replace(' ^| findstr /v /b /l /c:"._"', "")
+        self.assertNotEqual(GOOD, mutated)
+        problems = menu_filter_problems(picker_block(mutated))
+        self.assertEqual(1, len(problems))
+        self.assertIn("._", problems[0])
+
+    def test_a_list_without_the_tilde_filter_fails(self) -> None:
+        mutated = GOOD.replace(' ^| findstr /v /b /c:"~"', "")
+        self.assertNotEqual(GOOD, mutated)
+        problems = menu_filter_problems(picker_block(mutated))
+        self.assertEqual(1, len(problems))
+        self.assertIn("tilde", problems[0])
+
+    def test_a_missing_menu_line_fails(self) -> None:
+        mutated = GOOD.replace('> "~entry.menu"', '> "~other.menu"')
+        self.assertTrue(any("is missing" in p for p in menu_filter_problems(picker_block(mutated))))
 
 
 if __name__ == "__main__":
