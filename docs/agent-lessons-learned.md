@@ -775,6 +775,18 @@ step's own text through `pwsh` with `$ErrorActionPreference = 'stop'`, once with
 component of 300 characters is refused on Linux and Windows) and read `GITHUB_OUTPUT`; keep the old step as a harness check that
 must lose its outputs on that input, so the test cannot go quiet.
 
+**A job's `timeout-minutes` is a sum, and a retry's `sleep` and a step's own default timeout are terms in it (the Pages publish, run
+`42384855330`).** `publish_diag` deploys the Pages artifact up to three times with a wait between. `actions/deploy-pages` gives up
+on one attempt after its `timeout` input, which is 600000 ms (ten minutes) when nothing sets it. The Pages backend left attempts 1
+and 2 running until that limit (606 s and 604 s), the 20 minute wait began about 22 minutes in, and the job's 40 minute limit
+cancelled it in the middle: the job ended as cancelled and attempt 3 never ran (worst case about 54 minutes against 40). Rules:
+(1) a job that retries holds the arithmetic (about 5 minutes of setup + every attempt's timeout + every `sleep`) at or below
+`timeout-minutes`, and `tests/test_pages_deploy_budget.py` reads the workflow text and adds it up; (2) every attempt sets its
+`timeout` itself, so the action's default is never silently a term in the sum (the test names a step that sets none); (3) when
+attempts are likely to hang to their limit, shorten the early ones (now 5, 5 and 10 minutes with waits of 30 seconds and 10
+minutes, about 36 minutes) rather than lengthening the job. The step that gave up is `continue-on-error`, so the job's own
+conclusion hid the cut for a while: a "cancelled" `publish_diag` with a long `Wait before Pages deploy retry` step is this case.
+
 **Never use "Re-run failed jobs" on a run of `batch-check.yml`.** It re-runs `publish_diag` too, which uploads a
 second artifact named `github-pages` to the same run, and `actions/deploy-pages` then fails with "Multiple artifacts
 named github-pages" (PR #488, run `39004972181`). The red `Publish diagnostics to Pages` job is a CI-mechanism

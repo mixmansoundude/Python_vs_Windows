@@ -6317,6 +6317,11 @@ jobs:
         uses: actions/deploy-pages@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # derived requirement: the three attempts, the two waits and about 5 minutes of setup must fit the job's
+          # timeout-minutes (tests/test_pages_deploy_budget.py adds them up). The action gives up on one attempt after
+          # `timeout` ms and its default is 600000 (10 minutes); in run 42384855330 the Pages backend left attempts 1
+          # and 2 running until that limit and the 20 minute wait was cut off by the job limit, so no third attempt ran.
+          timeout: 300000
 
       - name: Wait before Pages deploy retry (short backoff)
         # derived requirement: GitHub Pages deployment backend occasionally returns a transient
@@ -6334,17 +6339,18 @@ jobs:
         uses: actions/deploy-pages@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          timeout: 300000
 
       - name: Wait before Pages deploy retry (long backoff)
         # A second consecutive failure suggests a longer-lived backend issue rather than a
-        # one-off blip; wait substantially longer (20 min) to give it real room to recover
+        # one-off blip; wait substantially longer (10 min) to give it real room to recover
         # before the final attempt, rather than hammering the API on a short cadence. This job
         # is non-gating and has concurrency.cancel-in-progress set on this ref (see the job's
         # concurrency block above), so a sleeping attempt is safely superseded, not wasted, if a
         # newer push arrives in the meantime.
         if: ${{ github.event_name != 'pull_request' && steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure' }}
         shell: bash
-        run: sleep 1200
+        run: sleep 600
 
       - name: Deploy to GitHub Pages (attempt 3, final)
         if: ${{ github.event_name != 'pull_request' && steps.deploy1.outcome == 'failure' && steps.deploy2.outcome == 'failure' }}
@@ -6352,3 +6358,4 @@ jobs:
         uses: actions/deploy-pages@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          timeout: 600000

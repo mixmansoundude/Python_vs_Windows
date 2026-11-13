@@ -140,6 +140,11 @@ fallbacks ("Record iterate artifact status", "Fetch batch-check artifacts") are 
 writes (a renamed output or a typo fails locally), and runs the step text through `pwsh` with a run id that makes the per-run
 folder name too long.
 
+**The deploy retries have a time budget** (run `42384855330`): the job's `timeout-minutes: 40` must cover about 5 minutes of
+setup, the three `actions/deploy-pages` attempts (`timeout: 300000`, `300000`, `600000`, each set in the step so the action's
+10 minute default is never a term) and the two waits (`sleep 30`, `sleep 600`). A change to any of the five numbers or to the
+job limit is a change to the sum; `tests/test_pages_deploy_budget.py` adds it up from the workflow text and fails with the total.
+
 ---
 
 ## Expected-row baseline (Items 98, 103, 104): `tests/expected_rows/<lane>.txt`, `tests/expected_rows_post/<lane>.txt`, `tools/check_expected_rows.py` and the selftest-gate job
