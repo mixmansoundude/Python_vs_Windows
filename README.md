@@ -165,8 +165,8 @@ choice should never come out empty. A person who names a file should get that fi
   wait, use that file.
 - **REQ-002.17** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
   nine candidates, print no list, use the alphabetical default and print the three ways of REQ-002.14.
-- **REQ-002.18** [major] The bootstrapper **shall**, in a non-interactive run, ask no entry question and use the
-  alphabetical default of REQ-002.12.
+- **REQ-002.18** [major] The bootstrapper **shall**, in a non-interactive run that reaches REQ-002.12, ask no entry
+  question and use the alphabetical default of REQ-002.12.
 - **REQ-002.19** [minor] The bootstrapper **shall** ask the question of REQ-002.14 at most once in a run, and
   use the file the user chose, or the default when nothing was typed, in every later step of that run.
 
@@ -1264,7 +1264,7 @@ Operational knobs, not needed for normal double-click use:
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
 | `HP_SKIP_PEP723_WRITEBACK=1` | Skip the PEP 723 header write-back (`uv add --script`) after a fresh install or warnfix repair | REQ-005.11 |
 | `HP_VERBOSE_CONSOLE=1` | Opt-in: also echo `[DEBUG]`/`[TRACE]`/`[INSTALL]`-tagged lines to the live console (suppressed by default; always written to `~setup.log` either way) | -- |
-| `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
+| `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default when no other rule picks a file | REQ-002 |
 | `PVW_PROVIDER=conda` | Super-user: use only the Miniconda provider for this run, no cascade after a failure, no read or write of `~provider.state.json`; any other value stops the run | REQ-009.15 |
 | `PVW_BUILDER=auto\|pyinstaller\|nuitka\|both` | Super-user: choose the build tool for the EXE (default `auto`: PyInstaller first, Nuitka as fallback and as the elective upgrade); an unrecognized value is ignored with one warning | REQ-009.17 |
 

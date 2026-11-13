@@ -4372,6 +4372,13 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   case per rule.
 - **Left alone.** A provider cascade re-enters `:determine_entry` a third time; the memory covers it too, by the same read.
   Item 108 (the picker lists `._` files) is a separate defect in the same subroutine, closed next.
+- **Considered, not built (CodeRabbit on PR #527).** The read could sit in `:determine_entry`, before the automatic discovery, so a
+  remembered choice also beats a preferred name (`main.py`, `app.py`, `run.py`, `cli.py`) that appeared between the two runs. The
+  path needs a file to be created in the program folder between two points that run no user code (the dependency phase; only the
+  opt-in `HP_PVW_KNOWN_IDEMPOTENT` run or a provider cascade after the verification run executes the program), and the file that
+  appears would then be the one the author means. The move would also skip `~find_entry.py`'s emit and syntax check on the second
+  call, which `self.entry.*` and `helper.find_entry.syntax` exercise. Revisit if a row or a field report shows the entry changing
+  between the two runs.
 
 ### Item 108 (closed 2026-11-13, PR #527; found while writing the REQ-002 rows)
 
