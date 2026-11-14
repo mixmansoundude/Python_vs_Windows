@@ -269,6 +269,29 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
 - **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only; REQ-013.12 (an installed
   Miniconda or uv is used as it is in offline mode) has no row.
 
+
+---
+
+## The venv fallback's interpreter probe is cut out and run with a stub Python (Item 113)
+
+**Touch `:try_venv_fallback`, its canary probe line, `:venv_canary_fail`/`:venv_canary_ok`, the `[WARN] venv fallback: ...` and `[INFO] venv fallback ready:`
+log texts, or the labels `:resolve_system_python` and `:download_get_pip` it calls, must understand `tests/selfapps_venv_probe.ps1` and
+`tests/test_venv_probe.py`.** README REQ-023.1 says the fallback runs a probe command in the new interpreter and declines the tier when it does not pass.
+The older rows (`self.venv.canary_fail`) force the decline through `HP_TEST_FORCE_VENV_CANARY_FAIL`, which skips the probe command, so they cannot show
+what the real command does for the exit codes a broken interpreter gives. `tests/selfapps_venv_probe.ps1` (`self.venvprobe.*`, real lane, gating):
+- **The cut**: the block from the line `:try_venv_fallback` up to the line `:try_system_fallback` (each exactly once), in a driver that defines `LOG`,
+  `:log`, `:resolve_system_python` (sets `HP_SYS_CMD` and `HP_SYS_ARGS` to the stub) and `:download_get_pip` (never reached: the stub always has pip).
+- **The stub**: a C# program compiled with `csc` and used as the system Python. `-m venv .\.venv` builds `.venv\Scripts\python.exe` as a copy of the stub
+  itself (`VP_VENV_MODE=nofile` builds the folder and no file); any other call, which is the probe `-c "import sys"` run by the copy, exits with
+  `VP_PROBE_EXIT`. Every call is appended to the `VP_LEDGER` file, so a row reads which command ran, not only what the batch logged.
+- **The rows**: `.command` (the probe is called as `-c|import sys` on the venv's own interpreter and a passing exit selects the venv), `.nofile` (no interpreter
+  file, so no probe at all and the tier is declined), `.declines` (exit 1, 2 and 255 each decline), `.crash` (a negative exit code, which is how Windows
+  reports a missing DLL or an access violation, declines too). The verdicts are pure functions (`Get-ProbeProblems`) that `tests/test_venv_probe.py`
+  runs through real `pwsh` on synthetic ledgers, so a judge that could not go red is found locally.
+- **Coupling**: exactly one unindented probe line `"%HP_PY%" -c "import sys" >nul 2>&1`, placed after `:venv_create_pip_ready`; a probe line inside a parenthesized
+  block would read its errorlevel at parse time (the Provider-cascade entry in `docs/agent-lessons-learned.md`).
+  The unit test names the script to update when a label, a variable read or a log text moves.
+
 ---
 
 ## `.github/dependabot.yml`, `tests/test_dependabot_config.py` and the `no-automerge` label (Item 90 follow-up)

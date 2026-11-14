@@ -80,7 +80,6 @@ UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-018.30": "unit: tests/test_window_confirm.py::WindowQuestionWiring the question says the check stops the program after about 30 seconds (static wording pin)",
     "REQ-020.5": "gap: self.corrupt.conda.heal.accept reaches the Y branch with the deletion and the Miniconda download skipped (HP_TEST_SKIP_EVICT), and self.corrupt.conda.real_locked shows a deletion that fails; no row deletes a damaged installation, installs a fresh Miniconda in its place and shows the run continuing (a 150 MB download)",
     "REQ-020.9": "gap: no row makes the fresh Miniconda install fail after the eviction, so exit code 4 and the 'Fresh Miniconda install failed after self-healing eviction.' line are never asserted",
-    "REQ-023.1": "inspection: run_setup.bat :: \"%HP_PY%\" -c \"import sys\"\nthe probe command that :try_venv_fallback runs after the venv is created; self.venv.canary_fail forces the probe's failure with a hook that jumps past the command, so no row makes the real command fail",
 }
 
 

@@ -7815,7 +7815,7 @@ cross-line or redirection. `check_delimiters.py`'s `line != last.line` exemption
 entirely as a result, surfacing 63 further genuine findings in `run_setup.bat` (on top of the 26
 the `rem`-generalization pass had already found), all fixed by rewording with no functional change.
 
-### Item 112 (filed 2026-11-14, PR pending; REQ-013 rows for the download, check and swap code)
+### Item 112 (filed 2026-11-14, PR #532; REQ-013 rows for the download, check and swap code)
 
 - **The gap.** README REQ-013.1, .3, .10, .11, .14, .15, .17 and .18 had no row (`gap:` entries of `tests/test_req_shall_trace.py`):
   nothing showed curl's `--retry 3`, the Windows PowerShell second method, the check running before the secondary URL, the repeat of each
@@ -7828,4 +7828,13 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   from `UNTRACED_SHALLS` (REQ-013.12 stays). Design and coupling: `docs/agent-interconnect.md`, "The REQ-013 download, check and swap
   code is cut out and run against a local server".
 - **Not covered.** The uv download (a text pin in the unit test) and REQ-013.12.
+
+### Item 113 (filed 2026-11-14, PR pending; REQ-023.1, the venv canary probe with the real command)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-023.1 as "shown by inspection": the existing rows (`self.venv.canary_fail`) force the decline through
+  `HP_TEST_FORCE_VENV_CANARY_FAIL`, which skips the probe command, so no row ran `"%HP_PY%" -c "import sys"` against an interpreter that fails.
+- **What shipped.** `tests/selfapps_venv_probe.ps1` (4 `self.venvprobe.*` rows, real lane, gating from the first run) cuts `:try_venv_fallback` out of
+  `run_setup.bat` and runs it under cmd.exe with a compiled stub Python; `tests/test_venv_probe.py` pins what the script assumes and runs its judging
+  functions through pwsh; README REQ-023's tests note names the rows; the REQ-023.1 `gap:` entry is gone (233 of 265 shalls named). Design and coupling:
+  `docs/agent-interconnect.md`, "The venv fallback's interpreter probe is cut out and run with a stub Python".
 

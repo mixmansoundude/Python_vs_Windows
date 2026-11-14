@@ -1411,8 +1411,14 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 > - Tests (`tests/selfapps_ux_hardening.ps1`): `self.venv.canary_fail` (REQ-023.2 to .4) lets the venv be created for
 >   real and forces only the probe to fail, then requires the warning, that the venv is not selected and that the
 >   system Python tier is attempted next. `self.venv.fallback` (REQ-009) shows the other half: a healthy venv passes
->   the probe and is selected. No row makes the real probe command fail, so REQ-023.1 is shown by inspection of
->   `run_setup.bat`.
+>   the probe and is selected. Those two rows run a whole bootstrap and reach the probe command only through a hook that
+>   jumps past it. `tests/selfapps_venv_probe.ps1` (`self.venvprobe.command`, `self.venvprobe.nofile`,
+>   `self.venvprobe.declines`, `self.venvprobe.crash`) cuts
+>   `:try_venv_fallback` out of `run_setup.bat` and runs the real probe line against a stub interpreter: REQ-023.1 (the
+>   interpreter inside the venv is run once with `-c "import sys"`, after the creation and before the venv is selected,
+>   and not at all when the creation leaves no interpreter file), REQ-023.2 and REQ-023.3 (an exit code of 1, 2 or 255,
+>   and the negative codes a crash gives, -1, -1073741515 for a DLL that cannot be loaded and -1073741819 for an access
+>   violation, each leave the venv unselected and the warning in the log).
 
 ---
 
