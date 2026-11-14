@@ -335,6 +335,7 @@ def script_problems(text):
         "[System.IO.FileShare]::Read",
         "taskkill /F /T /PID",
         "NoDefaultCurrentDirectoryInExePath",
+        "'set \"NO_PROXY=127.0.0.1\"'",
         "'^(HP_|PVW_|NOINPUT$|NoDefaultCurrentDirectoryInExePath$)'",
         "'non-windows-host'",
         "-ShippedOnly $true",
@@ -515,6 +516,7 @@ class SyntheticRulesCanFail(unittest.TestCase):
         self.assertTrue(script_problems(text.replace("self.netres.shipped.tools", "self.netres.shipped.other")))
         self.assertTrue(script_problems(text.replace("-ge 17763", "-ge 10240")))
         self.assertTrue(script_problems(text.replace("-ShippedOnly $true", "-ShippedOnly $false")))
+        self.assertTrue(script_problems(text.replace("NO_PROXY=127.0.0.1", "NO_PROXY_UNSET=1")))
 
     def test_script_cutting_another_block_is_reported(self):
         text = SCRIPT.read_text(encoding="utf-8").replace("-EndLine ':system_python_consent_gate'", "-EndLine ':elsewhere'")

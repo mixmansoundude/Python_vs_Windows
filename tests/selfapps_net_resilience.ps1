@@ -310,7 +310,9 @@ function New-DriverHead {
         'setlocal',
         ('set "LOG=' + (Join-Path $Dir '~driver.log') + '"'),
         ('set "TEMP=' + (Join-Path $Dir 'tmp') + '"'),
-        ('set "TMP=' + (Join-Path $Dir 'tmp') + '"')
+        ('set "TMP=' + (Join-Path $Dir 'tmp') + '"'),
+        # The server is on the loopback address; a proxy inherited from the runner or a developer machine must not take it.
+        'set "NO_PROXY=127.0.0.1"'
     )
 }
 
