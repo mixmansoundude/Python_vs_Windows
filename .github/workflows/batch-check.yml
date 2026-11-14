@@ -1376,6 +1376,20 @@ jobs:
         run: |
           & tests\selfapps_conda_install_fail.ps1
 
+      # Item 46 Batch 4 (README REQ-024, REQ-016.8 and the per-site requirement): a file the bootstrapper cannot write in the
+      # middle of a run (~prep_requirements.py, ~detect_visa.py, the dependency list copy of :dm_copy_one) called :die, the
+      # END-of-run routine: key press, lock released, state error, although the run goes on. One control and three failing
+      # default runs with no HP_* flag and closed standard input; the lock folder must be in place when the build starts, no
+      # "Press any key" may come before the end of the run, and the state is the control's (error only for the dependency list).
+      # Real lane only, gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: a file the bootstrapper cannot write does not end the run (real only)"
+        if: ${{ !cancelled() && matrix.mode == 'real' }}
+        env:
+          SOFTFAIL_SCENARIO: uv
+        shell: pwsh
+        run: |
+          & tests\selfapps_die_writefail.ps1
+
       # Item 94b (REQ-018.9): in a non-interactive run every elective offer (post-execution checkpoint, optimized
       # build, missing-package install, last-chance offer) declines without reading the console. One signal at a
       # time (NOINPUT, HP_NONINTERACTIVE, HP_CI_LANE), plus a control run with none of them that must reach the
@@ -1712,6 +1726,16 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_die_emit_fallthrough.ps1
+
+      # Item 46 Batch 4, the conda half of the step in the real lane: ~detect_python.py, ~print_pyver.py, ~condarc (staging) and
+      # the .condarc copy into the environment. One control and four failing default runs, each with a real conda create.
+      - name: "Self-test: a file the bootstrapper cannot write does not end the run, conda path (conda-full only)"
+        if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
+        env:
+          SOFTFAIL_SCENARIO: conda
+        shell: pwsh
+        run: |
+          & tests\selfapps_die_writefail.ps1
 
       - name: "Test pandas/openpyxl heuristic (conda-full only)"
         if: ${{ !cancelled() && matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true' }}
@@ -2771,6 +2795,8 @@ jobs:
             tests\~selftest_noflag_evidence\~bootstrap.status.json
             tests/~selftest_installfail_evidence/*
             tests\~selftest_installfail_evidence\*
+            tests/~selftest_softfail_evidence/*
+            tests\~selftest_softfail_evidence\*
             tests/~selftest_offers_*/~offers_console.log
             tests/~selftest_offers_*/~offers_env.txt
             tests/~selftest_offers_*/~offers_env0.txt

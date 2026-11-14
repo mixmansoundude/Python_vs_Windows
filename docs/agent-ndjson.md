@@ -589,6 +589,44 @@ self.conda.installfail.nopause
 self.conda.installfail.cascade
 ```
 
+## selfapps-die-writefail NDJSON rows (selfapps_die_writefail.ps1, real lane for `uv`, conda-full lane for `conda`, both gating)
+
+Item 46 Batch 4 (README REQ-024 lock, REQ-016.8 key press, and the per-site requirement): seven `call :die` sites follow a file the
+bootstrapper could not write in the middle of a run that goes on (`~detect_python.py`, `~print_pyver.py`, `~condarc`, the `.condarc` copy,
+`~prep_requirements.py`, `~detect_visa.py`, the `:dm_copy_one` list copy). `:die` is the end-of-run routine (state `error`, status file
+written, lock released, key press unless the CI marker is set), so a real user saw "Press any key" mid-run, a second double click could
+start, and an optional step turned the whole run into state `error`. Two scenarios (`SOFTFAIL_SCENARIO`, default `uv`), each a set of
+full default bootstraps: a wrapper clears every `HP_*`, `PVW_*` and `NOINPUT` variable (the CI marker too) and standard input is closed. The
+script polls `~setup.log` and, the moment "Building standalone executable" is written (after every failed step, before a build that
+takes tens of seconds), looks once at `~bootstrap.lock`; the run then goes to its end and the console is read: "Press any key" before
+that line is a key press mid-run, and the total must equal the control's. The judging functions (`Get-ControlProblems`,
+`Get-SoftfailProblems`) take plain values and are run through real pwsh by `tests/test_die_writefail.py`.
+- `uv` (real lane), a program with `requirements.txt` (`toolz`) so the dependency rules run. `.control.uv`: lock in place at the build
+  line, no key press before it, exactly the end-of-run key press, state `ok`, no `[ERROR]` line. `.prep` (`HP_TEST_FORCE_EMIT_FAIL=
+  HP_PREP_REQUIREMENTS`): a `[WARN]` line, the doomed helper call not made, lock kept, no key press, state as the control. `.visa`
+  (`HP_DETECT_VISA`): the same, plus `[VISA] skipped (detector_unavailable)` and never "No pyvisa/visa imports detected." (the check did not
+  run). `.depstage`: `requirements.txt` read-only next to a `pyproject.toml`, so the merge cannot replace it and the fallback copy fails; the
+  run goes on with lock kept and no key press mid-run and ends with state `error` (the packages the list names may not be installed).
+- `conda` (conda-full lane, `HP_FORCE_CONDA_ONLY=1`), a program with no dependencies and a real conda create per run. `.control.conda`: as
+  the uv control. `.pyspec` (`HP_DETECT_PY`), `.pyver` (`HP_PRINT_PYVER`), `.condarc.stage` (`HP_CONDARC`, the provider line is still written)
+  and `.condarc.write` (`HP_TEST_FORCE_CONDARC_WRITE_FAIL=1`, a new hook in `:conda_create_done`: the copy gets a destination whose folder
+  does not exist): each a `[WARN]` line, lock kept, no key press mid-run, state as the control.
+A failing-run row also needs a clean control (the control's problems are part of its verdict), so the observation cannot pass on a run that
+never reached the build. The older `self.die_emit_fallthrough` scenario `condarc` reads the same change (warning, provider line, state `ok`).
+Skips on non-Windows.
+
+```
+self.softfail.control.uv
+self.softfail.prep
+self.softfail.visa
+self.softfail.depstage
+self.softfail.control.conda
+self.softfail.pyspec
+self.softfail.pyver
+self.softfail.condarc.stage
+self.softfail.condarc.write
+```
+
 ## selfapps-cascade-conda-create-fail NDJSON rows (selfapps_cascade_conda_create_fail.ps1, uv lane only, non-gating)
 
 Covers a genuine (non-simulated) conda-create failure reached during a REQ-009 cascade re-entry,

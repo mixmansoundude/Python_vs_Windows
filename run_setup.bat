@@ -1425,7 +1425,11 @@ if errorlevel 1 (
   goto :after_env_mode_selection
 )
 if not exist "%ENV_PATH%" mkdir "%ENV_PATH%"
-copy /y "~condarc" "%ENV_PATH%\.condarc" >> "%LOG%" 2>&1
+rem Test hook, absence changes nothing: the copy gets a destination whose folder does not exist, so it fails the way a locked or full disk would.
+set "HP_CONDARC_DEST=%ENV_PATH%\.condarc"
+if defined HP_TEST_FORCE_CONDARC_WRITE_FAIL call :log "[TEST] HP_TEST_FORCE_CONDARC_WRITE_FAIL: the .condarc copy gets a destination that cannot be written."
+if defined HP_TEST_FORCE_CONDARC_WRITE_FAIL set "HP_CONDARC_DEST=%ENV_PATH%\~no_such_folder\.condarc"
+copy /y "~condarc" "%HP_CONDARC_DEST%" >> "%LOG%" 2>&1
 if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
 call :log "[BOOT] REQ-009: Selected Python provider: Conda (Portable)."
 goto :after_env_mode_selection
