@@ -4334,6 +4334,37 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   (a README wording question for the README owner, not a code change). The status of a bootstrap after a failed rebuild is recorded in
   the row details, not asserted. Item 105 (Ctrl+C read as a yes in three timed gates) was found on the way and filed separately.
 
+### Item 105 (closed 2026-11-13, PR #529; found 2026-11-07 while writing the Item 99 gate rows)
+
+- **The problem.** `choice /C YN ... /T 30 /D N` leaves errorlevel 1 for Y, 2 for N and for the timeout default, 255 for an error and 0
+  for Ctrl+C or Ctrl+Break, and `if errorlevel 2` is true for 2 or MORE. Three timed questions, `:cascade_consent_gate` (README
+  REQ-005.10), `:visa_subfolder_gate` (REQ-008.11) and `:runtime_install_offer` (REQ-018.15), sent only 2 and 255 to their decline, so a
+  person who pressed Ctrl+C at the question and answered N to cmd's own "Terminate batch job (Y/N)?" took the batch on to the accept
+  line: a provider cascade (a second environment, the program started again), an NI-VISA driver install, or a package install plus a
+  rebuild. README REQ-005.10 (the cascade follows explicit consent), REQ-008.11 (anything other than yes installs no driver) and
+  REQ-018.15 (anything but an explicit yes installs, edits and rebuilds nothing) all make an interrupted question a no, and REQ-018.2
+  asks for explicit consent before any further run. `:hidden_import_consent` (Item 97) already had both guards.
+- **What shipped.** One line per gate, `if not errorlevel 1 goto <the same decline label>`, directly after the `if errorlevel 2 goto`
+  line, so only a code of exactly 1 reaches the accept line. Nothing sits between the `choice` line and the guards, not even a `rem`;
+  the explanation is a `rem` line above the `choice` line. The new script `tests/selfapps_choice_cancel.ps1` (contract-uv lane, its own
+  gating step in `batch-check.yml`) cuts each real gate block out of `run_setup.bat`, runs it under cmd.exe with closed standard input
+  and a stub in place of the one `choice` line that answers 1, 2, 0 and 255 in turn and records its arguments, and writes four rows,
+  `self.consent.cancel.cascade`, `.visa`, `.install` and `.repair` (the control: `:hidden_import_consent` was already right, so a driver
+  that cannot tell accept from decline fails it). `tests/test_choice_cancel.py` pins the batch side (the four labels once and in order,
+  each block reaches only names the driver defines, one live `choice` line per block directly followed by the two guards with the same
+  target, the heading and each decision's log line matched by one live line) and runs the script's judging functions through real
+  `pwsh` on synthetic runs, with a mutation case for each rule; two anchors in `tests/test_edge_rows.py` moved with the inserted line.
+- **Evidence.** Red run `43442985124` (head `d56ef96`, the test only): the contract-uv lane had exactly three red rows, `cascade`, `visa`
+  and `install`, each red only in its Ctrl+C scenario (`errorlevel 0 (Ctrl+C or Ctrl+Break) was taken for a yes: the gate accepted`;
+  the driver's own result file shows `RC=0`, `NEED_VISA=1` and the install call) while its yes, no and error scenarios behaved as the
+  README says, and `repair` was green. Every other lane had no red row, no listed row was missing anywhere (contract-uv wrote 115 rows,
+  4 of them not yet listed: these four) and the aggregate check was red for those three rows alone.
+- **Fix run.** Read on all eight lanes before the merge; its run id and row counts are in the squash commit message (a docs-only push
+  after the run would have cost a second full run).
+- **Not changed on purpose.** The entry picker's `choice /C 123456789` takes a digit and not a yes, so it is a different shape and is
+  not covered. The four new row ids belong in `tests/expected_rows/contract-uv.txt` once they have appeared in green runs (lane 1 owns
+  those lists).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

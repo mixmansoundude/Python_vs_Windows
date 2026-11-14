@@ -60,12 +60,15 @@ function Write-NdjsonRow {
     Add-Content -LiteralPath $ciNd -Value $json -Encoding Ascii
 }
 
-$allIds = @('self.workdir.verify', 'self.workdir.fastpath', 'self.workdir.interpreter', 'self.workdir.repair', 'self.workdir.optbuild')
+# derived requirement: every row id is a literal at its own call site, here too (tools/check_ndjson_registry.py reads text, so a
+# loop variable would hide the ids of this skip and error path from it).
 function Write-AllRows {
     param([bool]$Pass, [string]$Desc, [hashtable]$Details)
-    foreach ($rowId in $allIds) {
-        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
-    }
+    Write-NdjsonRow ([ordered]@{ id = 'self.workdir.verify'; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.workdir.fastpath'; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.workdir.interpreter'; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.workdir.repair'; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.workdir.optbuild'; req = 'REQ-003.6'; pass = $Pass; desc = $Desc; details = $Details })
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
