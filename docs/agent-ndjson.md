@@ -1750,6 +1750,67 @@ self.consent.cancel.install
 self.consent.cancel.repair
 ```
 
+## selfapps-dep-merge-edges NDJSON rows (selfapps_dep_merge_edges.ps1, contract-uv lane only, GATING)
+
+Item 106, README REQ-005.1.6, REQ-005.1.12, REQ-005.1.13 and REQ-005.1.14: the edges of the dependency-list merge that the
+rows of `selfapps_dep_merge_later.ps1` (a later run that goes right, above) do not reach. Seven default bootstraps of small
+folders (a stub `app.py`; the entry smoke test and the EXE verification run are switched off, so no program of the folder
+starts; the build still runs; each wrapper sets or clears the seven variables that decide the flow, the skip hooks, the header
+write-back switch and the forced emit failure, so the runner's own settings cannot decide; the run's slice of `~setup.log` is
+what the row reads). `self.depmerge.failed.records` (REQ-005.1.6): requirements.txt `termcolor`
+plus pyproject.toml `iniconfig`; run 1 installs both, writes the header and records the three lists (`~dep_base.requirements.txt`,
+`.pyproject.txt`, `.pep723.txt`); then the user deletes termcolor and adds `six==999.0.0`, a pin no index can satisfy: run 2
+reports `Removed termcolor`, the install fails, the header write-back is reported as skipped, and the three records are byte for
+byte what run 1 left; run 3 (dist removed so the dependency flow runs, nothing edited) reports the same removal again, because
+nothing was recorded. `self.depmerge.header.userwrote` (REQ-005.1.12): a hand-written multi-line PEP 723 header `iniconfig` plus
+requirements.txt `termcolor` and `iniconfig`; run 1 has the header write-back switched off (`HP_SKIP_PEP723_WRITEBACK`), so the
+header stays the user's text and has no record; then the user deletes iniconfig from requirements.txt and run 2 (write-back on)
+must keep it in the header: the console says it stays because the header still lists it, no removal is reported, and the header
+ends as iniconfig plus termcolor. `self.depmerge.fallback.emit` and `.fallback.helper` (both REQ-005.1.13 and REQ-005.1.14): the
+same two lists (requirements.txt `termcolor`, pyproject.toml `iniconfig`) where the merge cannot run, once because the helper
+cannot be written (`HP_TEST_FORCE_EMIT_FAIL=HP_DEP_MERGE`, the `[TEST]` line is the precondition) and once because the helper
+fails while it works (the script holds `~requirements.merge.tmp` open without sharing for the whole run, so the helper cannot
+write it, and its own `dep_merge: ... ~requirements.merge.tmp` error line in the setup log is the precondition). Both runs must
+warn on the console and in the setup log, use the highest ranked list alone (requirements.txt holds `iniconfig`, `iniconfig` is
+installed and `termcolor` is not), never say the lists were merged, and still end with state `ok` and exit code 0. Every sub-check
+also needs its precondition (the removal was seen, the install failed, the write-back ran, the forced failure fired), so a
+bootstrap that never reached the step cannot pass. One honest finding: README REQ-005.1.12 says "a PEP 723 header that it did
+not write", but after one successful write-back the whole header, the user's own lines included, has a record, so a later removal
+from requirements.txt would take such a line out of the header; the row therefore runs the first run with the write-back
+switched off, and the wording is lane 3's to settle (it is in the pull request). `tests/test_dep_merge_edges.py` pins the batch
+side (the merge flow, the snapshot guards, the fallback), the texts the facts look for as live lines of `run_setup.bat` and
+`tools/dep_merge.py` (the real helper is run on the scenarios' inputs), and runs the judging functions through real `pwsh` on
+synthetic runs. The rows skip with `skip=true` off Windows.
+
+```
+self.depmerge.failed.records
+self.depmerge.header.userwrote
+self.depmerge.fallback.emit
+self.depmerge.fallback.helper
+```
+
+## selfapps-repair-cap NDJSON rows (selfapps_repair_cap.ps1, contract-uv lane only, GATING)
+
+Item 106, README REQ-018.7: the re-verification run inside the `--hidden-import` repair loop ends after 30 seconds, whatever
+output the program produces (the main verification run, REQ-018.6, is the one that lets any output keep the program alive).
+`:hidden_import_loop` starts the EXE after each repair rebuild with an inline PowerShell that waits 30 seconds, stops the process
+it started and reads what it printed; no row ever ran a program that keeps printing through it, and a PyInstaller onefile EXE is
+two processes (the bootloader and the program it starts), so a stop of the first can leave the second holding the pipes. One
+default bootstrap with `HP_TEST_REPAIR_ANSWER=Y` (the loop asks first, Item 97): requirements.txt `colorama`, and an `app.py` that
+imports colorama by a runtime string (PyInstaller does not bundle it), so the EXE verification run and the loop's first run fail
+with `ModuleNotFoundError`, the loop rebuilds with `--hidden-import=colorama`, and the run after the rebuild prints a line a second
+for 100 seconds. Every start appends JSON lines to a ledger at an absolute path (`start`, `imported`, one `tick` a second, `done`).
+`self.repair.cap` passes only when the setup log has the `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama` line and a
+`[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap` line after it, one start of the frozen EXE got past the import,
+that start's own clock shows more than 10 and at most 45 seconds between its first and its last line and never reached `done`, and
+no process whose image sits under the scenario's `dist` folder is still running when the bootstrapper has returned (read through
+CIM; a leftover is stopped and reported). `tests/test_repair_cap.py` pins the batch side (the inline `WaitForExit(30000)` line,
+the log texts) and runs the judging functions through real `pwsh` on synthetic runs. The row skips with `skip=true` off Windows.
+
+```
+self.repair.cap
+```
+
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
 
 CLAUDE.md Item 78 slice 2 (README REQ-008). An `import visa` that sits only below a subfolder (an archived

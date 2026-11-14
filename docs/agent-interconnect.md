@@ -1006,6 +1006,18 @@ for a conflict). The old behavior was winner takes all (`copy /y` of the highest
   pipreqs fallback (only when nothing is declared). **Item 91**: the Item 65 runtime-install offer appends its package to
   `requirements.txt` for every dependency source; `:dep_merge_snapshot` records the file as it stands at `:success`, appended
   line included, so the next run's merge keeps it as an ordinary entry.
+- **Edge rows (Item 106, README REQ-005.1.6, .12, .13, .14)**: `tests/selfapps_dep_merge_edges.ps1` (`self.depmerge.failed.records`,
+  `.header.userwrote`, `.fallback.emit`, `.fallback.helper`; contract-uv lane, gating) bootstraps four folders for real with no user
+  program started (the build still runs). It matches these texts in `Get-DmFacts`, so rewording one means rewording its pattern there: the
+  report lines `Removed <name>: you removed it from ...` and `... still lists it, so it stays`, the `[INFO] Removed <name> from the
+  PEP 723 header.` line, `uv pip install -r requirements.txt failed`, both `PEP 723 write-back skipped (...)` reasons, `PEP 723 header
+  write-back succeeded via uv add --script`, `[WARN] The dependency lists could not be merged; using the highest ranked list only.`
+  (console and setup log), the `[TEST] HP_TEST_FORCE_EMIT_FAIL=HP_DEP_MERGE` line and the helper's own `dep_merge: ...` error line
+  (stderr, so it is in `~setup.log`). The `H` scenario holds `~requirements.merge.tmp` open with `FileShare.None` so the helper cannot
+  write its result: that temp name is part of the contract between the helper and the script (`tests/test_dep_merge_edges.py` pins it).
+  The `F` scenario's failed install is `six==999.0.0`, a pin no index has. A header record exists only for a header the bootstrapper
+  wrote (`HP_DM_HDR_WRITTEN`), so `U` switches the write-back off (`HP_SKIP_PEP723_WRITEBACK`) in its first run to get a header with
+  no record.
 
 ### `HP_TEST_FORCE_UV_FAIL` / `HP_TEST_CORRUPT_UV` interaction
 
@@ -1714,6 +1726,15 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
   question to the risk-sentence rule of the other prompts.
 - **Left for later** (CLAUDE.md, "Item 97 follow-ups"): reading `~run.err.txt` first, "do not ask again for N runs", the
   known-idempotent skip on the other four offers, and the maintainer's up-front consent question.
+- **The cap on each of the loop's runs (Item 106, README REQ-018.7)**: the loop's start line (`:hidden_import_loop`, the inline
+  PowerShell after `set "HP_HIR_EXE=..."`) waits 30 seconds, stops the process it started and only then reads what it printed; a run
+  that did not finish is exit -1 and ends the loop with the TIMED OUT status line. A PyInstaller onefile EXE is two processes (the
+  bootloader that was started and the program it starts) and `Kill()` ends only the first, so a program that keeps printing is the
+  case that could hold the pipes the loop reads until it ends by itself. `tests/selfapps_repair_cap.ps1` (`self.repair.cap`,
+  contract-uv lane, gating) measures the program's own clock through a ledger at an absolute path (its first line to its last must span
+  10 to 45 seconds and it must never reach `done`) and lists the processes still running from `dist` after the bootstrap returns;
+  `tests/test_repair_cap.py` pins the line's order inside its block (`WaitForExit(30000)`, the stop, the read, the default -1 before the
+  test for 0). Any change to that one line is a change to the shall's only code.
 
 ### Cascade signal reliability
 

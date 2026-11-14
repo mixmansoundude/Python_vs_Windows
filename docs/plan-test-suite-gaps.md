@@ -150,12 +150,14 @@ Requirement numbers the README mentions that have no numbered shall yet: REQ-002
    `tests/selfapps_runtime_install_edges.ps1`, contract-uv lane, through the hook `HP_TEST_FORCE_RTI_REBUILD_FAIL`),
    REQ-018.5 (`self.launch.warning.throwaway`, the throwaway-check warning before the verification run of a build and of a
    rebuild) and REQ-012.5 (`self.skiphooks.exe_only.panel`, the neutral note when EXE verification is skipped), the last
-   two in `tests/selfapps_skiphooks_single.ps1`. What is left, by size of the user-visible risk:
-   REQ-018.7 (the 30 second cap on the re-verification run),
-   REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the header is never removed from; a merge that
-   cannot run falls back with a warning) and REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the
-   working files go). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
-   optional.
+   two in `tests/selfapps_skiphooks_single.ps1`. Done 2026-11-13 (Item 106): REQ-018.7 (`self.repair.cap`,
+   `tests/selfapps_repair_cap.ps1`: the repair loop's re-verification run of a program that prints every second for 100
+   seconds is ended at about 30 seconds and nothing of it is left running) and REQ-005.1.6, .12, .13 and .14
+   (`self.depmerge.failed.records`, `.header.userwrote`, `.fallback.emit`, `.fallback.helper`,
+   `tests/selfapps_dep_merge_edges.ps1`: a failed install records nothing, a header the user wrote is never removed from,
+   a merge that cannot run falls back with a warning and the run goes on), both in the contract-uv lane. What is left, by
+   size of the user-visible risk: REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the working files go).
+   REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.

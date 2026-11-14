@@ -1439,6 +1439,11 @@ nothing and looks like proof. **Rule: `mutate()` in `tests/test_edge_rows.py` as
 line that only the block under test has), and a case asserts that the finding names the rule being tested, not only that something is
 reported.** The same applies to any test that edits a copy of `run_setup.bat` text.
 
+The mirror mistake lives in the pins themselves (Item 106): the first check of the repair loop's start line in `tests/test_repair_cap.py`
+fell back to the whole file when its block was not found, and passed, because `:run_exe_smokerun` holds the same default `-1` line.
+**A pin about one block reads only that block (cut by its labels) and checks the order of the lines inside it**, and a mutation case that
+moves the line out of its place (here: after the test for 0) must turn it red.
+
 ## A gate that cuts real code out of the batch file must replace the console read, and the read has to be decided on purpose (Item 99)
 
 The cut-out technique of `selfapps_conda_transient.ps1`, `selfapps_repair_consent.ps1` and `selfapps_runtime_install_edges.ps1` runs the

@@ -4365,6 +4365,40 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   not covered. The four new row ids belong in `tests/expected_rows/contract-uv.txt` once they have appeared in green runs (lane 1 owns
   those lists).
 
+### Item 106 (shipped 2026-11-14; assigned 2026-11-13 from the `gap:` entries of `tests/test_req_shall_trace.py`)
+
+- **The problem.** Five README shalls had no row able to fail for them: REQ-005.1.6 (a run whose install fails records nothing, so the
+  next run sees the same changes again), REQ-005.1.12 (a PEP 723 header the user wrote is never removed from), REQ-005.1.13 and .14 (when
+  the merge cannot run the bootstrapper warns, uses the highest ranked list alone and goes on to a normal end) and REQ-018.7 (the
+  re-verification run inside the `--hidden-import` repair loop ends after 30 seconds whatever output it produces). `tests/test_dep_merge.py`
+  pinned the helper; the batch lines around it were read by nothing that could fail.
+- **What shipped.** Two scripts, five rows, each script in its own gating step of the contract-uv lane (the lane with the most wall-clock
+  headroom). `tests/selfapps_dep_merge_edges.ps1` runs seven real default bootstraps of four folders with the user's program never started
+  (`HP_SKIP_ENTRY_SMOKE`, `HP_SKIP_EXE_SMOKERUN`; the build still runs). F, three runs (a baseline, then the user deletes `termcolor` and
+  adds `six==999.0.0`, a pin no index can satisfy, then a third unchanged run), shows the three `~dep_base.*.txt` records byte-identical
+  after the failed install and the same removal reported again. U, two runs with the header write-back switched off in the first, shows
+  that a header the user wrote keeps a package the user deleted from `requirements.txt` ("so it stays") and is never removed from. X
+  (`HP_TEST_FORCE_EMIT_FAIL=HP_DEP_MERGE`) and H (`~requirements.merge.tmp` held open with `FileShare.None`, so the helper fails while it
+  works and the batch file's `del` cannot clear it) show the `[WARN] The dependency lists could not be merged` line on the console and in
+  the setup log, the `pyproject.toml` list alone in `requirements.txt` and installed, and state ok with exit code 0. Rows
+  `self.depmerge.failed.records`, `.header.userwrote`, `.fallback.emit` and `.fallback.helper`. `tests/selfapps_repair_cap.ps1` runs one
+  default bootstrap (`HP_TEST_REPAIR_ANSWER=Y`) of a program that loads colorama by a runtime string and then prints a flushed line a second
+  for 100 seconds, with a ledger at an absolute path: the seconds from its first line to its last must be 10 to 45 and it must never
+  reach `done`, the setup log must show the repair rebuild and then the TIMED OUT status line, and when the bootstrap returns no process may
+  still run from `dist` (read through CIM before a leftover is stopped). A bootstrap that never reached the loop cannot pass. Row
+  `self.repair.cap`.
+- **How it is kept honest.** `tests/test_dep_merge_edges.py` and `tests/test_repair_cap.py` pin each script (literal row ids and tags, the
+  environment of every run, closed standard input, the process-tree kill and the time limits, its own exit codes), the texts the rows look
+  for (each is written by a live line of `run_setup.bat` or by the real `tools/dep_merge.py` run on the scenario inputs), the repair loop's
+  one start line (`WaitForExit(30000)`, `Kill()` after the wait and before the output is read, the default -1 before the test for 0, all
+  inside its own block), the workflow steps and the registry, and run every judging function through real `pwsh` in strict mode on synthetic
+  runs, with a mutation case for each rule. The five `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **For the README owner.** REQ-005.1.12 says "a PEP 723 header that it did not write", but after one successful write-back the whole
+  header, the user's lines included, has a record, so the product treats a header it has once added to as its own. The scenario tests the
+  unambiguous reading (a header with no record, because the write-back was off in the run that met it).
+- **Evidence.** The reading of the five rows on their first run is in the squash commit message (a docs-only push after the run would cost
+  a second full run). The five ids join the contract-uv list in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
