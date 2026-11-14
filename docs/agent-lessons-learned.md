@@ -892,6 +892,18 @@ reports the premise failing** (here the offline line; up to three runs, 20 secon
 run's real result so a network that stays down stays red, never retry an outcome with neither line (a real failure), and record
 `attempts` in the row. Do not "fix" it with `pass:true` plus a flag, and do not use "Re-run failed jobs" (duplicate Pages
 artifact, see the GitHub Actions entry): the fix is a new commit. `tests/test_connectivity_online_retry.py` pins the shape.
+
+**A scenario's premise can also be broken by an earlier scenario's fallback in the same job, not only by the network.** Run
+`43608572893` (PR #531, `real` lane): `~envsmoke` could not download uv from github.com ("uv: all download URLs failed"),
+fell back to conda and really installed Miniconda into `C:\Users\Public\Documents\Miniconda3`, the runner's shared location.
+Twenty-five minutes later the four `self.embed.version.*` rows found a Miniconda there, so the main flow computed `PYSPEC`
+itself and the embed tier never printed its own "a Python version request was found" line, which each row requires. The
+product was right (the swap happened and the program ran under the requested minor, `appLine`/`dlls` in the details), the
+row's premise (no uv, no Miniconda: the chain the README names for this tier) was not true any more, and a PR whose diff
+touched none of it was held. The `installfail` scenarios already point `PUBLIC` at a scratch folder; a scenario that assumes
+"no Miniconda" must do the same, and a row that fails on a log line while its other details are right should say which
+premise it needs (`requestLog` false with `swappedLog` true is this case). Open follow-up: `tests/selfapps_embed_version.ps1`
+still uses the runner's real `PUBLIC`.
 ---
 
 ## A conda call that talks to conda-forge needs one bounded retry, and a 502 on the sharded repodata path does not look like a conda error (Item 92)
