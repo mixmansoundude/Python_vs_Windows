@@ -600,23 +600,26 @@ def shall_entry_problems(text):
 
 DRIVER = r"""
 $ErrorActionPreference = 'Stop'
-$tokens = $null; $errs = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:ER_SCRIPT, [ref]$tokens, [ref]$errs)
-if ($errs.Count -gt 0) { throw ('parse errors: ' + $errs[0].Message) }
-$want = @($env:ER_WANT -split ',')
-$defs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $true)
-if (@($defs).Count -ne $want.Count) { throw 'a judging function is missing from the script' }
-foreach ($f in $defs) { Invoke-Expression $f.Extent.Text }
-$cases = Get-Content -LiteralPath $env:ER_CASES -Raw | ConvertFrom-Json
-$all = New-Object System.Collections.ArrayList
-foreach ($c in $cases) {
-    $h = @{}
-    foreach ($p in $c.args.PSObject.Properties) { $h[$p.Name] = $p.Value }
-    $r = @(& $c.fn @h)
-    if ($r.Count -eq 1 -and ($r[0].PSObject.TypeNames -contains 'System.Management.Automation.PSCustomObject')) { $res = $r[0] } else { $res = $r }
-    [void]$all.Add([ordered]@{ name = $c.name; result = $res })
+# A judging function may use only its parameters and its own locals. Strict mode makes a read of a variable nobody set an error
+# (and not $null), and the driver's own variables start with two underscores, so no judge can read one of them by accident.
+Set-StrictMode -Version 1.0
+$__tokens = $null; $__errs = $null
+$__ast = [System.Management.Automation.Language.Parser]::ParseFile($env:ER_SCRIPT, [ref]$__tokens, [ref]$__errs)
+if ($__errs.Count -gt 0) { throw ('parse errors: ' + $__errs[0].Message) }
+$__want = @($env:ER_WANT -split ',')
+$__defs = $__ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $__want -contains $n.Name }, $true)
+if (@($__defs).Count -ne $__want.Count) { throw 'a judging function is missing from the script' }
+foreach ($__f in $__defs) { Invoke-Expression $__f.Extent.Text }
+$__cases = Get-Content -LiteralPath $env:ER_CASES -Raw | ConvertFrom-Json
+$__all = New-Object System.Collections.ArrayList
+foreach ($__c in $__cases) {
+    $__h = @{}
+    foreach ($__p in $__c.args.PSObject.Properties) { $__h[$__p.Name] = $__p.Value }
+    $__r = @(& $__c.fn @__h)
+    if ($__r.Count -eq 1 -and ($__r[0].PSObject.TypeNames -contains 'System.Management.Automation.PSCustomObject')) { $__res = $__r[0] } else { $__res = $__r }
+    [void]$__all.Add([ordered]@{ name = $__c.name; result = $__res })
 }
-ConvertTo-Json -InputObject @($all) -Compress -Depth 8
+ConvertTo-Json -InputObject @($__all) -Compress -Depth 8
 """
 
 
@@ -1069,6 +1072,33 @@ class WarningFacts(unittest.TestCase):
         self.assertEqual((facts["Count"], facts["OutputLine"], facts["Before"]), (1, -1, False))
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
+class JudgeDriverIsStrict(unittest.TestCase):
+    """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
+    loudly instead of reading $null (or a variable of the driver) and quietly passing."""
+
+    def run_probe(self, body, args):
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "judge.ps1"
+            script.write_text("function Get-Probe {\n    param($Value)\n%s\n}\n" % body, encoding="ascii")
+            return run_cases(script, ["Get-Probe"], [{"name": "probe", "fn": "Get-Probe", "args": args}], d)["probe"]
+
+    def test_a_judge_that_uses_only_its_own_values_runs(self):
+        self.assertEqual(self.run_probe("    $own = $Value + 1\n    return $own", {"Value": 41}), [42])
+
+    def test_a_judge_that_reads_a_variable_nobody_set_fails(self):
+        with self.assertRaises(AssertionError) as ctx:
+            self.run_probe("    return $neverSetByAnyone", {"Value": 1})
+        self.assertIn("pwsh failed", str(ctx.exception))
+
+    def test_a_judge_cannot_read_a_variable_of_the_driver(self):
+        # the earlier driver called these $cases, $c, $h, $want, $all, $ast and $defs, and every judge could see them
+        for name in ("cases", "c", "h", "want", "all", "ast", "defs", "tokens", "errs", "r", "res", "p", "f"):
+            with self.subTest(name=name):
+                with self.assertRaises(AssertionError):
+                    self.run_probe("    return $%s" % name, {"Value": 1})
+
+
 def mutate(text, old, new):
     # exactly once: with two matches the case would edit the first one, which may be another block of the file (the choice line
     # of :hidden_import_consent looks like the one of :runtime_install_offer), and the pin under test would never see the change
@@ -1257,12 +1287,14 @@ class EachRuleCanFail(unittest.TestCase):
             self.assertTrue(any(word in f for f in offer_problems(text, self.names)), old)
 
     def test_a_second_choice_line_is_caught(self):
-        text = mutate(self.batch, "if errorlevel 2 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"",
-                      "if errorlevel 2 goto :rti_gate_decline\nchoice /C YN /N /T 30 /D N\nset \"HP_RTI_CHOICE=Y\"")
+        # Item 105 put a second guard line (errorlevel 0, Ctrl+C) between the errorlevel 2 line and the line that accepts
+        text = mutate(self.batch, "if not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"",
+                      "if not errorlevel 1 goto :rti_gate_decline\nchoice /C YN /N /T 30 /D N\nset \"HP_RTI_CHOICE=Y\"")
         self.assertTrue(any("exactly one live choice line" in f for f in offer_problems(text, self.names)))
 
     def test_a_no_from_choice_that_goes_on_is_caught(self):
-        text = mutate(self.batch, "if errorlevel 2 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"", "set \"HP_RTI_CHOICE=Y\"")
+        text = mutate(self.batch, "if errorlevel 2 goto :rti_gate_decline\nif not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"",
+                      "if not errorlevel 1 goto :rti_gate_decline\nset \"HP_RTI_CHOICE=Y\"")
         self.assertTrue(any("errorlevel 2" in f for f in offer_problems(text, self.names)))
 
     def test_a_system_python_that_is_offered_is_caught(self):
@@ -1353,7 +1385,9 @@ class EachRuleCanFail(unittest.TestCase):
         self.assertEqual(workflow_problems(mutated), ["no step runs tests\\selfapps_runtime_install_edges.ps1"])
 
     def test_a_step_on_another_lane_is_caught(self):
-        mutated = mutate(self.workflow, EDGES_STEP_IF, "if: ${{ !cancelled() && matrix.mode == 'real' }}")
+        # the step name goes into the anchor: other contract-uv steps carry the same if line, and mutate() wants exactly one match
+        anchor = '- name: "Self-test: the runtime install offer, its edges (contract-uv only)"\n        ' + EDGES_STEP_IF
+        mutated = mutate(self.workflow, anchor, anchor.replace("'contract-uv'", "'real'"))
         self.assertTrue(any("contract-uv lane" in f for f in workflow_problems(mutated)))
 
     def test_a_step_that_cannot_fail_is_caught(self):

@@ -1540,6 +1540,21 @@ jobs:
         run: |
           & tests\selfapps_runtime_install_edges.ps1
 
+      # Item 105 (README REQ-005.10, REQ-008.11, REQ-018.15 and REQ-018.2): only an explicit yes accepts. choice.exe leaves
+      # errorlevel 0 for Ctrl+C and Ctrl+Break and 255 for an error, and three timed questions (the provider cascade, the
+      # NI-VISA install for a subfolder-only import and the runtime install) sent only errorlevel 2 to the decline, so a person
+      # who pressed Ctrl+C and then answered N to cmd's "Terminate batch job (Y/N)?" had the batch take 0 for a yes. Four rows run
+      # each real block (the three, and the --hidden-import repair question as the control that already declines) cut out of
+      # run_setup.bat under cmd.exe with closed standard input and a stub in place of the console read that answers 1, 2, 0 and
+      # 255 in turn: yes accepts, and the other three must decline with the decline line in the log. contract-uv only: it is the
+      # lane with the most wall-clock headroom, and the blocks are the same on every lane. Gating from its first run
+      # (AGENTS.md, "New tests gate immediately"): the rows reach the aggregate check like every other lane's.
+      - name: "Self-test: Ctrl+C at a timed question is a no, not a yes (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_choice_cancel.ps1
+
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2788,6 +2803,9 @@ jobs:
             tests/~selftest_rtiedge_*/requirements.txt
             tests/~selftest_rtiedge_*/~sub.ndjson
             tests/~selftest_rtiedge_*/~bootstrap.status.json
+            tests/~choice_cancel_evidence.txt
+            tests/~selftest_choicecancel/*/~driver*
+            tests/~selftest_choicecancel/*/~choice_args.txt
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt

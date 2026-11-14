@@ -4989,8 +4989,10 @@ set "HP_CASCADE_T=30"
 if defined HP_TEST_FORCE_INTERACTIVE_CASCADE set "HP_CASCADE_T=2"
 where choice >nul 2>&1
 if errorlevel 1 goto :cascade_consent_no_choice_exe
+rem Item 105: choice.exe leaves errorlevel 0 for Ctrl+C or Ctrl+Break and the first guard below does not catch 0, so the second guard sends it to the decline too. Only an explicit Y goes on.
 choice /C YN /N /T %HP_CASCADE_T% /D N /M "  Try the next Python provider to resolve them? [Y/N, defaults to N after %HP_CASCADE_T%s] "
 if errorlevel 2 goto :cascade_consent_ci_decline
+if not errorlevel 1 goto :cascade_consent_ci_decline
 set "HP_CASCADE_CHOICE=Y"
 goto :cascade_consent_resolve
 
@@ -5030,8 +5032,10 @@ set "HP_VISA_T=30"
 if defined HP_TEST_FORCE_INTERACTIVE_VISA set "HP_VISA_T=2"
 where choice >nul 2>&1
 if errorlevel 1 goto :visa_gate_decline
+rem Item 105: choice.exe leaves errorlevel 0 for Ctrl+C or Ctrl+Break and the first guard below does not catch 0, so the second guard sends it to the decline too. Only an explicit Y goes on.
 choice /C YN /N /T %HP_VISA_T% /D N /M "  Install the NI-VISA driver now? [Y/N, defaults to N after %HP_VISA_T%s] "
 if errorlevel 2 goto :visa_gate_decline
+if not errorlevel 1 goto :visa_gate_decline
 goto :visa_gate_accept
 :visa_gate_from_override
 set "HP_VISA_RAW=%HP_TEST_VISA_ANSWER%"
@@ -5955,8 +5959,10 @@ goto :rti_gate_resolve
 :rti_gate_interactive
 where choice >nul 2>&1
 if errorlevel 1 goto :rti_gate_decline
+rem Item 105: choice.exe leaves errorlevel 0 for Ctrl+C or Ctrl+Break and the first guard below does not catch 0, so the second guard sends it to the decline too. Only an explicit Y goes on.
 choice /C YN /N /T 30 /D N /M "  Install and check? [Y/N, defaults to N after 30s] "
 if errorlevel 2 goto :rti_gate_decline
+if not errorlevel 1 goto :rti_gate_decline
 set "HP_RTI_CHOICE=Y"
 :rti_gate_resolve
 if /I "%HP_RTI_CHOICE%"=="Y" goto :rti_accepted
