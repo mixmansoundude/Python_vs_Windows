@@ -610,7 +610,8 @@ that line is a key press mid-run, and the total must equal the control's. The ju
   run). `.depstage`: `requirements.txt` read-only next to a `pyproject.toml`, so the merge cannot replace it and the fallback copy fails; the
   run goes on with lock kept and no key press mid-run and ends with state `error` (the packages the list names may not be installed).
 - `conda` (conda-full lane, `HP_FORCE_CONDA_ONLY=1`), a program with no dependencies and a real conda create per run. `.control.conda`: as
-  the uv control. `.pyspec` (`HP_DETECT_PY`), `.pyver` (`HP_PRINT_PYVER`), `.condarc.stage` (`HP_CONDARC`, the provider line is still written)
+  the uv control. `.prep.conda` (`HP_PREP_REQUIREMENTS` with a requirements.txt, so the conda branch of the install block runs: the helper is
+  not called, the conda bulk step is skipped, the pip step still runs), `.pyspec` (`HP_DETECT_PY`), `.pyver` (`HP_PRINT_PYVER`), `.condarc.stage` (`HP_CONDARC`, the provider line is still written)
   and `.condarc.write` (`HP_TEST_FORCE_CONDARC_WRITE_FAIL=1`, a new hook in `:conda_create_done`: the copy gets a destination whose folder
   does not exist): each a `[WARN]` line, lock kept, no key press mid-run, state as the control.
 A failing-run row also needs a clean control (the control's problems are part of its verdict), so the observation cannot pass on a run that
@@ -623,6 +624,7 @@ self.softfail.prep
 self.softfail.visa
 self.softfail.depstage
 self.softfail.control.conda
+self.softfail.prep.conda
 self.softfail.pyspec
 self.softfail.pyver
 self.softfail.condarc.stage

@@ -4440,7 +4440,8 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   shape of that run (no timeouts, `sleep 1200`) is one of its refused fixtures.
 - **Evidence.** The normal path in practice: the Pages publish of `main` run `43559506767` (head `7bed154`, the merge of #528) deployed on
   attempt 1 in 8 seconds and skipped both waits and the other two attempts; every lane and the aggregate were green. The retry path
-  itself (attempts that hang to their limit) is shown only by the unit test, since a real hang cannot be made on demand.
+  itself (attempts that hang to their limit) has not been exercised by any run: a real hang cannot be made on demand, and the unit
+  test only adds the budget up from the workflow text (it does not simulate a hanging deploy).
 - **Rule kept.** A job that retries holds the arithmetic at or below `timeout-minutes`; see `docs/agent-lessons-learned.md`
   ("A job's `timeout-minutes` is a sum") and `docs/agent-interconnect.md` (`publish_diag` "Prep site directories").
 

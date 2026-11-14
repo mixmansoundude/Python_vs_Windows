@@ -399,8 +399,8 @@ for several batches is now already done and waiting.
   (README REQ-024, so a second copy of the bootstrapper could start in the same folder mid-build) and, without
   `HP_CI_LANE`, waits for a key press in the middle of the run (REQ-016.8 says one, at the end). A default double-click
   run with one unwritable helper therefore stopped on a "Press any key" while the install and the build still lay ahead.
-  `tests/selfapps_die_writefail.ps1` (nine `self.softfail.*` rows, real lane for the uv scenario and conda-full for the
-  conda one, gating) proved it from the first run (run `43561468853`): a clean control keeps the lock folder until the
+  `tests/selfapps_die_writefail.ps1` (ten `self.softfail.*` rows, real lane for the uv scenario and conda-full for the
+  conda one, gating; `.prep.conda` was added after review, the other nine proved it from the first run, run `43561468853`): a clean control keeps the lock folder until the
   build line, prints no key press before the end and ends with state `ok`; each failing run released the lock, printed
   one extra key press and ended in state `error` (the dependency list site ended in `error` by design, see below).
   The fix makes each site log one line and go on: `[WARN]` for `~detect_python.py` (PYSPEC stays empty), `~print_pyver.py`

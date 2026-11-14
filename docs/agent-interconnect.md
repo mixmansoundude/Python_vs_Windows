@@ -791,7 +791,8 @@ named, so a later edit cannot make the skipped file look present:
   `HP_TEST_FORCE_EMIT_FAIL` only reaches `:emit_from_base64`, not the copy; absence changes nothing (README REQ-019).
 - **Rows** (`tests/selfapps_die_writefail.ps1`, real lane `SOFTFAIL_SCENARIO=uv`, conda-full `=conda`, gating): `self.softfail.control.uv`
   / `.control.conda` (a run with nothing forced: the lock exists at the build line, no key press, state ok), then `.prep`, `.visa`,
-  `.depstage` (uv lane) and `.pyspec`, `.pyver`, `.condarc.stage`, `.condarc.write` (conda lane), each comparing with its control: the
+  `.depstage` (uv lane) and `.prep.conda` (a requirements.txt, so the conda branch of the install block runs: no helper call, no conda bulk
+  step, the pip step still runs), `.pyspec`, `.pyver`, `.condarc.stage`, `.condarc.write` (conda lane), each comparing with its control: the
   lock folder is still held at the "Building standalone executable" line, the key-press count did not grow, the state is the control's
   (`error` only for `.depstage`), one line of the new wording and none of the old `[ERROR]`. `tests/test_die_writefail.py` pins the six
   shapes in the batch and a mutation case puts each old `:die` back. The old `condarc` scenario of `selfapps_die_emit_fallthrough.ps1`

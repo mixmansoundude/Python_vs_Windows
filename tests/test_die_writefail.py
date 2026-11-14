@@ -1,7 +1,7 @@
 """Item 46 Batch 4 (README REQ-024, REQ-016.8 and the per-site requirements; docs/plan-die-fatal-remediation.md): a file the
 bootstrapper cannot write in the middle of a run must not end the run.
 
-What really happens in a bootstrap is checked on Windows by tests/selfapps_die_writefail.ps1 (nine `self.softfail.*` rows: the uv
+What really happens in a bootstrap is checked on Windows by tests/selfapps_die_writefail.ps1 (ten `self.softfail.*` rows: the uv
 scenario in the real lane, the conda scenario in the conda-full lane, both gating). These rules read the script, run_setup.bat,
 batch-check.yml and docs/agent-ndjson.md as text, and run the script's own judging functions through a real pwsh on synthetic runs, so a
 reworded log line, a hook that no longer names a real emit call, a judging rule that stops judging or a step that stops gating fails here
@@ -34,6 +34,7 @@ ROWS = (
     ("self.softfail.visa", "REQ-008, REQ-024"),
     ("self.softfail.depstage", "REQ-005.1, REQ-024"),
     ("self.softfail.control.conda", "REQ-024"),
+    ("self.softfail.prep.conda", "REQ-005.8, REQ-024"),
     ("self.softfail.pyspec", "REQ-004, REQ-024"),
     ("self.softfail.pyver", "REQ-004, REQ-024"),
     ("self.softfail.condarc.stage", "REQ-006, REQ-024"),
@@ -86,6 +87,20 @@ def script_problems(text, batch):
             problems.append("the script never fails %s" % var)
     if "HP_TEST_FORCE_CONDARC_WRITE_FAIL = '1'" not in text:
         problems.append("the script never sets HP_TEST_FORCE_CONDARC_WRITE_FAIL")
+    if text.count("HP_TEST_FORCE_EMIT_FAIL = 'HP_PREP_REQUIREMENTS'") < 2:
+        problems.append("~prep_requirements.py must be failed on the uv path and again on the conda path (with a requirements.txt)")
+    # self.softfail.prep.conda judges the log lines of the conda branch: each one it expects present or absent must be a line the
+    # batch really writes, or the absence check could never fail.
+    for log_text, why in (
+        ("[INSTALL] conda bulk from ~reqs_conda.txt", "the conda bulk step the row says is skipped"),
+        ("[INSTALL] pip gap fill from requirements.txt", "the pip step the row says still runs"),
+        ("[TRACE] heuristic augmentation: skipped, the helper was not written", "the skip line"),
+        ("[TRACE] heuristic augmentation: complete", "the line a helper call that ran would leave"),
+    ):
+        if not re.search(r'(?m)^\s*(if [^\n]*)?call :log "%s"' % re.escape(log_text), batch):
+            problems.append("run_setup.bat no longer writes %r (%s)" % (log_text, why))
+        if log_text.split("] ", 1)[1] not in text.replace("\\", ""):
+            problems.append("selfapps_die_writefail.ps1 does not look for %r (%s)" % (log_text, why))
     if "~bootstrap.lock" not in text or "~bootstrap.lock" not in batch:
         problems.append("the lock folder name is not the one run_setup.bat uses")
     return problems
@@ -362,6 +377,18 @@ class StaticRulesCanFail(unittest.TestCase):
         bad = self.mutate(self.script, "id = 'self.softfail.depstage'; req = 'REQ-005.1, REQ-024'; pass = [bool]($depProblems.Count -eq 0)",
                           "id = 'self.softfail.depstage'; req = 'REQ-005.1'; pass = [bool]($depProblems.Count -eq 0)")
         self.assertTrue(any("self.softfail.depstage" in p for p in script_problems(bad, self.batch)))
+
+    def test_a_conda_prep_row_that_stopped_looking_for_the_skipped_bulk_step_is_found(self):
+        bad = self.mutate(self.script, "'\\[INSTALL\\] conda bulk from ~reqs_conda\\.txt'", "'\\[INSTALL\\] conda bulk from the list'")
+        self.assertTrue(any("conda bulk from ~reqs_conda.txt" in p for p in script_problems(bad, self.batch)))
+
+    def test_a_conda_prep_row_with_a_renamed_batch_line_is_found(self):
+        bad = self.mutate(self.batch, 'call :log "[INSTALL] pip gap fill from requirements.txt"', 'call :log "[INSTALL] pip fill from requirements.txt"')
+        self.assertTrue(any("pip gap fill" in p for p in script_problems(self.script, bad)))
+
+    def test_a_conda_prep_row_that_lost_its_hook_is_found(self):
+        bad = self.mutate(self.script, "(Get-CondaEnv @{ HP_TEST_FORCE_EMIT_FAIL = 'HP_PREP_REQUIREMENTS' })", "(Get-CondaEnv @{})")
+        self.assertTrue(any("conda path" in p for p in script_problems(bad, self.batch)))
 
     def test_a_hook_that_names_no_emit_call_is_found(self):
         bad = self.mutate(self.batch, 'call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA', 'call :emit_from_base64 "~detect_visa2.py" HP_DETECT_VISA')

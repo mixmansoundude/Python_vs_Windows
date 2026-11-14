@@ -30,8 +30,11 @@
 #                                import was found
 #     self.softfail.depstage     requirements.txt is read-only next to a pyproject.toml, so the merge cannot replace it
 #                                and the fallback copy fails; the run goes on and ends with state error
-#   conda (conda-full lane, HP_FORCE_CONDA_ONLY=1): a program with no dependencies, a real conda create per run
+#   conda (conda-full lane, HP_FORCE_CONDA_ONLY=1): a program with no dependencies (prep.conda adds a requirements.txt), a real conda
+#     create per run
 #     self.softfail.control.conda   the same control for the conda path
+#     self.softfail.prep.conda      ~prep_requirements.py cannot be written, with a requirements.txt (toolz) so the conda branch
+#                                   of the install block runs: no helper call, no conda bulk step, the pip step still runs
 #     self.softfail.pyspec          ~detect_python.py cannot be written
 #     self.softfail.pyver           ~print_pyver.py cannot be written
 #     self.softfail.condarc.stage   ~condarc cannot be staged (HP_TEST_FORCE_EMIT_FAIL=HP_CONDARC)
@@ -443,6 +446,24 @@ if ($scenario -eq 'conda') {
     })
     if (-not $ctlRowPass) { $allPass = $false }
 
+    # The conda branch of the install block reads HP_PREP_UNAVAILABLE at two places (the helper call and the conda list step), and
+    # a program with no requirements.txt never reaches either, so this run has a requirements.txt: without the helper there is no
+    # ~reqs_conda.txt, the conda bulk step must be skipped and the pip step must still install the list.
+    $prepConda = Invoke-SoftfailRun -Name 'prep_conda' -Files @{ 'app.py' = $appText; 'requirements.txt' = "toolz`r`n" } -ReadOnly @() -EnvSet (Get-CondaEnv @{ HP_TEST_FORCE_EMIT_FAIL = 'HP_PREP_REQUIREMENTS' })
+    $prepCondaProblems = Get-SoftfailProblems $prepConda $ctl @{
+        Hook = 'HP_TEST_FORCE_EMIT_FAIL=HP_PREP_REQUIREMENTS: simulating embedded helper write failure'
+        Site = '\[WARN\] Could not write ~prep_requirements\.py'
+        Present = @('heuristic augmentation: skipped, the helper was not written', '\[INSTALL\] pip gap fill from requirements\.txt')
+        Absent = @("can't open file[^\r\n]*~prep_requirements", 'heuristic augmentation: complete', '\[INSTALL\] conda bulk from ~reqs_conda\.txt')
+        State = 'control'
+    } $markerText
+    Write-NdjsonRow ([ordered]@{
+        id = 'self.softfail.prep.conda'; req = 'REQ-005.8, REQ-024'; pass = [bool]($prepCondaProblems.Count -eq 0)
+        desc = 'a ~prep_requirements.py that cannot be written, on the conda path with a requirements.txt: the helper is not called, the conda bulk step is skipped, the pip step still runs, the lock is kept, no key press, state as a clean run'
+        details = (Get-RowDetails $prepConda $ctl $prepCondaProblems)
+    })
+    if ($prepCondaProblems.Count -gt 0) { $allPass = $false }
+
     $pyspec = Invoke-SoftfailRun -Name 'pyspec' -Files $condaFiles -ReadOnly @() -EnvSet (Get-CondaEnv @{ HP_TEST_FORCE_EMIT_FAIL = 'HP_DETECT_PY' })
     $pyspecProblems = Get-SoftfailProblems $pyspec $ctl @{
         Hook = 'HP_TEST_FORCE_EMIT_FAIL=HP_DETECT_PY: simulating embedded helper write failure'
@@ -501,7 +522,7 @@ if ($scenario -eq 'conda') {
     if ($writeProblems.Count -gt 0) { $allPass = $false }
 
     Write-Host '=== softfail evidence (conda): lines that name a failed step, per run ==='
-    foreach ($r in @($ctl, $pyspec, $pyver, $stage, $write)) {
+    foreach ($r in @($ctl, $prepConda, $pyspec, $pyver, $stage, $write)) {
         Write-Host ('--- ' + $r.Name + ': state=' + $r.State + ' lockAtBuild=' + $r.LockAtMarker + ' finished=' + $r.Finished + ' seconds=' + $r.Seconds)
         foreach ($oneLine in ((Get-RowDetails $r $ctl @()).siteLines)) { Write-Host $oneLine }
     }
