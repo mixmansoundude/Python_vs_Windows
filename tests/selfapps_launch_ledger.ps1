@@ -59,7 +59,7 @@ $allIds = @(
 $reqOf = @{
     'self.launch.argv.fresh' = 'REQ-026.1'; 'self.launch.argv.cap' = 'REQ-026.5'; 'self.launch.count.default' = 'REQ-018.1'
     'self.launch.argv.fastpath' = 'REQ-026.2, REQ-018.3'; 'self.launch.argv.interpreter' = 'REQ-026.3'
-    'self.isolation.req010.pythonhome' = 'REQ-010'; 'self.isolation.req010.path_shadow' = 'REQ-010'
+    'self.isolation.req010.pythonhome' = 'REQ-010.2'; 'self.isolation.req010.path_shadow' = 'REQ-010.3'
     'self.launch.count.checkpoint' = 'REQ-018.1'; 'self.launch.argv.checkpoint' = 'REQ-026.4'; 'self.launch.argv.none' = 'REQ-026.6'
 }
 
@@ -287,13 +287,13 @@ Write-NdjsonRow ([ordered]@{
 })
 $homePass = ($null -ne $c0) -and ([string]$c0.pythonhome -eq '')
 Write-NdjsonRow ([ordered]@{
-    id = 'self.isolation.req010.pythonhome'; req = 'REQ-010'; pass = [bool]$homePass
+    id = 'self.isolation.req010.pythonhome'; req = 'REQ-010.2'; pass = [bool]$homePass
     desc = 'REQ-010: a poisoned PYTHONHOME is cleared before the user program runs'
     details = [ordered]@{ poison = $poison; seenByProgram = if ($c0) { $c0.pythonhome } else { $null }; ledgerLines = $linesC.Count }
 })
 $shadowPass = (-not $decoyRan) -and $cInProvider
 Write-NdjsonRow ([ordered]@{
-    id = 'self.isolation.req010.path_shadow'; req = 'REQ-010'; pass = [bool]$shadowPass
+    id = 'self.isolation.req010.path_shadow'; req = 'REQ-010.3'; pass = [bool]$shadowPass
     desc = 'REQ-010: a decoy python.cmd first on PATH is never run; the program runs under the provider interpreter'
     details = [ordered]@{ decoyRan = $decoyRan; programRanUnderAppFolder = $cInProvider; executable = if ($c0) { $c0.executable } else { $null }; decoyDir = $decoyDir }
 })

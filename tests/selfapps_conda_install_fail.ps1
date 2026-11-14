@@ -69,8 +69,8 @@ function Write-PreflightRows {
         return
     }
     Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.control'; req = 'REQ-024'; pass = $Pass; desc = $Desc; details = $Details })
-    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.lock'; req = 'REQ-024'; pass = $Pass; desc = $Desc; details = $Details })
-    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.nopause'; req = 'REQ-009'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.lock'; req = 'REQ-024.10'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.conda.installfail.nopause'; req = 'REQ-016.9'; pass = $Pass; desc = $Desc; details = $Details })
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -237,7 +237,7 @@ if ($scenario -eq 'fallback') {
     $flPre = $hookSeen -and $failSeen -and $fl.Sampled -and ($null -ne $flWindow)
     $lockPass = [bool]($flPre -and ($fl.LockAtVenv -eq $true))
     Write-NdjsonRow ([ordered]@{
-        id = 'self.conda.installfail.lock'; req = 'REQ-024'; pass = $lockPass
+        id = 'self.conda.installfail.lock'; req = 'REQ-024.10'; pass = $lockPass
         desc = 'a failed Miniconda install does not release the lock: the run goes on with the next provider, so the lock folder is still in place there'
         details = [ordered]@{
             precondition = [bool]$flPre; hookSeen = $hookSeen; failMessageSeen = $failSeen; sampled = $fl.Sampled
@@ -246,7 +246,7 @@ if ($scenario -eq 'fallback') {
     })
     $pausePass = [bool]($flPre -and ($flWindow -notmatch 'Press any key'))
     Write-NdjsonRow ([ordered]@{
-        id = 'self.conda.installfail.nopause'; req = 'REQ-009'; pass = $pausePass
+        id = 'self.conda.installfail.nopause'; req = 'REQ-016.9'; pass = $pausePass
         desc = 'a failed Miniconda install does not wait for a key press before the next provider: the key press belongs to the end of the run'
         details = [ordered]@{
             precondition = [bool]$flPre; hookSeen = $hookSeen; failMessageSeen = $failSeen; sampled = $fl.Sampled

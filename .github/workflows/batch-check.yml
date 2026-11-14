@@ -420,6 +420,30 @@ jobs:
         run: |
           & tests\selfapps_envname.ps1
 
+      - name: "Self-test: env-name sanitization (cut at 64 leaves a separator, REQ-004.10)"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        env:
+          ENVNAME_SCENARIO: 'longtrim'
+        shell: pwsh
+        run: |
+          & tests\selfapps_envname.ps1
+
+      - name: "Self-test: env-name sanitization (dots in the folder name, REQ-004.7, Item 107)"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        env:
+          ENVNAME_SCENARIO: 'dotted'
+        shell: pwsh
+        run: |
+          & tests\selfapps_envname.ps1
+
+      - name: "Self-test: env-name sanitization (separators only, REQ-004.11)"
+        if: ${{ !cancelled() && env.HP_CACHE_CORRUPTED != '1' }}
+        env:
+          ENVNAME_SCENARIO: 'allsep'
+        shell: pwsh
+        run: |
+          & tests\selfapps_envname.ps1
+
       - name: "Self-test: bootstrapper size tripwire (REQ-017)"
         # derived requirement (item 7 scoping pass): this step never executes run_setup.bat
         # (a static byte-size check only), so !cancelled() carries zero duration-inflation risk --
