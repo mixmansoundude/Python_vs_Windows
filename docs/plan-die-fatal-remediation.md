@@ -5,8 +5,8 @@ trace completed (2026-08-21, see Finding 3 and "Batch Roadmap" below) -- grounde
 current `run_setup.bat` source via `tools/audit_batch_exit_paths.py` and manual tracing, not
 written from memory or inference. **Batch 1 is merged** (PR #468). Batches 2, 3, 5, and one site of
 Batch 4 (the `Could not stage ~condarc` site) are implemented, with regression tests and CI wiring,
-landing as a follow-on PR stacked on Batch 1. Batch 6 and the "Active Python interpreter not
-resolved" sink remain deferred, per "Batch Roadmap" below. See CLAUDE.md's Item 46 entry for the
+landing as a follow-on PR stacked on Batch 1. Batch 6 (PR #528) is done as `call :die` to `call :log`, no
+coordination flag; the "Active Python interpreter not resolved" sink remains deferred, per "Batch Roadmap" below. See CLAUDE.md's Item 46 entry for the
 full incident history (Bucket B, closed; Bucket A slice 1, closed) this plan picks up from, and
 "Batch Roadmap" below for exactly what's implemented vs. what remains.
 **Owner:** Supervisor (Python_vs_Windows)
@@ -110,8 +110,8 @@ how much the file's line numbers drift as unrelated work lands.
 | 23 | `:corrupt_ci_exit` | Corrupt conda binary in CI | -- | Pre-existing safe (self-contained `exit /b 2`) |
 | 24 | `:evict_and_rebuild` | Could not delete corrupt conda dir | -- | Pre-existing safe (self-contained `exit /b 3`) |
 | 25 | `:evict_and_rebuild` | Fresh Miniconda install failed after self-healing eviction | -- | Pre-existing safe (self-contained `exit /b 4`) |
-| 26 | `:tci_both_failed` | Miniconda install failed (both AllUsers and JustMe) | `goto :eof` -> caller's own chain (row 1's chain, now contained post-Batch-1) | Traced, deferred (Batch 6) |
-| 27 | `:tci_both_failed` | Miniconda install failed (AllUsers skipped) | same as row 26 | Traced, deferred (Batch 6) |
+| 26 | `:tci_both_failed` | Miniconda install failed (both AllUsers and JustMe) | `goto :eof` -> caller's own chain (row 1's chain, now contained post-Batch-1) | Done (Batch 6, PR #528): `call :log` |
+| 27 | `:tci_both_failed` | Miniconda install failed (AllUsers skipped) | same as row 26 | Done (Batch 6, PR #528): `call :log` |
 | 28 | `:hp_test_conda_fail` | conda env create failed | -- | Pre-existing safe (`goto`) |
 
 (27 real `call :die` sites, numbered 1-19 and 21-28 above; row 20 is the newly-found 3rd
@@ -337,8 +337,8 @@ note:**
      (asking whether the fix "resolves" the second `:determine_entry` call): it does not eliminate
      that second call, and never claimed to -- it only skips the pointless intervening work; if the
      same root cause persists, the second call's own `call :die` still fires, one pause, not zero.
-   - **Batch 6** (`:tci_both_failed`'s two sites, `:try_conda_install` coordination) stays deferred
-     -- see "Implementation Status" below for why its remaining value shrank further once traced.
+   - **Batch 6** (`:tci_both_failed`'s two sites) is done (PR #528): no coordination flag was needed, the two
+     `call :die` became `call :log`; see "Implementation Status" below.
    - **The "Active Python interpreter not resolved" sink** (inside `:after_env_mode_selection`)
      stays deferred indefinitely (lowest priority, already-mitigated, no fix currently planned).
 4. **This pass's full trace (Finding 3 above) is the roadmap** -- no further blanket re-audit is
@@ -415,7 +415,12 @@ for several batches is now already done and waiting.
   -- if the same root cause persists, its own `call :die` still fires once, not zero times; the fix
   only removes the pointless intervening work between the two calls, it does not eliminate the
   second call itself.
-- **Batch 6 -- traced further, value confirmed lower than originally scoped, REMAINS DEFERRED.**
+- **Batch 6 -- DONE (PR #528): the two `call :die` became `call :log`, no caller-side flag.** The reasoning below
+  (traced further, value lower than scoped) was right about the probe chain and wrong about the cost of the end-of-run
+  routine: a real default-order run goes on to embedded Python, venv and system after the failure, so `:die`
+  released the lock folder (REQ-024), waited for a key press (REQ-016.8 is an end-of-run wait) and set state `error`
+  for a run that then succeeded. Rows `self.conda.installfail.*`.
+  Original trace, kept for the history:
   `:try_conda_install` (home of `:tci_both_failed`'s two sites) has TWO call sites, not one: the
   main install-if-missing block (near the top of the file) AND a second, independent one inside
   `:cascade_acquire_conda` (the REQ-009 uv-to-conda cascade's own on-demand Miniconda acquisition
