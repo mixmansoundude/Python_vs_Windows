@@ -50,7 +50,6 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-002.15": "unit: tests/test_picker_gate.py::PickerWait the prompt of :pick_entry_interactive waits HP_PICK_T seconds, 30 unless the test setting HP_TEST_FORCE_PICKER shortens it to 2; self.entry.picker (default taken, REQ-002.22) and self.entry.picker.number (a typed number) run with the shortened wait, so no row waits the full 30 seconds",
     "REQ-003.1": "gap: rows are tagged REQ-003 (selfapps_unc, selfapps_justme, selfapps_exefail) but none names this shall; the Windows 10 (1809) floor and the curl and PowerShell it relies on are shown only by the runners",
-    "REQ-003.2": "gap: selfapps_justme and the provider rows install Miniconda under %PUBLIC%\\Documents\\Miniconda3 and are tagged REQ-003; none asserts the install folder as this shall",
     "REQ-003.3": "gap: self.litter.appfolder (selftest.ps1) proves what the bootstrapper leaves in the folder, but no row asserts that the working files and the build output are created in the folder where it was started",
     "REQ-005.1.6": "gap: self.depmerge.later.baseline shows the requirements.txt and header records exist after a clean run; no row shows that a failed or partial install records nothing, so the next run sees the same changes again",
     "REQ-005.1.12": "gap: tests/test_dep_merge.py LaterRun.test_a_header_we_did_not_write_keeps_a_package_alive pins the merge half (an unrecorded header keeps its package in the merged list); no row shows the header file itself is never removed from",

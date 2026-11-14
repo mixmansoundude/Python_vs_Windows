@@ -39,7 +39,7 @@ row was found/fixed" bug-hunt detail belongs in `docs/agent-closed-backlog.md`.
 ```
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
 self.empty_repo.no_spurious_warn,
-self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
+self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, self.env.smoke.minicondafolder, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run, self.exe.build.xfail,
 self.builder.override,

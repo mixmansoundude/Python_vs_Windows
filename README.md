@@ -233,6 +233,13 @@ found on every run.
 >   the folder where the bootstrapper was started (REQ-011 stops a file from another folder), so this folder is
 >   the one of REQ-003.3. A program that opens `config.json` by that bare name therefore finds the file next to
 >   its `.py` source on a fresh build and on every later run alike, even though the EXE it runs sits in `dist`.
+> - REQ-003.2 is `self.env.smoke.minicondafolder` (`tests/selfapps_envsmoke.ps1`, every lane that runs the script;
+>   `tests/test_miniconda_folder.py` runs its judging function on synthetic runs). When conda was the selected
+>   provider, the interpreter the setup printed has to sit in an environment folder of the Miniconda under `%PUBLIC%`,
+>   and its `conda.bat` has to be there. A GitHub runner image holds a Miniconda of its own (`C:\Miniconda3`), which the
+>   script's search for `conda.bat` falls back to, so the printed interpreter path, not the presence of a `conda.bat`,
+>   is what shows which one was used. Where uv is the provider the row skips; in the conda-only `conda-full` lane a
+>   missing provider line fails it.
 > - Not covered: a double-click on `dist\<env>.exe` is the user's own launch, which Windows starts in the `dist`
 >   folder, and a file located from the program's own path (`__file__`, `sys.argv[0]`) is not affected either way:
 >   the EXE's `__file__` points into PyInstaller's temporary extraction folder and `sys.argv[0]` to the EXE.

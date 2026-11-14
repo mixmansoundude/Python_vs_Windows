@@ -7848,3 +7848,15 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   alone must give a newer minor) so that 3.12 can only mean runtime.txt was read. The no-request row compares with a plain `uv venv --seed` under
   `UV_PYTHON_PREFERENCE=only-managed`, the same call the batch makes without a version, so it shows "no version forwarded, uv chooses" and not an absolute "newest".
   The conda and embedded providers are not covered for these two shalls. 235 of 265 shalls named.
+
+### Item 115 (filed 2026-11-14, PR pending; REQ-003.2, the Miniconda folder)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-003.2 as a gap: the provider rows install Miniconda and are tagged REQ-003, but no row asserted the folder.
+- **What shipped.** `self.env.smoke.minicondafolder` in `tests/selfapps_envsmoke.ps1` (every lane that runs the script, gating from the first run). When the
+  setup log says conda was the selected provider, the interpreter the bootstrap printed has to be in an environment folder of the Miniconda under
+  `%PUBLIC%\Documents\Miniconda3` and its `conda.bat` has to be there; where uv is the provider the row skips, and with `HP_FORCE_CONDA_ONLY=1` (`conda-full`) a
+  missing provider line fails it. The folder alone is not enough: a GitHub runner image holds a Miniconda of its own (`C:\Miniconda3`) that the script's search for
+  `conda.bat` falls back to, so the printed interpreter path is what shows which one was used. The judging is a pure function that
+  `tests/test_miniconda_folder.py` runs through pwsh on synthetic runs. 236 of 265 shalls named.
+- **Not covered.** REQ-003.1 (the Windows floor, `curl` and PowerShell from System32) and REQ-003.3 (the working files go to the folder where the bootstrapper was
+  started, owned by the other thread).

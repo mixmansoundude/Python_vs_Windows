@@ -1320,6 +1320,12 @@ checkpoint can still launch an OPTIONAL second run). Touching this flow requires
   of this fix -- an inherent EXE-vs-script difference, not something to normalize.
   If any of this vocabulary/paths changes, `harness.ps1`'s `batch.smoke.single_verify` and
   `self.env.smoke.run`/`self.prime.run`/`self.prime.bootstrap` break.
+- **`self.env.smoke.minicondafolder` (Item 115, README REQ-003.2) reads two more strings of the batch file:** the provider line
+  `[BOOT] REQ-009: Selected Python provider: Conda (Portable).` (the row's only way to know conda was selected; a reworded line turns the row into a skip
+  in every lane except `conda-full`, where it fails it) and `Interpreter: %HP_PY%` (the printed path is compared with `%PUBLIC%\Documents\Miniconda3\envs\<name>\`,
+  because a runner image's own Miniconda `C:\Miniconda3` is a valid fallback for the script's `conda.bat` search and would otherwise pass). The Miniconda folder is set
+  once (`set "MC=%PUBLIC%\Documents\Miniconda3"`, then `CONDA_MAIN`, `CONDA_ALT` and `MINICONDA_ROOT`) and `ENV_PATH` is built from `MINICONDA_ROOT`;
+  `tests/test_miniconda_folder.py` pins those lines, so moving the folder is a change to README REQ-003.2, the script and the test together.
 - **No-EXE path** runs the interpreter ONCE via `:verify_no_exe_interpreter`, UNTIMED on purpose
   (the interpreter run IS the user's real run there, not a throwaway) -- skipped when an EXE
   exists, the fast path ran it, or `HP_SKIP_ENTRY_SMOKE`.

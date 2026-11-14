@@ -89,7 +89,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-002 | 26 | 25 | 1 | 7 |
-| REQ-003 | 6 | 3 | 3 | 18 |
+| REQ-003 | 6 | 4 | 2 | 18 |
 | REQ-004 | 12 | 12 | 0 | 8 |
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-006 | 2 | 2 | 0 | 3 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-235 of 265 numbered shalls are named by at least one row tag.
+236 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.12, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
+Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.12, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -158,8 +158,8 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    two in `tests/selfapps_skiphooks_single.ps1`. What is left, by size of the user-visible risk:
    REQ-018.7 (the 30 second cap on the re-verification run),
    REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the header is never removed from; a merge that
-   cannot run falls back with a warning) and REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the
-   working files go). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
+   cannot run falls back with a warning) and REQ-003.1 and .3 (the Windows floor, where the
+   working files go; REQ-003.2, the Miniconda folder, is `self.env.smoke.minicondafolder`, Item 115). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
    optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
@@ -211,8 +211,8 @@ aggregate row `self.pytest.unit` in every lane.
 |---|---|---|---|---|
 | 001 | Prime Directive end to end | `self.prime.bootstrap/.run/.exe.build/.exe.run/.spaced-path` (all) | Strong | |
 | 002 | Entry selection order | `self.entry.entry1/A/B/C/D/override/helper.invoke.absent/results/spaced-path` (all), `self.entry.picker/.overflow` (F), `test_find_entry.py` | Strong | |
-| 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R); REQ-003.6 (every run starts in the folder of the entry file): `self.exe.smokerun.cwd_consistency` (R,F, tagged REQ-018) proves the fresh-build verification and the fast path | Medium; REQ-003.6 is met by the verification run and the fast path only: the optimized build's verification and the `--hidden-import` repair re-run still start from `dist` (backlog Item 38 deferral, owned by the thread of the 96/97 bundle), and no row covers the interpreter run, the checkpoint or the hint capture | T8, T9 done; rows for REQ-003.6 |
-| 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin, range, runtime.txt over pyproject.toml and no request only `self.contract.uv.pyver*` (k, uv provider only) | Strong, with the uv cases non-gating | |
+| 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.env.smoke.minicondafolder` (REQ-003.2, Item 115: with conda as the provider the interpreter the setup printed is in an environment folder of the Miniconda under `%PUBLIC%`; skips where uv is the provider), `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R); REQ-003.6 (every run starts in the folder of the entry file): `self.exe.smokerun.cwd_consistency` (R,F, tagged REQ-018) proves the fresh-build verification and the fast path | Medium; REQ-003.6 is met by the verification run and the fast path only: the optimized build's verification and the `--hidden-import` repair re-run still start from `dist` (backlog Item 38 deferral, owned by the thread of the 96/97 bundle), and no row covers the interpreter run, the checkpoint or the hint capture | T8, T9 done; rows for REQ-003.6 |
+| 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin, range, runtime.txt over pyproject.toml and no request only `self.contract.uv.pyver*` (k, uv provider only; `.conflict` and `.nopin` are Item 114) | Strong, with the uv cases non-gating | |
 | 005 / 005.1 | Dependency source order | `reqspec.*` x16 (all), `self.pep723.pyproject.merge` (all), `self.pyproject.malformed` (all), `pyproject.dep.detect/.noproj` (R,F) | Medium: pairwise only | T2 |
 | 005.2, .3 | conda bulk retry, per-package fallback | `self.stub.conda_retry`, `self.stub.conda_perpkg` (all) | Strong | |
 | 005.4 | pipreqs scan | `pipreqs.flags` (harness), `self.pipreqs.encoding.*` x3, `self.pipreqs.output.*` x4 (R), `self.depcheck.*` (R,F) | Strong | |
