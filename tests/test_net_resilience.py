@@ -3,6 +3,9 @@
 `tests/selfapps_net_resilience.ps1` cuts five blocks out of `run_setup.bat` (the get-pip.py download, the Miniconda
 download, the embedded Python download and extraction, the replacement of the embedded Python folder, the reachability
 check), wraps each in a small driver and runs it with cmd.exe against a local HTTP server and a stub ping.exe/curl.exe.
+Item 116 added three more cuts (the uv acquisition, the Miniconda folder decision and `:select_conda_bat`) for the rows that
+show an installed uv or Miniconda used as it is in offline mode (REQ-013.12), and one more run of the get-pip.py block with PATH
+cut to the System32 folders (REQ-003.1).
 What it can prove depends on those blocks staying what the script assumes. This file pins that, so a change that moves a
 label, adds a variable the driver does not set, drops `--retry 3` or reorders the attempts fails here with a message
 that names the script to update, and not after a two and a half hour run.
@@ -38,6 +41,9 @@ ROWS = {
     "self.netres.embed.extractfail": "REQ-013.17",
     "self.netres.check.repeat": "REQ-013.3",
     "self.netres.swap.retry": "REQ-013.18",
+    "self.netres.offline.uv": "REQ-013.12",
+    "self.netres.offline.conda": "REQ-013.12",
+    "self.netres.shipped.tools": "REQ-003.1",
 }
 STEP_NAME = "Self-test: network resilience of the downloads (real only)"
 
@@ -48,6 +54,10 @@ BLOCKS = {
     "embed": ('set "HP_EMBED_DL_ATTEMPT=0"', 'call :log "[INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified."'),
     "swap": ('set "HP_EMBED_SWAP_ATTEMPT=0"', ":embed_pyver_check_tagcheck"),
     "check": (":check_net_after_dl_fail", ":system_python_consent_gate"),
+    # Item 116: the installed uv and Miniconda decisions that REQ-013.12 is about.
+    "uv": (":pvw_uv_exe_skip", ":uv_acquire_done"),
+    "mcdir": ('set "MC=%PUBLIC%\\Documents\\Miniconda3"', ":after_conda_bat_validation"),
+    "select": (":select_conda_bat", ":download_miniconda_exe"),
 }
 # The uv download is inline in the main flow (not a subroutine) and uses curl only; its half of REQ-013.1 and REQ-013.9 is pinned
 # here as text, because the script's Miniconda block shows the same order with real requests and uv's URL cannot be redirected.
@@ -60,6 +70,10 @@ EXTERNAL_LABELS = {
     "embed": {":log", ":emit_from_base64"},
     "swap": {":log", ":embed_pyver_check_tagcheck"},
     "check": {":log"},
+    # :uv_acquire_done is the label the driver puts right after the block (the block's own end line is not part of it).
+    "uv": {":log", ":check_net_after_dl_fail", ":uv_acquire_done"},
+    "mcdir": {":log", ":select_conda_bat", ":download_miniconda_exe", ":try_conda_install"},
+    "select": set(),
 }
 # Variables a block reads that the driver sets (or the system always has).
 DRIVER_VARIABLES = {
@@ -68,6 +82,10 @@ DRIVER_VARIABLES = {
     "embed": {"LOG", "HP_EMBED_URL", "HP_EMBED_ZIP", "HP_EMBED_DIR", "HP_EMBED_LATEST_PATCH", "HP_EMBED_LATEST_SHA256"},
     "swap": {"HP_EMBED_DIR", "HP_EMBED_SWAP_DIR", "HP_EMBED_SWAP_MINOR"},
     "check": set(),
+    "uv": {"LOG", "TEMP", "HP_OFFLINE_MODE", "HP_SCRIPT_ROOT", "HP_UV_URL", "HP_UV_FALLBACK_URL", "HP_UV_MIN_BYTES"},
+    "mcdir": {"LOG", "TEMP", "PUBLIC", "HP_OFFLINE_MODE", "HP_MINICONDA_URL", "HP_MINICONDA_FALLBACK_URL", "PATH"},
+    # CONDA_MAIN and CONDA_ALT are set by the Miniconda folder block, which runs first in the same driver.
+    "select": {"CONDA_MAIN", "CONDA_ALT"},
 }
 # Variables a block reads that the script leaves undefined on purpose: a test hook or the product's own offline flag.
 ABSENT_BY_DESIGN = {
@@ -76,12 +94,17 @@ ABSENT_BY_DESIGN = {
     "embed": {"HP_TEST_FORCE_EMBED_DL_FAIL_ONCE"},
     "swap": set(),
     "check": {"HP_TEST_OFFLINE", "HP_TEST_CNDF_ANSWER", "HP_OFFLINE_MODE", "NOINPUT", "HP_NONINTERACTIVE"},
+    "uv": {"HP_FORCE_CONDA_ONLY", "HP_TEST_FORCE_UV_FAIL", "HP_TEST_CORRUPT_UV", "HP_TEST_UV_DL_FALLBACK", "HP_UV_DL_INJECTED"},
+    "mcdir": {"PVW_CONDA_EXE", "HP_UV_PROVIDING_PYTHON"},
+    "select": set(),
 }
 
 # (what the script looks for in a driver log, the live `call :log` text in run_setup.bat that writes it)
 LOG_TEXTS = (
     ("Offline mode: skipping get-pip.py download", "Offline mode: skipping get-pip.py download"),
     ("Offline mode: skipping Miniconda download", "Offline mode: skipping Miniconda download"),
+    ("Offline mode: skipping uv download", "Offline mode: skipping uv download"),
+    ("uv: cached binary found at ~uv_bin\\\\uv\\.exe", "uv: cached binary found at ~uv_bin"),
     ("Trying fallback get-pip.py URL", "Trying fallback get-pip.py URL"),
     ("get-pip.py download succeeded from fallback URL", "get-pip.py download succeeded from fallback URL"),
     ("Trying fallback Miniconda URL", "Trying fallback Miniconda URL"),
@@ -230,6 +253,27 @@ def contract_problems(lines):
         ("the pause", r"^ping -n 2 127\.0\.0\.1"),
         ("the failure line", r"swap move failed; interpreter may be missing"),
     ])
+    # REQ-013.12: the installed binary is taken before the offline test, and Miniconda is installed only when conda.bat is missing.
+    found += order_problems("uv", blocks["uv"], [
+        ("the health check of the installed uv", r"^\"%HP_UV_BIN%\\uv\.exe\" --version"),
+        ("the installed uv is the one used", r"^set \"HP_UV_EXE=%HP_UV_BIN%\\uv\.exe\"$"),
+        ("the cached binary line", r"uv: cached binary found at ~uv_bin"),
+        ("the download label", r"^:uv_acquire_download$"),
+        ("the offline skip", r"Offline mode: skipping uv download"),
+        ("curl of the active URL", r"^curl --fail -L --retry 3 --retry-delay 5 --max-time 120 \"%HP_UV_ACTIVE_URL%\""),
+    ])
+    found += order_problems("mcdir", blocks["mcdir"], [
+        ("the Miniconda folder", r"^set \"MC=%PUBLIC%\\Documents\\Miniconda3\"$"),
+        ("the search for an installed conda.bat", r"^call :select_conda_bat$"),
+        ("the install only when conda.bat is missing", r"^if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT \($"),
+        ("the download", r"^call :download_miniconda_exe$"),
+        ("the installer", r"^call :try_conda_install$"),
+    ])
+    found += order_problems("select", blocks["select"], [
+        ("the reset", r"^set \"CONDA_BAT=\"$"),
+        ("the main conda.bat", r"^if exist \"%CONDA_MAIN%\" set \"CONDA_BAT=%CONDA_MAIN%\"$"),
+        ("the alternative conda.bat", r"^if not defined CONDA_BAT if exist \"%CONDA_ALT%\" set \"CONDA_BAT=%CONDA_ALT%\"$"),
+    ])
     check = blocks["check"]
     found += order_problems("check", check, [
         ("the attempt counter of the echo", r"^set /a HP_CONN_PING_ATTEMPT\+=1$"),
@@ -293,6 +337,11 @@ def script_problems(text):
         "NoDefaultCurrentDirectoryInExePath",
         "'^(HP_|PVW_|NOINPUT$|NoDefaultCurrentDirectoryInExePath$)'",
         "'non-windows-host'",
+        "-ShippedOnly $true",
+        "$state.Agents[$key] = $ua",
+        "[Environment]::OSVersion.Version.Build",
+        "-ge 17763",
+        "WindowsPowerShell/5\\.1",
     ):
         if needle not in text:
             found.append("the script no longer holds %r" % needle)
@@ -446,11 +495,26 @@ class SyntheticRulesCanFail(unittest.TestCase):
         text = "\n".join(_lines()).replace("swap move failed; interpreter may be missing", "swap did not work")
         self.assertTrue(log_problems(text))
 
+    def test_an_offline_gate_before_the_installed_uv_is_reported(self):
+        # REQ-013.12: moving the offline test in front of the installed binary would make an installed uv unusable offline.
+        lines = _lines()
+        gate = 'call :log "[INFO] REQ-013: Offline mode: skipping uv download."'
+        mutated = [l.replace('call :log "[INFO] uv: cached binary found at ~uv_bin\\uv.exe"', gate) for l in lines]
+        self.assertNotEqual(lines, mutated)
+        self.assertTrue(any("cached binary line" in p for p in contract_problems(mutated)), contract_problems(mutated))
+
+    def test_installing_miniconda_without_the_conda_bat_test_is_reported(self):
+        lines = [l.replace("if not defined HP_UV_PROVIDING_PYTHON if not defined CONDA_BAT (", "if not defined HP_UV_PROVIDING_PYTHON (") for l in _lines()]
+        self.assertTrue(any("install only when conda.bat is missing" in p for p in contract_problems(lines)), contract_problems(lines))
+
     def test_script_without_a_row_or_the_exit_is_reported(self):
         text = SCRIPT.read_text(encoding="utf-8")
         self.assertTrue(script_problems(text.replace("self.netres.swap.retry", "self.netres.swap.other")))
         self.assertTrue(script_problems(text.replace("exit 0", "")))
         self.assertTrue(script_problems(text.replace("req = 'REQ-013.18'", "req = 'REQ-013.99'")))
+        self.assertTrue(script_problems(text.replace("self.netres.shipped.tools", "self.netres.shipped.other")))
+        self.assertTrue(script_problems(text.replace("-ge 17763", "-ge 10240")))
+        self.assertTrue(script_problems(text.replace("-ShippedOnly $true", "-ShippedOnly $false")))
 
     def test_script_cutting_another_block_is_reported(self):
         text = SCRIPT.read_text(encoding="utf-8").replace("-EndLine ':system_python_consent_gate'", "-EndLine ':elsewhere'")

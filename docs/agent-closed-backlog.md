@@ -7825,9 +7825,9 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
 - **What shipped.** `tests/selfapps_net_resilience.ps1` (14 `self.netres.*` rows, real lane, gating from the first run) cuts the five
   real blocks out of `run_setup.bat` and runs them under cmd.exe against a local `HttpListener` and a compiled stub `ping.exe`/`curl.exe`;
   `tests/test_net_resilience.py` pins what the script assumes; README REQ-013's tests note names the rows; eight `gap:` entries were removed
-  from `UNTRACED_SHALLS` (REQ-013.12 stays). Design and coupling: `docs/agent-interconnect.md`, "The REQ-013 download, check and swap
+  from `UNTRACED_SHALLS` (REQ-013.12 stayed; Item 116 closed it). Design and coupling: `docs/agent-interconnect.md`, "The REQ-013 download, check and swap
   code is cut out and run against a local server".
-- **Not covered.** The uv download (a text pin in the unit test) and REQ-013.12.
+- **Not covered.** The uv download (a text pin in the unit test). REQ-013.12 followed in Item 116.
 
 ### Item 113 (filed 2026-11-14, PR pending; REQ-023.1, the venv canary probe with the real command)
 
@@ -7860,3 +7860,15 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   `tests/test_miniconda_folder.py` runs through pwsh on synthetic runs. 236 of 265 shalls named.
 - **Not covered.** REQ-003.1 (the Windows floor, `curl` and PowerShell from System32) and REQ-003.3 (the working files go to the folder where the bootstrapper was
   started, owned by the other thread).
+
+### Item 116 (filed 2026-11-14, PR pending; REQ-013.12 and REQ-003.1, the last two gap entries of the REQ-013 and REQ-003 families I took)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-013.12 (offline mode uses an installed Miniconda or uv as it is: no row had one installed) and REQ-003.1 (Windows 10 1809 or newer,
+  using the curl and PowerShell Windows ships: rows were tagged REQ-003 but none named the shall).
+- **What shipped.** Three rows in `tests/selfapps_net_resilience.ps1` (real lane, gating from the first run). `self.netres.offline.uv` and `self.netres.offline.conda` cut the uv
+  acquisition and the Miniconda folder decision out of `run_setup.bat`, run them under `HP_OFFLINE_MODE=1` with a stub `uv.exe` or `conda.bat` installed (the installed one has to be
+  the one used, untouched, with no request to the server) and with nothing installed (the offline skip line must appear, so the gate is shown to be live). `self.netres.shipped.tools`
+  runs the real get-pip.py download with PATH cut to the System32 folders, curl failing once and Windows PowerShell delivering, and compares the User-Agent of each request with
+  `System32\curl.exe --version` and `WindowsPowerShell/5.1`, on a build at or above 17763. 238 of 265 shalls named. The REQ-003.1 row is honest about its limit: the bootstrapper
+  makes no version check of its own, so it shows the runner at the floor and the download code independent of everything but the Windows-shipped programs.
+- **Not covered.** The Windows floor itself on a real 1809 machine (no runner image is that old), and REQ-003.3.

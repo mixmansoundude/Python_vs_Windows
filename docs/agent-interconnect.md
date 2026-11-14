@@ -266,8 +266,16 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
   a new variable read in a block, a moved cut line or a reordered attempt fails that unit test with the block named. The expected counts follow
   from the batch: `--retry 3` means four curl requests, each probe of the check is tried twice, the swap has three attempts and so two pauses.
   A change of any of those numbers in `run_setup.bat` is a change to README REQ-013, the script and the unit test together.
-- **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only; REQ-013.12 (an installed
-  Miniconda or uv is used as it is in offline mode) has no row.
+- **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only.
+- **Item 116 adds three rows to the same script**, with three more cuts: the uv acquisition (`:pvw_uv_exe_skip` up to `:uv_acquire_done`, the driver puts a stub `uv.exe` under
+  `~uv_bin` or leaves the folder empty), the Miniconda folder decision (the line that sets `MC` up to `:after_conda_bat_validation`, plus `:select_conda_bat`, with a scratch `PUBLIC` that
+  holds a stub `condabin\conda.bat` or nothing) and the same get-pip.py block run with `PATH` set to the System32 folders (`where curl` and `where powershell` are recorded; the server
+  keeps the first User-Agent per path and client kind, so the curl version in it is compared with `System32\curl.exe --version` and the PowerShell one must say `WindowsPowerShell/5.1`).
+  REQ-013.12 holds when the installed binary is taken BEFORE the offline test (a gate placed in front of it makes an installed uv or Miniconda unusable offline) and Miniconda is
+  installed only when `CONDA_BAT` is undefined; each has a control run with nothing installed that must show the offline skip line, so "no request" cannot pass for a missing
+  gate. `tests/test_net_resilience.py` pins the order of those lines and which labels and variables the three new blocks reach (`CONDA_MAIN` and `CONDA_ALT` come from the folder block,
+  which runs first in the same driver). REQ-003.1 is the weakest of the three: the bootstrapper has no version check of its own, so the row shows the runner's build at or above
+  17763 and that the download code works with only the System32 programs, which is what "using the curl and PowerShell that Windows ships" can be tested as.
 
 
 ---

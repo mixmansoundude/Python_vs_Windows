@@ -89,7 +89,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-002 | 26 | 25 | 1 | 7 |
-| REQ-003 | 6 | 4 | 2 | 18 |
+| REQ-003 | 6 | 5 | 1 | 18 |
 | REQ-004 | 12 | 12 | 0 | 8 |
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-006 | 2 | 2 | 0 | 3 |
@@ -99,7 +99,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
 | REQ-012 | 6 | 6 | 0 | 1 |
-| REQ-013 | 19 | 18 | 1 | 4 |
+| REQ-013 | 19 | 19 | 0 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
 | REQ-015 | 9 | 7 | 2 | 1 |
 | REQ-016 | 9 | 6 | 3 | 4 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-236 of 265 numbered shalls are named by at least one row tag.
+238 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.12, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
+Shalls no row names: REQ-002.15, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -158,8 +158,8 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    two in `tests/selfapps_skiphooks_single.ps1`. What is left, by size of the user-visible risk:
    REQ-018.7 (the 30 second cap on the re-verification run),
    REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the header is never removed from; a merge that
-   cannot run falls back with a warning) and REQ-003.1 and .3 (the Windows floor, where the
-   working files go; REQ-003.2, the Miniconda folder, is `self.env.smoke.minicondafolder`, Item 115). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
+   cannot run falls back with a warning) and REQ-003.3 (where the
+   working files go; REQ-003.1, the Windows floor and the programs Windows ships, is `self.netres.shipped.tools`, Item 116; REQ-003.2, the Miniconda folder, is `self.env.smoke.minicondafolder`, Item 115). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
    optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
@@ -230,7 +230,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 010 | Session isolation | `self.isolation.req010.pythonpath` (all); runs under `HP_CI_SKIP_ENV=1` with system Python | Weak: `PYTHONPATH` only | T1 |
 | 011 | Directory integrity | `self.entry.req011.crossdir/.sameDir` (all) | Strong | |
 | 012 | Execution-skip hooks | `self.skiphooks.combined` (F), both flags set together | Weak: no single-flag case | T1 |
-| 013 | Network resilience | `self.ux.connectivity.*` x10 (all, tagged `REQ-013.2/.4` to `.9`), `self.dl.conda.fallback`, `self.dl.uv.fallback` (`.13`), `self.embed.dl.retry` (`.16`), `self.venv.nopip_retry` (`.19`), `self.netres.*` x14 (Item 112: the probe repeat `.3`, the check before the secondary URL `.1`, the offline skips `.10`, `.11`, curl retry `.14`, PowerShell method `.15`, embed checksum and extraction retry `.17`, swap retry `.18`); README section REQ-013 (19 shalls) | Strong. The uv half of `.1` is a text pin in `tests/test_net_resilience.py`; no row for the installed provider kept in offline mode (`.12`) | T1, Item 112 |
+| 013 | Network resilience | `self.ux.connectivity.*` x10 (all, tagged `REQ-013.2/.4` to `.9`), `self.dl.conda.fallback`, `self.dl.uv.fallback` (`.13`), `self.embed.dl.retry` (`.16`), `self.venv.nopip_retry` (`.19`), `self.netres.*` x17 (Item 112: the probe repeat `.3`, the check before the secondary URL `.1`, the offline skips `.10`, `.11`, curl retry `.14`, PowerShell method `.15`, embed checksum and extraction retry `.17`, swap retry `.18`; Item 116: `self.netres.offline.uv` and `.conda` for `.12`, `self.netres.shipped.tools` for REQ-003.1); README section REQ-013 (19 shalls) | Strong. The uv half of `.1` is a text pin in `tests/test_net_resilience.py` | T1, Items 112 and 116 |
 | 014 | System Python consent | `self.ux.system.gate.*` x4 (all) | Strong | |
 | 015 | Git config merge | `self.ux.gitignore.*`, `self.ux.gitattributes.*` x6 (all) | Strong | |
 | 016 | Post-flight briefing | `self.ux.postflight` (all), `self.exe.hidden_import*` (R,F), `self.postflight.runline.*` (j,u) | Strong | |

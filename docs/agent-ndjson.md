@@ -1572,7 +1572,8 @@ driver's exit state.
 self.netres.getpip.retry, self.netres.getpip.powershell, self.netres.getpip.fallback, self.netres.getpip.offline,
 self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.miniconda.checkorder, self.netres.miniconda.offline,
 self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
-self.netres.check.repeat, self.netres.swap.retry
+self.netres.check.repeat, self.netres.swap.retry,
+self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools
 ```
 
 ## selfapps-venv-probe NDJSON rows (selfapps_venv_probe.ps1, real lane only, GATING)
