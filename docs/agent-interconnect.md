@@ -245,6 +245,32 @@ name a failure that waiting can fix.
 
 ---
 
+## The REQ-013 download, check and swap code is cut out and run against a local server (Item 112)
+
+**Touch `:download_get_pip`, `:download_miniconda_exe`, the embed download and extraction (from `set "HP_EMBED_DL_ATTEMPT=0"`), the embed folder
+swap (from `set "HP_EMBED_SWAP_ATTEMPT=0"`), `:check_net_after_dl_fail`, any `curl --fail -L --retry 3` line, or a `call :log` text the script
+matches, must understand `tests/selfapps_net_resilience.ps1` and `tests/test_net_resilience.py`.** The script (`self.netres.*`, real lane,
+gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartLine/-EndLine`), wraps each in a driver batch file (it defines
+`LOG`, `TEMP`, `:log`, and for the embed block `:emit_from_base64` by copying `tools/embed_extract.ps1`, for the Miniconda block a
+`:check_net_after_dl_fail` that makes one `curl` request to the server's `/checkpoint`) and runs it under cmd.exe:
+- **The server**: `System.Net.HttpListener` on a free loopback port in its own runspace; one plan per path and client (`curl*` or
+  `*WindowsPowerShell*` User-Agent), each plan a list of `<status>[:<body name>]` with the last item repeating, and an ordered request log
+  (`<client>|<status>|<path>`). Row verdicts read that log: counts per role (`p1` primary URL, `p2` secondary) and client, and the whole order.
+- **The stubs**: a C# program compiled with `csc` and copied as `ping.exe` and `curl.exe` into a scenario folder. cmd.exe searches the current
+  folder before PATH, which is why the product's bare `ping`/`curl` calls reach them (the script scrubs `NoDefaultCurrentDirectoryInExePath`).
+  The stub records its arguments before it does anything else and then answers from `<name>.plan` (`exit[:sleepms]`, the last item repeating).
+- **Real, not stubbed**: curl and Windows PowerShell for every download, `tools/embed_extract.ps1` for checksum and extraction, `rd` and `move`
+  for the folder swap (a `FileShare.Read` handle makes `rd /s /q` fail; the harness releases it when the stub ping, the pause between
+  attempts, has been called once, and the stub then sleeps so the next attempt always sees the release).
+- **Coupling**: the five blocks may reach only the labels and variables `tests/test_net_resilience.py` lists (the script's driver defines them);
+  a new variable read in a block, a moved cut line or a reordered attempt fails that unit test with the block named. The expected counts follow
+  from the batch: `--retry 3` means four curl requests, each probe of the check is tried twice, the swap has three attempts and so two pauses.
+  A change of any of those numbers in `run_setup.bat` is a change to README REQ-013, the script and the unit test together.
+- **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only; REQ-013.12 (an installed
+  Miniconda or uv is used as it is in offline mode) has no row.
+
+---
+
 ## `.github/dependabot.yml`, `tests/test_dependabot_config.py` and the `no-automerge` label (Item 90 follow-up)
 
 **Touch the file, the test's name lists, or `pr-automerge.yml`'s label handling, must understand the others.** Dependabot
