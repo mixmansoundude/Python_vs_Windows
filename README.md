@@ -296,7 +296,12 @@ name.
 >   longer than the character it replaces.
 > - Where each shall is shown: the version rows `self.contract.uv.pyver`, `.pyver.range` and `.pyver.exactpin` (uv) and
 >   `self.embed.version.*` (embedded) read the Python that was set up; `pyproject.precedence.writeback` (conda)
->   reads the version written back; `self.envname.*` reads the logged name.
+>   reads the version written back; `self.envname.*` reads the logged name. REQ-004.3 is shown by
+>   `self.contract.uv.pyver.conflict` (a `runtime.txt` of `python-3.12` next to a `pyproject.toml` that asks for
+>   `>=3.13` gives a 3.12.x interpreter, while the same `pyproject.toml` alone gives a newer one) and REQ-004.4 by
+>   `self.contract.uv.pyver.nopin` (a folder with neither file forwards no version to uv and gets the interpreter that
+>   a plain `uv venv` of the same uv gives under the same managed-only preference, which is uv's newest managed CPython);
+>   both run in the contract-uv lane, and the conda and embedded providers are not covered for these two shalls.
 
 ## [REQ-009] Environment Providers
 

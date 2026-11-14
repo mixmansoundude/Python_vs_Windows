@@ -90,7 +90,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-002 | 26 | 25 | 1 | 7 |
 | REQ-003 | 6 | 3 | 3 | 18 |
-| REQ-004 | 12 | 10 | 2 | 8 |
+| REQ-004 | 12 | 12 | 0 | 8 |
 | REQ-005 | 18 | 14 | 4 | 32 |
 | REQ-006 | 2 | 2 | 0 | 3 |
 | REQ-007 | 20 | 17 | 3 | 13 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-233 of 265 numbered shalls are named by at least one row tag.
+235 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.12, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
+Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.12, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -176,7 +176,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision). Done in the change that converts
    the last five sections: REQ-002 (18 shalls), REQ-004 (12), REQ-006 (2), REQ-010 (3) and REQ-011 (4); `tests/test_picker_gate.py`
    (the 30 second wait and the three non-interactive signals of the entry picker) and the `gap:` entries for REQ-004.3 and .4 say what
-   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 stays open. Item 113 (REQ-023.1, the probe command itself): `tests/selfapps_venv_probe.ps1` runs the real `:try_venv_fallback` block under cmd.exe with a stub Python that answers each exit code a probe can see (`self.venvprobe.command/.nofile/.declines/.crash`); the first run of `.crash` is the proof that a probe which exits with a negative code (a missing DLL, an access violation) was read as a pass.
+   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 stays open. Item 114 (REQ-004.3 and .4): two rows in `tests/selfapps_contract_uv.ps1` (contract-uv lane), `self.contract.uv.pyver.conflict` (a `runtime.txt` of 3.12 next to `requires-python >=3.13` gives 3.12.x, and the same `pyproject.toml` alone gives a newer minor, which is the control) and `self.contract.uv.pyver.nopin` (no file, no version forwarded, the interpreter equals what a plain `uv venv` gives); the conda and embedded providers are not covered for these two shalls. Item 113 (REQ-023.1, the probe command itself): `tests/selfapps_venv_probe.ps1` runs the real `:try_venv_fallback` block under cmd.exe with a stub Python that answers each exit code a probe can see (`self.venvprobe.command/.nofile/.declines/.crash`); the first run of `.crash` is the proof that a probe which exits with a negative code (a missing DLL, an access violation) was read as a pass.
 
 ---
 
@@ -212,7 +212,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 001 | Prime Directive end to end | `self.prime.bootstrap/.run/.exe.build/.exe.run/.spaced-path` (all) | Strong | |
 | 002 | Entry selection order | `self.entry.entry1/A/B/C/D/override/helper.invoke.absent/results/spaced-path` (all), `self.entry.picker/.overflow` (F), `test_find_entry.py` | Strong | |
 | 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R); REQ-003.6 (every run starts in the folder of the entry file): `self.exe.smokerun.cwd_consistency` (R,F, tagged REQ-018) proves the fresh-build verification and the fast path | Medium; REQ-003.6 is met by the verification run and the fast path only: the optimized build's verification and the `--hidden-import` repair re-run still start from `dist` (backlog Item 38 deferral, owned by the thread of the 96/97 bundle), and no row covers the interpreter run, the checkpoint or the hint capture | T8, T9 done; rows for REQ-003.6 |
-| 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin and range only `self.contract.uv.pyver*` (k) | Strong, with the uv exact-pin case non-gating | |
+| 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin, range, runtime.txt over pyproject.toml and no request only `self.contract.uv.pyver*` (k, uv provider only) | Strong, with the uv cases non-gating | |
 | 005 / 005.1 | Dependency source order | `reqspec.*` x16 (all), `self.pep723.pyproject.merge` (all), `self.pyproject.malformed` (all), `pyproject.dep.detect/.noproj` (R,F) | Medium: pairwise only | T2 |
 | 005.2, .3 | conda bulk retry, per-package fallback | `self.stub.conda_retry`, `self.stub.conda_perpkg` (all) | Strong | |
 | 005.4 | pipreqs scan | `pipreqs.flags` (harness), `self.pipreqs.encoding.*` x3, `self.pipreqs.output.*` x4 (R), `self.depcheck.*` (R,F) | Strong | |

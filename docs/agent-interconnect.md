@@ -1156,6 +1156,11 @@ tests both an exact pin staying pinned and a loose range resolving to latest-sat
 floor, via `HP_UV_PY_REQ`/operator-free `HP_UV_PY_DISP`), `self.uv.first.miniconda.skip`,
 `self.contract.uv.fail` (contract-uv-fail), `self.uv.managed.interpreter` (all uv-first lanes),
 `uv.python.preference.configured` (static), `self.dl.uv.fallback` (justme-test, passes via skip).
+Item 114 added `self.contract.uv.pyver.conflict` (runtime.txt `python-3.12` next to `requires-python >=3.13` gives 3.12.x; the same
+pyproject.toml alone is the control and must give a newer minor) and `self.contract.uv.pyver.nopin` (neither file: the log line without a
+version and the interpreter of a plain `uv venv --seed`). They read two `call :log` lines (`uv: creating venv at .uv_env with Python ...`
+and `uv: creating venv at .uv_env...`) and the version-less `"%HP_UV_EXE%" venv --seed` call; `tests/test_pyver_rows.py` pins them. The
+helper `Invoke-UvPyverScenario` writes `runtime.txt` and `pyproject.toml` each on its own condition (both, or neither, is a valid scenario).
 
 **Gap**: the real uv DL-fallback URL path (`HP_TEST_UV_DL_FALLBACK=1`) has no lane exercising it
 without also short-circuiting before download is reached.

@@ -7838,3 +7838,13 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   functions through pwsh; README REQ-023's tests note names the rows; the REQ-023.1 `gap:` entry is gone (233 of 265 shalls named). Design and coupling:
   `docs/agent-interconnect.md`, "The venv fallback's interpreter probe is cut out and run with a stub Python".
 
+
+### Item 114 (filed 2026-11-14, PR pending; REQ-004.3 and .4, the two uv version cases that had no row)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-004.3 (runtime.txt wins when both files name a version) as a unit test of the helper only, and REQ-004.4 (no request: the
+  provider's newest Python) as a gap: no row started a bootstrap with both files, or with neither, and read the interpreter that was set up.
+- **What shipped.** `self.contract.uv.pyver.conflict` and `self.contract.uv.pyver.nopin` in `tests/selfapps_contract_uv.ps1` (contract-uv lane, gating through the aggregate check
+  from the first run), judged by pure functions that `tests/test_pyver_rows.py` runs through pwsh. The conflict row has a control scenario (the same `pyproject.toml`
+  alone must give a newer minor) so that 3.12 can only mean runtime.txt was read. The no-request row compares with a plain `uv venv --seed` under
+  `UV_PYTHON_PREFERENCE=only-managed`, the same call the batch makes without a version, so it shows "no version forwarded, uv chooses" and not an absolute "newest".
+  The conda and embedded providers are not covered for these two shalls. 235 of 265 shalls named.

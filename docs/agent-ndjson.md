@@ -172,6 +172,8 @@ self.contract.uv
 self.contract.uv.pyver
 self.contract.uv.pyver.range
 self.contract.uv.pyver.exactpin
+self.contract.uv.pyver.conflict
+self.contract.uv.pyver.nopin
 self.uv.first.miniconda.skip
 ```
 
