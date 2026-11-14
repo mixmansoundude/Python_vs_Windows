@@ -296,6 +296,12 @@ what the real command does for the exit codes a broken interpreter gives. `tests
   file, so no probe at all and the tier is declined), `.declines` (exit 1, 2 and 255 each decline), `.crash` (a negative exit code, which is how Windows
   reports a missing DLL or an access violation, declines too). The verdicts are pure functions (`Get-ProbeProblems`) that `tests/test_venv_probe.py`
   runs through real `pwsh` on synthetic ledgers, so a judge that could not go red is found locally.
+- **The probe reads its exit code as text** (Item 113): the line after the probe copies `%ERRORLEVEL%` to `HP_CANARY_RC` and the next compares that copy
+  with `0`. The first version of the block used `if errorlevel 1`, which is true only for 1 or more, so a negative code (a missing DLL is `0xC0000135`,
+  an access violation `0xC0000005`) selected a venv whose interpreter cannot start; `self.venvprobe.crash` was the row that showed it. The embedded
+  Python tier's canary (`:try_embed_fallback`, `"%HP_EMBED_PY%" -c "import sys, pip"`) had the same line and got the same fix; no row runs it with a
+  failing code (the tier downloads Python), so `tests/test_venv_probe.py` pins its two lines as text (`result_problems`). The copy has to sit at the top
+  level of the subroutine, never inside a parenthesized block.
 - **Coupling**: exactly one unindented probe line `"%HP_PY%" -c "import sys" >nul 2>&1`, placed after `:venv_create_pip_ready`; a probe line inside a parenthesized
   block would read its errorlevel at parse time (the Provider-cascade entry in `docs/agent-lessons-learned.md`).
   The unit test names the script to update when a label, a variable read or a log text moves.

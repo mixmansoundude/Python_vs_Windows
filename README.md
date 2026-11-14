@@ -1415,8 +1415,10 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 > - Rationale: a venv can be created (the folder and `python.exe` are there) and still not run, because of missing
 >   DLLs, broken links or an execution-policy block. Without this check a broken venv would reach PyInstaller and
 >   fail later with a more confusing error, or be reported as setup success for an environment that cannot run code.
-> - Mechanism: `:try_venv_fallback` runs `"%HP_PY%" -c "import sys"` and clears `HP_PY` on a failure, so a later
->   check does not take the failed tier for a selected provider. Log contract: `[WARN] venv fallback: interpreter
+> - Mechanism: `:try_venv_fallback` runs `"%HP_PY%" -c "import sys"`, copies the exit code to `HP_CANARY_RC` and
+>   compares the copy as text with `0` (a signed `if errorlevel 1` test would read a negative code, which is how Windows
+>   reports a missing DLL or an access violation, as a pass), and clears `HP_PY` on a failure, so a later
+>   check does not take the failed tier for a selected provider. The embedded Python tier's own probe is read the same way. Log contract: `[WARN] venv fallback: interpreter
 >   created but failed canary probe (import sys).`; the next provider then logs its own `[WARN] Attempting system
 >   Python fallback (degraded)...` line.
 > - The retry of a plain venv creation that fails outright (the `--without-pip` retry and the `get-pip.py` download)

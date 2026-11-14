@@ -152,6 +152,29 @@ def shape_problems(block):
     return found
 
 
+# The two interpreter probes of the batch (venv, and embed which was written to match it): each is followed at once by a copy of the
+# exit code and a comparison of that copy as text.
+PROBE_SITES = (
+    ('"%HP_PY%" -c "import sys" >nul 2>&1', 'if not "%HP_CANARY_RC%"=="0" goto :venv_canary_fail'),
+    ('"%HP_EMBED_PY%" -c "import sys, pip" >nul 2>&1', 'if not "%HP_CANARY_RC%"=="0" ('),
+)
+COPY_LINE = 'set "HP_CANARY_RC=%ERRORLEVEL%"'
+
+
+def result_problems(lines):
+    """A negative exit code (a missing DLL, an access violation) must decline the tier: `if errorlevel 1` is true only for 1 or more."""
+    found = []
+    for probe, compare in PROBE_SITES:
+        at = [i for i, l in enumerate(lines) if l == probe]
+        if len(at) != 1:
+            found.append("the probe line %s occurs %d times, expected exactly 1" % (probe, len(at)))
+            continue
+        after = lines[at[0] + 1:at[0] + 3]
+        if after != [COPY_LINE, compare]:
+            found.append("after %s the next two lines are %r, expected %r (an `if errorlevel 1` test reads a negative exit code as a pass)" % (probe, after, [COPY_LINE, compare]))
+    return found
+
+
 def log_problems(bat_text):
     """Each text the script's judging looks for is written by a live call :log line of the batch."""
     found = []
@@ -426,6 +449,9 @@ class BatchSide(unittest.TestCase):
     def test_the_block_keeps_the_shape_the_rows_read(self):
         self.assertEqual(shape_problems(cut_block(_lines(), *BLOCK)), [])
 
+    def test_the_probe_result_is_read_where_a_negative_code_is_a_failure(self):
+        self.assertEqual(result_problems(_lines()), [])
+
     def test_the_script_looks_for_text_the_batch_writes(self):
         self.assertEqual(log_problems("\n".join(_lines())), [])
 
@@ -479,6 +505,20 @@ class SyntheticRulesCanFail(unittest.TestCase):
         self.assertTrue(shape_problems([l.replace(PROBE_LINE, '"%HP_PY%" -c "pass" >nul 2>&1') for l in block]))
         self.assertTrue(shape_problems(block + [PROBE_LINE]))
         self.assertTrue(shape_problems([("  " + l) if l == PROBE_LINE else l for l in block]))
+
+    def test_a_probe_read_with_if_errorlevel_is_reported(self):
+        lines = _lines()
+        old = [i for i, l in enumerate(lines) if l == COPY_LINE]
+        self.assertEqual(len(old), 2, "the venv and the embed probe each copy the exit code")
+        # the old shape: no copy, a signed `if errorlevel 1` straight after the probe
+        mutated = [l for l in lines if l != COPY_LINE]
+        mutated = [("if errorlevel 1 goto :venv_canary_fail" if l.startswith('if not "%HP_CANARY_RC%"=="0" goto') else l) for l in mutated]
+        self.assertTrue(any("venv_canary_fail" in p or "HP_PY" in p for p in result_problems(mutated)))
+        # a second probe site losing the copy is reported on its own
+        embed = [l for i, l in enumerate(lines) if i != old[1]]
+        self.assertEqual(len(result_problems(embed)), 1)
+        # an extra probe line is reported
+        self.assertTrue(result_problems(lines + [PROBE_SITES[0][0]]))
 
     def test_a_dropped_hp_py_clear_is_reported(self):
         block = cut_block(_lines(), *BLOCK)

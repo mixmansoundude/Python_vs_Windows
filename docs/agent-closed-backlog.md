@@ -7946,8 +7946,12 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   `docs/agent-interconnect.md`, "The venv fallback's interpreter probe is cut out and run with a stub Python".
 - **Red first.** Run `43636493617` (head `7ff2a27`, rows only, no fix): `self.venvprobe.command`, `.nofile` and `.declines` true on `real`; `self.venvprobe.crash` red, and for the
   right reason. Both negative exit codes of the stub (`-1` and `-1073741515`, the missing-DLL code) ended with `venv fallback ready`, `Selected Python provider: Local venv (fallback)`,
-  tier return 0 and `HP_PY` and `HP_ENV_MODE` set, i.e. the venv was selected although its probe failed. The cause is the product, not the test: `if errorlevel 1` is true only for a code of 1 or
-  more, so a negative exit code read as a pass. The fix reads `%ERRORLEVEL%` into a variable and compares it with `0` in both canary probes (the venv tier and the embedded tier, which had the same line).
+  tier return 0 and `HP_PY` and `HP_ENV_MODE` set, i.e. the venv was selected although its probe failed. The cause is the product, not the test (next bullet).
+- **The finding.** The probe line was followed by `if errorlevel 1 goto :venv_canary_fail`. `if errorlevel N` is true for N or more, so a probe that exits
+  with a negative code (`0xC0000135`, a DLL that cannot be loaded, is -1073741515; an access violation is -1073741819; the stub's `-1`) was read as a
+  pass and the venv was selected, which is the failure README REQ-023 exists for. Fixed in the fix commit that follows the red run, by copying the code to `HP_CANARY_RC` and
+  comparing it as text; the embedded Python tier's canary had the same line and got the same fix, pinned as text only. Not found elsewhere by this
+  work: a search for other `if errorlevel` tests that follow a launch of an interpreter is a separate audit (CLAUDE.md, Item 46 style batches).
 
 
 ### Item 114 (filed 2026-11-14, PR #533; REQ-004.3 and .4, the two uv version cases that had no row)
