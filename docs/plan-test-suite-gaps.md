@@ -89,22 +89,22 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-002 | 26 | 25 | 1 | 7 |
-| REQ-003 | 6 | 3 | 3 | 18 |
+| REQ-003 | 6 | 4 | 2 | 18 |
 | REQ-004 | 12 | 10 | 2 | 8 |
-| REQ-005 | 18 | 14 | 4 | 32 |
+| REQ-005 | 18 | 18 | 0 | 32 |
 | REQ-006 | 2 | 2 | 0 | 3 |
 | REQ-007 | 20 | 17 | 3 | 13 |
-| REQ-008 | 23 | 17 | 6 | 9 |
+| REQ-008 | 23 | 18 | 5 | 9 |
 | REQ-009 | 13 | 13 | 0 | 22 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
 | REQ-012 | 6 | 6 | 0 | 1 |
 | REQ-013 | 19 | 10 | 9 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
-| REQ-015 | 9 | 7 | 2 | 1 |
-| REQ-016 | 9 | 6 | 3 | 4 |
+| REQ-015 | 9 | 9 | 0 | 1 |
+| REQ-016 | 9 | 8 | 1 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
-| REQ-018 | 37 | 32 | 5 | 16 |
+| REQ-018 | 37 | 33 | 4 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
 | REQ-020 | 9 | 7 | 2 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-224 of 265 numbered shalls are named by at least one row tag.
+235 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-004.3, REQ-004.4, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.15, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -160,9 +160,18 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    seconds is ended at about 30 seconds and nothing of it is left running) and REQ-005.1.6, .12, .13 and .14
    (`self.depmerge.failed.records`, `.header.userwrote`, `.fallback.emit`, `.fallback.helper`,
    `tests/selfapps_dep_merge_edges.ps1`: a failed install records nothing, a header the user wrote is never removed from,
-   a merge that cannot run falls back with a warning and the run goes on), both in the contract-uv lane. What is left, by
-   size of the user-visible risk: REQ-003.1 to .3 (the Windows floor, the Miniconda folder, where the working files go).
-   REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
+   a merge that cannot run falls back with a warning and the run goes on), both in the contract-uv lane. Done 2026-11-14
+   (Item 111): REQ-003.3 (`self.tilde.workfolder`: the working files and the EXE are in the program's own folder and
+   nowhere else), REQ-015.7 and .8 (`self.tilde.keepfiles`, `.deletable`, `tests/selfapps_tilde_files.ps1`: a program in a
+   folder named `~tilde_work`, every file the briefing says to keep exists under a name without `~`, the EXE is
+   `_tilde_work.exe`, and deleting every `~` entry loses nothing and the next run ends ok), REQ-016.6 and .7
+   (`self.caveat.runline`, `.sentences`, `tests/selfapps_caveat_briefing.ps1`: the interpreter command of the caveat
+   briefing, run as printed, runs the program, and no caveat sentence claims what was not verified) and REQ-008.14
+   (`self.nivisa.signals.noinput`, `.nonint`, `.control`, `tests/selfapps_visa_signals.ps1`: the NI-VISA subfolder
+   question is declined without waiting under `NOINPUT` or `HP_NONINTERACTIVE`, and a run with no signal reaches it),
+   all three scripts in the contract-uv lane. What is left, by size of the user-visible risk: REQ-003.1 and .2 (the
+   Windows floor, the Miniconda folder). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response,
+   so a row is optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
@@ -170,7 +179,8 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    goal and shalls, each in the change that works on its tests. Done in the change that adds REQ-003.6 (the same
    working folder for every run of the program): REQ-017, REQ-020 and REQ-023. Done in the change that adds the
    system-gate, git-config and briefing rows: REQ-014, REQ-015 and REQ-016 (`gap:` and `inspection:` entries
-   for REQ-015.7, .8 and REQ-016.6 to .8 say what no row shows). Done in the change that adds the connectivity rows:
+   for REQ-015.7, .8 and REQ-016.6 to .8 say what no row shows; Item 111 later gave REQ-015.7, .8, REQ-016.6 and .7 rows).
+   Done in the change that adds the connectivity rows:
    REQ-013 (nine `gap:` and `inspection:` entries say what no row shows; `self.ux.connectivity.empty`, `.noinput` and
    `.nonint` are new). Done in the change that retags the NI-VISA rows: REQ-008 (six `gap:`, `unit:` and `inspection:` entries
    say what no row shows; `self.nivisa.not_required` is new). Done in the change that retags the executable rows: REQ-007 (three

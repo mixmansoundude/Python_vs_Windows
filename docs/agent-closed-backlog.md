@@ -4472,6 +4472,42 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Evidence.** The reading of the five rows on their first run is in the squash commit message (a docs-only push after the run would cost
   a second full run). The five ids join the contract-uv list in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
 
+### Item 111 (shipped 2026-11-14; the next batch of `gap:` entries of `tests/test_req_shall_trace.py`, after Item 106)
+
+- **The problem.** Six README shalls had no row able to fail for them: REQ-003.3 (the working files and the build output are created in
+  the folder where the bootstrapper was started), REQ-015.7 (no file the user is meant to keep or share gets a name that starts with `~`),
+  REQ-015.8 (deleting a `~` file does not lose the user's work), REQ-016.6 and REQ-016.7 (the briefing of a run whose EXE could not be
+  verified shows the command and says what REQ-016.7 names) and REQ-008.14 (`NOINPUT` or `HP_NONINTERACTIVE` alone answers the NI-VISA
+  subfolder question with no, without waiting). The README notes of REQ-015 and REQ-016 said so in words ("No row names REQ-015.7 or
+  REQ-015.8"); the CI folders never start with `~`, so a name derived from the folder could not show the tilde rule, and every
+  bootstrap of the NI-VISA rows carries the CI marker, so only that one of the three signals was ever shown to skip the wait.
+- **What shipped.** Three scripts, eight rows, each in its own gating step of the contract-uv lane. `tests/selfapps_tilde_files.ps1`
+  bootstraps a program (it imports colorama, so the pipreqs scan writes `requirements.txt`) in a folder named `~tilde_work`, twice by
+  default: the first run must leave `~setup.log`, `~bootstrap.status.json` and `dist\_tilde_work.exe` in that folder, nothing beside it
+  and nothing changed in the folder of the scripts or the repository root (`self.tilde.workfolder`); every file the briefing says to keep,
+  the two git files and the EXE it names must exist under a name without `~` (`self.tilde.keepfiles`); every `~` entry is then deleted,
+  as the briefing says is safe, and the second run must end ok with exit code 0, print the program's line, build the EXE again and leave
+  the user's files as they were (`self.tilde.deletable`). `tests/selfapps_caveat_briefing.ps1` bootstraps a program that exits with 3 so
+  that the EXE check fails, and reads the caveat briefing: the command it shows (two quoted paths, the interpreter exists) is written to
+  a `.cmd` file as printed and run from the program folder and must print the program's line and leave exit code 3
+  (`self.caveat.runline`), and the caveat must say the environment was set up and packaging finished without a fatal error, claim no
+  verified installation and match the setup log's WARN line, not its INFO line (`self.caveat.sentences`).
+  `tests/selfapps_visa_signals.ps1` cuts `:visa_subfolder_gate` out of `run_setup.bat` and runs it three times under cmd.exe with closed
+  standard input and a stub that answers yes in place of the one `choice` line: `NOINPUT` alone and `HP_NONINTERACTIVE` alone must
+  decline and must not read the console, and a run with no signal (the control) must reach the stub once with `/T 30 /D N` and honor its
+  yes (`self.nivisa.signals.noinput`, `.nonint`, `.control`).
+- **How it is kept honest.** `tests/test_tilde_files.py`, `tests/test_caveat_briefing.py` and `tests/test_visa_signals.py` pin each
+  script (literal row ids and tags, the environment of every run, closed standard input, a process-tree kill and time limits, its own exit
+  codes), the texts the rows look for, and the workflow step and registry entries. The briefing is replayed from the real echo lines of
+  `:print_postflight_briefing` and handed to the scripts' own judging functions through real `pwsh`, so a reworded heading fails locally
+  with the sentence to change; the judging functions run in strict mode on synthetic runs with one red case per comparison, and every
+  pin has a mutation case that shows it can fail. The six `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **Left.** REQ-020.5 and .9 (need a hook), the rest of REQ-008 (.2, .5, .6, .12, .15), REQ-018.6, .13, .19 and .30, REQ-007.12, .17 and
+  .20, REQ-016.8 (read from code: every CI lane carries the CI marker, so no row reaches a `pause`). The REQ-013 family, REQ-003.1 and .2,
+  REQ-004.3 and .4 and REQ-023.1 are lane 3's.
+- **Evidence.** The reading of the eight rows on their first run is in the squash commit message. The eight ids join the contract-uv list
+  in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

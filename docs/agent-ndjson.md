@@ -1848,6 +1848,81 @@ the log texts) and runs the judging functions through real `pwsh` on synthetic r
 self.repair.cap
 ```
 
+## selfapps-tilde-files NDJSON rows (selfapps_tilde_files.ps1, contract-uv lane only, GATING)
+
+Item 111, README REQ-003.3, REQ-015.7 and REQ-015.8: where the bootstrapper works, what it calls the files a person keeps and what
+deleting its `~` files costs. `self.litter.appfolder` keeps a hand-written list of the files a run may leave, and no row deleted the
+`~` files and ran again, so the README notes of REQ-015 said that no row named the last two shalls. One program (`app.py`, imports
+`colorama`, prints `TILDE_APP_RAN`) in a folder named `~tilde_work`, so a name derived from the folder would carry the tilde (the EXE
+is `_tilde_work.exe`, the tilde turned into `_`), bootstrapped twice by default (only the PEP 723 write-back and the autopep723
+discovery are off, so the pipreqs scan writes `requirements.txt` in the first run). `self.tilde.workfolder` (REQ-003.3) passes when the
+first run ended ok with `~setup.log`, `~bootstrap.status.json` and `dist\_tilde_work.exe` in the program folder, nothing beside the
+program folder in the folder the script made for it, and no name created or changed in the folder of the test scripts or in the
+repository root. `self.tilde.keepfiles` (REQ-015.7) reads the console of the first run: every file under "KEEP these files with your
+project:" (`requirements.txt` and `runtime.txt` among them) exists and none starts with `~`, `.gitignore` and `.gitattributes` exist,
+and the EXE named under "Your standalone application is ready:" exists, does not start with `~` and is `_tilde_work.exe`.
+`self.tilde.deletable` (REQ-015.8) deletes every `~` entry of the program folder and of `dist` and `build`, as the briefing says is
+safe, and runs the bootstrapper again: the second run must end ok with exit code 0, print the program's own line, rebuild the EXE, and
+leave `app.py`, `requirements.txt`, `runtime.txt` and the two git files as the first run left them. The deletion removes the first
+run's console and setup logs, so the script keeps their last lines in `tests/~tilde_files_evidence.txt`. Each row passes only on its
+named sub-checks and each also needs the precondition that makes it mean something (the first run ended ok, the briefing printed a
+keep list, at least three `~` entries including `~setup.log` existed and were really removed). `tests/test_tilde_files.py` replays the
+real echo lines of `:print_postflight_briefing` through the script's own judging functions and runs those functions on synthetic runs
+that must be red for each comparison. The rows skip with `skip=true` off Windows.
+
+```
+self.tilde.workfolder
+self.tilde.keepfiles
+self.tilde.deletable
+```
+
+## selfapps-caveat-briefing NDJSON rows (selfapps_caveat_briefing.ps1, contract-uv lane only, GATING)
+
+Item 111, README REQ-016.6 and REQ-016.7: the post-flight briefing of a run whose EXE could not be verified, the one a person reads
+when something went wrong. The success variant is read by `self.postflight.runline.verbatim` (REQ-016.5); the caveat variant was
+reached only by rows about other things, which keep the number-level tag and never searched it for the command or for the sentences.
+One default bootstrap (`HP_SKIP_PIPREQS`, `HP_SKIP_AUTOPEP_DISCOVERY` and `HP_SKIP_NIVISA` set, nothing else skipped) of a program
+that prints `CAVEAT_APP_RAN` and exits with 3: the EXE is built, its verification run fails and the caveat briefing is printed.
+`self.caveat.runline` (REQ-016.6) passes when the briefing under "directly via the interpreter at any time:" shows two quoted paths,
+the first an interpreter that exists, and that command, written to a `.cmd` file exactly as printed and run from the program folder,
+prints the program's line and leaves exit code 3 (the file's last line prints the errorlevel, so the code does not depend on how
+`cmd /c` carries it). `self.caveat.sentences` (REQ-016.7) passes when the caveat says that the environment was set up and that the
+packaging step completed without a fatal error, no sentence of it claims that the dependencies or their installation were verified
+(a sentence that names dependencies or an install and says verified or confirmed must also say could not, not, never or no), and the
+setup log has the `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.` line and not the success line.
+A row also needs the precondition: the heading `SETUP COMPLETE -- WITH A CAVEAT` was printed and the success wording was not, so a
+run that never reached the briefing cannot pass. `tests/test_caveat_briefing.py` replays the real echo lines of
+`:print_postflight_briefing` and runs the judging functions through real `pwsh` on synthetic runs. The rows skip with `skip=true` off
+Windows.
+
+```
+self.caveat.runline
+self.caveat.sentences
+```
+
+## selfapps-visa-signals NDJSON rows (selfapps_visa_signals.ps1, contract-uv lane only, GATING)
+
+Item 111, README REQ-008.14: with `NOINPUT` or `HP_NONINTERACTIVE` set, the question of REQ-008.7 (install the NI-VISA driver
+although every import of `pyvisa` or `visa` sits in a subfolder) is answered with no, without waiting. `:visa_subfolder_gate` tests four
+signals before it reads the console (a test answer, `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`); `selfapps_pyvisa_subfolder.ps1`
+runs real bootstraps and every one of them carries `HP_CI_LANE`, so only that signal was ever shown to skip the wait and the other two
+could be deleted from the batch file with no row turning red. Three driver runs of the real block, cut out of `run_setup.bat` from
+`:visa_subfolder_gate` to `:dll_bundle_recover`, under cmd.exe with closed standard input, every variable the block reads cleared
+first and exactly one signal set. The one `choice` line is replaced by a stub that records its arguments and answers yes, so a block
+that read the console in spite of the signal would accept and say so. `self.nivisa.signals.noinput` (`NOINPUT` alone) and
+`self.nivisa.signals.nonint` (`HP_NONINTERACTIVE` alone) pass when the block declines (`NEED_VISA` stays 2, the log line
+`[VISA] skipped (subfolder_only)`) and the console was read zero times; `self.nivisa.signals.control` (no signal) passes when the
+console was read exactly once, with `/T 30 /D N`, and the stub's yes was honored. The control is what stops the two signal rows from
+passing because the block never asked in any case. `tests/test_visa_signals.py` pins the cut (labels once and in order, only variables
+the driver sets or clears) and runs the judging functions through real `pwsh` on synthetic runs. The rows skip with `skip=true` off
+Windows.
+
+```
+self.nivisa.signals.noinput
+self.nivisa.signals.nonint
+self.nivisa.signals.control
+```
+
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
 
 CLAUDE.md Item 78 slice 2 (README REQ-008). An `import visa` that sits only below a subfolder (an archived

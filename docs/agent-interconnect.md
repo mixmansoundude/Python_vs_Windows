@@ -1453,6 +1453,38 @@ state `ok` and exit code 0. Both read the console text with whitespace flattened
 several `echo` lines), so a reworded or re-wrapped sentence only needs the test string updated, but a changed
 heading or log line breaks the rows by design.
 
+## Four rows read the post-flight briefing's console text, and one cuts the NI-VISA gate out of the batch file (Item 111)
+
+**Touch `:print_postflight_briefing` (a heading, the keep or delete list, the two lines `Your standalone application is ready:` and
+`dist\%ENVNAME%.exe`, the interpreter command line, the two `REQ-016` log lines), the derivation of the environment name from the folder
+name, or `:visa_subfolder_gate`, must understand these.**
+- `self.tilde.keepfiles` and `.deletable` (`tests/selfapps_tilde_files.ps1`) read the console of a default run of a program in a folder
+  named `~tilde_work`: the files under `KEEP these files with your project:` (the first word of each line with a ` -- ` after it, up to
+  `SAFE TO DELETE`) and the EXE on the line directly under the ready line. Each named file must exist in that run, so a keep-list line for
+  a file the bootstrapper does not write turns the row red with the file named (REQ-015.7). The folder name is chosen because the
+  derivation `-replace '[^A-Za-z0-9_-]', '_'` turns `~tilde_work` into `_tilde_work`: the expected EXE is `_tilde_work.exe`, so a
+  derivation that kept the `~` is a red row with both names. The deletion step removes every `~` entry of the program folder, `dist` and
+  `build`, and the first run's own logs with it, so the script keeps the last lines of both in `tests/~tilde_files_evidence.txt`
+  (written last, after every folder was listed, so it cannot be taken for something the bootstrapper created).
+- `self.caveat.runline` and `.sentences` (`tests/selfapps_caveat_briefing.ps1`) read the caveat variant of the same block: the heading
+  `SETUP COMPLETE -- WITH A CAVEAT`, the text up to `RUNNING YOUR APP` (flattened to one line: it must hold `Your Python environment was
+  set up and the packaging step completed without a fatal error.` and no sentence that names dependencies or an install together with
+  verified or confirmed unless it is negated), the first line that starts with a double quote under `directly via the interpreter at any
+  time:` (two quoted paths, written to a `.cmd` file as printed and run from the program folder, which must print the program's line and
+  leave its exit code), and the setup log's `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.` (never
+  the `[INFO]` line). Reword a sentence of the caveat and the row names the missing sentence; the unit tests replay the real echo lines of
+  the block (`simulate()` in `tests/test_tilde_files.py` and `tests/test_caveat_briefing.py`) and hand the text to the scripts' own
+  judging functions through real `pwsh`, so the wording is checked locally before a lane run.
+- `self.nivisa.signals.*` (`tests/selfapps_visa_signals.ps1`) cut `:visa_subfolder_gate` up to `:dll_bundle_recover` out of the batch file
+  and run it under cmd.exe, like `selfapps_choice_cancel.ps1` does for the Ctrl+C gates. The block must keep: the five labels of the
+  gate, only variables the driver sets or clears (`KNOWN_VARIABLES` in `tests/test_visa_signals.py`), the four signal lines each once and
+  live in the order test answer, `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`, then the timer line and exactly one live `choice` line,
+  which the driver replaces with a recording stub that answers yes. The answer is the point: a gate that read the console in spite of the
+  signal would take the yes and accept, so a signal row cannot pass by a stub that declines, and the control run (no signal) shows the stub
+  is reachable.
+- `tests/selfapps_pyvisa_subfolder.ps1` still runs the real bootstraps of the same gate and stays the proof that the main flow calls it; the
+  new script proves the gate alone.
+
 ## Post-execution checkpoint (Slice 2b-C, second half)
 
 `:run_postexec_checkpoint` is a **consent gate** (echo prompt unconditionally, then

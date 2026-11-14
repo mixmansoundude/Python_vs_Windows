@@ -1506,6 +1506,33 @@ that wants the console branch (no test answer, none of the three non-interactive
 (`/C YN`, `/T 30`, `/D N`) and the decline, which is the shall (a bounded wait that defaults to N), and not what a person's keystroke
 would do.
 
+**The stub's answer is the one the defect would take, and a run with no signal shows the stub can be reached (Item 111).** The gate
+`:visa_subfolder_gate` skips its question when a test answer, `HP_CI_LANE`, `NOINPUT` or `HP_NONINTERACTIVE` is set, and every real bootstrap
+of CI carries `HP_CI_LANE`, so for months only that one signal was ever shown to skip the wait: the lines for the other two could have been
+deleted from the batch file with every row green. `tests/selfapps_visa_signals.ps1` cuts the gate out and runs it once per signal, and its
+`choice` stub answers YES. Declined is the right outcome for a signal run, so a stub that answered no would let a gate that waits and a gate
+that does not wait end in the same decline and prove nothing; with a yes, a gate that read the console in spite of the signal takes it,
+accepts and says so, and the run turns red with the read counted. The same stub in a control run with no signal must be called exactly once,
+with the 30 second wait and `/D N`, and its yes must be honored: that is what keeps the signal rows from passing because the gate never
+asks at all (a typo in the cut, a label that moved). **Rule: a driver that fakes the one blocking read answers the way a broken gate would,
+and the same driver without the signal must reach the read.** Both halves are in `tests/test_visa_signals.py` (`Get-SignalProblems` on a
+signal run that read the console, a control that never reached the stub, a wrong wait).
+
+## A rule about names the bootstrapper derives from the user's folder is only tested by a folder that is hostile to the derivation (Item 111)
+
+README REQ-015.7 says nothing the user keeps or shares may have a name that starts with `~`, REQ-015.8 says deleting every `~` file must not
+lose the user's work. In an ordinary folder name neither can fail: the environment name is the folder name, so `my_app` gives `my_app.exe`
+and no derivation is exercised. `run_setup.bat` builds the name with `-replace '[^A-Za-z0-9_-]', '_'`, which turns a leading `~` into `_`
+(`~tilde_work` gives `_tilde_work.exe`); a derivation that kept the tilde would name the EXE `~tilde_work.exe`, and a person following the
+briefing's "SAFE TO DELETE" advice (delete the `~` files) would delete their own program. **Rule: when a shall is about a name built from
+something the user chose, run it in a folder whose name breaks the derivation (a leading tilde, a space, a dot) and compare the NAME the
+bootstrapper printed with the name it must have, not only that a file exists.** `tests/selfapps_tilde_files.ps1` does that and keeps both names
+in the row. Two details from writing it: (1) the deletion step of REQ-015.8 removes the first run's own console log and setup log, so the
+script reads both into memory before the deletion and writes its evidence file last, after every folder was listed, so that the file is
+never taken for something the bootstrapper created; (2) the keep list is read from the console text of the briefing (the file names under
+the heading, up to `SAFE TO DELETE`), and every name on it must exist, otherwise a keep line for a file the bootstrapper never writes is
+invisible to a row that only checks the files it already knows.
+
 ## `choice` leaves errorlevel 0 for Ctrl+C, and `if errorlevel 2` means "2 or more": a timed yes/no gate needs a second guard line (Item 105)
 
 `choice /C YN ... /T 30 /D N` returns 1 for Y, 2 for N (and for the timeout default), 255 for an error and 0 for Ctrl+C or Ctrl+Break.
