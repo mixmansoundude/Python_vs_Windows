@@ -1469,7 +1469,9 @@ name, or `:visa_subfolder_gate`, must understand these.**
 - `self.caveat.runline` and `.sentences` (`tests/selfapps_caveat_briefing.ps1`) read the caveat variant of the same block: the heading
   `SETUP COMPLETE -- WITH A CAVEAT`, the text up to `RUNNING YOUR APP` (flattened to one line: it must hold `Your Python environment was
   set up and the packaging step completed without a fatal error.` and no sentence that names dependencies or an install together with
-  verified or confirmed unless it is negated), the first line that starts with a double quote under `directly via the interpreter at any
+  a verification word that is not negated: a negator stands at most two words in front of the word, or the word starts with un-, and a
+  negator elsewhere in the sentence does not count, "verified, not just installed" is a claim; a console that also carries the success
+  wording `Your standalone application is ready:` fails both rows), the first line that starts with a double quote under `directly via the interpreter at any
   time:` (two quoted paths, written to a `.cmd` file as printed and run from the program folder, which must print the program's line and
   leave its exit code), and the setup log's `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.` (never
   the `[INFO]` line). Reword a sentence of the caveat and the row names the missing sentence; the unit tests replay the real echo lines of

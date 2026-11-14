@@ -574,6 +574,7 @@ def sentences(found):
     return " | ".join(found)
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeOnSyntheticRuns(unittest.TestCase):
     """The script's judging functions on runs built here: a clean run passes and each kind of wrong run is reported with its own
     sentence. The functions run alone and in strict mode, so they cannot read the script's variables."""
@@ -672,6 +673,7 @@ class JudgeOnSyntheticRuns(unittest.TestCase):
         self.assertEqual(self.r["names_empty_is_not_none"], [True])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class FactsMatchTheRealText(unittest.TestCase):
     """Get-DmFacts on the real words of the batch file and of the helper: each fact is true for its own text, false for an empty
     run, and no other fact is true for it (a pattern that matched everything would make every precondition meaningless)."""
@@ -715,6 +717,7 @@ class FactsMatchTheRealText(unittest.TestCase):
                     self.assertFalse(self.r["wronglog_" + fact][0][fact])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeDriverIsStrict(unittest.TestCase):
     """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
     loudly instead of reading $null (or a variable of the driver) and quietly passing."""
@@ -778,6 +781,7 @@ U_SECOND_RUN = {
 }
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class RealHelperOnTheScenarioInputs(unittest.TestCase):
     """What tools/dep_merge.py really says about the inputs of each scenario, and what the script's facts make of it."""
 
@@ -1094,6 +1098,7 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertEqual(shall_list_problems('    "REQ-005.1.60": "gap: x",\n'), [])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgesCanFail(unittest.TestCase):
     """A judge that quietly stops judging would pass every scenario, so the cases are run against mutated copies of the script."""
 

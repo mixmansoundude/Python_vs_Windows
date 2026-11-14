@@ -132,14 +132,24 @@ function Get-CaveatSentenceProblems {
     param($Panel, [string]$Setup)
     $out = New-Object System.Collections.ArrayList
     if (-not $Panel.Found) { return @('no caveat briefing was printed (the heading SETUP COMPLETE -- WITH A CAVEAT is not on the console), so the run never reached the state under test') }
+    # The sentences are the caveat variant's; a console that also carries the success wording is not one this verdict can speak for.
+    if ($Panel.Ready) { [void]$out.Add('the console also carries the success wording of the briefing (Your standalone application is ready:), so the caveat is not the only briefing printed') }
     if (-not [regex]::IsMatch($Panel.Caveat, 'Your Python environment was set up and the packaging step completed without a fatal error\.')) {
         [void]$out.Add('the caveat does not say that the environment was set up and that the packaging step completed without a fatal error')
     }
     foreach ($s in @([regex]::Split([string]$Panel.Caveat, '(?<=[.!?])\s+'))) {
         if ([string]::IsNullOrWhiteSpace($s)) { continue }
-        $claims = ($s -match '(?i)dependenc|install') -and ($s -match '(?i)verif|confirm|validat|checked')
-        $negated = $s -match "(?i)couldn't|could not|cannot|can't|\bnot\b|\bnever\b|\bno\b"
-        if ($claims -and (-not $negated)) { [void]$out.Add('a sentence of the caveat claims that the dependencies or their installation were verified: ' + $s.Trim()) }
+        if ($s -notmatch '(?i)dependenc|install') { continue }
+        # A sentence about the dependencies or their installation claims verification when one of its verification words is not negated.
+        # A word is negated when a negator stands at most two words in front of it (could not verify, has not been fully verified) or it
+        # starts with un-. A negator elsewhere in the sentence does not count: "verified, not just installed" is a claim.
+        $claimed = $false
+        foreach ($m in [regex]::Matches($s, '(?i)\b\w*(?:verif|confirm|validat)\w*|\bchecked\b')) {
+            $before = $s.Substring(0, $m.Index)
+            $negated = ($m.Value -match '(?i)^un') -or ($before -match '(?i)(?:\b(?:not|never|cannot|unable|failed|no|nothing)\b|n''t)(?:\s+\w+){0,2}\s*$')
+            if (-not $negated) { $claimed = $true }
+        }
+        if ($claimed) { [void]$out.Add('a sentence of the caveat claims that the dependencies or their installation were verified: ' + $s.Trim()) }
     }
     if (-not [regex]::IsMatch($Setup, '\[WARN\] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run\.')) {
         [void]$out.Add('the setup log does not carry the WARN line of the log contract (Post-flight briefing printed; EXE unverified, advised direct run.)')

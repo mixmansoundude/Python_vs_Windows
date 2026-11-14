@@ -595,6 +595,7 @@ def judge_cases():
     return c
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeOnSyntheticRuns(unittest.TestCase):
     """The script's judging functions on runs built here: a clean run passes and each kind of wrong run is reported with its own
     sentence. The functions run alone and in strict mode, so they cannot read the script's variables."""
@@ -728,6 +729,7 @@ class JudgeOnSyntheticRuns(unittest.TestCase):
         self.assertEqual(self.r["excerpt_non_ascii"][0], "caf? ok")
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeDriverIsStrict(unittest.TestCase):
     """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
     loudly instead of reading $null (or a variable of the driver) and quietly passing."""
@@ -763,6 +765,7 @@ class JudgeDriverIsStrict(unittest.TestCase):
 
 # --- the real briefing through the judges --------------------------------------------------------------------------------------
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class RealBriefingThroughTheJudges(unittest.TestCase):
     """The real echo lines of :print_postflight_briefing, replayed for the verified and the unverified variant, are handed to the
     script's own functions: the headings, section names and the EXE line the judge looks for are the ones the batch file prints."""
@@ -1057,6 +1060,7 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertEqual(shall_list_problems('    "REQ-015.70": "gap: x",\n'), [])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgesCanFail(unittest.TestCase):
     """A judge that quietly stops judging would pass every scenario, so the cases are run against mutated copies of the script."""
 

@@ -4502,6 +4502,14 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   `:print_postflight_briefing` and handed to the scripts' own judging functions through real `pwsh`, so a reworded heading fails locally
   with the sentence to change; the judging functions run in strict mode on synthetic runs with one red case per comparison, and every
   pin has a mutation case that shows it can fail. The six `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **Review of PR #530 (CodeRabbit, three minor findings, all taken).** The sentence judge of `self.caveat.sentences` let a sentence off
+  the claim check when it held any negation word, so "Your dependencies were verified, not just installed." passed; it now judges each
+  verification word of a sentence about the dependencies or their installation and lets it off only when a negator stands at most two
+  words in front of it or it starts with un-. It also accepted a console that carried the success wording as well (the runline judge
+  already refused it), and the PowerShell-dependent classes of the five new unit-test files now skip when `pwsh` is absent, like the
+  older ones. Each has a rejecting synthetic case and a mutation case. The three new behavior tests are red against the old judge (run
+  through real `pwsh` before the change: it accepted "verified, not just installed" and a console with the success wording as well,
+  and flagged the honest "is unverified"); the seven mutation tests need the new code to exist.
 - **Left.** REQ-020.5 and .9 (need a hook), the rest of REQ-008 (.2, .5, .6, .12, .15), REQ-018.6, .13, .19 and .30, REQ-007.12, .17 and
   .20, REQ-016.8 (read from code: every CI lane carries the CI marker, so no row reaches a `pause`). The REQ-013 family, REQ-003.1 and .2,
   REQ-004.3 and .4 and REQ-023.1 are lane 3's.

@@ -1533,6 +1533,19 @@ never taken for something the bootstrapper created; (2) the keep list is read fr
 the heading, up to `SAFE TO DELETE`), and every name on it must exist, otherwise a keep line for a file the bootstrapper never writes is
 invisible to a row that only checks the files it already knows.
 
+## A text judge that lets negated wording off must tie the negation to the word it negates (Item 111 review)
+
+`Get-CaveatSentenceProblems` rejected a sentence that names the dependencies or their installation together with a verification
+word, unless the sentence held a negation word anywhere (`not`, `no`, `could not`). "Your dependencies were verified, not just
+installed." holds both and passed (CodeRabbit, PR #530); so would "not only installed but verified" and "We could not verify the
+app, but your dependencies were installed and verified". **Rule: judge each verification word on its own, and let it off only when a
+negator stands a few words in front of it (at most two here) or the word is itself an un- form; a negator elsewhere in the sentence
+takes nothing back.** The unit tests keep a rejecting case for each of those shapes and a mutation case that puts the old broad rule
+back and must see all three accepted. The other error is the cheaper one and shows up red: the old rule also flagged the honest
+"is unverified" (no negator word), which a person reads and fixes, and a judge in this repository errs in that direction. The same
+review asked that a verdict which depends on a precondition (the caveat variant is the only briefing printed) check it itself, as its
+sibling verdict did, so that a mixed console is not credited to one requirement by the row that forgot.
+
 ## `choice` leaves errorlevel 0 for Ctrl+C, and `if errorlevel 2` means "2 or more": a timed yes/no gate needs a second guard line (Item 105)
 
 `choice /C YN ... /T 30 /D N` returns 1 for Y, 2 for N (and for the timeout default), 255 for an error and 0 for Ctrl+C or Ctrl+Break.

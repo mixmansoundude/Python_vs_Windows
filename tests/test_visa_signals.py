@@ -457,6 +457,7 @@ def judge_cases():
     return c
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeOnSyntheticRuns(unittest.TestCase):
     """The script's judging functions on runs built here: a clean run passes and each kind of wrong run is reported with its own
     sentence. The functions run alone and in strict mode, so they cannot read the script's variables."""
@@ -531,6 +532,7 @@ class JudgeOnSyntheticRuns(unittest.TestCase):
         self.only("control_declined_line", "1 declined line(s), expected 0")
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeDriverIsStrict(unittest.TestCase):
     """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
     loudly instead of reading $null (or a variable of the driver) and quietly passing."""
@@ -784,6 +786,7 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertEqual(shall_list_problems('    "REQ-008.140": "gap: x",\n'), [])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgesCanFail(unittest.TestCase):
     """A judge that quietly stops judging would pass every scenario, so the cases are run against mutated copies of the script."""
 

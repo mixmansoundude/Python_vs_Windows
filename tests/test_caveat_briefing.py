@@ -581,6 +581,20 @@ def judge_cases():
                   **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " All dependencies are confirmed."))))
     c.append(case("sent_negated_claim_is_fine", "Get-CaveatSentenceProblems",
                   **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " We could not verify the installation of your dependencies."))))
+    # a negator that does not stand in front of the verification word does not take the claim back (review of PR 530)
+    c.append(case("sent_claims_verified_not_just_installed", "Get-CaveatSentenceProblems",
+                  **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " Your dependencies were verified, not just installed."))))
+    c.append(case("sent_claims_not_only_installed_but_verified", "Get-CaveatSentenceProblems",
+                  **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " Your dependencies were not only installed but verified."))))
+    c.append(case("sent_claims_after_a_negated_clause", "Get-CaveatSentenceProblems",
+                  **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " We could not verify the app, but your dependencies were installed and verified."))))
+    c.append(case("sent_negated_could_not_be_fully_verified", "Get-CaveatSentenceProblems",
+                  **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " The installation of your dependencies could not be fully verified."))))
+    c.append(case("sent_negated_verify_or_confirm", "Get-CaveatSentenceProblems",
+                  **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " We could not verify or confirm that your dependencies installed."))))
+    c.append(case("sent_negated_unverified", "Get-CaveatSentenceProblems",
+                  **sentence_args(Panel=panel_obj(Caveat=GOOD_CAVEAT + " The installation of your dependencies is unverified."))))
+    c.append(case("sent_success_wording_too", "Get-CaveatSentenceProblems", **sentence_args(Panel=panel_obj(Ready=True))))
     c.append(case("sent_no_warn_line", "Get-CaveatSentenceProblems", **sentence_args(Setup="[INFO] something else\r\n")))
     c.append(case("sent_info_line_too", "Get-CaveatSentenceProblems", **sentence_args(Setup=SETUP + "x " + INFO_TEXT + "\r\n")))
     c.append(case("sent_info_line_only", "Get-CaveatSentenceProblems", **sentence_args(Setup="x " + INFO_TEXT + "\r\n")))
@@ -590,6 +604,7 @@ def judge_cases():
     return c
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeOnSyntheticRuns(unittest.TestCase):
     """The script's judging functions on runs built here: a clean run passes and each kind of wrong run is reported with its own
     sentence. The functions run alone and in strict mode, so they cannot read the script's variables."""
@@ -683,6 +698,18 @@ class JudgeOnSyntheticRuns(unittest.TestCase):
 
     def test_a_negated_sentence_about_the_installation_is_not_a_claim(self):
         self.assertEqual(self.r["sent_negated_claim_is_fine"], [])
+        self.assertEqual(self.r["sent_negated_could_not_be_fully_verified"], [])
+        self.assertEqual(self.r["sent_negated_verify_or_confirm"], [])
+        self.assertEqual(self.r["sent_negated_unverified"], [])
+
+    def test_a_negator_that_does_not_stand_in_front_of_the_verification_word_does_not_take_the_claim_back(self):
+        needle = "claims that the dependencies or their installation were verified"
+        self.only("sent_claims_verified_not_just_installed", needle)
+        self.only("sent_claims_not_only_installed_but_verified", needle)
+        self.only("sent_claims_after_a_negated_clause", needle)
+
+    def test_the_success_wording_next_to_the_caveat_is_named_by_the_sentence_verdict_too(self):
+        self.only("sent_success_wording_too", "carries the success wording of the briefing")
 
     def test_a_setup_log_without_the_warn_line_or_with_the_success_line_is_named(self):
         self.only("sent_no_warn_line", "does not carry the WARN line of the log contract")
@@ -695,6 +722,7 @@ class JudgeOnSyntheticRuns(unittest.TestCase):
         self.assertEqual(self.r["excerpt_non_ascii"][0], "caf? ok")
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeDriverIsStrict(unittest.TestCase):
     """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
     loudly instead of reading $null (or a variable of the driver) and quietly passing."""
@@ -730,6 +758,7 @@ class JudgeDriverIsStrict(unittest.TestCase):
 
 # --- the real briefing through the judges --------------------------------------------------------------------------------------
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class RealBriefingThroughTheJudges(unittest.TestCase):
     """The real echo lines of :print_postflight_briefing, replayed for the caveat and the success variant, are handed to the script's
     own functions: the headings, section names and the command line the judge looks for are the ones the batch file prints."""
@@ -827,7 +856,7 @@ class RealFiles(unittest.TestCase):
     def test_the_checks_are_not_vacuous_on_the_real_files(self):
         block = cut_block(self.batch, BRIEF_START, BRIEF_END)
         self.assertGreater(len(live_bat(block)), 40)
-        self.assertEqual(len(judge_cases()), 34)
+        self.assertEqual(len(judge_cases()), 41)
 
     def test_every_judge_the_driver_is_asked_for_is_a_function_of_the_script(self):
         for name in JUDGES:
@@ -1029,6 +1058,7 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertEqual(shall_list_problems('    "REQ-016.60": "gap: x",\n'), [])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgesCanFail(unittest.TestCase):
     """A judge that quietly stops judging would pass every scenario, so the cases are run against mutated copies of the script."""
 
@@ -1054,8 +1084,17 @@ class JudgesCanFail(unittest.TestCase):
         self.assertNotEqual(got["run_no_caveat"], ["no caveat briefing was printed (the heading SETUP COMPLETE -- WITH A CAVEAT is not on the console), so the run never reached the state under test"])
 
     def test_a_judge_that_forgets_the_success_wording_is_caught(self):
-        got = self.run_mutated("    if ($Panel.Ready) {", "    if ($false) {", ["run_success_wording_too"])
+        # each of the two verdicts has its own check, told apart by the end of its sentence
+        old = "    if ($Panel.Ready) { [void]$out.Add('the console also carries the success wording of the briefing (Your standalone application is ready:), so the variant"
+        got = self.run_mutated(old, old.replace("if ($Panel.Ready) {", "if ($false) {"), ["run_success_wording_too", "sent_success_wording_too"])
         self.assertEqual(got["run_success_wording_too"], [])
+        self.assertNotEqual(got["sent_success_wording_too"], [], "the sentence verdict has its own check, the runline mutation must not touch it")
+
+    def test_a_sentence_verdict_that_forgets_the_success_wording_is_caught(self):
+        old = "    if ($Panel.Ready) { [void]$out.Add('the console also carries the success wording of the briefing (Your standalone application is ready:), so the caveat"
+        got = self.run_mutated(old, old.replace("if ($Panel.Ready) {", "if ($false) {"), ["run_success_wording_too", "sent_success_wording_too"])
+        self.assertEqual(got["sent_success_wording_too"], [])
+        self.assertNotEqual(got["run_success_wording_too"], [], "the runline verdict has its own check, the sentence mutation must not touch it")
 
     def test_a_judge_that_forgets_the_missing_command_is_caught(self):
         got = self.run_mutated("    if (-not $Panel.Printed) {", "    if ($false) {", ["run_no_command"])
@@ -1087,11 +1126,33 @@ class JudgesCanFail(unittest.TestCase):
         self.assertEqual(got["sent_sentence_missing"], [])
 
     def test_a_judge_that_forgets_a_claim_of_verification_is_caught(self):
-        got = self.run_mutated("        if ($claims -and (-not $negated)) {", "        if ($false) {", ["sent_claims_dependencies_verified"])
+        got = self.run_mutated("        if ($claimed) {", "        if ($false) {", ["sent_claims_dependencies_verified"])
         self.assertEqual(got["sent_claims_dependencies_verified"], [])
 
     def test_a_judge_that_flags_every_negated_sentence_too_is_caught(self):
-        got = self.run_mutated("        if ($claims -and (-not $negated)) {", "        if ($claims) {", ["sent_negated_claim_is_fine"])
+        got = self.run_mutated("            if (-not $negated) { $claimed = $true }", "            $claimed = $true",
+                               ["sent_negated_claim_is_fine", "sent_negated_unverified"])
+        self.assertNotEqual(got["sent_negated_claim_is_fine"], [])
+        self.assertNotEqual(got["sent_negated_unverified"], [])
+
+    def test_a_judge_that_lets_any_negator_of_the_sentence_off_is_caught(self):
+        # the first version of the rule: one negation word anywhere in the sentence exempted every verification word in it
+        text = norm(SCRIPT.read_text(encoding="utf-8"))
+        line = next(ln for ln in text.split("\n") if ln.startswith("            $negated = ($m.Value -match"))
+        broad = "            $negated = $s -match \"(?i)couldn't|could not|cannot|can't|\\bnot\\b|\\bnever\\b|\\bno\\b\""
+        names = ["sent_claims_verified_not_just_installed", "sent_claims_not_only_installed_but_verified",
+                 "sent_claims_after_a_negated_clause", "sent_negated_claim_is_fine"]
+        got = self.run_mutated(line, broad, names)
+        for name in names[:3]:
+            self.assertEqual(got[name], [], "%s: the broad rule accepts what the narrow rule names, so the case can tell them apart" % name)
+        self.assertEqual(got["sent_negated_claim_is_fine"], [])
+
+    def test_a_judge_that_ignores_the_un_forms_is_caught(self):
+        got = self.run_mutated("($m.Value -match '(?i)^un') -or", "$false -or", ["sent_negated_unverified"])
+        self.assertNotEqual(got["sent_negated_unverified"], [])
+
+    def test_a_judge_that_reads_the_whole_sentence_instead_of_the_words_in_front_is_caught(self):
+        got = self.run_mutated("            $before = $s.Substring(0, $m.Index)", "            $before = $s", ["sent_negated_claim_is_fine"])
         self.assertNotEqual(got["sent_negated_claim_is_fine"], [])
 
     def test_a_judge_that_forgets_the_warn_line_is_caught(self):

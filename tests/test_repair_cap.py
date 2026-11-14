@@ -509,6 +509,7 @@ def sentences(found):
     return " | ".join(found)
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeOnSyntheticRuns(unittest.TestCase):
     """The script's judging functions on runs built here: a clean run passes and each kind of wrong run is reported with its own
     sentence. The functions run alone and in strict mode, so they cannot read the script's variables."""
@@ -619,6 +620,7 @@ class LogFactsMatchTheRealText(unittest.TestCase):
             self.assertIsNone(re.search(r"[<>|&^]", text), text)
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgeDriverIsStrict(unittest.TestCase):
     """The driver runs each judging function alone and in strict mode, so a judge that reads a variable it does not own fails
     loudly instead of reading $null (or a variable of the driver) and quietly passing."""
@@ -1038,6 +1040,7 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertEqual(shall_list_problems('    "REQ-018.70": "gap: x",\n'), [])
 
 
+@unittest.skipUnless(PWSH, "pwsh not available")
 class JudgesCanFail(unittest.TestCase):
     """A judge that quietly stops judging would pass every scenario, so the cases are run against mutated copies of the script."""
 
