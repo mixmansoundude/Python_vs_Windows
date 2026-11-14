@@ -48,9 +48,12 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 
 # Shall id -> reason it has no tagged row. Delete an entry when a row is tagged with the shall's id.
 UNTRACED_SHALLS: Dict[str, str] = {
+    "REQ-002.15": "unit: tests/test_picker_gate.py::PickerWait the prompt of :pick_entry_interactive waits HP_PICK_T seconds, 30 unless the test setting HP_TEST_FORCE_PICKER shortens it to 2; self.entry.picker (default taken, REQ-002.22) and self.entry.picker.number (a typed number) run with the shortened wait, so no row waits the full 30 seconds",
     "REQ-003.1": "gap: rows are tagged REQ-003 (selfapps_unc, selfapps_justme, selfapps_exefail) but none names this shall; the Windows 10 (1809) floor and the curl and PowerShell it relies on are shown only by the runners",
     "REQ-003.2": "gap: selfapps_justme and the provider rows install Miniconda under %PUBLIC%\\Documents\\Miniconda3 and are tagged REQ-003; none asserts the install folder as this shall",
     "REQ-003.3": "gap: self.litter.appfolder (selftest.ps1) proves what the bootstrapper leaves in the folder, but no row asserts that the working files and the build output are created in the folder where it was started",
+    "REQ-004.3": "unit: tests/test_detect_python.py::DetectRequiresPython test_runtime_txt_wins_over_pyproject pins the helper that both providers read; no row starts a bootstrap with a runtime.txt and a pyproject.toml that name different versions and reads the Python that was set up",
+    "REQ-004.4": "gap: no row compares the Python that a provider set up, with no request in the folder, with the newest version that provider offers; self.uv.managed.interpreter shows the managed CPython is the one in use and the version-agnostic row cannot tell newest from older",
     "REQ-007.12": "unit: tests/test_collect_submodules.py::GatingMatrix a curated package is collected only when the program uses it and the interpreter has it installed, so an unused library never enters the build",
     "REQ-007.17": "gap: no row answers yes to the system-Python build question; doing so would install PyInstaller into the runner's own system Python (self.sysbuild.decline, .nuitka_prompt and .ci_marker stop at the question)",
     "REQ-007.20": "gap: no check reads every message of the build step; self.exe.build.xfail reads the PyInstaller failure messages, and the word executable in the other messages is not searched",

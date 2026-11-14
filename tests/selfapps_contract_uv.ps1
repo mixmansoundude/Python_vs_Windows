@@ -314,7 +314,7 @@ if ($lane -eq 'contract-uv-fail') {
     }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.contract.uv.pyver.exactpin'
-        req     = 'REQ-004'
+        req     = 'REQ-004.1'
         pass    = [bool]$exactPass
         desc    = 'Exact pin (runtime.txt python-X.Y) pins uv venv --python to X.Y (does not drift to latest)'
         details = $exactDetails

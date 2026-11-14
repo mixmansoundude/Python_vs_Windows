@@ -76,8 +76,9 @@ try {
   throw "Bootstrap status JSON invalid: $($_.Exception.Message)"
 }
 New-Item -ItemType Directory -Force -Path $ExtractDir | Out-Null
-function Write-Result { param($Id,$Desc,[bool]$Pass,$Details)
+function Write-Result { param($Id,$Desc,[bool]$Pass,$Details,[hashtable]$Tag)
   $rec = [ordered]@{ id=$Id; pass=$Pass; desc=$Desc; details=$Details }
+  if ($Tag -and $Tag.req) { $rec['req'] = $Tag.req }
   $json = $rec | ConvertTo-Json -Compress -Depth 8
   Add-Content -Path $ResultsPath -Value $json -Encoding Ascii
 }
@@ -161,14 +162,14 @@ Write-Result "batch.bang.scan" "No '!' in live batch code lines" ($bangHits.Coun
 $badConda = @()
 for ($i=0; $i -lt $Lines.Count; $i++) {
   $ln = $Lines[$i]
-  if ($ln -match '^\s*call\s+(?!:)(?:(?:"?%[^%\s]*conda[^%\s]*%"?)|(?:"[^"]*conda\.bat"|[^\s]*conda\.bat))\s+(create|install)\b') {
+  if ($ln -match '^\s*call\s+(?!:)(?:(?:"?%[^%\s]*conda[^%\s]*%"?)|(?:"[^"]*conda\.bat"|[^\s]*conda\.bat))\s+(create|install|update)\b') {
     $window = ($ln + " " + ($(if ($i+1 -lt $Lines.Count) { $Lines[$i+1] } else { "" })) + " " + ($(if ($i+2 -lt $Lines.Count) { $Lines[$i+2] } else { "" })))
     if ($window -notmatch "--override-channels" -or $window -notmatch "-c\s+conda-forge") {
       $badConda += ("line {0}: {1}" -f ($i+1), $ln.Trim())
     }
   }
 }
-Write-Result "conda.channels" "All conda create/install use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda }
+Write-Result "conda.channels" "All conda create/install/update use --override-channels -c conda-forge" ($badConda.Count -eq 0) @{ misses=$badConda } -Tag @{ req = 'REQ-006.2' }
 $expectedPipreqs = @('pipreqs.pipreqs', '.', '--force', '--mode', 'compat', '--savepath', 'requirements.auto.txt')
 # Prefer the actual Python -m invocation; fall back to logged command text when
 # the run only records the pipreqs CLI (e.g., bootstrap log summaries).
@@ -277,7 +278,8 @@ for ($k = 0; $k -lt $Lines.Count; $k++) {
 }
 $pauseGated = ($pauseHits.Count -ge 1) -and ($ungatedPauses.Count -eq 0)
 Write-Result 'batch.ux.pause.gated' 'REQ-016: all pause statements gated on HP_CI_LANE' $pauseGated @{ pauseCount = $pauseHits.Count; ungated = $ungatedPauses }
-$envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nI"')
+# Item 107: %%~nxI keeps the whole folder name; %%~nI cut it at its last dot (Report.v2.1 became Report_v2).
+$envLine = ($AllText -match 'for %%I in \("%CD%"\) do set "ENVNAME=%%~nxI"')
 Write-Result "env.foldername" "Env name equals folder name" $envLine @{} 
 $instPathOk = ($AllText -match "%PUBLIC%\\Documents\\Miniconda3")
 Write-Result "conda.path" "Miniconda path is %PUBLIC%\Documents\Miniconda3" $instPathOk @{}

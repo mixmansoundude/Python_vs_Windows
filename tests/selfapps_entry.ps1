@@ -1,7 +1,9 @@
 # Windows-only entry-selection probe for consumer apps.
 # Synthesizes tiny app roots and writes self.entry.* NDJSON rows
-# (entry1/entryA/entryB/entryC). Runs unconditionally; HP_CI_SKIP_ENV=1
-# must be set so each scenario uses system Python instead of installing conda.
+# (entry1/entryA to entryE, guard, fallback, fallback.guard, ignored). Runs unconditionally;
+# HP_CI_SKIP_ENV=1 must be set so each scenario uses system Python instead of installing conda.
+# Every row carries the README shall it proves as a literal tag (REQ-002.2, .10 to .13); the tag
+# is passed to Write-EntryRow as a hashtable so the scan of tests/test_req_trace.py reads it.
 $ErrorActionPreference = 'Continue'
 
 $here = $PSScriptRoot
@@ -199,7 +201,10 @@ function Write-EntryRow {
         [string]$Id,
         [string]$Expected,
         [hashtable]$Scenario,
-        [string]$Description
+        [string]$Description,
+        [hashtable]$Tag,
+        [string]$RequireText = '',
+        [string]$ForbidText = ''
     )
 
     $chosen = $Scenario.crumb
@@ -218,11 +223,22 @@ function Write-EntryRow {
         $details.helperCommand = $Scenario.helperCommand
     }
 
-    $pass = ($Scenario.exitCode -eq 0) -and ($chosen -eq $Expected)
+    # RequireText and ForbidText are literal texts of the setup log and the console log: the
+    # chosen file alone cannot tell the sole-guard rule from the alphabetical fallback, which
+    # can name the same file, so the row also reads which of the two the batch file reported.
+    $logs = [string]$Scenario.setupLog + "`n" + [string]$Scenario.bootstrapLog
+    $sawRequired = $true
+    if ($RequireText) { $sawRequired = $logs.Contains($RequireText) }
+    $sawForbidden = $false
+    if ($ForbidText) { $sawForbidden = $logs.Contains($ForbidText) }
+    $details.sawRequired = $sawRequired
+    $details.sawForbidden = $sawForbidden
+
+    $pass = ($Scenario.exitCode -eq 0) -and ($chosen -eq $Expected) -and $sawRequired -and (-not $sawForbidden)
 
     Write-NdjsonRow ([ordered]@{
         id      = $Id
-        req     = 'REQ-002'
+        req     = $Tag.req
         pass    = $pass
         desc    = $Description
         details = $details
@@ -237,7 +253,7 @@ if __name__ == "__main__":
 '@
 })
 $expected1 = 'entry1.py'
-Write-EntryRow -Id 'self.entry.entry1' -Expected $expected1 -Scenario $scenario1 -Description 'Single entry file detected'
+Write-EntryRow -Id 'self.entry.entry1' -Expected $expected1 -Scenario $scenario1 -Description 'Single entry file detected' -Tag @{ req = 'REQ-002.2' }
 Check-PipreqsFailure -LogPath $scenario1.setupPath -LogText $scenario1.setupLog
 Check-HelperInvokeFailure -LogPath $scenario1.bootstrapPath -LogText $scenario1.bootstrapLog
 
@@ -253,7 +269,7 @@ if __name__ == "__main__":
 '@
 })
 $expectedA = 'main.py'
-Write-EntryRow -Id 'self.entry.entryA' -Expected $expectedA -Scenario $scenarioA -Description 'main.py beats app.py'
+Write-EntryRow -Id 'self.entry.entryA' -Expected $expectedA -Scenario $scenarioA -Description 'main.py beats app.py' -Tag @{ req = 'REQ-002.10' }
 Check-PipreqsFailure -LogPath $scenarioA.setupPath -LogText $scenarioA.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioA.bootstrapPath -LogText $scenarioA.bootstrapLog
 
@@ -269,7 +285,7 @@ if __name__ == "__main__":
 '@
 })
 $expectedB = 'app.py'
-Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules'
+Write-EntryRow -Id 'self.entry.entryB' -Expected $expectedB -Scenario $scenarioB -Description 'app.py preferred over generic modules' -Tag @{ req = 'REQ-002.10' }
 Check-PipreqsFailure -LogPath $scenarioB.setupPath -LogText $scenarioB.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioB.bootstrapPath -LogText $scenarioB.bootstrapLog
 
@@ -285,7 +301,7 @@ if __name__ == "__main__":
 '@
 })
 $expectedC = 'cli.py'
-Write-EntryRow -Id 'self.entry.entryC' -Expected $expectedC -Scenario $scenarioC -Description 'cli.py preferred over generic modules (REQ-002)'
+Write-EntryRow -Id 'self.entry.entryC' -Expected $expectedC -Scenario $scenarioC -Description 'cli.py preferred over generic modules (REQ-002)' -Tag @{ req = 'REQ-002.10' }
 Check-PipreqsFailure -LogPath $scenarioC.setupPath -LogText $scenarioC.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioC.bootstrapPath -LogText $scenarioC.bootstrapLog
 
@@ -301,9 +317,107 @@ if __name__ == "__main__":
 '@
 })
 $expectedD = 'run.py'
-Write-EntryRow -Id 'self.entry.entryD' -Expected $expectedD -Scenario $scenarioD -Description 'run.py preferred over cli.py (REQ-002)'
+Write-EntryRow -Id 'self.entry.entryD' -Expected $expectedD -Scenario $scenarioD -Description 'run.py preferred over cli.py (REQ-002)' -Tag @{ req = 'REQ-002.10' }
 Check-PipreqsFailure -LogPath $scenarioD.setupPath -LogText $scenarioD.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioD.bootstrapPath -LogText $scenarioD.bootstrapLog
+
+# Scenario E (REQ-002.10): app.py comes before run.py. Scenarios A and D show main.py before
+# app.py and run.py before cli.py; this is the pair that joins them into one order.
+$scenarioE = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_app_run') -LogName '~entry_app_run_bootstrap.log' -Files ([ordered]@{
+    'run.py' = @'
+if __name__ == "__main__":
+    print("from-run")
+'@
+    'app.py' = @'
+if __name__ == "__main__":
+    print("from-app")
+'@
+})
+$expectedE = 'app.py'
+Write-EntryRow -Id 'self.entry.entryE' -Expected $expectedE -Scenario $scenarioE -Description 'app.py preferred over run.py (REQ-002.10)' -Tag @{ req = 'REQ-002.10' }
+Check-PipreqsFailure -LogPath $scenarioE.setupPath -LogText $scenarioE.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioE.bootstrapPath -LogText $scenarioE.bootstrapLog
+
+# Scenario F (REQ-002.11): none of the four names is present, one file has a substantive guard.
+# The file that sorts first has a guard whose body is only pass, which does not count; if it did,
+# two files would have a guard, no sole guard would exist and the alphabetical rule would take
+# alpha_helper.py. So zeta.py, with no fallback line in the log, is the proof.
+$scenarioF = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_guard') -LogName '~entry_guard_bootstrap.log' -Files ([ordered]@{
+    'alpha_helper.py' = @'
+if __name__ == "__main__":
+    pass
+'@
+    'mid.py' = @'
+print("from-mid")
+'@
+    'zeta.py' = @'
+if __name__ == "__main__":
+    print("from-zeta")
+'@
+})
+$expectedF = 'zeta.py'
+Write-EntryRow -Id 'self.entry.guard' -Expected $expectedF -Scenario $scenarioF -Description 'The one file with a substantive main guard is the entry; a guard of only pass does not count (REQ-002.11)' -Tag @{ req = 'REQ-002.11' } -ForbidText 'No clear entry found'
+Check-PipreqsFailure -LogPath $scenarioF.setupPath -LogText $scenarioF.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioF.bootstrapPath -LogText $scenarioF.bootstrapLog
+
+# Scenario G1 (REQ-002.12): no name, no guard anywhere. The alphabetically first of all files runs
+# and the fallback line names it.
+$scenarioG1 = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_fallback') -LogName '~entry_fallback_bootstrap.log' -Files ([ordered]@{
+    'beta.py' = @'
+print("from-beta")
+'@
+    'alpha.py' = @'
+print("from-alpha")
+'@
+})
+$expectedG1 = 'alpha.py'
+Write-EntryRow -Id 'self.entry.fallback' -Expected $expectedG1 -Scenario $scenarioG1 -Description 'With no clear entry the alphabetically first file runs and the fallback is logged (REQ-002.12)' -Tag @{ req = 'REQ-002.12, REQ-002.18, REQ-002.25' } -RequireText "[BOOT] REQ-002: No clear entry found; selecting 'alpha.py' (alphabetical fallback)." -ForbidText 'Multiple Python files detected'
+Check-PipreqsFailure -LogPath $scenarioG1.setupPath -LogText $scenarioG1.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioG1.bootstrapPath -LogText $scenarioG1.bootstrapLog
+
+# Scenario G2 (REQ-002.12): two files have a substantive guard. The alphabetical rule is applied to
+# those two only: alpha.py sorts first of all three files but has no guard, so beta.py is the entry.
+$scenarioG2 = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_fallback_guard') -LogName '~entry_fallback_guard_bootstrap.log' -Files ([ordered]@{
+    'alpha.py' = @'
+print("from-alpha")
+'@
+    'gamma.py' = @'
+if __name__ == "__main__":
+    print("from-gamma")
+'@
+    'beta.py' = @'
+if __name__ == "__main__":
+    print("from-beta")
+'@
+})
+$expectedG2 = 'beta.py'
+Write-EntryRow -Id 'self.entry.fallback.guard' -Expected $expectedG2 -Scenario $scenarioG2 -Description 'With two guarded files the alphabetically first of those runs, not the first of all files (REQ-002.12)' -Tag @{ req = 'REQ-002.12' } -RequireText "[BOOT] REQ-002: No clear entry found; selecting 'beta.py' (alphabetical fallback)."
+Check-PipreqsFailure -LogPath $scenarioG2.setupPath -LogText $scenarioG2.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioG2.bootstrapPath -LogText $scenarioG2.bootstrapLog
+
+# Scenario H (REQ-002.13): a file that starts with ~ or ._ is never a candidate. Both have a
+# guard and sort before the others, so a candidate among them would be taken as the sole or the
+# alphabetically first guarded file. Without them nothing has a guard and yyy.py is first of all.
+$scenarioH = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_ignored') -LogName '~entry_ignored_bootstrap.log' -Files ([ordered]@{
+    '~aaa.py' = @'
+if __name__ == "__main__":
+    print("from-tilde")
+'@
+    '._bbb.py' = @'
+if __name__ == "__main__":
+    print("from-appledouble")
+'@
+    'yyy.py' = @'
+print("from-yyy")
+'@
+    'zzz.py' = @'
+print("from-zzz")
+'@
+})
+$expectedH = 'yyy.py'
+Write-EntryRow -Id 'self.entry.ignored' -Expected $expectedH -Scenario $scenarioH -Description 'Files that start with a tilde or ._ are not candidates for the entry (REQ-002.13)' -Tag @{ req = 'REQ-002.13' } -RequireText "selecting 'yyy.py' (alphabetical fallback)."
+Check-PipreqsFailure -LogPath $scenarioH.setupPath -LogText $scenarioH.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioH.bootstrapPath -LogText $scenarioH.bootstrapLog
 
 # REQ-011/REQ-010 behavioral tests moved to tests/selfapps_isolation.ps1 (runs unconditionally).
 # This file only covers REQ-002 entry-selection.
@@ -336,7 +450,12 @@ $expectedMap = @(
     @{ Id = 'self.entry.entryA'; Expected = $expectedA },
     @{ Id = 'self.entry.entryB'; Expected = $expectedB },
     @{ Id = 'self.entry.entryC'; Expected = $expectedC },
-    @{ Id = 'self.entry.entryD'; Expected = $expectedD }
+    @{ Id = 'self.entry.entryD'; Expected = $expectedD },
+    @{ Id = 'self.entry.entryE'; Expected = $expectedE },
+    @{ Id = 'self.entry.guard'; Expected = $expectedF },
+    @{ Id = 'self.entry.fallback'; Expected = $expectedG1 },
+    @{ Id = 'self.entry.fallback.guard'; Expected = $expectedG2 },
+    @{ Id = 'self.entry.ignored'; Expected = $expectedH }
 )
 $issues = @()
 foreach ($item in $expectedMap) {

@@ -121,30 +121,86 @@ imports installed**.
 > - Small example programs that exercise REQ-001.1 are in `tests/fixtures/examples`; copy one folder's files next
 >   to `run_setup.bat` to try it. CI runs three of them (`self.examples.*`).
 
-### [REQ-002] Entry selection (current behavior)
-- **0 Python files**: the bootstrapper reports no Python files and skips environment bootstrap. It prints:
-  - `Python file count: 0`
-  - `No Python files detected; skipping environment bootstrap.`
-- **Exactly 1 Python file**: run that file directly.
-- **2 or more Python files**: prefer a clear entry by:
-  0) Manual override (`%1` argument, e.g. drag-and-drop) -- if the file is co-located with the bootstrapper (REQ-011), it is used directly and skips all auto-detection. The argument must name an existing `.py` file, as typed or with `.py` appended (`run_setup.bat main` uses `main.py`). Anything else (a `.csv`, a name that is not a file, a wildcard) stops the run before anything is built or run, with `Usage: run_setup.bat your_script.py [arguments for your program]`; it is never ignored and never taken as the entry. See REQ-026 for the arguments that follow it.
-  1) Common names in order: `main.py` > `app.py` > `run.py` > `cli.py`
-  2) Otherwise, the sole file containing a **substantive** `if __name__ == "__main__":` guard (a guard whose body is only `pass`, comments, a docstring, or `...` does not count, so a real sibling entry wins).
-  - If no single clear entry remains after those checks (multiple files, no clear winner), the bootstrapper falls through to a deterministic resolution:
-    - **Interactive picker (timed)** -- when a human is present (interactive console; not CI/`NOINPUT`/`HP_NONINTERACTIVE`), it prints an alphabetical numbered menu (up to 9 files) and waits ~30s. Typing a valid number selects that file; **timeout (or no console) -> the alphabetical default**. The menu also explains how to avoid the prompt next time (drag-and-drop a file onto the batch, rename to `main.py`/`app.py`/`run.py`/`cli.py`, or add a single `__main__` guard).
-    - **Alphabetical fallback (deterministic)** -- the non-interactive / default path: the alphabetically-first candidate (preferring files that declared a `__main__` guard, otherwise any `.py` file). This is the guaranteed terminal pick, so something always runs and packages instead of the entry resolving to empty. `find_entry` logs `[BOOT] REQ-002: No clear entry found; selecting <file> (alphabetical fallback).` and exits with a distinct ambiguous code that triggers the picker.
+## [REQ-002] Entry Selection
 
-**Entry selection criteria (priority order):**
+**Goal.** A person who starts `run_setup.bat` in a folder with several `.py` files, and has not said which one to
+run, should get the file the author most plausibly means as the program, and some file should always run: the
+choice should never come out empty. A person who names a file should get that file.
 
-| Criterion | Priority | REQ |
-|-----------|----------|-----|
-| Manual override `%1` (co-located) | 0 (highest) | REQ-002, REQ-011 |
-| `main.py` | 1 | REQ-002 |
-| `app.py` | 2 | REQ-002 |
-| `run.py` / `cli.py` | 3 | REQ-002 |
-| Sole file with a substantive `__main__` guard | 4 | REQ-002 |
-| Interactive picker (timed; human present) | 5 | REQ-002 |
-| Alphabetical fallback (deterministic) | 6 (lowest) | REQ-002 |
+- **REQ-002.1** [major] The bootstrapper **shall**, when the folder holds no `.py` file, print
+  `Python file count: 0` and `No Python files detected; skipping environment bootstrap.`
+- **REQ-002.2** [major] The bootstrapper **shall**, when the folder holds exactly one `.py` file that REQ-002.13
+  does not exclude, run that file.
+- **REQ-002.3** [major] The bootstrapper **shall**, when the first argument names a `.py` file in the folder
+  (REQ-002.4 and REQ-002.5 say how the name may be spelled), use that file as the entry and apply none of the
+  automatic rules REQ-002.10 to REQ-002.12.
+- **REQ-002.4** [major] The bootstrapper **shall** accept the name of that file as typed, with its `.py` extension.
+- **REQ-002.5** [major] The bootstrapper **shall**, when the first argument is the name of a `.py` file in the
+  folder without its extension (`run_setup.bat main` for `main.py`), use that file.
+- **REQ-002.6** [major] The bootstrapper **shall**, when the first argument is not the name of an existing `.py`
+  file in the folder, as typed or with `.py` appended, stop before anything is built, installed or run. An existing
+  file of another type, a name that is not a file, a folder, and a name with `*` or `?` all fail this test.
+- **REQ-002.20** [major] The bootstrapper **shall**, on the stop of REQ-002.6, print
+  `Usage: run_setup.bat your_script.py [arguments for your program]`.
+- **REQ-002.7** [major] The bootstrapper **shall**, on the stop of REQ-002.6, write state `error` to
+  `~bootstrap.status.json`.
+- **REQ-002.21** [major] The bootstrapper **shall**, on the stop of REQ-002.6, exit with code 1.
+- **REQ-002.8** [major] The bootstrapper **shall**, on the stop of REQ-002.6, leave an existing EXE as it was.
+- **REQ-002.9** [major] The bootstrapper **shall**, on the stop of REQ-002.6, release the concurrent-instance lock,
+  so that the next run in the folder starts normally.
+- **REQ-002.10** [major] The bootstrapper **shall**, when no file is named and the folder holds more than one `.py`
+  file, use the first of `main.py`, `app.py`, `run.py` and `cli.py`, in that order, that is present.
+- **REQ-002.11** [major] The bootstrapper **shall**, when none of those names is present, use the one `.py` file that
+  has a substantive `if __name__ == "__main__":` guard, when exactly one file has. A guard whose body is only
+  `pass`, comments, a docstring or `...` is not substantive.
+- **REQ-002.12** [major] The bootstrapper **shall**, when REQ-002.10 and REQ-002.11 give no single file, use the
+  alphabetically first of the files that have a substantive guard, or of all `.py` files when none has, and log
+  `[BOOT] REQ-002: No clear entry found; selecting '<file>' (alphabetical fallback).`
+- **REQ-002.13** [major] The bootstrapper **shall not** take a file whose name starts with `~` or `._` as a
+  candidate for the entry.
+- **REQ-002.14** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with at most nine
+  candidates, print a numbered list of the candidates, the file that is used when nothing is typed, and the three
+  ways to avoid the question next time (drop a file onto `run_setup.bat`, rename the main script to one of the
+  names of REQ-002.10, give exactly one script a `__main__` guard).
+- **REQ-002.15** [minor] The bootstrapper **shall**, after the list of REQ-002.14, wait 30 seconds for a number.
+- **REQ-002.22** [minor] The bootstrapper **shall**, when no number is typed within that wait, use the alphabetical
+  default of REQ-002.12.
+- **REQ-002.16** [minor] The bootstrapper **shall**, when the user types the number of a listed file within that
+  wait, use that file.
+- **REQ-002.17** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
+  nine candidates, use the alphabetical default.
+- **REQ-002.23** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
+  nine candidates, print no list.
+- **REQ-002.24** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
+  nine candidates, print the three ways of REQ-002.14.
+- **REQ-002.18** [major] The bootstrapper **shall**, in a non-interactive run that reaches REQ-002.12, ask no entry
+  question.
+- **REQ-002.25** [major] The bootstrapper **shall**, in a non-interactive run that reaches REQ-002.12, use the
+  alphabetical default of REQ-002.12.
+- **REQ-002.19** [minor] The bootstrapper **shall** ask the question of REQ-002.14 at most once in a run.
+- **REQ-002.26** [minor] The bootstrapper **shall** use the file that the question of REQ-002.14 selected, whether
+  the user chose it or the default was taken, in every later step of that run.
+
+> **Notes (non-normative).**
+> - Order of precedence, highest first: a named file (REQ-002.3), `main.py`, `app.py`, `run.py` and `cli.py`, the
+>   sole substantive guard, the picker (an interactive run only), the alphabetical default.
+> - A dropped file is the first argument. The arguments after it belong to the program (REQ-026). The first
+>   argument is checked before the cached-EXE fast path, so a missing entry file never makes the bootstrapper start
+>   a good EXE with the wrong arguments and discard it (backlog Item 67).
+> - REQ-002.7 to REQ-002.9 and REQ-002.21 also hold on the stop of REQ-011.1. A name without `.py` is logged as
+>   `[INFO] REQ-002: first argument had no .py extension; using the .py file of that name.`
+> - The guard is looked for at the top level of the file: a guard inside a function or a class does not count, and
+>   neither does the text `__main__` in a string or a comment. A file that does not parse has no guard.
+> - `find_entry` exits with code 3 when it uses the alphabetical default; the batch file reads that code to decide
+>   whether to offer the list of REQ-002.14.
+> - The 30 seconds of REQ-002.15 are the `HP_PICK_T` setting of `:pick_entry_interactive`; the test setting
+>   `HP_TEST_FORCE_PICKER` shortens it to 2 seconds, so no row waits the full time.
+>   The bootstrapper chooses the entry file twice in one run (before the dependency phase and again before the
+>   build); `:pick_entry_interactive` keeps the answer in `HP_PICKED_ENTRY` so that the second choice does not ask
+>   again (backlog Item 109).
+> - REQ-002.20 to REQ-002.26 were split out of REQ-002.6, REQ-002.7, REQ-002.15, REQ-002.17, REQ-002.18 and
+>   REQ-002.19 so that each id states one obligation; each sits next to the shall it came from, and the older ids
+>   keep their first obligation.
 
 ---
 
@@ -195,14 +251,54 @@ found on every run.
 
 ---
 
-## Python & Environment
+## [REQ-004] Python Version and Environment Name
 
-- [REQ-004] Python version detection precedence:
-  1. `runtime.txt` (`python-3.x.y` or `3.x[.y]`)
-  2. `pyproject.toml` `requires-python`
-  3. Otherwise let the **selected provider pick latest** (no hard-coded fallback); then **write back `runtime.txt`**. (When the conda provider is active, conda resolves the latest available Python from conda-forge; when the embedded-Python provider is active, it resolves to the newest entry in its pinned version table.)
+**Goal.** A program should run under the Python version its author asked for, when the author asked, and under the
+newest Python the selected provider offers when not. The environment of a program folder should have a name that is
+made from the folder's name and is safe for every provider, so that the name can be read, typed and used in a file
+name.
 
-- Environment naming: env name equals the **current folder name**, sanitized (`&` is first special-cased to the bare word `and` for readability, e.g. `Sales & Marketing` -> `Sales_and_Marketing`; then characters outside `[A-Za-z0-9_-]` (e.g. spaces) become `_`; a **leading hyphen** is replaced with `_`; the result is **truncated to 64 characters** whenever it exceeds that length (most commonly caused by the `&`->`and` expansion, which can make the sanitized name longer than the original); and a name that reduces to only separators falls back to `env`; internal hyphens like `my-app` are preserved). When the conda provider is active, this sanitized name is passed to `conda create -n`. The derived name is logged: `[INFO] Environment name: <name>`.
+- **REQ-004.1** [major] The bootstrapper **shall**, when the folder holds a `runtime.txt` that names a Python
+  version (`python-3.x.y` or `3.x[.y]`), set up the environment with the minor version that file names.
+- **REQ-004.2** [major] The bootstrapper **shall**, when the folder has no usable `runtime.txt` and its
+  `pyproject.toml` holds `requires-python`, set up the environment with the newest Python version the selected
+  provider has that the range allows.
+- **REQ-004.3** [major] The bootstrapper **shall**, when both files name a version, use the version of `runtime.txt`.
+- **REQ-004.4** [major] The bootstrapper **shall**, when neither file names a version, let the selected provider
+  choose its newest Python version.
+- **REQ-004.5** [major] The bootstrapper **shall**, after uv or conda has set up the environment of a folder that
+  has no `runtime.txt`, write a `runtime.txt` that names the Python version that was set up as
+  `python-<major>.<minor>.<patch>`, and log `[INFO] runtime.txt written: <version>`.
+- **REQ-004.6** [major] The bootstrapper **shall** leave an existing `runtime.txt` as it is.
+- **REQ-004.7** [major] The bootstrapper **shall** name the environment after the folder, with every character
+  outside `A-Z`, `a-z`, `0-9`, `_` and `-` (spaces and dots included) written as `_`.
+- **REQ-004.8** [minor] The bootstrapper **shall** write each `&` of the folder name as the word `and` before
+  REQ-004.7 is applied (`Sales & Marketing` becomes `Sales_and_Marketing`).
+- **REQ-004.9** [major] The bootstrapper **shall** replace a run of hyphens at the start of the name with one `_`.
+  Hyphens inside the name stay (`my-app`).
+- **REQ-004.10** [major] The bootstrapper **shall** cut a name that is longer than 64 characters to 64 characters
+  and remove any `_` and `-` the cut leaves at its end.
+- **REQ-004.11** [major] The bootstrapper **shall**, when the name holds nothing but `_` and `-` after the rules above,
+  use `env` and log a `[WARN]` that says the name could not be derived.
+- **REQ-004.12** [minor] The bootstrapper **shall** log the name it derived as `[INFO] Environment name: <name>`.
+
+> **Notes (non-normative).**
+> - The version request is read by the embedded `~detect_python.py` (`tools/detect_python.py`): a bare
+>   `python-3.12.4` or `3.12.4` in `runtime.txt` is requested as the minor version `3.12`, because the providers pin by
+>   minor version; the patch number is not forwarded. A `requires-python` range is translated to the syntax of the
+>   provider (`>=3.10,<3.11` becomes `python>=3.10,<3.11` for conda).
+> - With no request, conda takes the newest Python on conda-forge, the embedded provider the newest entry of its
+>   version table (REQ-009), and uv its newest managed CPython.
+> - The embedded, venv and system providers do not write `runtime.txt` (REQ-004.5 names uv and conda). A `runtime.txt`
+>   that an earlier run wrote for another provider is removed again when conda goes first (REQ-009, backlog Item 66).
+> - The name of REQ-004.7 to REQ-004.11 is the name passed to `conda create -n` and the name of
+>   `dist\<name>.exe`. The cut of REQ-004.10 matters most for a folder name heavy in `&`, since the word `and` is
+>   longer than the character it replaces.
+> - Where each shall is shown: the version rows `self.contract.uv.pyver`, `.pyver.range` and `.pyver.exactpin` (uv) and
+>   `self.embed.version.*` (embedded) read the Python that was set up; `pyproject.precedence.writeback` (conda)
+>   reads the version written back; `self.envname.*` reads the logged name.
+
+## [REQ-009] Environment Providers
 
 - **Provider independence:** The bootstrapper cannot depend exclusively on a single provider. It must be able to function with only any one of the REQ-009 providers available (uv alone, conda alone, embedded Python alone, venv alone, or system Python alone). No bootstrap path may hard-require a specific provider to be present.
 - UV is the preferred environment provider when available (cached or downloadable), as it is fast and avoids Miniconda download latency. When UV is unavailable or disabled, the bootstrapper falls back to Miniconda (conda provider); if conda also fails, it downloads a checksum-verified embeddable Python build directly from python.org (no admin rights, no pre-existing Python required); if that fails too, it falls back to a local venv built from whatever Python is already on the machine; and as a last resort runs the entry point under any available system Python. Every provider path preserves the Prime Directive -- at least one .py file runs with its imports satisfied.
@@ -307,21 +403,61 @@ found on every run.
   > - When the system-Python build consent of REQ-014 is asked under `nuitka`, its question names Nuitka, not
   >   PyInstaller, as the tool it would install.
 
-- [REQ-006] Channels policy (applies when **conda is the selected provider**; determinism and legal-friction avoidance):
-  - Before any conda updates or installs, force **community conda-forge only**:
-    ```
-    conda config --env --add channels conda-forge
-    ```
-  - Always install with `--override-channels -c conda-forge`.
-  - These constraints do not apply to uv or venv providers, which use PyPI (pip) with no channel concept.
-- [REQ-010] Session isolation (leak-proof environment):
-  - At script start, `PYTHONPATH` and `PYTHONHOME` are explicitly cleared so the host shell cannot inject external site-packages into the bootstrapped environment.
-  - Portable provider directories (UV `.uv_env\Scripts`, Conda env `\Scripts`) are **prepended** to `PATH` to shadow any global Python installation.
-- [REQ-011] Directory integrity for explicit file arguments:
-  - When a `.py` file is passed as `%1` (drag-and-drop or CLI argument), its parent directory (`%~dp1`) must equal the batch file directory (`%~dp0`). Both expand to a fully-qualified drive+path with trailing backslash; comparison is case-insensitive.
-  - On mismatch: `[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.` -- script aborts (exit 1) and releases the concurrent-instance lock, so the next run in that folder starts normally.
-  - The same pre-flight step then requires the argument to be an existing `.py` file in that folder, as typed or with `.py` appended (REQ-002, CLAUDE.md Item 67). Otherwise it prints `[ERROR] The first argument must be one of your Python files in this folder.` and the usage line, writes status `error` (exit 1), releases the lock, and stops before the cached-EXE fast path. The existing EXE, the environment and the dependency files are not touched.
-  - This prevents accidental cross-project contamination when users drag a file from a different project folder onto `run_setup.bat`.
+## [REQ-006] Channels Policy
+
+**Goal.** When conda is the selected provider, packages should come from the community channel conda-forge only, so
+that a run does not depend on the Anaconda `defaults` channels and their terms of use. The rule does not apply to uv,
+embedded Python or venv, which use PyPI and have no channels.
+
+- **REQ-006.1** [critical] The bootstrapper **shall**, when conda is the selected provider, install every package
+  from conda-forge and from no other channel.
+- **REQ-006.2** [major] The bootstrapper **shall**, when conda is the selected provider, name
+  `--override-channels -c conda-forge` on every conda command that creates an environment or installs packages.
+
+> **Notes (non-normative).**
+> - The bootstrapper also adds conda-forge to the base configuration (`conda config --name base --add channels
+>   conda-forge`) and writes a `.condarc` into the environment folder that lists conda-forge as the only channel with
+>   strict priority. REQ-006.2 is what holds when a `.condarc` of the user would add another channel.
+> - The `conda update` of the base installation names the same two options.
+
+## [REQ-010] Session Isolation
+
+**Goal.** A program should run against the packages of its own environment only, whatever the shell that started
+`run_setup.bat` has set or installed.
+
+- **REQ-010.1** [major] The bootstrapper **shall** run the program without the `PYTHONPATH` of the shell that started
+  `run_setup.bat`.
+- **REQ-010.2** [major] The bootstrapper **shall** run the program without the `PYTHONHOME` of the shell that started
+  `run_setup.bat`.
+- **REQ-010.3** [major] The bootstrapper **shall** run the program with the interpreter of the selected provider,
+  even when another `python` or `py` comes first on the `PATH`.
+
+> **Notes (non-normative).**
+> - Both variables are cleared once, at the start of the script, so every later start of Python sees them empty.
+> - The bootstrapper does not rely on the `PATH` for its own interpreter: it starts the program by the full path of the
+>   interpreter of the provider (`.uv_env`, the conda environment, `~embed_python` or `.venv`). It puts the Miniconda
+>   folders at the front of the `PATH` while conda is the provider; the full path is what shadows a global Python.
+
+## [REQ-011] Directory Integrity For Explicit File Arguments
+
+**Goal.** A file dropped onto `run_setup.bat` from another folder should not be built into the environment of this
+folder, so that projects stay apart.
+
+- **REQ-011.1** [major] The bootstrapper **shall**, when the first argument names a file whose folder is not the
+  folder of `run_setup.bat`, stop before anything is built, installed or run, print
+  `[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder for environment cleanliness.` and exit
+  with code 1.
+- **REQ-011.2** [major] The bootstrapper **shall** treat two folder names that differ only in letter case as the
+  same folder.
+- **REQ-011.3** [major] The bootstrapper **shall**, on that stop, write state `error` to `~bootstrap.status.json`.
+- **REQ-011.4** [major] The bootstrapper **shall**, on that stop, release the concurrent-instance lock, so that the
+  next run in the folder starts normally.
+
+> **Notes (non-normative).**
+> - The check runs after the lock is taken and before the check of REQ-002.6, so a file from another folder gets this
+>   message and not the usage line. Both stops come before the cached-EXE fast path.
+> - The comparison is between the folder part of the argument and the folder of the batch file, both written in full with
+>   a trailing backslash.
 
 ---
 
@@ -1032,12 +1168,13 @@ program that is valid.
 - **REQ-016.6** [major] The bootstrapper **shall** show the command of REQ-016.5 whether or not the EXE could be verified.
 - **REQ-016.7** [major] The bootstrapper **shall**, when the EXE could not be verified, print the briefing with a caveat that says the environment was set up and packaging finished without a fatal error, and **shall not** claim that the installation of the dependencies was verified.
 - **REQ-016.8** [minor] The bootstrapper **shall** keep its terminal window open at the end of a run, whether the run succeeded or failed, until the user presses a key, except in a run that carries the CI marker `HP_CI_LANE`.
+- **REQ-016.9** [major] The bootstrapper **shall not**, when a provider fails and the run continues with a further provider, wait for a key press before the end of the run; the wait of REQ-016.8 belongs to the end of the run.
 
 > **Notes (non-normative).**
 > - Rationale: the audience is a beginner who was handed Python code. A frozen EXE brings two common confusions (a window that flashes shut, output that appears late) and a slow first appearance that looks like a hang. A partial or failed dependency install can still reach the briefing, so the caveat does not vouch for the installation.
 > - Mechanism (`:print_postflight_briefing`, called when `dist\<env>.exe` exists and the cached EXE was not reused; the no-EXE briefing and the cached-EXE note are REQ-027). Section names the tests match: `Your standalone application is ready:`, `SETUP COMPLETE -- WITH A CAVEAT`, `RUNNING YOUR APP`, `STARTUP MAY BE SLOW`, `KEEP these files`, `SAFE TO DELETE`.
 > - Log contract: `[INFO] REQ-016: Post-flight briefing printed.` and, with a caveat, `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
-> - Tests: `self.ux.postflight` (`tests/selfapps_ux_hardening.ps1`, reads the real-environment smoke run) checks the EXE, keep, delete, Command Prompt, buffering and slow-start text (REQ-016.1 to REQ-016.4); `self.postflight.runline.verbatim` (`tests/selfapps_postflight_runline.ps1`) runs the printed command as printed (REQ-016.5). The caveat rows (`tests/selfapps_gui_timeout_hint.ps1`, `tests/selfapps_hidden_import*.ps1`) keep the requirement number: none of them checks the REQ-016.7 sentences or the command of REQ-016.6. REQ-016.8 is read from the code: every CI lane carries the CI marker, so no row reaches a `pause`.
+> - Tests: `self.ux.postflight` (`tests/selfapps_ux_hardening.ps1`, reads the real-environment smoke run) checks the EXE, keep, delete, Command Prompt, buffering and slow-start text (REQ-016.1 to REQ-016.4); `self.postflight.runline.verbatim` (`tests/selfapps_postflight_runline.ps1`) runs the printed command as printed (REQ-016.5). The caveat rows (`tests/selfapps_gui_timeout_hint.ps1`, `tests/selfapps_hidden_import*.ps1`) keep the requirement number: none of them checks the REQ-016.7 sentences or the command of REQ-016.6. REQ-016.8 is read from the code: every CI lane carries the CI marker, so no row reaches a `pause`. REQ-016.9 is `self.conda.installfail.nopause` (`tests/selfapps_conda_install_fail.ps1`, real lane): a run whose Miniconda install is forced to fail, started without the CI marker and with standard input closed, must show no `Press any key` text between the failure message and the start of the next provider; a control run without the failure shows the same window is observable.
 
 ---
 
@@ -1142,7 +1279,7 @@ Operational knobs, not needed for normal double-click use:
 | `HP_SKIP_NIVISA=1` | Skip NI-VISA install even when pyvisa/visa is detected | REQ-008 |
 | `HP_SKIP_PEP723_WRITEBACK=1` | Skip the PEP 723 header write-back (`uv add --script`) after a fresh install or warnfix repair | REQ-005.11 |
 | `HP_VERBOSE_CONSOLE=1` | Opt-in: also echo `[DEBUG]`/`[TRACE]`/`[INSTALL]`-tagged lines to the live console (suppressed by default; always written to `~setup.log` either way) | -- |
-| `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default | REQ-002 |
+| `NOINPUT=1` / `HP_NONINTERACTIVE=1` | Skip the interactive entry picker; take the alphabetical default when no other rule picks a file | REQ-002 |
 | `PVW_PROVIDER=conda` | Super-user: use only the Miniconda provider for this run, no cascade after a failure, no read or write of `~provider.state.json`; any other value stops the run | REQ-009.15 |
 | `PVW_BUILDER=auto\|pyinstaller\|nuitka\|both` | Super-user: choose the build tool for the EXE (default `auto`: PyInstaller first, Nuitka as fallback and as the elective upgrade); an unrecognized value is ignored with one warning | REQ-009.17 |
 
@@ -1302,6 +1439,8 @@ time, and should not let an instance that ended abnormally keep later runs out o
   a success or an error report, remove the lock folder.
 - **REQ-024.9** [major] The bootstrapper **shall**, when it cannot create its own lock folder after removing one
   under REQ-024.6, continue the run without a lock and write a warning to the log.
+- **REQ-024.10** [major] The bootstrapper **shall**, when a provider fails and the run continues with another
+  provider, keep the lock folder in place until the run ends.
 
 > **Notes (non-normative).**
 > - Rationale: two instances in one folder would write the same environment, logs and status file at the same
@@ -1311,7 +1450,10 @@ time, and should not let an instance that ended abnormally keep later runs out o
 > - Mechanism: `:acquire_lock` makes the folder with `mkdir`, which is atomic on NTFS, then writes `owner.txt`
 >   (process id and start time) into it; the message of REQ-024.2 prints that file. The age is the folder's last
 >   write time (`:lock_is_stale`); the process id is not used to test whether the owner is alive, because ids are
->   reused. The lock is released by `:success`, by `:die` and by the early stops that run after it was taken. A run
+>   reused. The lock is released by `:success`, by `:die` and by the early stops that run after it was taken, and
+>   only by those: the failure of one provider (for example a Miniconda install that cannot finish, `:tci_both_failed`)
+>   is logged and the run goes on, so it neither releases the lock nor waits for a key press (REQ-024.10, REQ-016.9;
+>   a call of `:die` from a subroutine whose caller continues is that defect). A run
 >   that is killed (Ctrl+C, a closed window, power loss) never releases it, which is what REQ-024.6 is for.
 > - Limits: the lock is not refreshed while a run goes on, so a run that has lasted more than 2 hours can have its
 >   lock replaced by a new double click. When the replacement folder of REQ-024.6 cannot be created (REQ-024.9),
@@ -1330,7 +1472,11 @@ time, and should not let an instance that ended abnormally keep later runs out o
 >   `self.stub.lock_stale_evict` (REQ-024.6, with the age forced by a test hook rather than waited out),
 >   `self.stub.lock_indeterminate` (REQ-024.7), `self.stub.lock_no_leak` (REQ-024.8, after a full successful run)
 >   and `self.stub.lock_evict_blocked` (REQ-024.9, a stale lock folder holding a file that the test keeps open, so
->   it cannot be removed).
+>   it cannot be removed). REQ-024.10 is `self.conda.installfail.lock`
+>   (`tests/selfapps_conda_install_fail.ps1`, real lane, no CI marker, standard input closed): with the Miniconda
+>   install forced to fail, the lock folder is still there when the venv provider starts, and the log shows the run
+>   reached the failure first; `self.conda.installfail.control` shows the same observation sees the lock folder in a run
+>   without the failure.
 
 ---
 
