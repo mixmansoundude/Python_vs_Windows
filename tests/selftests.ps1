@@ -31,6 +31,7 @@ Write-NdjsonRow ([ordered]@{ id = 'self.harness.started'; pass = $true; desc = '
 
 $record = [ordered]@{
     id = 'self.empty_repo.msg'
+    req = 'REQ-002.1'
     pass = $false
     desc = "Empty repo emits the no-python console lines"
     details = [ordered]@{

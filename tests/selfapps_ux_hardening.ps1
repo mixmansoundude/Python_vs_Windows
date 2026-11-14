@@ -1570,7 +1570,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     $entryOvPass = ($entryOvDragMsg -and $entryOvSelected -and $entryOvRanOverride -and $entryOvNotMain)
     Write-NdjsonRow ([ordered]@{
         id      = 'self.entry.override'
-        req     = 'REQ-002'
+        req     = 'REQ-002.3, REQ-002.4'
         pass    = $entryOvPass
         desc    = 'REQ-002 priority 0: co-located %1 override is chosen and run over main.py'
         details = [ordered]@{

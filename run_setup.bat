@@ -315,6 +315,10 @@ rem program again lives for one bootstrap only. Cleared here, once, so a value i
 rem stand in for the user's answer; :hidden_import_consent keeps it because the loop can be called a second time and a
 rem provider cascade re-enters the build, and neither may ask the same question again.
 set "HP_HIC_ANSWER="
+rem CLAUDE.md Item 109: the file chosen in the entry picker lives for one bootstrap only. Cleared here, once, so a value
+rem inherited from the calling terminal can never stand in for the user's answer; :pick_entry_interactive keeps it because
+rem :determine_entry runs twice and a provider cascade runs it again, and none of them may ask the question twice.
+set "HP_PICKED_ENTRY="
 rem --- Path-length guard: warn if script root path approaches the 260-char cmd.exe limit ---
 for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:HP_SCRIPT_ROOT.Length" 2^>nul`) do set "HP_PATH_LEN=%%L"
 if defined HP_PATH_LEN if %HP_PATH_LEN% GEQ 200 (
@@ -627,7 +631,9 @@ rem --- CI fast path (entry tests only) ---
 call :rotate_log
 rem HP_* variables represent "Helper Payload" assets emitted on demand -- now decoded
 rem earlier, right before :merge_git_config, not here; see that call site's own comment.
-for %%I in ("%CD%") do set "ENVNAME=%%~nI"
+rem derived requirement: CLAUDE.md Item 107 -- %%~nxI keeps the whole folder name. %%~nI drops everything after the last
+rem dot, so a folder Report.v2.1 got the environment Report_v2, while README REQ-004.7 writes every dot as an underscore.
+for %%I in ("%CD%") do set "ENVNAME=%%~nxI"
 rem derived requirement: conda env names reject characters like '~'; self env smoke
 rem scenarios run from tests\~envsmoke so normalize to ASCII word chars/_/-.
 rem CLAUDE.md Item 26: '&' is special-cased to the bare word 'and' BEFORE the blanket
@@ -3561,13 +3567,20 @@ rem REQ-002: timed interactive entry picker for the ambiguous case. The default
 rem (Enter / timeout) is find_entry's alphabetical pick (HP_ENTRY). Skipped when
 rem non-interactive: NOINPUT, HP_NONINTERACTIVE, or CI (HP_CI_LANE) -- unless
 rem HP_TEST_FORCE_PICKER forces the path (it degrades to the default with no console).
+rem derived requirement: CLAUDE.md Item 109 -- :determine_entry runs twice in one bootstrap, once before the dependency
+rem phase and once in :after_env_bootstrap, and the second run asked the question again with nothing typed, so the default
+rem replaced the file the user had chosen. The file chosen is kept in HP_PICKED_ENTRY, cleared once near the top of the file.
+if defined HP_PICKED_ENTRY set "HP_ENTRY=%HP_PICKED_ENTRY%"
+if defined HP_PICKED_ENTRY exit /b 0
 if defined NOINPUT exit /b 0
 if defined HP_NONINTERACTIVE exit /b 0
 if defined HP_CI_LANE if not defined HP_TEST_FORCE_PICKER exit /b 0
 rem choice.exe drives the timed prompt; on a stripped image without it, keep the default.
 where choice >nul 2>&1 || exit /b 0
+rem derived requirement: CLAUDE.md Item 108 -- find_entry.py skips a name that starts with ~ or ._ -- a macOS metadata copy -- so
+rem the list drops both as well, or its number would run a metadata file as the program.
 if exist "~entry.menu" del "~entry.menu" >nul 2>&1
-(for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul ^| findstr /v /b /c:"~" ^| sort') do echo %%F) > "~entry.menu"
+(for /f "delims=" %%F in ('dir /b /a-d *.py 2^>nul ^| findstr /v /b /c:"~" ^| findstr /v /b /l /c:"._" ^| sort') do echo %%F) > "~entry.menu"
 set "HP_PICK_N=0"
 for /f "usebackq delims=" %%F in ("~entry.menu") do set /a HP_PICK_N+=1
 if %HP_PICK_N% LSS 2 ( del "~entry.menu" >nul 2>&1 & exit /b 0 )
@@ -3604,6 +3617,7 @@ if %HP_PICK_SEL% GEQ 1 if %HP_PICK_SEL% LEQ %HP_PICK_N% (
 )
 del "~entry.menu" >nul 2>&1
 call :log "[INFO] REQ-002: Picker entry selected: %HP_ENTRY%"
+set "HP_PICKED_ENTRY=%HP_ENTRY%"
 set "HP_PICK_N="
 set "HP_PICK_I="
 set "HP_PICK_SEL="

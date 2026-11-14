@@ -20,6 +20,13 @@ function Write-NdjsonRow {
 # Non-Windows skip: emit pass=true with skip flag and exit 0
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $platform = [System.Environment]::OSVersion.Platform
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.depcheck.channels'
+        req     = 'REQ-006.1'
+        pass    = $true
+        desc    = 'Every package of the conda environment the bootstrapper made came from conda-forge (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; platform = [string][System.Environment]::OSVersion.Platform; reason = 'non-windows-host' }
+    })
     foreach ($id in @('self.depcheck.install','self.depcheck.skip')) {
         Write-NdjsonRow ([ordered]@{
             id      = $id
@@ -130,5 +137,65 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not $installPass -or -not $depSkipPass) { exit 1 }
+# --- REQ-006.1: every package the bootstrapper put into the conda environment came from conda-forge ---
+# Only the conda provider has channels (the real lane runs uv, which has none), so the row is a skip
+# unless this lane forces conda. `conda list --json` names the channel of every installed package;
+# pip-installed packages say pypi. A package from the Anaconda defaults channels (channel defaults,
+# a pkgs/ channel, a repo.anaconda.com base url) fails the row. Other channel names are not failures
+# here but are listed in the details, and the row needs at least one conda-forge package (python
+# itself), so an empty or unreadable list can never pass.
+$chanPass = $true
+if ($env:HP_FORCE_CONDA_ONLY -ne '1') {
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.depcheck.channels'
+        req     = 'REQ-006.1'
+        pass    = $true
+        desc    = 'Every package of the conda environment the bootstrapper made came from conda-forge (skipped: conda is not the provider in this lane)'
+        details = [ordered]@{ skip = $true; reason = 'conda-not-the-provider' }
+    })
+} else {
+    $condaBat = Join-Path $env:PUBLIC 'Documents\Miniconda3\condabin\conda.bat'
+    $envName = ''
+    foreach ($ln in $run1Lines) { if ($ln -match 'Environment name:\s+(\S+)') { $envName = $Matches[1]; break } }
+    $listExit = -1
+    $parseError = ''
+    $pkgCount = 0
+    $forgeCount = 0
+    $offenders = @()
+    $otherChannels = @()
+    if ((Test-Path -LiteralPath $condaBat) -and $envName) {
+        $listText = (cmd /c "`"$condaBat`" list -n $envName --json 2>nul" | Out-String)
+        $listExit = $LASTEXITCODE
+        $jsonStart = $listText.IndexOf('[')
+        $jsonEnd = $listText.LastIndexOf(']')
+        $pkgs = @()
+        if ($jsonStart -ge 0 -and $jsonEnd -gt $jsonStart) {
+            try { $pkgs = @($listText.Substring($jsonStart, $jsonEnd - $jsonStart + 1) | ConvertFrom-Json) } catch { $parseError = $_.Exception.Message }
+        } else {
+            $parseError = 'no json array in the output of conda list'
+        }
+        foreach ($p in $pkgs) {
+            $pkgCount++
+            $ch = [string]$p.channel
+            $bu = [string]$p.base_url
+            if ($ch -eq 'conda-forge') { $forgeCount++ }
+            elseif ($ch -ne 'pypi') { $otherChannels += ('{0}={1}' -f $p.name, $ch) }
+            if (($ch -match '^(defaults|pkgs/)') -or ($bu -match 'repo\.anaconda\.com|/pkgs/(main|r|msys2)')) { $offenders += ('{0}={1}' -f $p.name, $ch) }
+        }
+    }
+    $chanPass = ($listExit -eq 0) -and (-not $parseError) -and ($forgeCount -gt 0) -and ($offenders.Count -eq 0)
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.depcheck.channels'
+        req     = 'REQ-006.1'
+        pass    = $chanPass
+        desc    = 'Every package of the conda environment the bootstrapper made came from conda-forge'
+        details = [ordered]@{
+            envName = $envName; condaFound = (Test-Path -LiteralPath $condaBat); listExit = $listExit; parseError = $parseError
+            packages = $pkgCount; condaForge = $forgeCount
+            offenders = @($offenders | Select-Object -First 10); otherChannels = @($otherChannels | Select-Object -First 10)
+        }
+    })
+}
+
+if (-not $installPass -or -not $depSkipPass -or -not $chanPass) { exit 1 }
 exit 0

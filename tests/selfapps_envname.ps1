@@ -1,7 +1,7 @@
 # ASCII only
 # selfapps_envname.ps1 - REQ-004 env-name sanitization edge cases.
 #
-# Three scenarios (ENVNAME_SCENARIO env var; unset defaults to 'hyphen'):
+# Six scenarios (ENVNAME_SCENARIO env var; unset defaults to 'hyphen'):
 #
 # - 'hyphen' (default): a folder name starting with a hyphen must not flow through to
 #   `conda create -n -foo`, where argparse would treat "-foo" as a command-line flag
@@ -18,8 +18,16 @@
 #   ampersand-heavy folder name can make the sanitized result LONGER than the original, so the
 #   sanitizer truncates to 64 chars post-substitution. This scenario is the only one that
 #   actually exercises that truncation branch.
+# - 'longtrim' (REQ-004.10, second clause): the cut at 64 characters can land on a '_' or '-'.
+#   A folder of ten "AAA & " groups sanitizes to "AAA_and_" repeated, and the 64th character is
+#   a '_', which the rule removes again, so the name ends at 63 characters on "and".
+# - 'dotted' (REQ-004.7, backlog Item 107): a folder name with dots ("Report.v2.1") keeps its
+#   whole name, every dot written as '_' ("Report_v2_1"). Before Item 107 the batch file took the
+#   folder name with the last extension cut off, so the name came out as "Report_v2".
+# - 'allsep' (REQ-004.11): a folder name that holds nothing but separators ("--- ---") gets the
+#   name "env" and a [WARN] that says the name could not be derived.
 #
-# All three scenarios run with HP_CI_SKIP_ENV=1 (no conda needed) and assert the derived env
+# All six scenarios run with HP_CI_SKIP_ENV=1 (no conda needed) and assert the derived env
 # name logged by run_setup.bat matches expectations.
 #
 # Lane: any (cheap, skip-env).
@@ -47,8 +55,8 @@ $scenario = if ($env:ENVNAME_SCENARIO) { $env:ENVNAME_SCENARIO } else { 'hyphen'
 # not quietly substitute a different test and still report pass. Still emit a (failed) NDJSON
 # row first -- a bare Write-Error/exit with no row at all is invisible to the NDJSON-based
 # verdict/registry checks, which would then have no record of why this scenario never ran.
-if ($scenario -notin @('hyphen', 'ampersand', 'longname')) {
-    Write-Error "selfapps_envname.ps1: unknown ENVNAME_SCENARIO value '$scenario' (expected 'hyphen', 'ampersand', or 'longname')."
+if ($scenario -notin @('hyphen', 'ampersand', 'longname', 'longtrim', 'dotted', 'allsep')) {
+    Write-Error "selfapps_envname.ps1: unknown ENVNAME_SCENARIO value '$scenario' (expected 'hyphen', 'ampersand', 'longname', 'longtrim', 'dotted', or 'allsep')."
     Write-NdjsonRow ([ordered]@{
         id='self.envname.hyphen'; req='REQ-004'; pass=$false
         desc="unknown ENVNAME_SCENARIO value '$scenario'"
@@ -75,6 +83,25 @@ switch ($scenario) {
         $expectedName = ('A_and_' * 11).Substring(0, 64).TrimEnd('_', '-')
         $desc         = 'Over-64-char, ampersand-heavy folder name exercises the post-substitution truncation bound (CLAUDE.md Item 26)'
     }
+    'longtrim' {
+        # derived requirement (REQ-004.10): "AAA & " is 6 characters raw and "AAA_and_" is 8
+        # sanitized, so the 64th sanitized character is the '_' that closes the eighth group.
+        # Ten groups (the last one without its trailing space) give 79 sanitized characters, the
+        # cut keeps 64 and the rule must remove the trailing '_': 63 characters, ending on "and".
+        $folderName   = ('AAA & ' * 10).TrimEnd()
+        $expectedName = (('AAA_and_' * 8).Substring(0, 64)).TrimEnd('_', '-')
+        $desc         = 'A cut at 64 characters that leaves a trailing separator has that separator removed (REQ-004.10)'
+    }
+    'dotted' {
+        $folderName   = 'Report.v2.1'
+        $expectedName = 'Report_v2_1'
+        $desc         = 'Dots in the folder name are written as underscores and no part of the name is cut off (REQ-004.7, backlog Item 107)'
+    }
+    'allsep' {
+        $folderName   = '--- ---'
+        $expectedName = 'env'
+        $desc         = 'A folder name of separators only gets the name env and a warning that the name could not be derived (REQ-004.11)'
+    }
     'hyphen' {
         $folderName   = '-hyphen-start'
         $expectedName = '_hyphen-start'
@@ -89,19 +116,37 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     # not only assigned to $rowId above, or the row is (falsely) flagged as doc-only/unemitted.
     if ($scenario -eq 'ampersand') {
         Write-NdjsonRow ([ordered]@{
-            id='self.envname.ampersand'; req='REQ-004'; pass=$true
+            id='self.envname.ampersand'; req='REQ-004.8, REQ-004.12'; pass=$true
             desc="$desc (skipped on non-Windows)"
             details=[ordered]@{ skip=$true; reason='non-windows-host' }
         })
     } elseif ($scenario -eq 'longname') {
         Write-NdjsonRow ([ordered]@{
-            id='self.envname.longname'; req='REQ-004'; pass=$true
+            id='self.envname.longname'; req='REQ-004.10, REQ-004.12'; pass=$true
+            desc="$desc (skipped on non-Windows)"
+            details=[ordered]@{ skip=$true; reason='non-windows-host' }
+        })
+    } elseif ($scenario -eq 'longtrim') {
+        Write-NdjsonRow ([ordered]@{
+            id='self.envname.longtrim'; req='REQ-004.10, REQ-004.12'; pass=$true
+            desc="$desc (skipped on non-Windows)"
+            details=[ordered]@{ skip=$true; reason='non-windows-host' }
+        })
+    } elseif ($scenario -eq 'dotted') {
+        Write-NdjsonRow ([ordered]@{
+            id='self.envname.dotted'; req='REQ-004.7, REQ-004.12'; pass=$true
+            desc="$desc (skipped on non-Windows)"
+            details=[ordered]@{ skip=$true; reason='non-windows-host' }
+        })
+    } elseif ($scenario -eq 'allsep') {
+        Write-NdjsonRow ([ordered]@{
+            id='self.envname.allsep'; req='REQ-004.11, REQ-004.12'; pass=$true
             desc="$desc (skipped on non-Windows)"
             details=[ordered]@{ skip=$true; reason='non-windows-host' }
         })
     } else {
         Write-NdjsonRow ([ordered]@{
-            id='self.envname.hyphen'; req='REQ-004'; pass=$true
+            id='self.envname.hyphen'; req='REQ-004.9, REQ-004.12'; pass=$true
             desc="$desc (skipped on non-Windows)"
             details=[ordered]@{ skip=$true; reason='non-windows-host' }
         })
@@ -152,8 +197,15 @@ $sawExpected = $combined -cmatch $expectedPattern
 $sawBadPattern = switch ($scenario) {
     'ampersand' { $combined -match '(?m)^[^\r\n]*Environment name:[^\r\n]*&' }
     'longname'  { $combined -match '(?m)^[^\r\n]*Environment name:[^\r\n]*&' }
+    'longtrim'  { $combined -match '(?m)^[^\r\n]*Environment name:[^\r\n]*&' }
+    # Item 107: the name the batch file gave before the fix, the folder name cut at its last dot.
+    'dotted'    { $combined -cmatch '(?m)^[^\r\n]*Environment name:[ \t]+Report_v2[ \t]*(?:\r?$)' }
     default     { $combined -match 'Environment name:\s+-' }
 }
+# The first name the run logged, whatever it is, so a red row says what the batch file made of the folder name.
+$observedName = $null
+$observedMatch = [regex]::Match($combined, '(?m)^[^\r\n]*Environment name:[ \t]+([^\r\n \t]+)[ \t]*(?:\r?$)')
+if ($observedMatch.Success) { $observedName = $observedMatch.Groups[1].Value }
 
 # derived requirement (CodeRabbit finding on PR #417): the 'longname' scenario's whole point is
 # proving the 64-char truncation branch actually ran, not just that SOME value was logged --
@@ -162,7 +214,7 @@ $sawBadPattern = switch ($scenario) {
 # in a way that still produced a 64-char string equal to $expectedName by chance).
 $loggedNameLen = $null
 $sawTruncationBound = $true
-if ($scenario -eq 'longname') {
+if ($scenario -in @('longname', 'longtrim')) {
     $captureMatch = [regex]::Match($combined, '(?m)^[^\r\n]*Environment name:[ \t]+([^\r\n \t]+)[ \t]*(?:\r?$)')
     if ($captureMatch.Success) { $loggedNameLen = $captureMatch.Groups[1].Value.Length }
     $sawTruncationBound = ($null -ne $loggedNameLen) -and ($loggedNameLen -le 64)
@@ -179,13 +231,21 @@ if ($scenario -eq 'longname') {
 # and `dist\%ENVNAME%.exe`) will use. Proving the truncated value with a real conda env create is
 # already covered by every other test in this file/suite that exercises a full provider build.
 
-$pass = ($exit -eq 0) -and $sawExpected -and (-not $sawBadPattern) -and $sawTruncationBound
+# REQ-004.11: the name "env" must come with the warning that says the folder name gave nothing to
+# build a name from. The name alone is not proof: a folder that is really called "env" gets the same
+# name with no warning, so the row reads the warning too.
+$sawDeriveWarn = $true
+if ($scenario -eq 'allsep') {
+    $sawDeriveWarn = $combined -match '\[WARN\][^\r\n]*Env name could not be derived'
+}
+
+$pass = ($exit -eq 0) -and $sawExpected -and (-not $sawBadPattern) -and $sawTruncationBound -and $sawDeriveWarn
 
 # derived requirement: same literal-id-per-call-site reasoning as the non-Windows skip block above.
 if ($scenario -eq 'ampersand') {
     Write-NdjsonRow ([ordered]@{
         id='self.envname.ampersand'
-        req='REQ-004'
+        req='REQ-004.8, REQ-004.12'
         pass=$pass
         desc=$desc
         details=[ordered]@{
@@ -199,7 +259,7 @@ if ($scenario -eq 'ampersand') {
 } elseif ($scenario -eq 'longname') {
     Write-NdjsonRow ([ordered]@{
         id='self.envname.longname'
-        req='REQ-004'
+        req='REQ-004.10, REQ-004.12'
         pass=$pass
         desc=$desc
         details=[ordered]@{
@@ -212,10 +272,58 @@ if ($scenario -eq 'ampersand') {
             log                 = $bootstrapLog
         }
     })
+} elseif ($scenario -eq 'longtrim') {
+    Write-NdjsonRow ([ordered]@{
+        id='self.envname.longtrim'
+        req='REQ-004.10, REQ-004.12'
+        pass=$pass
+        desc=$desc
+        details=[ordered]@{
+            exitCode           = $exit
+            expectedName       = $expectedName
+            sawExpected        = $sawExpected
+            sawBadPattern      = $sawBadPattern
+            loggedNameLen      = $loggedNameLen
+            sawTruncationBound = $sawTruncationBound
+            log                = $bootstrapLog
+        }
+    })
+} elseif ($scenario -eq 'dotted') {
+    Write-NdjsonRow ([ordered]@{
+        id='self.envname.dotted'
+        req='REQ-004.7, REQ-004.12'
+        pass=$pass
+        desc=$desc
+        details=[ordered]@{
+            exitCode      = $exit
+            folderName    = $folderName
+            expectedName  = $expectedName
+            observedName  = $observedName
+            sawExpected   = $sawExpected
+            sawBadPattern = $sawBadPattern
+            log           = $bootstrapLog
+        }
+    })
+} elseif ($scenario -eq 'allsep') {
+    Write-NdjsonRow ([ordered]@{
+        id='self.envname.allsep'
+        req='REQ-004.11, REQ-004.12'
+        pass=$pass
+        desc=$desc
+        details=[ordered]@{
+            exitCode       = $exit
+            folderName     = $folderName
+            expectedName   = $expectedName
+            sawExpected    = $sawExpected
+            sawBadPattern  = $sawBadPattern
+            sawDeriveWarn  = $sawDeriveWarn
+            log            = $bootstrapLog
+        }
+    })
 } else {
     Write-NdjsonRow ([ordered]@{
         id='self.envname.hyphen'
-        req='REQ-004'
+        req='REQ-004.9, REQ-004.12'
         pass=$pass
         desc=$desc
         details=[ordered]@{
