@@ -1738,14 +1738,25 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
 - **Left for later** (CLAUDE.md, "Item 97 follow-ups"): reading `~run.err.txt` first, "do not ask again for N runs", the
   known-idempotent skip on the other four offers, and the maintainer's up-front consent question.
 - **The cap on each of the loop's runs (Item 106, README REQ-018.7)**: the loop's start line (`:hidden_import_loop`, the inline
-  PowerShell after `set "HP_HIR_EXE=..."`) waits 30 seconds, stops the process it started and only then reads what it printed; a run
-  that did not finish is exit -1 and ends the loop with the TIMED OUT status line. A PyInstaller onefile EXE is two processes (the
-  bootloader that was started and the program it starts) and `Kill()` ends only the first, so a program that keeps printing is the
-  case that could hold the pipes the loop reads until it ends by itself. `tests/selfapps_repair_cap.ps1` (`self.repair.cap`,
+  PowerShell after `set "HP_HIR_EXE=..."`) starts both pipe reads, waits 30 seconds, ends the process TREE with `taskkill /F /T /PID`
+  (started from `%SystemRoot%\System32`, waited for at most 5 seconds; `$p.Kill()` stays as the fallback when taskkill cannot be
+  started), reads each pipe for at most 5 seconds and prints the exit code, or -1 for a run that did not finish, as its LAST line
+  (`for /f` keeps the last line it reads). A run that did not finish ends the loop with the TIMED OUT status line. A PyInstaller
+  onefile EXE is two processes, the bootloader that is started and the program it starts. The first version of the line called
+  `Kill()` and then read both pipes without a limit: `Kill()` ends the bootloader only, the program kept the output pipes open, and
+  the read waited until the program ended by itself (`self.repair.cap` on its first run, run `43532440009`: all 100 printed lines,
+  100.1 s on the program's own clock, the loop's -1 and the TIMED OUT line only after that). The PowerShell text lives inside one
+  `-Command "..."` of a `for /f` line, so it holds no `"`, `%`, `^`, `!`, `<`, `>` or `&` (a unit test names the character). The same
+  Kill-only shape is still in `:offer_optimized_build`'s verification line and in `tools/exe_smokerun.ps1` (see "Active Backlog"
+  Item 110 in CLAUDE.md); no row asks either one to end a program that keeps printing, and the smoke runner's orphan may be wanted
+  for the window question of the last-chance offer, so neither was changed here. `tests/selfapps_repair_cap.ps1` (`self.repair.cap`,
   contract-uv lane, gating) measures the program's own clock through a ledger at an absolute path (its first line to its last must span
   10 to 45 seconds and it must never reach `done`) and lists the processes still running from `dist` after the bootstrap returns;
-  `tests/test_repair_cap.py` pins the line's order inside its block (`WaitForExit(30000)`, the stop, the read, the default -1 before the
-  test for 0). Any change to that one line is a change to the shall's only code.
+  `tests/test_repair_cap.py` pins the line's pieces and their order (reads started before the wait, `WaitForExit(30000)`, the
+  taskkill call with `/F /T /PID` and its 5 second wait, the fallback `Kill()`, both reads bounded, the result last, the default -1 before
+  the test for 0), and on a POSIX host with pwsh runs the line's own text against stand-in programs with the waits shortened (a program
+  whose child holds the pipes, one that only starts, one that exits by itself, a stand-in taskkill that records its arguments, and the
+  first version of the line as the control that must show the defect). Any change to that one line is a change to the shall's only code.
 
 ### Cascade signal reliability
 

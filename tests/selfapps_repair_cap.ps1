@@ -3,12 +3,14 @@
 # ends after 30 seconds, whatever output the run produces.
 #
 # Why a row. The loop (:hidden_import_recover) starts the EXE after every repair rebuild with an inline PowerShell that waits 30
-# seconds, kills the process it started and reads what it printed. The README says the run ends after 30 seconds "whatever
+# seconds, stops the process it started and reads what it printed. The README says the run ends after 30 seconds "whatever
 # output the run produces", which is different from the main verification run (REQ-018.6), where any output keeps the program
-# alive. No row ever ran a program that keeps printing through the loop, so the one inline line that carries the shall (a
-# WaitForExit(30000), a Kill() and two ReadToEndAsync tasks that are read after the kill) had no test. A PyInstaller onefile EXE
-# is two processes, the bootloader that was started and the program it starts; killing only the first can leave the second
-# alive, holding the pipes the loop reads until it ends by itself.
+# alive. No row ever ran a program that keeps printing through the loop, so the one inline line that carries the shall had no
+# test. A PyInstaller onefile EXE is two processes, the bootloader that was started and the program it starts. The first run of
+# this row (run 43532440009) showed what that does to the first version of the line, which called Kill() on the process it
+# started and then read both pipes without a limit: Kill() ended the bootloader only, the program kept the pipes open, the
+# read waited for it, and the program's own clock ran its whole 100 seconds. The line now ends the process tree with taskkill
+# /F /T, keeps Kill() as the fallback and reads each pipe for at most 5 seconds; this row is what holds it to that on Windows.
 #
 # The scenario. One folder, one program, one default bootstrap with HP_TEST_REPAIR_ANSWER=Y (the loop asks before it starts the
 # program again, Item 97, and a non-interactive run declines):

@@ -2,17 +2,22 @@
 
 REQ-018.7 says the loop's own run of the EXE is ended after 30 seconds whatever output it produces (the main verification run,
 REQ-018.6, is the one that lets any output keep the program alive). The shall is carried by one inline PowerShell line of
-:hidden_import_loop in run_setup.bat: a WaitForExit(30000), a Kill() and two reads of what the process printed that come after the
-kill. No row ever ran a program that keeps printing through it, and a PyInstaller onefile EXE is two processes, so a stop of the
-first can leave the second holding the pipes the loop reads. tests/selfapps_repair_cap.ps1 (one row, self.repair.cap; contract-uv
-lane, gating) bootstraps a program that needs a package it loads by a runtime string and then prints a line a second for 100
-seconds, and judges the result by the program's own ledger and by the process list.
+:hidden_import_loop in run_setup.bat. No row had ever run a program that keeps printing through it. tests/selfapps_repair_cap.ps1
+(one row, self.repair.cap; contract-uv lane, gating) bootstraps a program that needs a package it loads by a runtime string and
+then prints a line a second for 100 seconds, judges the result by the program's own ledger and by the process list, and found the
+defect on its first run (run 43532440009): the line waited 30 seconds, called Process.Kill() and then read what the process had
+printed. A PyInstaller onefile EXE is two processes, the bootloader that is started and the program it starts; Kill() ended only
+the first, the second kept the output pipes open, and the read waited until the program ended by itself (the program's own clock
+ran about 100 seconds, not 30). The line now ends the whole process tree with taskkill /F /T, keeps Kill() as the fallback when
+taskkill cannot be started, and reads each pipe for at most 5 seconds.
 
 What really happens is shown on Windows by that script. These rules read run_setup.bat, the script, batch-check.yml,
-docs/agent-ndjson.md and tests/test_req_shall_trace.py as text, and run the script's own judging functions through a real pwsh on
-synthetic runs (a run that passes, and one run for each way to be wrong), so a reworded log line, a loop that no longer stops the
-process, a scenario that stops being the one the shall names, a judge that stops judging or a step that stops gating fails here
-with a sentence, before a 40 minute Windows run is needed. Synthetic cases prove each rule can fail.
+docs/agent-ndjson.md and tests/test_req_shall_trace.py as text, run the script's own judging functions through a real pwsh on
+synthetic runs (a run that passes, and one run for each way to be wrong), and run the loop's own PowerShell text through pwsh
+against stand-in programs on a POSIX host (a program whose child holds the pipe, one that only starts, one that exits by itself),
+so a reworded log line, a loop that no longer stops the process tree or waits for a pipe without a limit, a scenario that stops
+being the one the shall names, a judge that stops judging or a step that stops gating fails here with a sentence, before a
+40 minute Windows run is needed. Synthetic cases prove each rule can fail.
 """
 import json
 import os
@@ -20,6 +25,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -91,6 +97,38 @@ def cut_block(text, start, end):
     return lines[s:e]
 
 
+def inline_command(line):
+    """The PowerShell text of a `for /f ... in (`powershell ... -Command "<text>"`) ...` line: what stands between -Command " and
+    the quote that closes it in front of the backtick. cmd reads the line first, so this text may hold none of the characters cmd
+    reads inside a for /f command (the rule below names them). Raises ValueError when the line has another shape."""
+    marker = '-Command "'
+    start = line.index(marker) + len(marker)
+    end = line.rindex('"`)')
+    if end < start:
+        raise ValueError("the closing quote comes before the opening one")
+    return line[start:end]
+
+
+# The characters that must not appear in that text: a quote ends it, % and ! are expanded, ^ is cmd's escape, < > & are operators.
+CMD_CHARACTERS = '"%^!<>&'
+
+# The real pieces of the start line, each one unique in run_setup.bat; the cases that mutate the file use them as anchors.
+TREE_KILL = "[System.Diagnostics.Process]::Start($k).WaitForExit(5000)"
+TREE_ARGS = "$k.Arguments='/F /T /PID '+$p.Id"
+TREE_EXE = "$k.FileName=$env:SystemRoot+'\\System32\\taskkill.exe'"
+FALLBACK_KILL = "try{$p.Kill()}catch{}"
+BOUNDED_SO = "if($so.Wait(5000)){$t+=$so.Result}"
+BOUNDED_SE = "if($se.Wait(5000)){$t+=$se.Result}"
+START_READS = "$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();"
+RESULT_TAIL = "if($done){$p.ExitCode}else{-1}"
+# the optimized build's verification line starts the same way, so the cases that move the reads anchor on what is only in this line
+WAIT_AND_STOP = "$done=$p.WaitForExit(30000);if(-not $done){try{$k=New-Object"
+# the end of the stop: the taskkill attempt, then the fallback kill, then the start of the read of the output
+FALLBACK_AT_THE_END_OF_THE_STOP = "}catch{};try{$p.Kill()}catch{}};$t=''"
+WITHOUT_THE_FALLBACK = "}catch{}};$t=''"
+HIR_START = "$si.FileName=$env:HP_HIR_EXE;$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);"
+
+
 # --- the batch file: what the script assumes about the loop ------------------------------------------------------------------
 
 def log_message(batch, needle):
@@ -100,8 +138,51 @@ def log_message(batch, needle):
     return hits[0][len('call :log "'):-1]
 
 
+def run_line_problems(run):
+    """The pins on the loop's one start line: it starts both reads before the wait, waits 30 seconds, ends the whole process tree
+    (taskkill /F /T on the id of the process it started, at most 5 seconds) with Kill() as the fallback, reads each pipe for at
+    most 5 seconds, writes dist\\~exe_out.txt and prints the exit code, or -1 for a run that did not finish, as its last line."""
+    try:
+        text = inline_command(run)
+    except ValueError:
+        return ["the loop's start line is no longer a for /f line that hands PowerShell one -Command \"...\" text"]
+    found = []
+    wait = text.find("WaitForExit(30000)")
+    if wait < 0:
+        return ["the PowerShell text of the loop's start line no longer waits for the process with WaitForExit(30000)"]
+    starts = text.find(START_READS)
+    if starts < 0 or starts > wait:
+        found.append("the two asynchronous reads of the program's output no longer start before the 30 second wait, so a program "
+                     "that fills a pipe could block on it")
+    tree = text.find(TREE_KILL)
+    arguments = text.find(TREE_ARGS)
+    if tree < wait or arguments < wait or arguments > tree or TREE_EXE not in text:
+        found.append("the line that waits 30 seconds no longer ends the whole process tree after the wait: taskkill.exe from System32 "
+                     "with /F /T /PID and the id of the process it started, waited for at most 5 seconds")
+    fallback = text.find(FALLBACK_KILL)
+    if fallback < 0 or fallback < tree:
+        found.append("the process the line started is no longer killed as the fallback after the taskkill attempt ($p.Kill())")
+    so_read = text.find(BOUNDED_SO)
+    se_read = text.find(BOUNDED_SE)
+    if so_read < 0 or se_read < 0 or text.count(".Result") != 2:
+        found.append("the output is no longer read through two reads that each wait at most 5 seconds (if($so.Wait(5000)){...}), so a "
+                     "program that keeps a pipe open could hold the line until it ends by itself")
+    elif min(so_read, se_read) < max(fallback, tree):
+        found.append("the output is read before the process is stopped, so a program that keeps printing is waited for and not stopped")
+    if not text.endswith(RESULT_TAIL):
+        found.append("a run that did not finish within 30 seconds no longer gives the exit code -1, as the last thing the line prints")
+    if text.count("ReadToEndAsync") != 2:
+        found.append("the output of the run is no longer read through the two asynchronous reads that the cap relies on")
+    if "$env:HP_HIR_EXE" not in text or "'dist\\~exe_out.txt'" not in text:
+        found.append("the run no longer starts the EXE named by HP_HIR_EXE and no longer writes dist\\~exe_out.txt")
+    held = "".join(sorted(set(CMD_CHARACTERS) & set(text)))
+    if held:
+        found.append("the PowerShell text of the start line holds the cmd character(s) %s, which cmd reads before PowerShell does" % held)
+    return found
+
+
 def loop_problems(batch):
-    """README REQ-018.7 in the batch file: the loop's run of the EXE waits 30 seconds, stops the process it started and only
+    """README REQ-018.7 in the batch file: the loop's run of the EXE waits 30 seconds, ends the process tree it started and only
     then reads what it printed, a run that did not finish counts as -1, and the two log lines the script reads are live."""
     found = []
     stripped = [ln.strip() for ln in lines_of(batch)]
@@ -119,20 +200,7 @@ def loop_problems(batch):
     if len(runs) != 1:
         found.append("the loop must hold exactly one live line with WaitForExit(30000), the 30 second cap; found %d" % len(runs))
     else:
-        run = runs[0]
-        wait = run.index("WaitForExit(30000)")
-        kill = run.find("$p.Kill()")
-        read = run.find("$so.Result")
-        if kill < 0 or kill < wait:
-            found.append("the line that waits 30 seconds no longer stops the process it started after the wait ($p.Kill())")
-        if read < 0 or read < kill:
-            found.append("the output is read before the process is stopped, so a program that keeps printing is waited for and not stopped")
-        if "if($done){$p.ExitCode}else{-1}" not in run:
-            found.append("a run that did not finish within 30 seconds no longer gives the exit code -1")
-        if "ReadToEndAsync" not in run:
-            found.append("the output of the run is no longer read through the two asynchronous reads that the cap relies on")
-        if "$env:HP_HIR_EXE" not in run or "'dist\\~exe_out.txt'" not in run:
-            found.append("the run no longer starts the EXE named by HP_HIR_EXE and no longer writes dist\\~exe_out.txt")
+        found.extend(run_line_problems(runs[0]))
     # the same default line exists in :run_exe_smokerun, so the pin is on this block only: after the run, before the 0 test
     default_line = 'if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"'
     zero_line = 'if "%HP_EXE_EXIT%"=="0" goto :hidden_import_recover_done'
@@ -584,7 +652,7 @@ class RealFiles(unittest.TestCase):
         self.script = SCRIPT.read_text(encoding="utf-8")
         self.workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_the_loop_waits_30_seconds_stops_the_process_and_only_then_reads_its_output(self):
+    def test_the_loop_waits_30_seconds_ends_the_process_tree_and_only_then_reads_its_output(self):
         self.assertEqual(loop_problems(self.batch), [])
 
     def test_the_script_has_its_row_judges_variables_program_and_exit_codes(self):
@@ -609,6 +677,158 @@ class RealFiles(unittest.TestCase):
             self.assertRegex(norm(self.script), r"(?m)^function %s \{" % re.escape(name))
 
 
+# --- the line's own text, run through pwsh against stand-in programs --------------------------------------------------------------
+# On Windows only the row of tests/selfapps_repair_cap.ps1 runs the real EXE. A POSIX host can still run the PowerShell text of the
+# line itself, with its waits shortened, against shell scripts that behave like the two processes of a PyInstaller onefile EXE: the
+# bootloader that the line starts and the program it starts, whose output pipes stay open for as long as the program runs.
+
+POSIX_PWSH = os.name == "posix" and PWSH is not None
+
+# The first version of the line (6eeaf87): Kill() of the process it started and then both results read without a limit. It is the
+# control of the stand-in: the defect has to show here, or the stand-in proves nothing about the fix.
+FIRST_VERSION_OF_THE_LINE = (
+    "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_HIR_EXE;$si.UseShellExecute=$false;"
+    "$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);"
+    "$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);"
+    "if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)|Set-Content -Path 'dist\\~exe_out.txt' -Encoding ASCII;"
+    "if($done){$p.ExitCode}else{-1}"
+)
+
+# The bootloader (this script) starts the program as its own child and waits for it; the child prints a line every 0.2 seconds for
+# TICKS lines and so keeps both pipes open. The pid files let the test find both processes afterwards.
+BOOTLOADER = """#!/bin/sh
+echo started
+echo $$ > "$PARENT_PID_FILE"
+sh -c 'i=0; while [ $i -lt %d ]; do echo tick; sleep 0.2; i=$((i+1)); done' &
+echo $! > "$CHILD_PID_FILE"
+wait
+"""
+ONLY_A_PARENT = "#!/bin/sh\necho started\nexec sleep 30\n"
+EXITS_BY_ITSELF = "#!/bin/sh\necho hello\nexit 3\n"
+
+# What taskkill /F /T /PID <id> does on Windows, and what it was asked: ends the process and every process below it.
+STAND_IN_TASKKILL = r"""#!/usr/bin/env python3
+import os, signal, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ["TASKKILL_LOG"], "a") as log:
+    log.write(" ".join(args) + "\n")
+pid = int(args[args.index("/PID") + 1])
+below = {}
+for row in subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True).stdout.split("\n"):
+    parts = row.split()
+    if len(parts) == 2:
+        below.setdefault(int(parts[1]), []).append(int(parts[0]))
+def tree(p):
+    for child in below.get(p, []):
+        yield from tree(child)
+    yield p
+for victim in list(tree(pid)):
+    try:
+        os.kill(victim, signal.SIGKILL)
+    except OSError:
+        pass
+"""
+
+
+def process_running(pid):
+    """True while the process exists and is not a zombie that nobody has collected yet."""
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(out) and not out.startswith("Z")
+
+
+def read_pid(path):
+    try:
+        return int(Path(path).read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def run_loop_text(text, program, tmp, stand_in=False, wait_ms=500):
+    """Run the PowerShell text of the loop's start line under pwsh with each wait shortened to wait_ms (the real ones are 30000 and
+    5000), the program set to `program` (a shell script) and the output file moved into tmp. With stand_in the host gets a taskkill
+    where $env:SystemRoot\\System32\\taskkill.exe is looked for, and without it that file does not exist, so starting taskkill fails
+    as it would on a host without one. Returns a dict: lines (what the line printed), seconds, output (the file, or None), parent and
+    child (the pids the program wrote), child_running (at the moment the line returned), taskkill (its arguments, or None)."""
+    tmp = Path(tmp)
+    exe = tmp / "program.sh"
+    exe.write_text(program)
+    exe.chmod(0o755)
+    out = tmp / "exe_out.txt"
+    env = dict(os.environ)
+    env.pop("SystemRoot", None)
+    env.update(HP_HIR_EXE=str(exe), PARENT_PID_FILE=str(tmp / "parent.pid"), CHILD_PID_FILE=str(tmp / "child.pid"),
+               TASKKILL_LOG=str(tmp / "taskkill.log"))
+    if stand_in:
+        root = tmp / "root"  # the file name holds the backslashes, as the line spells the path
+        tool = Path(str(root) + "\\System32\\taskkill.exe")
+        tool.write_text(STAND_IN_TASKKILL)
+        tool.chmod(0o755)
+        env["SystemRoot"] = str(root)
+    shortened = (text.replace("WaitForExit(30000)", "WaitForExit(%d)" % wait_ms).replace("Wait(5000)", "Wait(%d)" % wait_ms)
+                 .replace("WaitForExit(5000)", "WaitForExit(%d)" % wait_ms).replace("'dist\\~exe_out.txt'", "'%s'" % out))
+    started = time.monotonic()
+    done = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-Command", shortened], env=env, capture_output=True, text=True,
+                          timeout=HARD_TIMEOUT)
+    seconds = time.monotonic() - started
+    child = read_pid(tmp / "child.pid")
+    running = child is not None and process_running(child)
+    if running:
+        os.kill(child, 9)  # a stand-in must not outlive the test
+    log = tmp / "taskkill.log"
+    return {"lines": done.stdout.strip().splitlines(), "stderr": done.stderr.strip(), "seconds": seconds,
+            "output": out.read_text() if out.exists() else None, "parent": read_pid(tmp / "parent.pid"), "child": child,
+            "child_running": running, "taskkill": log.read_text().strip() if log.exists() else None}
+
+
+@unittest.skipUnless(POSIX_PWSH, "needs pwsh on a POSIX host: the stand-in programs are shell scripts")
+class TheLineRunThroughPwsh(unittest.TestCase):
+    """The real PowerShell text of the loop's start line, run against stand-in programs with its waits shortened."""
+
+    def setUp(self):
+        batch = BATCH.read_text(encoding="utf-8", errors="replace")
+        runs = [ln.strip() for ln in live_bat(lines_of(batch)) if "WaitForExit(30000)" in ln and "$env:HP_HIR_EXE" in ln]
+        self.assertEqual(len(runs), 1)
+        self.text = inline_command(runs[0])
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.tmp = scratch.name
+
+    def test_a_program_that_ends_by_itself_gives_its_exit_code_and_its_output(self):
+        got = run_loop_text(self.text, EXITS_BY_ITSELF, self.tmp)
+        self.assertEqual(got["lines"], ["3"], got)
+        self.assertEqual(got["output"].split(), ["hello"], got)
+
+    def test_a_program_that_only_starts_is_ended_at_the_cap_and_gives_minus_one(self):
+        got = run_loop_text(self.text, ONLY_A_PARENT, self.tmp)
+        self.assertEqual(got["lines"], ["-1"], got)
+        self.assertEqual(got["output"].split(), ["started"], got)
+        self.assertLess(got["seconds"], 15, got)  # the program would have slept for 30 seconds
+
+    def test_the_whole_process_tree_is_ended_with_taskkill_f_t_on_the_id_of_the_process_it_started(self):
+        got = run_loop_text(self.text, BOOTLOADER % 50, self.tmp, stand_in=True)
+        self.assertEqual(got["lines"], ["-1"], got)
+        self.assertIsNotNone(got["parent"], got)
+        self.assertEqual(got["taskkill"], "/F /T /PID %d" % got["parent"], got)
+        self.assertFalse(got["child_running"], "the program the bootloader started was still running when the line returned: %r" % (got,))
+        self.assertIn("tick", got["output"], got)  # what the program printed before the stop is kept
+
+    def test_a_program_that_keeps_the_pipes_open_does_not_hold_the_line_when_taskkill_cannot_be_started(self):
+        # no taskkill on this host: Kill() ends the process the line started, the program below it lives on with both pipes,
+        # and the reads give up at their limit instead of waiting for it (it runs for about ten seconds here)
+        got = run_loop_text(self.text, BOOTLOADER % 50, self.tmp)
+        self.assertEqual(got["lines"], ["-1"], got)
+        self.assertIsNone(got["taskkill"], got)
+        self.assertTrue(got["child_running"], "the line did not return before the program below the process it started ended: %r" % (got,))
+
+    def test_the_stand_in_reproduces_the_defect_of_the_first_version_of_the_line(self):
+        # the same program, the first version of the line: the read after Kill() waits for the program to end by itself, so every
+        # line it printed is in the output although the cap was half a second, and nothing is left running afterwards
+        got = run_loop_text(FIRST_VERSION_OF_THE_LINE, BOOTLOADER % 30, self.tmp)
+        self.assertEqual(got["lines"], ["-1"], got)
+        self.assertFalse(got["child_running"], got)
+        self.assertGreaterEqual(got["output"].count("tick"), 25, got)
+
+
 def mutate(text, old, new):
     # exactly once: with two matches the case would edit the first one, which may be another block of the file, and the pin under
     # test would never see the change
@@ -630,21 +850,62 @@ class BatchRulesCanFail(unittest.TestCase):
         self.assertIsNone(cut_block("a\n:one\nb\n", ":one", ":two"))
 
     def test_a_cap_that_is_not_30_seconds_is_caught(self):
-        bad = mutate(self.batch, "$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)",
-                     "$done=$p.WaitForExit(300000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)")
+        bad = mutate(self.batch, WAIT_AND_STOP, WAIT_AND_STOP.replace("30000", "300000"))
         self.assertTrue(any("WaitForExit(30000)" in f for f in loop_problems(bad)), loop_problems(bad))
 
-    def test_a_run_that_is_not_stopped_after_the_wait_is_caught(self):
-        bad = mutate(self.batch, "$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)",
-                     "$done=$p.WaitForExit(30000);($so.Result+$se.Result)")
-        self.assertTrue(any("no longer stops the process" in f for f in loop_problems(bad)), loop_problems(bad))
+    def test_a_stop_that_ends_only_the_process_and_not_its_tree_is_caught(self):
+        # without /T taskkill ends the bootloader only, which is the defect of the first version of the line
+        bad = mutate(self.batch, TREE_ARGS, "$k.Arguments='/F /PID '+$p.Id")
+        self.assertTrue(any("whole process tree" in f for f in loop_problems(bad)), loop_problems(bad))
+
+    def test_a_taskkill_that_is_never_started_is_caught(self):
+        bad = mutate(self.batch, TREE_KILL, "[void]$k")
+        self.assertTrue(any("whole process tree" in f for f in loop_problems(bad)), loop_problems(bad))
+
+    def test_a_taskkill_that_is_not_the_one_in_system32_is_caught(self):
+        bad = mutate(self.batch, TREE_EXE, "$k.FileName='taskkill.exe'")
+        self.assertTrue(any("whole process tree" in f for f in loop_problems(bad)), loop_problems(bad))
+
+    def test_a_stop_that_is_removed_altogether_is_caught(self):
+        bad = mutate(self.batch, TREE_KILL, "[void]$k")
+        bad = mutate(bad, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
+        found = loop_problems(bad)
+        self.assertTrue(any("whole process tree" in f for f in found) and any("fallback" in f for f in found), found)
+
+    def test_a_fallback_kill_that_is_removed_or_runs_first_is_caught(self):
+        gone = mutate(self.batch, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
+        self.assertTrue(any("fallback" in f for f in loop_problems(gone)), loop_problems(gone))
+        first = mutate(self.batch, WAIT_AND_STOP, WAIT_AND_STOP.replace("try{$k=", "try{$p.Kill()}catch{};try{$k="))
+        first = mutate(first, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
+        self.assertTrue(any("fallback" in f for f in loop_problems(first)), loop_problems(first))
+
+    def test_a_read_that_waits_without_a_limit_is_caught(self):
+        for bounded, unbounded in ((BOUNDED_SO, "$t+=$so.Result"), (BOUNDED_SE, "$t+=$se.Result")):
+            bad = mutate(self.batch, bounded, unbounded)
+            self.assertTrue(any("at most 5 seconds" in f for f in loop_problems(bad)), loop_problems(bad))
+        # the original first version of the line: both results read together, with no limit
+        old = mutate(self.batch, "$t='';try{" + BOUNDED_SO + ";" + BOUNDED_SE + "}catch{};$t|Set-Content", "($so.Result+$se.Result)|Set-Content")
+        self.assertTrue(any("at most 5 seconds" in f for f in loop_problems(old)), loop_problems(old))
 
     def test_a_read_that_comes_before_the_stop_is_caught(self):
-        bad = mutate(self.batch, "$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)|Set-Content",
-                     "$done=$p.WaitForExit(30000);($so.Result+$se.Result)|Set-Content")
-        bad = mutate(bad, "-Encoding ASCII;if($done){$p.ExitCode}else{-1}\"`) do set \"HP_EXE_EXIT=%%X\"",
-                     "-Encoding ASCII;if(-not $done){try{$p.Kill()}catch{}};if($done){$p.ExitCode}else{-1}\"`) do set \"HP_EXE_EXIT=%%X\"")
+        reads = "$t='';try{" + BOUNDED_SO + ";" + BOUNDED_SE + "}catch{};"
+        bad = mutate(self.batch, "};" + reads + "$t|Set-Content", "};$t|Set-Content")
+        bad = mutate(bad, WAIT_AND_STOP, reads + WAIT_AND_STOP)
         self.assertTrue(any("before the process is stopped" in f for f in loop_problems(bad)), loop_problems(bad))
+
+    def test_reads_that_start_after_the_wait_are_caught(self):
+        bad = mutate(self.batch, HIR_START + START_READS + "$done=$p.WaitForExit(30000);", HIR_START + "$done=$p.WaitForExit(30000);" + START_READS)
+        self.assertTrue(any("before the 30 second wait" in f for f in loop_problems(bad)), loop_problems(bad))
+
+    def test_a_character_cmd_reads_in_the_powershell_text_is_caught(self):
+        for ch in CMD_CHARACTERS:
+            bad = mutate(self.batch, "$t='';try{", "$t='" + ch + "';try{")
+            self.assertTrue(any("cmd character" in f and ch in f for f in loop_problems(bad)), (ch, loop_problems(bad)))
+
+    def test_a_start_line_with_another_shape_is_reported_and_not_raised(self):
+        bad = mutate(self.batch, '-Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_HIR_EXE;',
+                     '-Command $si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_HIR_EXE;')
+        self.assertTrue(any("no longer a for /f line" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_a_run_that_does_not_report_minus_one_when_it_did_not_finish_is_caught(self):
         bad = mutate(self.batch, "-Encoding ASCII;if($done){$p.ExitCode}else{-1}\"`) do set \"HP_EXE_EXIT=%%X\"",

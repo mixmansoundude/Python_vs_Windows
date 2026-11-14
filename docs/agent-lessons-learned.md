@@ -1290,6 +1290,19 @@ eventually succeeded, just 40-60s late against a 500ms test deadline) traced to 
 (the blocking `taskkill.exe` invocation and the trailing `$p.WaitForExit()`); both were bounded to 5000ms each.
 `tests/selfapps_layered_e2e.ps1`'s bounded launch of the built EXE follows the same pattern.
 
+**The repair loop's own start line had both faults until Item 106** (`self.repair.cap`, run `43532440009`): `$p.Kill()` after
+`WaitForExit(30000)` and then an unbounded `ReadToEndAsync().Result`, so a program that keeps printing was waited for until it ended by
+itself (100 seconds on the program's own clock against a 30 second cap, and the TIMED OUT status only after that). A PyInstaller onefile
+EXE is two processes, the bootloader you start and the program it starts, and `Kill()` ends the first only; the second keeps the output
+pipes open, so killing the process the read is waiting behind frees nothing. The line now runs `taskkill /F /T /PID <id>` (waited for at
+most 5 seconds, `Kill()` as the fallback when taskkill cannot be started) and reads each pipe with `Task.Wait(5000)`. It is one
+`-Command "..."` of a `for /f` line, so its text holds none of `"`, `%`, `^`, `!`, `<`, `>`, `&`, and the exit code, or -1 for a run that did
+not finish, stays the last line it prints (`for /f` keeps the last line). A test of a line like this needs a stand-in whose CHILD holds the
+pipes, and the first version of the line kept as the control that must show the defect, or a green result proves nothing
+(`tests/test_repair_cap.py`, `TheLineRunThroughPwsh`: the stand-in `taskkill` is a file whose name holds the backslashes the line spells,
+found through `$env:SystemRoot`, which records its arguments). The same Kill-only shape is left in `:offer_optimized_build` and
+`tools/exe_smokerun.ps1` (CLAUDE.md Item 110).
+
 **Why the fail-fast probe default is 10000ms, not 5000ms**: a PyInstaller *onefile* EXE must first
 extract its bundled runtime and boot an embedded interpreter before ANY user code (or its failure)
 can run -- commonly 1-3+ seconds even on an idle machine. A 5000ms window produced a genuine CI

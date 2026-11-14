@@ -4387,11 +4387,22 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   reach `done`, the setup log must show the repair rebuild and then the TIMED OUT status line, and when the bootstrap returns no process may
   still run from `dist` (read through CIM before a leftover is stopped). A bootstrap that never reached the loop cannot pass. Row
   `self.repair.cap`.
+- **What the first run found (a product defect, fixed in the same PR).** `self.repair.cap` was red on its first run, for the right
+  reason and on no other lane (run `43532440009`, contract-uv: `spanSeconds` 100.1, `ticks` 100, `done` true, `orphansAfterBootstrap` 0,
+  the repair line at 0:22:43 and the TIMED OUT status line at 0:24:32): the loop's run was reported as timed out, but only after the program
+  had printed all 100 lines and ended by itself. The inline line called `Process.Kill()` after `WaitForExit(30000)` and then read both pipes.
+  A PyInstaller onefile EXE is two processes; `Kill()` ended the bootloader, the program below it kept the pipes open and
+  `ReadToEndAsync().Result` waited until it ended. The fix, pushed under the early-push rule (the row was red for the right reason and every
+  other lane of that run was green): `taskkill /F /T /PID` on the id of the started process (waited for at most 5 seconds), `$p.Kill()` as the
+  fallback when taskkill cannot be started, each read bounded by `Task.Wait(5000)`, the exit code or -1 still the last line printed.
+  `tests/test_repair_cap.py` gained the pins and `TheLineRunThroughPwsh` (stand-in programs under pwsh on a POSIX host, the first version of
+  the line as the control that shows the defect). Left alone and filed as Item 110: the same Kill-only shape in `:offer_optimized_build`'s
+  verification line and in `tools/exe_smokerun.ps1`.
 - **How it is kept honest.** `tests/test_dep_merge_edges.py` and `tests/test_repair_cap.py` pin each script (literal row ids and tags, the
   environment of every run, closed standard input, the process-tree kill and the time limits, its own exit codes), the texts the rows look
   for (each is written by a live line of `run_setup.bat` or by the real `tools/dep_merge.py` run on the scenario inputs), the repair loop's
-  one start line (`WaitForExit(30000)`, `Kill()` after the wait and before the output is read, the default -1 before the test for 0, all
-  inside its own block), the workflow steps and the registry, and run every judging function through real `pwsh` in strict mode on synthetic
+  one start line (the reads started before `WaitForExit(30000)`, the process-tree kill with its fallback, both reads bounded, the result
+  printed last, the default -1 before the test for 0, all inside its own block), the workflow steps and the registry, and run every judging function through real `pwsh` in strict mode on synthetic
   runs, with a mutation case for each rule. The five `gap:` entries are gone from `UNTRACED_SHALLS`.
 - **For the README owner.** REQ-005.1.12 says "a PEP 723 header that it did not write", but after one successful write-back the whole
   header, the user's lines included, has a record, so the product treats a header it has once added to as its own. The scenario tests the
