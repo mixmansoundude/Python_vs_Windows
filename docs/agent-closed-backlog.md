@@ -4365,6 +4365,23 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   not covered. The four new row ids belong in `tests/expected_rows/contract-uv.txt` once they have appeared in green runs (lane 1 owns
   those lists).
 
+### Pages publish deploy-retry budget (closed 2026-11-14, PR #528, no item number; found in run `42384855330`, the Pages publish of a green `main` run)
+
+- **The problem.** `publish_diag` deployed the Pages artifact up to three times with a `sleep 1200` between attempts and no `timeout`
+  on the `actions/deploy-pages` steps, so each hung attempt ran to the action's 10 minute default (606 s and 604 s in that run). The
+  20 minute wait started about 22 minutes in and the job's `timeout-minutes: 40` cancelled it in the middle; attempt 3 never ran. The
+  worst case was about 54 minutes against 40. The step that gave up is `continue-on-error`, so the job read as a cancelled publish with a
+  long wait step and nothing else.
+- **What shipped.** Attempt timeouts of 300000, 300000 and 600000 ms, set in each step so the action's default is never a term; waits of
+  `sleep 30` and `sleep 600`; about 36 minutes in the worst case against the unchanged 40. `tests/test_pages_deploy_budget.py` adds the
+  budget up from the workflow text (about 5 minutes of setup + every deploy `timeout` + every `sleep`) and fails with the total; the old
+  shape of that run (no timeouts, `sleep 1200`) is one of its refused fixtures.
+- **Evidence.** The normal path in practice: the Pages publish of `main` run `43559506767` (head `7bed154`, the merge of #528) deployed on
+  attempt 1 in 8 seconds and skipped both waits and the other two attempts; every lane and the aggregate were green. The retry path
+  itself (attempts that hang to their limit) is shown only by the unit test, since a real hang cannot be made on demand.
+- **Rule kept.** A job that retries holds the arithmetic at or below `timeout-minutes`; see `docs/agent-lessons-learned.md`
+  ("A job's `timeout-minutes` is a sum") and `docs/agent-interconnect.md` (`publish_diag` "Prep site directories").
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

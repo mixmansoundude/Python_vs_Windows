@@ -766,6 +766,37 @@ second, independent `:try_conda_install` call site (`:cascade_acquire_conda`, th
 own on-demand Miniconda acquisition) does NOT re-enter this chain at all -- its own fall-through
 proceeds fairly directly to a conda-create attempt that already `goto`s correctly.
 
+### Batch 4 (Item 46): six failed optional writes are warnings, and each one has a place where the run reads what it skipped
+
+**Touch the six emit/copy sites below, the hook, or `tests/selfapps_die_writefail.ps1`, must understand the others.** A helper file
+or a copy that the run can do without used to end in `call :die`, which is the END-of-run routine (state `error`, status file, lock
+released, key press), in the middle of a run that was going on. Each site now logs one `[WARN]` (the dependency-list copy keeps
+`[ERROR]` and state `error`, because requirements.txt is then stale on purpose) and goes on; what the run reads afterwards is
+named, so a later edit cannot make the skipped file look present:
+- `~detect_python.py`: `:detect_python_unwritten` leaves `PYSPEC` empty (conda picks the version, as for a folder with no request).
+- `~print_pyver.py`: `goto :print_pyver_done`, so `runtime.txt` is not written for this run (the uv and env-state paths already skipped
+  this helper's failed emit silently).
+- `~condarc` staging and the copy into the environment: `goto :condarc_done`; every conda command names `--override-channels -c
+  conda-forge` itself, so only the file that keeps a later hand-typed command on conda-forge is missing.
+- `~prep_requirements.py`: `HP_PREP_UNAVAILABLE`, set at the emit and read at two places in the install block. The helper writes
+  `~reqs_conda.txt` and `~reqs_pip.txt`, so with it missing the heuristic rules are skipped, the conda bulk step has no list and is
+  skipped (`if not defined HP_DEP_SKIP if not defined HP_PREP_UNAVAILABLE`), and the pip step installs everything from
+  requirements.txt. Clear the flag at every new `call :emit_from_base64 "~prep_requirements.py"`.
+- `~detect_visa.py`: `:visa_detector_unwritten` sets `NEED_VISA=0`, logs `[VISA] skipped (detector_unavailable)` and goes to
+  `visa_done`. It never logs that no import was found, because nobody looked.
+- `:dm_copy_one` (the `:dm_fallback` copy of the highest ranked list): `HP_BOOTSTRAP_STATE=error` plus one `[ERROR]`. It cannot use
+  `HP_DM_INSTALL_FAILED` (reset about 360 lines later, after `:dep_merge_inputs` ran); `:dep_merge_snapshot` skips the record
+  because the state is `error`, so the next run merges again.
+- **The test hook** `HP_TEST_FORCE_CONDARC_WRITE_FAIL` points the `.condarc` copy at a folder that does not exist. It exists because
+  `HP_TEST_FORCE_EMIT_FAIL` only reaches `:emit_from_base64`, not the copy; absence changes nothing (README REQ-019).
+- **Rows** (`tests/selfapps_die_writefail.ps1`, real lane `SOFTFAIL_SCENARIO=uv`, conda-full `=conda`, gating): `self.softfail.control.uv`
+  / `.control.conda` (a run with nothing forced: the lock exists at the build line, no key press, state ok), then `.prep`, `.visa`,
+  `.depstage` (uv lane) and `.pyspec`, `.pyver`, `.condarc.stage`, `.condarc.write` (conda lane), each comparing with its control: the
+  lock folder is still held at the "Building standalone executable" line, the key-press count did not grow, the state is the control's
+  (`error` only for `.depstage`), one line of the new wording and none of the old `[ERROR]`. `tests/test_die_writefail.py` pins the six
+  shapes in the batch and a mutation case puts each old `:die` back. The old `condarc` scenario of `selfapps_die_emit_fallthrough.ps1`
+  now expects the `[WARN]` and the provider line.
+
 ### A future `:die`-halts-the-process change must respect one specific existing test contract
 
 Two INDEPENDENT "exit code" signals exist: the real OS-level process exit code (currently always 0

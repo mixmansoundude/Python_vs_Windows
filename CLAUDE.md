@@ -740,9 +740,11 @@ but several represent real gaps worth closing before calling the path fully rele
   main flow with the next provider, the cascade with the uv build), so `:tci_both_failed`'s two
   `call :die` became `call :log` with the same text and the end-of-run routine (state `error`, lock
   released, key press) no longer runs in the middle of a run; rows `self.conda.installfail.*`.
-  **Still open**: the rest of Batch 4 (6 sites, individually traced and reclassified as falling through into benign,
-  silently-degraded continuations rather than a redundant-`:die` cascade -- not fixed); and
-  candidate (c), converting `:die` to a genuine halt, deferred per the maintainer decision above. A
+  **Batch 4's other six sites are done (PR #531, 2026-11-14)**: they were reclassified as benign in the first pass
+  because the continuation is harmless, but the `:die` itself released the lock, forced state `error` and waited for a
+  key press in the middle of the run. Each now logs one `[WARN]` (the dependency list copy an `[ERROR]` with state
+  `error` kept) and goes on; rows `self.softfail.*` (`tests/selfapps_die_writefail.ps1`). **Still open**: candidate (c),
+  converting `:die` to a genuine halt, deferred per the maintainer decision above. A
   known, unfixed, near-zero-exposure quirk surfaced along the way: `:after_env_skip` writes
   `state=ok` unconditionally regardless of an earlier `call :die` in the same run
   (`HP_CI_SKIP_ENV` is test-infrastructure-only). Full detail:

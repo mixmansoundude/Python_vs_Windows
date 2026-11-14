@@ -104,6 +104,83 @@ def hook_problems(batch):
     return problems
 
 
+OLD_DIE_TEXTS = (
+    "Could not write ~detect_python.py",
+    "Could not write ~print_pyver.py",
+    "Could not stage ~condarc",
+    "Could not write %ENV_PATH%",
+    "Could not write ~prep_requirements.py",
+    "Could not write ~detect_visa.py",
+    "Could not stage the dependency list",
+)
+
+
+def labelled(batch, label):
+    """The live lines of the block that starts at :label and runs to the next label; None when the label is absent or repeated."""
+    found = re.findall(r"(?ms)^:%s\n(.*?)(?=^:[A-Za-z_]|\Z)" % re.escape(label), batch)
+    if len(found) != 1:
+        return None
+    return "\n".join(live_lines(found[0]))
+
+
+def batch_problems(batch):
+    """The six places that used to call :die for a file the run could not write (CLAUDE.md Item 46 Batch 4): each now logs one
+    warning, or for the dependency list copy one error, and goes on."""
+    problems = []
+    live = "\n".join(live_lines(batch))
+    for text in OLD_DIE_TEXTS:
+        if re.search(r"call :die [^\n]*" + re.escape(text), live):
+            problems.append("a live call :die still names %r; :die is the end-of-run routine and a failed optional write must not end the run" % text)
+
+    def need(cond, why):
+        if not cond:
+            problems.append(why)
+
+    # ~detect_python.py: the failed emit leaves PYSPEC empty and the normal path jumps over the warning block.
+    need(re.search(r'(?m)^call :emit_from_base64 "~detect_python\.py" HP_DETECT_PY\nif errorlevel 1 goto :detect_python_unwritten$', live) is not None,
+         "the ~detect_python.py emit must be followed by `if errorlevel 1 goto :detect_python_unwritten`")
+    block = labelled(batch, "detect_python_unwritten")
+    need(block is not None and 'set "PYSPEC="' in block and '[WARN] Could not write ~detect_python.py' in block and "call :die" not in block,
+         ":detect_python_unwritten must empty PYSPEC, warn and not call :die")
+    need("goto :detect_python_done\n:detect_python_unwritten" in live,
+         "the run that wrote ~detect_python.py must jump over the :detect_python_unwritten block")
+    # ~print_pyver.py: warn and jump to :print_pyver_done.
+    need(re.search(r'(?m)^if errorlevel 1 \(\n  call :log "\[WARN\] Could not write ~print_pyver\.py[^\n]*"\n  goto :print_pyver_done\n\)$', live) is not None,
+         "the ~print_pyver.py emit must warn and `goto :print_pyver_done`")
+    need(live.count("\n:print_pyver_done\n") == 1, ":print_pyver_done must exist once")
+    # ~condarc: warn and jump to :condarc_done, which is the line before the provider line; the copy warns without echoing the path.
+    need(re.search(r'(?m)^if errorlevel 1 \(\n  call :log "\[WARN\] Could not stage ~condarc[^\n]*"\n  goto :condarc_done\n\)$', live) is not None,
+         "the ~condarc staging failure must warn and `goto :condarc_done`")
+    need(re.search(r'(?m)^:condarc_done\ncall :log "\[BOOT\] REQ-009: Selected Python provider: Conda \(Portable\)\."$', live) is not None,
+         ":condarc_done must sit directly before the provider line, which is still written")
+    need(re.search(r'(?m)^if errorlevel 1 call :log "\[WARN\] Could not write \.condarc into the new environment[^%\n]*"$', live) is not None,
+         "the .condarc copy failure must be a [WARN] log line that does not expand a variable")
+    # ~prep_requirements.py: a flag, reset before the emit, read by the helper call and by the conda list step.
+    need(re.search(r'(?m)^set "HP_PREP_UNAVAILABLE="\ncall :emit_from_base64 "~prep_requirements\.py" HP_PREP_REQUIREMENTS\n'
+                   r'if errorlevel 1 set "HP_PREP_UNAVAILABLE=1"\nif defined HP_PREP_UNAVAILABLE call :log "\[WARN\] Could not write ~prep_requirements\.py', live) is not None,
+         "HP_PREP_UNAVAILABLE must be reset, set on a failed emit and warned about, in that order, around the ~prep_requirements.py emit")
+    need(re.search(r'(?m)^  if defined HP_PREP_UNAVAILABLE \(\n    call :log "\[TRACE\] heuristic augmentation: skipped[^\n]*"\n  \) else if "%HP_ENV_MODE%"=="conda" \(', live) is not None,
+         "the helper call must be skipped when HP_PREP_UNAVAILABLE is set")
+    need('  if not defined HP_PREP_UNAVAILABLE call :log "[TRACE] heuristic augmentation: complete"' in live,
+         "the complete line must not be logged for a skipped helper")
+    need("    if not defined HP_DEP_SKIP if not defined HP_PREP_UNAVAILABLE (\n      call :log \"[INSTALL] conda bulk from ~reqs_conda.txt\"" in live,
+         "the conda list step must be skipped without ~reqs_conda.txt")
+    # ~detect_visa.py: a skipped check is logged as skipped, never as nothing found.
+    need(re.search(r'(?m)^call :emit_from_base64 "~detect_visa\.py" HP_DETECT_VISA\nif errorlevel 1 goto :visa_detector_unwritten$', live) is not None,
+         "the ~detect_visa.py emit must be followed by `if errorlevel 1 goto :visa_detector_unwritten`")
+    block = labelled(batch, "visa_detector_unwritten")
+    need(block is not None and 'set "NEED_VISA=0"' in block and '[WARN] Could not write ~detect_visa.py' in block
+         and 'call :log "[VISA] skipped (detector_unavailable)"' in block and block.rstrip().endswith("goto visa_done")
+         and "No pyvisa/visa imports detected" not in block and "call :die" not in block,
+         ":visa_detector_unwritten must warn, log the skip, keep NEED_VISA at 0, never say no import was found, and go to visa_done")
+    # the dependency list copy: an error line, state error, no :die.
+    block = labelled(batch, "dm_copy_one")
+    need(block is not None and 'set "HP_BOOTSTRAP_STATE=error"' in block and '[ERROR] Could not copy the dependency list %~1 to requirements.txt' in block
+         and "call :die" not in block and block.rstrip().endswith("exit /b 0"),
+         ":dm_copy_one must log the error, keep state error, return and not call :die")
+    return problems
+
+
 def registry_ids(text):
     ids = set()
     inside = False
@@ -250,6 +327,9 @@ class ScriptShape(unittest.TestCase):
     def test_hook_is_a_destination_change_only(self):
         self.assertEqual([], hook_problems(read(BATCH)))
 
+    def test_the_six_sites_warn_and_go_on(self):
+        self.assertEqual([], batch_problems(read(BATCH)))
+
     def test_rows_are_registered(self):
         self.assertEqual([], registry_problems(read(REGISTRY)))
 
@@ -298,6 +378,42 @@ class StaticRulesCanFail(unittest.TestCase):
     def test_a_hook_that_skips_the_copy_is_found(self):
         bad = self.mutate(self.batch, 'copy /y "~condarc" "%HP_CONDARC_DEST%" ', 'copy /y "~condarc" "%ENV_PATH%\\.condarc" ')
         self.assertTrue(any("HP_CONDARC_DEST" in p for p in hook_problems(bad)))
+
+    def batch_mutation(self, old, new, text):
+        bad = self.mutate(self.batch, old, new)
+        found = batch_problems(bad)
+        self.assertTrue(any(text in p for p in found), found)
+
+    def test_a_die_back_at_detect_python_is_found(self):
+        self.batch_mutation("if errorlevel 1 goto :detect_python_unwritten\n", 'if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"\n', "detect_python")
+
+    def test_a_die_back_at_print_pyver_is_found(self):
+        self.batch_mutation('  call :log "[WARN] Could not write ~print_pyver.py; runtime.txt is not written for this run."\n  goto :print_pyver_done\n',
+                            '  call :die "[ERROR] Could not write ~print_pyver.py"\n', "print_pyver")
+
+    def test_a_die_back_at_condarc_staging_is_found(self):
+        self.batch_mutation('  call :log "[WARN] Could not stage ~condarc; the environment gets no .condarc, and every conda command of this run names conda-forge itself."\n  goto :condarc_done\n',
+                            '  call :die "[ERROR] Could not stage ~condarc"\n  goto :after_env_mode_selection\n', "condarc")
+
+    def test_a_die_back_at_the_condarc_copy_is_found(self):
+        self.batch_mutation('if errorlevel 1 call :log "[WARN] Could not write .condarc into the new environment; every conda command of this run names conda-forge itself."\n',
+                            'if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\\.condarc"\n', "condarc")
+
+    def test_a_die_back_at_prep_is_found(self):
+        self.batch_mutation('if errorlevel 1 set "HP_PREP_UNAVAILABLE=1"\n', 'if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"\n', "prep_requirements")
+
+    def test_a_conda_list_step_without_the_guard_is_found(self):
+        self.batch_mutation("    if not defined HP_DEP_SKIP if not defined HP_PREP_UNAVAILABLE (\n", "    if not defined HP_DEP_SKIP (\n", "conda list step")
+
+    def test_a_die_back_at_visa_is_found(self):
+        self.batch_mutation("if errorlevel 1 goto :visa_detector_unwritten\n", 'if errorlevel 1 call :die "[ERROR] Could not write ~detect_visa.py"\n', "detect_visa")
+
+    def test_a_visa_skip_that_says_nothing_found_is_found(self):
+        self.batch_mutation('call :log "[VISA] skipped (detector_unavailable)"\n', 'call :log "[INFO] No pyvisa/visa imports detected."\n', "visa_detector_unwritten")
+
+    def test_a_die_back_at_the_dependency_list_copy_is_found(self):
+        self.batch_mutation('  set "HP_BOOTSTRAP_STATE=error"\n  call :log "[ERROR] Could not copy the dependency list %~1 to requirements.txt, so the packages it names may not be installed."\n',
+                            '  call :die "[ERROR] Could not stage the dependency list %~1."\n', "dependency list")
 
     def test_an_unregistered_row_is_found(self):
         bad = read(REGISTRY).replace("self.softfail.visa\n", "")

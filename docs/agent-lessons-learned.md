@@ -437,6 +437,15 @@ recurring traps that have actually bitten us:
     given up its lock and reported `error`. A failure that is only the end of one TIER is a `call :log`
     plus the return; the `:die` belongs at the point where nothing else can be tried.
     `self.conda.installfail.*` reads the lock folder and the console text at the next provider's start.
+  - **Classify a `:die` by what the call itself does to a run that goes on, not only by what follows it** (Item 46 Batch 4). The
+    first pass called six sites "benign" because the code after them is harmless (a helper file that could not be written, a
+    copy of `.condarc`), and left them: the `:die` is still a lock release, a forced state `error` and a key press in the middle
+    of the run. A failed write of something the run can do without is a `[WARN]` plus the goto or flag that makes the later code
+    read the skip (`HP_PREP_UNAVAILABLE`, `:visa_detector_unwritten`); it is `:die` only where nothing useful can follow. Give the
+    skipped feature a visible consequence in the log (the VISA check says "skipped", never "no import found"). A row for such a
+    site needs a control next to it, because "no key press" and "lock held" are only meaningful against a run that has them
+    (`self.softfail.control.*`). A fix that adds a state `error` on purpose (the dependency-list copy) says so in the row's
+    expected state, so the contrast with the other rows is asserted and not assumed.
   - **`:warn_build_incomplete`** is a non-pausing sibling of `:die` for the 3 PyInstaller-build-
     failure sites reached only AFTER the Nuitka fallback has ALSO failed, where genuinely useful
     verification work still follows (interpreter-fallback verification decides real

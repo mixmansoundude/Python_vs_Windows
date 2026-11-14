@@ -1108,7 +1108,7 @@ rem so a runtime.txt / pyproject.toml change triggers a full env rebuild.
 rem uv-first path: already ran detect_python via uv run and set PYSPEC above.
 if defined HP_UV_PROVIDING_PYTHON goto :detect_python_done
 call :emit_from_base64 "~detect_python.py" HP_DETECT_PY
-if errorlevel 1 call :die "[ERROR] Could not write ~detect_python.py"
+if errorlevel 1 goto :detect_python_unwritten
 if exist "%CONDA_BASE_PY%" (
   "%CONDA_BASE_PY%" "~detect_python.py" > "~py_spec.txt" 2>> "%LOG%"
 ) else (
@@ -1116,6 +1116,12 @@ if exist "%CONDA_BASE_PY%" (
 )
 set "PYSPEC="
 for /f "usebackq delims=" %%A in ("~py_spec.txt") do set "PYSPEC=%%A"
+goto :detect_python_done
+:detect_python_unwritten
+rem Item 46 Batch 4: a failed optional write is a warning and the run goes on. :die is the end-of-run routine, with state error, a released lock and a key press, so it is not used here.
+rem Without the helper no Python version request is read, so PYSPEC stays empty and conda picks the version, the same as a folder with no runtime.txt.
+set "PYSPEC="
+call :log "[WARN] Could not write ~detect_python.py; a Python version asked for in runtime.txt or pyproject.toml is not applied."
 :detect_python_done
 if defined PVW_TARGET_PY set "PYSPEC=%PVW_TARGET_PY%"
 if defined PVW_TARGET_PY call :log "[INFO] Python version: using super-user override PVW_TARGET_PY."
@@ -1401,7 +1407,10 @@ if not exist "%HP_PY%" (
 )
 
 call :emit_from_base64 "~print_pyver.py" HP_PRINT_PYVER
-if errorlevel 1 call :die "[ERROR] Could not write ~print_pyver.py"
+if errorlevel 1 (
+  call :log "[WARN] Could not write ~print_pyver.py; runtime.txt is not written for this run."
+  goto :print_pyver_done
+)
 "%HP_PY%" "~print_pyver.py" > "~pyver.txt" 2>> "%LOG%"
 for /f "usebackq delims=" %%A in ("~pyver.txt") do set "PYVER=%%A"
 if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
@@ -1417,12 +1426,15 @@ if not defined HP_RUNTIME_TXT_PREEXIST if not "%PYVER%"=="" (
   )
 )
 
+:print_pyver_done
 rem README.md documents the conda-forge policy for this project and why .condarc is required.
 rem Emit the .condarc payload from base64 so quoting stays robust on Windows CMD.
+rem Item 46 Batch 4: a .condarc that cannot be staged or copied is a warning and the run goes on to the provider line. Every conda command of this run names
+rem --override-channels -c conda-forge itself, so the environment only misses the file that keeps a later hand-typed conda command on conda-forge too.
 call :emit_from_base64 "~condarc" HP_CONDARC
 if errorlevel 1 (
-  call :die "[ERROR] Could not stage ~condarc"
-  goto :after_env_mode_selection
+  call :log "[WARN] Could not stage ~condarc; the environment gets no .condarc, and every conda command of this run names conda-forge itself."
+  goto :condarc_done
 )
 if not exist "%ENV_PATH%" mkdir "%ENV_PATH%"
 rem Test hook, absence changes nothing: the copy gets a destination whose folder does not exist, so it fails the way a locked or full disk would.
@@ -1430,7 +1442,8 @@ set "HP_CONDARC_DEST=%ENV_PATH%\.condarc"
 if defined HP_TEST_FORCE_CONDARC_WRITE_FAIL call :log "[TEST] HP_TEST_FORCE_CONDARC_WRITE_FAIL: the .condarc copy gets a destination that cannot be written."
 if defined HP_TEST_FORCE_CONDARC_WRITE_FAIL set "HP_CONDARC_DEST=%ENV_PATH%\~no_such_folder\.condarc"
 copy /y "~condarc" "%HP_CONDARC_DEST%" >> "%LOG%" 2>&1
-if errorlevel 1 call :die "[ERROR] Could not write %ENV_PATH%\.condarc"
+if errorlevel 1 call :log "[WARN] Could not write .condarc into the new environment; every conda command of this run names conda-forge itself."
+:condarc_done
 call :log "[BOOT] REQ-009: Selected Python provider: Conda (Portable)."
 goto :after_env_mode_selection
 
@@ -1477,8 +1490,11 @@ rem derived requirement: README.md requires periodic conda base update; skip on
 rem first install (timestamp seeded) and when uv env is in use.
 call :conda_base_update
 rem === end conda base update ====================================================
+rem Item 46 Batch 4: without ~prep_requirements.py the dependency rules and the conda list are skipped, which the install step below reads from HP_PREP_UNAVAILABLE.
+set "HP_PREP_UNAVAILABLE="
 call :emit_from_base64 "~prep_requirements.py" HP_PREP_REQUIREMENTS
-if errorlevel 1 call :die "[ERROR] Could not write ~prep_requirements.py"
+if errorlevel 1 set "HP_PREP_UNAVAILABLE=1"
+if defined HP_PREP_UNAVAILABLE call :log "[WARN] Could not write ~prep_requirements.py; the dependency rules are skipped, so a package a library needs only at run time may be missing."
 set "REQ=requirements.txt"
 if exist "%REQ%" ( for %%S in ("%REQ%") do if %%~zS EQU 0 del "%REQ%" )
 if exist "%REQ%" (
@@ -1985,14 +2001,17 @@ if exist "requirements.txt" (
   call :log "[INFO] Installing dependencies -- this may take a few minutes..."
   if exist "~reqs_conda.txt" del "~reqs_conda.txt"
   call :log "[TRACE] heuristic augmentation: ~prep_requirements.py"
-  if "%HP_ENV_MODE%"=="conda" (
+  if defined HP_PREP_UNAVAILABLE (
+    call :log "[TRACE] heuristic augmentation: skipped, the helper was not written"
+  ) else if "%HP_ENV_MODE%"=="conda" (
     "%CONDA_BASE_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
   ) else (
     "%HP_PY%" "~prep_requirements.py" "requirements.txt" >nul 2>> "%LOG%"
   )
-  call :log "[TRACE] heuristic augmentation: complete"
+  if not defined HP_PREP_UNAVAILABLE call :log "[TRACE] heuristic augmentation: complete"
   if "%HP_ENV_MODE%"=="conda" (
-    if not defined HP_DEP_SKIP (
+    rem Without the helper there is no ~reqs_conda.txt, so the conda list is skipped and the pip step below installs everything from requirements.txt.
+    if not defined HP_DEP_SKIP if not defined HP_PREP_UNAVAILABLE (
       call :log "[INSTALL] conda bulk from ~reqs_conda.txt"
       call :conda_bulk_install
       if errorlevel 1 (
@@ -2107,7 +2126,7 @@ call :pep723_writeback fresh
 rem Detect pyvisa/visa usage so harness sees NI-VISA requirements
 
 call :emit_from_base64 "~detect_visa.py" HP_DETECT_VISA
-if errorlevel 1 call :die "[ERROR] Could not write ~detect_visa.py"
+if errorlevel 1 goto :visa_detector_unwritten
 set "NEED_VISA=0"
 set "HP_VISA_WHERE="
 if exist "~visa.flag" del "~visa.flag"
@@ -2134,6 +2153,13 @@ rem subfolder, so it passes this check but is turned into "1" only by an explici
 if "%NEED_VISA%"=="1" goto visa_wanted
 if "%NEED_VISA%"=="2" goto visa_wanted
 call :log "[VISA] skipped (not_required)"
+goto visa_done
+:visa_detector_unwritten
+rem Item 46 Batch 4: with no scanner nobody knows whether NI-VISA is needed, so the log says the check was skipped and never that no import was found.
+set "NEED_VISA=0"
+set "HP_VISA_WHERE="
+call :log "[WARN] Could not write ~detect_visa.py; the NI-VISA check is skipped, so a program that needs NI-VISA may not find it."
+call :log "[VISA] skipped (detector_unavailable)"
 goto visa_done
 :visa_wanted
 rem REQ-008: allow disabling the NI-VISA install for debugging, even when pyvisa/visa is detected.
@@ -3421,8 +3447,12 @@ if defined HP_PYPROJ_ACTIVE call :dm_copy_one "~requirements.pyproject.txt"
 if defined PEP723_ACTIVE call :dm_copy_one "%PEP723_REQ%"
 exit /b 0
 :dm_copy_one
+rem Item 46 Batch 4: a list that cannot be copied is reported and the run goes on with the requirements.txt it has. :die is the end-of-run routine, so it is not used here; state error is kept, the final status says it.
 copy /y "%~1" "requirements.txt" >nul 2>&1
-if errorlevel 1 call :die "[ERROR] Could not stage the dependency list %~1."
+if errorlevel 1 (
+  set "HP_BOOTSTRAP_STATE=error"
+  call :log "[ERROR] Could not copy the dependency list %~1 to requirements.txt, so the packages it names may not be installed."
+)
 exit /b 0
 
 :dep_merge_header_remove
