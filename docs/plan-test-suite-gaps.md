@@ -99,7 +99,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
 | REQ-012 | 6 | 6 | 0 | 1 |
-| REQ-013 | 19 | 10 | 9 | 4 |
+| REQ-013 | 19 | 18 | 1 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
 | REQ-015 | 9 | 7 | 2 | 1 |
 | REQ-016 | 9 | 6 | 3 | 4 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-224 of 265 numbered shalls are named by at least one row tag.
+232 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.12, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -176,7 +176,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision). Done in the change that converts
    the last five sections: REQ-002 (18 shalls), REQ-004 (12), REQ-006 (2), REQ-010 (3) and REQ-011 (4); `tests/test_picker_gate.py`
    (the 30 second wait and the three non-interactive signals of the entry picker) and the `gap:` entries for REQ-004.3 and .4 say what
-   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`.
+   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 stays open.
 
 ---
 
@@ -230,7 +230,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 010 | Session isolation | `self.isolation.req010.pythonpath` (all); runs under `HP_CI_SKIP_ENV=1` with system Python | Weak: `PYTHONPATH` only | T1 |
 | 011 | Directory integrity | `self.entry.req011.crossdir/.sameDir` (all) | Strong | |
 | 012 | Execution-skip hooks | `self.skiphooks.combined` (F), both flags set together | Weak: no single-flag case | T1 |
-| 013 | Network resilience | `self.ux.connectivity.*` x10 (all, tagged `REQ-013.2/.4` to `.9`), `self.dl.conda.fallback`, `self.dl.uv.fallback` (`.13`), `self.embed.dl.retry` (`.16`), `self.venv.nopip_retry` (`.19`); README section REQ-013 (19 shalls) | Strong for the question and the secondary URL; no row for the probe repeat (.3), the offline skips of Miniconda and get-pip.py (.10, .11), the installed provider kept (.12), the curl and PowerShell methods (.14, .15) or the embed checksum and swap retries (.17, .18) | T1 |
+| 013 | Network resilience | `self.ux.connectivity.*` x10 (all, tagged `REQ-013.2/.4` to `.9`), `self.dl.conda.fallback`, `self.dl.uv.fallback` (`.13`), `self.embed.dl.retry` (`.16`), `self.venv.nopip_retry` (`.19`), `self.netres.*` x14 (Item 112: the probe repeat `.3`, the check before the secondary URL `.1`, the offline skips `.10`, `.11`, curl retry `.14`, PowerShell method `.15`, embed checksum and extraction retry `.17`, swap retry `.18`); README section REQ-013 (19 shalls) | Strong. The uv half of `.1` is a text pin in `tests/test_net_resilience.py`; no row for the installed provider kept in offline mode (`.12`) | T1, Item 112 |
 | 014 | System Python consent | `self.ux.system.gate.*` x4 (all) | Strong | |
 | 015 | Git config merge | `self.ux.gitignore.*`, `self.ux.gitattributes.*` x6 (all) | Strong | |
 | 016 | Post-flight briefing | `self.ux.postflight` (all), `self.exe.hidden_import*` (R,F), `self.postflight.runline.*` (j,u) | Strong | |

@@ -1543,6 +1543,36 @@ self.conda.retry5xx.control, self.conda.retry5xx.bulk, self.conda.retry5xx.creat
 self.conda.retry5xx.bounded, self.conda.retry5xx.nonretry
 ```
 
+## selfapps-net-resilience NDJSON rows (selfapps_net_resilience.ps1, real lane only, GATING)
+
+Item 112 (README REQ-013.1, .3, .10, .11, .13, .14, .15, .17, .18). No provider and no outside network: five blocks of `run_setup.bat`
+(`:download_get_pip`, `:download_miniconda_exe`, the embedded Python download and extraction, the folder replacement of the
+embed tier, `:check_net_after_dl_fail`) are cut out, wrapped in a driver batch file and run by cmd.exe. Downloads go to a local
+`HttpListener` server that answers from a plan per URL and per client (the User-Agent tells `curl` from Windows PowerShell), so
+`curl` and `Invoke-WebRequest` are the real programs and the server's request log, in order, is the evidence. The reachability
+probe and the pause between swap attempts call `ping.exe` and `curl.exe` by bare name, and cmd.exe searches the current folder
+first, so a small compiled stub (`csc`) in the scenario folder answers from a plan and counts its calls. `getpip.retry`,
+`miniconda.retry`, `embed.retry` (three 503 answers, then the fourth request delivers: curl's `--retry 3`; the other method is not
+tried), `getpip.powershell`, `miniconda.powershell`, `embed.powershell` (curl gets a 404, so no retry, and Windows PowerShell
+fetches the same URL and delivers; no connectivity check, no secondary URL), `getpip.fallback` (curl four requests and PowerShell
+one on the primary URL, then curl on the secondary), `miniconda.checkorder` (request order `curl p1, ps p1, curl checkpoint,
+curl p2`: the check runs between the primary URL's failure and the secondary URL), `getpip.offline` and `miniconda.offline` (offline
+mode: zero requests and the skip line), `embed.checksum` (a zip with the wrong checksum, then the right one: two requests and the
+retry line), `embed.extractfail` (a body that passes the checksum and is no zip: two requests, not three, the final line, the tier
+fails), `check.repeat` (ICMP fails once then answers; both probes fail once then the HTTPS one answers; both fail twice and the
+answer is offline: the stub counts two and two), `swap.retry` (the old folder holds a file open with `FileShare.Read`; released
+after the first pause the second attempt delivers; never released, three attempts and two pauses, then the failure line). The uv
+half of REQ-013.1 is pinned as text in `tests/test_net_resilience.py` (uv's URL cannot be redirected). Skips with `skip=true,
+reason=non-windows-host` off Windows. Each row's details carry the request sequence, the counts, the driver's log lines and the
+driver's exit state.
+
+```
+self.netres.getpip.retry, self.netres.getpip.powershell, self.netres.getpip.fallback, self.netres.getpip.offline,
+self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.miniconda.checkorder, self.netres.miniconda.offline,
+self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
+self.netres.check.repeat, self.netres.swap.retry
+```
+
 ## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)
 
 CLAUDE.md Item 68 regression test (`docs/plan-field-report-2026-10.md`; README REQ-005, REQ-005.5, REQ-007).
