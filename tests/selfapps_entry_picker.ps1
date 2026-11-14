@@ -46,7 +46,7 @@ function Write-NdjsonRow {
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{
-        id='self.entry.picker'; req='REQ-002.14'; pass=$true
+        id='self.entry.picker'; req='REQ-002.14, REQ-002.22'; pass=$true
         desc='Timed entry picker degrades to alphabetical default (skipped on non-Windows)'
         details=[ordered]@{ skip=$true; reason='non-windows-host' }
     })
@@ -105,7 +105,7 @@ $pass = ($exit -eq 0) -and $menuShown -and $pickerResolved -and $chosenDefault -
 
 Write-NdjsonRow ([ordered]@{
     id='self.entry.picker'
-    req='REQ-002.14'
+    req='REQ-002.14, REQ-002.22'
     pass=$pass
     desc='Timed entry picker shows menu and resolves to the alphabetical default with no console'
     details=[ordered]@{
@@ -168,7 +168,7 @@ $overflowPass = ($overflowExit -eq 0) -and $overflowMenuAbsent -and $overflowLim
 
 Write-NdjsonRow ([ordered]@{
     id='self.entry.picker.overflow'
-    req='REQ-002.17'
+    req='REQ-002.17, REQ-002.23, REQ-002.24'
     pass=$overflowPass
     desc='More than 9 candidate files skips the numbered menu entirely but still shows Tip guidance, keeping the alphabetical default'
     details=[ordered]@{
@@ -231,7 +231,7 @@ $numberPass = ($numberExit -eq 0) -and $numberMenuShown -and $numberPickedB -and
 
 Write-NdjsonRow ([ordered]@{
     id='self.entry.picker.number'
-    req='REQ-002.16, REQ-002.19'
+    req='REQ-002.16, REQ-002.19, REQ-002.26'
     pass=$numberPass
     desc='The number of a listed file typed at the picker selects that file, and that file is the program that runs'
     details=[ordered]@{

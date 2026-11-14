@@ -4362,9 +4362,9 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **What shipped.** `HP_PICKED_ENTRY`: set at the end of `:pick_entry_interactive` after the log line `Picker entry selected`, cleared
   ONCE near the top of the file (next to `HP_HIC_ANSWER`, so a value inherited from the terminal can never stand in for an answer), and
   read as the first lines of the subroutine (`if defined HP_PICKED_ENTRY set "HP_ENTRY=..."` then `exit /b 0`), before the non-interactive
-  gates. New README shall REQ-002.19 [minor]: the question of REQ-002.14 is asked at most once in a run and the chosen file is used in
-  every later step.
-- **Rows and tests.** `self.entry.picker.number` (`tests/selfapps_entry_picker.ps1`, req `REQ-002.16, REQ-002.19`) now also records
+  gates. New README shalls REQ-002.19 [minor] (the question of REQ-002.14 is asked at most once in a run) and REQ-002.26 [minor] (the
+  chosen file is used in every later step; split out of REQ-002.19 on PR #527's review so each id states one obligation).
+- **Rows and tests.** `self.entry.picker.number` (`tests/selfapps_entry_picker.ps1`, req `REQ-002.16, REQ-002.19, REQ-002.26`) now also records
   `asked` (the number of times the menu text was printed) and `pickerRuns`, and passes only when both are 1; it was red on `conda-full`
   in run `42409621915` (`pickedB` and `pickedDefaultA` both true, `ranB` false: the typed `2` was logged and then the default replaced it,
   and the program that ran printed `entry-a`). `tests/test_picker_gate.py` (`PickerAsksOnce`,

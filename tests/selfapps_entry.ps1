@@ -371,7 +371,7 @@ print("from-alpha")
 '@
 })
 $expectedG1 = 'alpha.py'
-Write-EntryRow -Id 'self.entry.fallback' -Expected $expectedG1 -Scenario $scenarioG1 -Description 'With no clear entry the alphabetically first file runs and the fallback is logged (REQ-002.12)' -Tag @{ req = 'REQ-002.12, REQ-002.18' } -RequireText "[BOOT] REQ-002: No clear entry found; selecting 'alpha.py' (alphabetical fallback)." -ForbidText 'Multiple Python files detected'
+Write-EntryRow -Id 'self.entry.fallback' -Expected $expectedG1 -Scenario $scenarioG1 -Description 'With no clear entry the alphabetically first file runs and the fallback is logged (REQ-002.12)' -Tag @{ req = 'REQ-002.12, REQ-002.18, REQ-002.25' } -RequireText "[BOOT] REQ-002: No clear entry found; selecting 'alpha.py' (alphabetical fallback)." -ForbidText 'Multiple Python files detected'
 Check-PipreqsFailure -LogPath $scenarioG1.setupPath -LogText $scenarioG1.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioG1.bootstrapPath -LogText $scenarioG1.bootstrapLog
 

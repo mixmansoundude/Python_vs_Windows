@@ -1,4 +1,4 @@
-"""REQ-002.13, REQ-002.15, REQ-002.18 and REQ-002.19: the entry picker waits 30 seconds and defaults, a non-interactive
+"""REQ-002.13, REQ-002.15, REQ-002.18, REQ-002.19 and REQ-002.22: the entry picker waits 30 seconds and defaults, a non-interactive
 run is never asked, the question is asked once per run, and its list holds no tilde or ._ file.
 
 No row can wait the full 30 seconds (self.entry.picker shortens the wait to 2 seconds with HP_TEST_FORCE_PICKER) and the
@@ -208,7 +208,7 @@ class PickerGate(unittest.TestCase):
 
 
 class PickerWait(unittest.TestCase):
-    """REQ-002.15: a 30 second wait for a number, then the alphabetical default."""
+    """REQ-002.15 and REQ-002.22: a 30 second wait for a number, then the alphabetical default."""
 
     def test_the_real_batch_file_waits_30_seconds_and_defaults(self) -> None:
         block = picker_block(BATCH.read_text(encoding="utf-8", errors="replace"))

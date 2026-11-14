@@ -129,7 +129,8 @@ choice should never come out empty. A person who names a file should get that fi
 
 - **REQ-002.1** [major] The bootstrapper **shall**, when the folder holds no `.py` file, print
   `Python file count: 0` and `No Python files detected; skipping environment bootstrap.`
-- **REQ-002.2** [major] The bootstrapper **shall**, when the folder holds exactly one `.py` file, run that file.
+- **REQ-002.2** [major] The bootstrapper **shall**, when the folder holds exactly one `.py` file that REQ-002.13
+  does not exclude, run that file.
 - **REQ-002.3** [major] The bootstrapper **shall**, when the first argument names a `.py` file in the folder
   (REQ-002.4 and REQ-002.5 say how the name may be spelled), use that file as the entry and apply none of the
   automatic rules REQ-002.10 to REQ-002.12.
@@ -137,11 +138,13 @@ choice should never come out empty. A person who names a file should get that fi
 - **REQ-002.5** [major] The bootstrapper **shall**, when the first argument is the name of a `.py` file in the
   folder without its extension (`run_setup.bat main` for `main.py`), use that file.
 - **REQ-002.6** [major] The bootstrapper **shall**, when the first argument is not the name of an existing `.py`
-  file in the folder, as typed or with `.py` appended, stop before anything is built, installed or run and print
-  `Usage: run_setup.bat your_script.py [arguments for your program]`. An existing file of another type, a name that
-  is not a file, a folder, and a name with `*` or `?` all fail this test.
+  file in the folder, as typed or with `.py` appended, stop before anything is built, installed or run. An existing
+  file of another type, a name that is not a file, a folder, and a name with `*` or `?` all fail this test.
+- **REQ-002.20** [major] The bootstrapper **shall**, on the stop of REQ-002.6, print
+  `Usage: run_setup.bat your_script.py [arguments for your program]`.
 - **REQ-002.7** [major] The bootstrapper **shall**, on the stop of REQ-002.6, write state `error` to
-  `~bootstrap.status.json` and exit with code 1.
+  `~bootstrap.status.json`.
+- **REQ-002.21** [major] The bootstrapper **shall**, on the stop of REQ-002.6, exit with code 1.
 - **REQ-002.8** [major] The bootstrapper **shall**, on the stop of REQ-002.6, leave an existing EXE as it was.
 - **REQ-002.9** [major] The bootstrapper **shall**, on the stop of REQ-002.6, release the concurrent-instance lock,
   so that the next run in the folder starts normally.
@@ -159,16 +162,24 @@ choice should never come out empty. A person who names a file should get that fi
   candidates, print a numbered list of the candidates, the file that is used when nothing is typed, and the three
   ways to avoid the question next time (drop a file onto `run_setup.bat`, rename the main script to one of the
   names of REQ-002.10, give exactly one script a `__main__` guard).
-- **REQ-002.15** [minor] The bootstrapper **shall**, after the list of REQ-002.14, wait 30 seconds for a number and
-  use the alphabetical default of REQ-002.12 when none is typed.
+- **REQ-002.15** [minor] The bootstrapper **shall**, after the list of REQ-002.14, wait 30 seconds for a number.
+- **REQ-002.22** [minor] The bootstrapper **shall**, when no number is typed within that wait, use the alphabetical
+  default of REQ-002.12.
 - **REQ-002.16** [minor] The bootstrapper **shall**, when the user types the number of a listed file within that
   wait, use that file.
 - **REQ-002.17** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
-  nine candidates, print no list, use the alphabetical default and print the three ways of REQ-002.14.
+  nine candidates, use the alphabetical default.
+- **REQ-002.23** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
+  nine candidates, print no list.
+- **REQ-002.24** [minor] The bootstrapper **shall**, in an interactive run that reaches REQ-002.12 with more than
+  nine candidates, print the three ways of REQ-002.14.
 - **REQ-002.18** [major] The bootstrapper **shall**, in a non-interactive run that reaches REQ-002.12, ask no entry
-  question and use the alphabetical default of REQ-002.12.
-- **REQ-002.19** [minor] The bootstrapper **shall** ask the question of REQ-002.14 at most once in a run, and
-  use the file the user chose, or the default when nothing was typed, in every later step of that run.
+  question.
+- **REQ-002.25** [major] The bootstrapper **shall**, in a non-interactive run that reaches REQ-002.12, use the
+  alphabetical default of REQ-002.12.
+- **REQ-002.19** [minor] The bootstrapper **shall** ask the question of REQ-002.14 at most once in a run.
+- **REQ-002.26** [minor] The bootstrapper **shall** use the file that the question of REQ-002.14 selected, whether
+  the user chose it or the default was taken, in every later step of that run.
 
 > **Notes (non-normative).**
 > - Order of precedence, highest first: a named file (REQ-002.3), `main.py`, `app.py`, `run.py` and `cli.py`, the
@@ -176,7 +187,7 @@ choice should never come out empty. A person who names a file should get that fi
 > - A dropped file is the first argument. The arguments after it belong to the program (REQ-026). The first
 >   argument is checked before the cached-EXE fast path, so a missing entry file never makes the bootstrapper start
 >   a good EXE with the wrong arguments and discard it (backlog Item 67).
-> - REQ-002.7 to REQ-002.9 also hold on the stop of REQ-011.1. A name without `.py` is logged as
+> - REQ-002.7 to REQ-002.9 and REQ-002.21 also hold on the stop of REQ-011.1. A name without `.py` is logged as
 >   `[INFO] REQ-002: first argument had no .py extension; using the .py file of that name.`
 > - The guard is looked for at the top level of the file: a guard inside a function or a class does not count, and
 >   neither does the text `__main__` in a string or a comment. A file that does not parse has no guard.
@@ -187,6 +198,9 @@ choice should never come out empty. A person who names a file should get that fi
 >   The bootstrapper chooses the entry file twice in one run (before the dependency phase and again before the
 >   build); `:pick_entry_interactive` keeps the answer in `HP_PICKED_ENTRY` so that the second choice does not ask
 >   again (backlog Item 109).
+> - REQ-002.20 to REQ-002.26 were split out of REQ-002.6, REQ-002.7, REQ-002.15, REQ-002.17, REQ-002.18 and
+>   REQ-002.19 so that each id states one obligation; each sits next to the shall it came from, and the older ids
+>   keep their first obligation.
 
 ---
 

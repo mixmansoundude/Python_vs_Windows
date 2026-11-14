@@ -65,10 +65,10 @@ function Write-EntryArgRow {
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     $skipDetails = [ordered]@{ skip = $true; platform = [System.Environment]::OSVersion.Platform.ToString(); reason = 'non-windows-host' }
     Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $true -Desc 'First argument without .py (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.3, REQ-002.5' }
-    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $true -Desc 'First argument that is not a .py file stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
-    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $true -Desc 'First argument that is not a file stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
-    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $true -Desc 'Wildcard first argument stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
-    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $true -Desc 'A folder as first argument stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $true -Desc 'First argument that is not a .py file stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
+    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $true -Desc 'First argument that is not a file stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
+    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $true -Desc 'Wildcard first argument stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $true -Desc 'A folder as first argument stops the run (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
     Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $true -Desc 'Early stops release the lock (skipped on non-Windows)' -Details $skipDetails -Tag @{ req = 'REQ-002.9, REQ-011.4' }
     exit 0
 }
@@ -77,10 +77,10 @@ $batchPath = Join-Path $repo 'run_setup.bat'
 if (-not (Test-Path $batchPath)) {
     $missingDetails = [ordered]@{ error = 'run_setup.bat not found at ' + $batchPath }
     Write-EntryArgRow -Id 'self.entryarg.noext' -Pass $false -Desc 'First argument without .py: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.3, REQ-002.5' }
-    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $false -Desc 'First argument that is not a .py file: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
-    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $false -Desc 'First argument that is not a file: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
-    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $false -Desc 'Wildcard first argument: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
-    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $false -Desc 'A folder as first argument: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $false -Desc 'First argument that is not a .py file: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
+    Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $false -Desc 'First argument that is not a file: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
+    Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $false -Desc 'Wildcard first argument: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
+    Write-EntryArgRow -Id 'self.entryarg.directory' -Pass $false -Desc 'A folder as first argument: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
     Write-EntryArgRow -Id 'self.entryarg.stops_release_lock' -Pass $false -Desc 'Early stops release the lock: run_setup.bat not found' -Details $missingDetails -Tag @{ req = 'REQ-002.9, REQ-011.4' }
     exit 1
 }
@@ -224,7 +224,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.csv' -Pass $pass2 -Desc 'A first argument that exists but is not a .py file stops the run with a usage message and leaves the EXE alone' -Details ([ordered]@{
         exit = $r2.Exit; usage = $r2Usage; status = $r2.State; exeUntouched = $r2Untouched; noFastPath = $r2NoFast
         exeBuilt = $exeBase.Exists; log = $r2.Log
-    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
 
     # ---- Run 3: the 2026-08-31 command, entry file forgotten ----
     $r3 = Invoke-EntryRun -BatArgs 'arg1 arg2' -Tag 'run3'
@@ -238,7 +238,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.missing' -Pass $pass3 -Desc 'run_setup.bat arg1 arg2 (no entry file) stops with a usage message; the good EXE is not run with wrong arguments or discarded' -Details ([ordered]@{
         exit = $r3.Exit; usage = $r3Usage; status = $r3.State; exeUntouched = $r3Untouched
         noDiscard = $r3NoDiscard; noFastPath = $r3NoFast; exeBuilt = $exeBase.Exists; log = $r3.Log
-    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
 
     # ---- Run 4: a wildcard must never be taken as a file name ----
     $r4 = Invoke-EntryRun -BatArgs '*' -Tag 'run4'
@@ -251,7 +251,7 @@ try {
     Write-EntryArgRow -Id 'self.entryarg.wildcard' -Pass $pass4 -Desc 'A wildcard first argument is rejected like any other non-file, never expanded to match a file' -Details ([ordered]@{
         exit = $r4.Exit; usage = $r4Usage; status = $r4.State; exeUntouched = $r4Untouched; noFastPath = $r4NoFast
         exeBuilt = $exeBase.Exists; log = $r4.Log
-    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
 
     # ---- A folder named like a script: `if exist` is true for a folder, so it must be screened out ----
     # The folder exists only for these two runs, so run 5 and 6 see the same folder as before.
@@ -275,7 +275,7 @@ try {
         dotPyExit = $rd1.Exit; dotPyUsage = $rd1Usage; dotPyStatus = $rd1.State
         bareExit = $rd2.Exit; bareUsage = $rd2Usage; bareStatus = $rd2.State
         exeUntouched = $rdUntouched; noFastPath = $rdNoFast; exeBuilt = $exeBase.Exists; log1 = $rd1.Log; log2 = $rd2.Log
-    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8' }
+    }) -Tag @{ req = 'REQ-002.6, REQ-002.7, REQ-002.8, REQ-002.20, REQ-002.21' }
 
     # ---- Run 5: cross-folder file (REQ-011 stop), then run 6: a normal run must not meet a stale lock ----
     $extPy = Join-Path $extDir 'external.py'

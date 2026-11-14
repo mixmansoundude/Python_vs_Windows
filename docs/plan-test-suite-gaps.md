@@ -88,7 +88,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | Requirement | Shalls | Named by a row | Not named | Rows tagged with the number only |
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
-| REQ-002 | 19 | 18 | 1 | 7 |
+| REQ-002 | 26 | 25 | 1 | 7 |
 | REQ-003 | 6 | 3 | 3 | 18 |
 | REQ-004 | 12 | 10 | 2 | 8 |
 | REQ-005 | 18 | 14 | 4 | 32 |
@@ -116,7 +116,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-217 of 258 numbered shalls are named by at least one row tag.
+224 of 265 numbered shalls are named by at least one row tag.
 
 Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-003.3, REQ-004.3, REQ-004.4, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-013.1, REQ-013.3, REQ-013.10, REQ-013.11, REQ-013.12, REQ-013.14, REQ-013.15, REQ-013.17, REQ-013.18, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
 
@@ -176,7 +176,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision). Done in the change that converts
    the last five sections: REQ-002 (18 shalls), REQ-004 (12), REQ-006 (2), REQ-010 (3) and REQ-011 (4); `tests/test_picker_gate.py`
    (the 30 second wait and the three non-interactive signals of the entry picker) and the `gap:` entries for REQ-004.3 and .4 say what
-   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`.
+   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`.
 
 ---
 
