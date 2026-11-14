@@ -7814,3 +7814,18 @@ nesting, no redirection). This confirmed the final, unconditional rule now state
 cross-line or redirection. `check_delimiters.py`'s `line != last.line` exemption was removed
 entirely as a result, surfacing 63 further genuine findings in `run_setup.bat` (on top of the 26
 the `rem`-generalization pass had already found), all fixed by rewording with no functional change.
+
+### Item 112 (filed 2026-11-14, PR pending; REQ-013 rows for the download, check and swap code)
+
+- **The gap.** README REQ-013.1, .3, .10, .11, .14, .15, .17 and .18 had no row (`gap:` entries of `tests/test_req_shall_trace.py`):
+  nothing showed curl's `--retry 3`, the Windows PowerShell second method, the check running before the secondary URL, the repeat of each
+  probe, the get-pip.py and Miniconda offline skip lines, the second download after a wrong checksum or an unreadable zip, or the folder
+  swap tried again. A real network failure reaches each of them and the forced hooks of the earlier rows (`HP_TEST_*_DL_FALLBACK`,
+  `HP_TEST_OFFLINE`, `HP_TEST_FORCE_EMBED_DL_FAIL_ONCE`) skip the code that matters.
+- **What shipped.** `tests/selfapps_net_resilience.ps1` (14 `self.netres.*` rows, real lane, gating from the first run) cuts the five
+  real blocks out of `run_setup.bat` and runs them under cmd.exe against a local `HttpListener` and a compiled stub `ping.exe`/`curl.exe`;
+  `tests/test_net_resilience.py` pins what the script assumes; README REQ-013's tests note names the rows; eight `gap:` entries were removed
+  from `UNTRACED_SHALLS` (REQ-013.12 stays). Design and coupling: `docs/agent-interconnect.md`, "The REQ-013 download, check and swap
+  code is cut out and run against a local server".
+- **Not covered.** The uv download (a text pin in the unit test) and REQ-013.12.
+
