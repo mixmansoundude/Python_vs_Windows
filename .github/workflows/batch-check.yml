@@ -1579,6 +1579,72 @@ jobs:
         run: |
           & tests\selfapps_choice_cancel.ps1
 
+      # Item 106 (README REQ-005.1.6, REQ-005.1.12, REQ-005.1.13 and REQ-005.1.14): the edges of the dependency-list merge that
+      # the later-run rows do not reach. Seven default bootstraps of small folders with the entry smoke test and the EXE
+      # verification run switched off (no program of the folder is started): a failed install records nothing, so the next
+      # run reports the same removal again and the three records are byte for byte what the first run left; a PEP 723 header
+      # the user wrote is only added to, so a package dropped from requirements.txt still stands in the header; and when the
+      # merge cannot run, once because its helper cannot be written and once because the helper fails on a file another
+      # program holds open, the run warns, installs the highest ranked list alone and still ends ok. contract-uv only: the
+      # header write-back is uv-only and this is the uv lane with the most wall-clock headroom. Gating from its first run
+      # (AGENTS.md, "New tests gate immediately"): the rows reach the aggregate check like every other lane's.
+      - name: "Self-test: the dependency-list merge, its edges (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_dep_merge_edges.ps1
+
+      # Item 106 (README REQ-018.7): the re-verification run inside the --hidden-import repair loop ends after 30 seconds
+      # whatever output the program produces. The loop's inline PowerShell waits 30 seconds, kills the process it started and
+      # reads what it printed; no row ever ran a program that keeps printing through it, and a PyInstaller onefile EXE is two
+      # processes, so a stop of the first can leave the second holding the pipes. One default bootstrap (the repair answered
+      # yes through the test answer) of a program that needs a package it loads by a runtime string and then prints a line a
+      # second for 100 seconds; the program's own ledger gives the seconds between its first and its last line, and the
+      # process list gives what is left running when the bootstrapper has returned. contract-uv only, gating from its first
+      # run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the repair loop's re-verification run ends at the cap (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_repair_cap.ps1
+
+      # Item 111 (README REQ-003.3, REQ-015.7 and REQ-015.8): where the bootstrapper works, what it calls the files a person keeps and
+      # what deleting its ~ files costs. One program in a folder whose own name starts with ~ (so a name taken from the folder would
+      # carry the tilde), bootstrapped twice by default. The first run is read for the working files and the EXE (in the folder where
+      # it was started, nothing beside it, nothing in the folder of the test scripts or the repository root), then for the files its
+      # briefing tells the user to keep (they exist, none starts with ~, the EXE the briefing names has the tilde turned into _);
+      # every ~ file and folder is deleted, as the briefing says is safe, and the second run must end ok, run the program and leave the
+      # files of the user as they were. contract-uv only (the lane with the most wall-clock headroom), gating from its first run
+      # (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the working folder and the ~ files (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_tilde_files.ps1
+
+      # Item 111 (README REQ-016.6 and REQ-016.7): the post-flight briefing of a run whose EXE could not be verified, the one a person
+      # reads when something went wrong. One default bootstrap of a program that prints a line and exits with 3: the EXE is built, its
+      # verification run fails and the caveat briefing is printed. The command it shows, written to a .cmd file as printed and run from
+      # the program folder, must run the program (its line, exit code 3), and the sentences must say what REQ-016.7 names and claim no
+      # verification of the dependencies. contract-uv only, gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the briefing of a run whose EXE failed its check (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_caveat_briefing.ps1
+
+      # Item 111 (README REQ-008.14): NOINPUT or HP_NONINTERACTIVE alone answers the NI-VISA question for an import that sits only in a
+      # subfolder (REQ-008.7) with no, without waiting. Every bootstrap of a CI run carries HP_CI_LANE, so only that signal was ever
+      # shown to skip the wait. Three driver runs of the real block cut out of run_setup.bat under cmd.exe with closed standard input
+      # and a stub in place of the console read that answers yes: each signal alone must decline and not read the console, and the
+      # control with no signal must reach the stub once with a wait of 30 seconds that defaults to no. contract-uv only, gating from its
+      # first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the NI-VISA subfolder question under NOINPUT and HP_NONINTERACTIVE (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_visa_signals.ps1
+
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -2832,6 +2898,26 @@ jobs:
             tests/~choice_cancel_evidence.txt
             tests/~selftest_choicecancel/*/~driver*
             tests/~selftest_choicecancel/*/~choice_args.txt
+            tests/~selftest_dmedge_*/~dme_*.log
+            tests/~selftest_dmedge_*/~setup.log
+            tests/~selftest_dmedge_*/~dep_base.*.txt
+            tests/~selftest_dmedge_*/requirements.txt
+            tests/~selftest_dmedge_*/app.py
+            tests/~selftest_dmedge_*/~bootstrap.status.json
+            tests/~selftest_repaircap/~cap_console.log
+            tests/~selftest_repaircap/~cap_ledger.jsonl
+            tests/~selftest_repaircap/~setup.log
+            tests/~selftest_repaircap/~bootstrap.status.json
+            tests/~tilde_files_evidence.txt
+            tests/~selftest_tilde_root/~tilde_work/~tl_console2.log
+            tests/~selftest_tilde_root/~tilde_work/~setup.log
+            tests/~selftest_tilde_root/~tilde_work/~bootstrap.status.json
+            tests/~selftest_caveat/~cv_*
+            tests/~selftest_caveat/~setup.log
+            tests/~selftest_caveat/~bootstrap.status.json
+            tests/~visa_signals_evidence.txt
+            tests/~selftest_visasignals/*/~driver*
+            tests/~selftest_visasignals/*/~choice_args.txt
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt

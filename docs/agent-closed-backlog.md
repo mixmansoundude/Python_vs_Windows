@@ -4427,6 +4427,87 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   not covered. The four new row ids belong in `tests/expected_rows/contract-uv.txt` once they have appeared in green runs (lane 1 owns
   those lists).
 
+### Item 106 (shipped 2026-11-14; assigned 2026-11-13 from the `gap:` entries of `tests/test_req_shall_trace.py`)
+
+- **The problem.** Five README shalls had no row able to fail for them: REQ-005.1.6 (a run whose install fails records nothing, so the
+  next run sees the same changes again), REQ-005.1.12 (a PEP 723 header the user wrote is never removed from), REQ-005.1.13 and .14 (when
+  the merge cannot run the bootstrapper warns, uses the highest ranked list alone and goes on to a normal end) and REQ-018.7 (the
+  re-verification run inside the `--hidden-import` repair loop ends after 30 seconds whatever output it produces). `tests/test_dep_merge.py`
+  pinned the helper; the batch lines around it were read by nothing that could fail.
+- **What shipped.** Two scripts, five rows, each script in its own gating step of the contract-uv lane (the lane with the most wall-clock
+  headroom). `tests/selfapps_dep_merge_edges.ps1` runs seven real default bootstraps of four folders with the user's program never started
+  (`HP_SKIP_ENTRY_SMOKE`, `HP_SKIP_EXE_SMOKERUN`; the build still runs). F, three runs (a baseline, then the user deletes `termcolor` and
+  adds `six==999.0.0`, a pin no index can satisfy, then a third unchanged run), shows the three `~dep_base.*.txt` records byte-identical
+  after the failed install and the same removal reported again. U, two runs with the header write-back switched off in the first, shows
+  that a header the user wrote keeps a package the user deleted from `requirements.txt` ("so it stays") and is never removed from. X
+  (`HP_TEST_FORCE_EMIT_FAIL=HP_DEP_MERGE`) and H (`~requirements.merge.tmp` held open with `FileShare.None`, so the helper fails while it
+  works and the batch file's `del` cannot clear it) show the `[WARN] The dependency lists could not be merged` line on the console and in
+  the setup log, the `pyproject.toml` list alone in `requirements.txt` and installed, and state ok with exit code 0. Rows
+  `self.depmerge.failed.records`, `.header.userwrote`, `.fallback.emit` and `.fallback.helper`. `tests/selfapps_repair_cap.ps1` runs one
+  default bootstrap (`HP_TEST_REPAIR_ANSWER=Y`) of a program that loads colorama by a runtime string and then prints a flushed line a second
+  for 100 seconds, with a ledger at an absolute path: the seconds from its first line to its last must be 10 to 45 and it must never
+  reach `done`, the setup log must show the repair rebuild and then the TIMED OUT status line, and when the bootstrap returns no process may
+  still run from `dist` (read through CIM before a leftover is stopped). A bootstrap that never reached the loop cannot pass. Row
+  `self.repair.cap`.
+- **What the first run found (a product defect, fixed in the same PR).** `self.repair.cap` was red on its first run, for the right
+  reason and on no other lane (run `43532440009`, contract-uv: `spanSeconds` 100.1, `ticks` 100, `done` true, `orphansAfterBootstrap` 0,
+  the repair line at 0:22:43 and the TIMED OUT status line at 0:24:32): the loop's run was reported as timed out, but only after the program
+  had printed all 100 lines and ended by itself. The inline line called `Process.Kill()` after `WaitForExit(30000)` and then read both pipes.
+  A PyInstaller onefile EXE is two processes; `Kill()` ended the bootloader, the program below it kept the pipes open and
+  `ReadToEndAsync().Result` waited until it ended. The fix, pushed under the early-push rule (the row was red for the right reason and every
+  other lane of that run was green): `taskkill /F /T /PID` on the id of the started process (waited for at most 5 seconds), `$p.Kill()` as the
+  fallback when taskkill cannot be started, each read bounded by `Task.Wait(5000)`, the exit code or -1 still the last line printed.
+  `tests/test_repair_cap.py` gained the pins and `TheLineRunThroughPwsh` (stand-in programs under pwsh on a POSIX host, the first version of
+  the line as the control that shows the defect). Left alone and filed as Item 110: the same Kill-only shape in `:offer_optimized_build`'s
+  verification line and in `tools/exe_smokerun.ps1`.
+- **How it is kept honest.** `tests/test_dep_merge_edges.py` and `tests/test_repair_cap.py` pin each script (literal row ids and tags, the
+  environment of every run, closed standard input, the process-tree kill and the time limits, its own exit codes), the texts the rows look
+  for (each is written by a live line of `run_setup.bat` or by the real `tools/dep_merge.py` run on the scenario inputs), the repair loop's
+  one start line (the reads started before `WaitForExit(30000)`, the process-tree kill with its fallback, both reads bounded, the result
+  printed last, the default -1 before the test for 0, all inside its own block), the workflow steps and the registry, and run every judging function through real `pwsh` in strict mode on synthetic
+  runs, with a mutation case for each rule. The five `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **For the README owner.** REQ-005.1.12 says "a PEP 723 header that it did not write", but after one successful write-back the whole
+  header, the user's lines included, has a record, so the product treats a header it has once added to as its own. The scenario tests the
+  unambiguous reading (a header with no record, because the write-back was off in the run that met it).
+- **Evidence.** The reading of the five rows on their first run is in the squash commit message (a docs-only push after the run would cost
+  a second full run). The five ids join the contract-uv list in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+
+### Item 111 (shipped 2026-11-14; the next batch of `gap:` entries of `tests/test_req_shall_trace.py`, after Item 106)
+
+- **The problem.** Six README shalls had no row able to fail for them: REQ-003.3 (the working files and the build output are created in
+  the folder where the bootstrapper was started), REQ-015.7 (no file the user is meant to keep or share gets a name that starts with `~`),
+  REQ-015.8 (deleting a `~` file does not lose the user's work), REQ-016.6 and REQ-016.7 (the briefing of a run whose EXE could not be
+  verified shows the command and says what REQ-016.7 names) and REQ-008.14 (`NOINPUT` or `HP_NONINTERACTIVE` alone answers the NI-VISA
+  subfolder question with no, without waiting). The README notes of REQ-015 and REQ-016 said so in words ("No row names REQ-015.7 or
+  REQ-015.8"); the CI folders never start with `~`, so a name derived from the folder could not show the tilde rule, and every
+  bootstrap of the NI-VISA rows carries the CI marker, so only that one of the three signals was ever shown to skip the wait.
+- **What shipped.** Three scripts, eight rows, each in its own gating step of the contract-uv lane. `tests/selfapps_tilde_files.ps1`
+  bootstraps a program (it imports colorama, so the pipreqs scan writes `requirements.txt`) in a folder named `~tilde_work`, twice by
+  default: the first run must leave `~setup.log`, `~bootstrap.status.json` and `dist\_tilde_work.exe` in that folder, nothing beside it
+  and nothing changed in the folder of the scripts or the repository root (`self.tilde.workfolder`); every file the briefing says to keep,
+  the two git files and the EXE it names must exist under a name without `~` (`self.tilde.keepfiles`); every `~` entry is then deleted,
+  as the briefing says is safe, and the second run must end ok with exit code 0, print the program's line, build the EXE again and leave
+  the user's files as they were (`self.tilde.deletable`). `tests/selfapps_caveat_briefing.ps1` bootstraps a program that exits with 3 so
+  that the EXE check fails, and reads the caveat briefing: the command it shows (two quoted paths, the interpreter exists) is written to
+  a `.cmd` file as printed and run from the program folder and must print the program's line and leave exit code 3
+  (`self.caveat.runline`), and the caveat must say the environment was set up and packaging finished without a fatal error, claim no
+  verified installation and match the setup log's WARN line, not its INFO line (`self.caveat.sentences`).
+  `tests/selfapps_visa_signals.ps1` cuts `:visa_subfolder_gate` out of `run_setup.bat` and runs it three times under cmd.exe with closed
+  standard input and a stub that answers yes in place of the one `choice` line: `NOINPUT` alone and `HP_NONINTERACTIVE` alone must
+  decline and must not read the console, and a run with no signal (the control) must reach the stub once with `/T 30 /D N` and honor its
+  yes (`self.nivisa.signals.noinput`, `.nonint`, `.control`).
+- **How it is kept honest.** `tests/test_tilde_files.py`, `tests/test_caveat_briefing.py` and `tests/test_visa_signals.py` pin each
+  script (literal row ids and tags, the environment of every run, closed standard input, a process-tree kill and time limits, its own exit
+  codes), the texts the rows look for, and the workflow step and registry entries. The briefing is replayed from the real echo lines of
+  `:print_postflight_briefing` and handed to the scripts' own judging functions through real `pwsh`, so a reworded heading fails locally
+  with the sentence to change; the judging functions run in strict mode on synthetic runs with one red case per comparison, and every
+  pin has a mutation case that shows it can fail. The six `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **Left.** REQ-020.5 and .9 (need a hook), the rest of REQ-008 (.2, .5, .6, .12, .15), REQ-018.6, .13, .19 and .30, REQ-007.12, .17 and
+  .20, REQ-016.8 (read from code: every CI lane carries the CI marker, so no row reaches a `pause`). The REQ-013 family, REQ-003.1 and .2,
+  REQ-004.3 and .4 and REQ-023.1 are lane 3's.
+- **Evidence.** The reading of the eight rows on their first run is in the squash commit message. The eight ids join the contract-uv list
+  in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
