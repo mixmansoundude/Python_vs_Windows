@@ -1154,12 +1154,13 @@ program that is valid.
 - **REQ-016.6** [major] The bootstrapper **shall** show the command of REQ-016.5 whether or not the EXE could be verified.
 - **REQ-016.7** [major] The bootstrapper **shall**, when the EXE could not be verified, print the briefing with a caveat that says the environment was set up and packaging finished without a fatal error, and **shall not** claim that the installation of the dependencies was verified.
 - **REQ-016.8** [minor] The bootstrapper **shall** keep its terminal window open at the end of a run, whether the run succeeded or failed, until the user presses a key, except in a run that carries the CI marker `HP_CI_LANE`.
+- **REQ-016.9** [major] The bootstrapper **shall not**, when a provider fails and the run continues with a further provider, wait for a key press before the end of the run; the wait of REQ-016.8 belongs to the end of the run.
 
 > **Notes (non-normative).**
 > - Rationale: the audience is a beginner who was handed Python code. A frozen EXE brings two common confusions (a window that flashes shut, output that appears late) and a slow first appearance that looks like a hang. A partial or failed dependency install can still reach the briefing, so the caveat does not vouch for the installation.
 > - Mechanism (`:print_postflight_briefing`, called when `dist\<env>.exe` exists and the cached EXE was not reused; the no-EXE briefing and the cached-EXE note are REQ-027). Section names the tests match: `Your standalone application is ready:`, `SETUP COMPLETE -- WITH A CAVEAT`, `RUNNING YOUR APP`, `STARTUP MAY BE SLOW`, `KEEP these files`, `SAFE TO DELETE`.
 > - Log contract: `[INFO] REQ-016: Post-flight briefing printed.` and, with a caveat, `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.`
-> - Tests: `self.ux.postflight` (`tests/selfapps_ux_hardening.ps1`, reads the real-environment smoke run) checks the EXE, keep, delete, Command Prompt, buffering and slow-start text (REQ-016.1 to REQ-016.4); `self.postflight.runline.verbatim` (`tests/selfapps_postflight_runline.ps1`) runs the printed command as printed (REQ-016.5). The caveat rows (`tests/selfapps_gui_timeout_hint.ps1`, `tests/selfapps_hidden_import*.ps1`) keep the requirement number: none of them checks the REQ-016.7 sentences or the command of REQ-016.6. REQ-016.8 is read from the code: every CI lane carries the CI marker, so no row reaches a `pause`.
+> - Tests: `self.ux.postflight` (`tests/selfapps_ux_hardening.ps1`, reads the real-environment smoke run) checks the EXE, keep, delete, Command Prompt, buffering and slow-start text (REQ-016.1 to REQ-016.4); `self.postflight.runline.verbatim` (`tests/selfapps_postflight_runline.ps1`) runs the printed command as printed (REQ-016.5). The caveat rows (`tests/selfapps_gui_timeout_hint.ps1`, `tests/selfapps_hidden_import*.ps1`) keep the requirement number: none of them checks the REQ-016.7 sentences or the command of REQ-016.6. REQ-016.8 is read from the code: every CI lane carries the CI marker, so no row reaches a `pause`. REQ-016.9 is `self.conda.installfail.nopause` (`tests/selfapps_conda_install_fail.ps1`, real lane): a run whose Miniconda install is forced to fail, started without the CI marker and with standard input closed, must show no `Press any key` text between the failure message and the start of the next provider; a control run without the failure shows the same window is observable.
 
 ---
 
@@ -1424,6 +1425,8 @@ time, and should not let an instance that ended abnormally keep later runs out o
   a success or an error report, remove the lock folder.
 - **REQ-024.9** [major] The bootstrapper **shall**, when it cannot create its own lock folder after removing one
   under REQ-024.6, continue the run without a lock and write a warning to the log.
+- **REQ-024.10** [major] The bootstrapper **shall**, when a provider fails and the run continues with another
+  provider, keep the lock folder in place until the run ends.
 
 > **Notes (non-normative).**
 > - Rationale: two instances in one folder would write the same environment, logs and status file at the same
@@ -1433,7 +1436,10 @@ time, and should not let an instance that ended abnormally keep later runs out o
 > - Mechanism: `:acquire_lock` makes the folder with `mkdir`, which is atomic on NTFS, then writes `owner.txt`
 >   (process id and start time) into it; the message of REQ-024.2 prints that file. The age is the folder's last
 >   write time (`:lock_is_stale`); the process id is not used to test whether the owner is alive, because ids are
->   reused. The lock is released by `:success`, by `:die` and by the early stops that run after it was taken. A run
+>   reused. The lock is released by `:success`, by `:die` and by the early stops that run after it was taken, and
+>   only by those: the failure of one provider (for example a Miniconda install that cannot finish, `:tci_both_failed`)
+>   is logged and the run goes on, so it neither releases the lock nor waits for a key press (REQ-024.10, REQ-016.9;
+>   a call of `:die` from a subroutine whose caller continues is that defect). A run
 >   that is killed (Ctrl+C, a closed window, power loss) never releases it, which is what REQ-024.6 is for.
 > - Limits: the lock is not refreshed while a run goes on, so a run that has lasted more than 2 hours can have its
 >   lock replaced by a new double click. When the replacement folder of REQ-024.6 cannot be created (REQ-024.9),
@@ -1452,7 +1458,11 @@ time, and should not let an instance that ended abnormally keep later runs out o
 >   `self.stub.lock_stale_evict` (REQ-024.6, with the age forced by a test hook rather than waited out),
 >   `self.stub.lock_indeterminate` (REQ-024.7), `self.stub.lock_no_leak` (REQ-024.8, after a full successful run)
 >   and `self.stub.lock_evict_blocked` (REQ-024.9, a stale lock folder holding a file that the test keeps open, so
->   it cannot be removed).
+>   it cannot be removed). REQ-024.10 is `self.conda.installfail.lock`
+>   (`tests/selfapps_conda_install_fail.ps1`, real lane, no CI marker, standard input closed): with the Miniconda
+>   install forced to fail, the lock folder is still there when the venv provider starts, and the log shows the run
+>   reached the failure first; `self.conda.installfail.control` shows the same observation sees the lock folder in a run
+>   without the failure.
 
 ---
 

@@ -24,8 +24,8 @@ REGISTRY = REPO / "docs" / "agent-ndjson.md"
 
 ROW_TAGS = {
     "self.conda.installfail.control": "REQ-024",
-    "self.conda.installfail.lock": "REQ-024",
-    "self.conda.installfail.nopause": "REQ-009",
+    "self.conda.installfail.lock": "REQ-024.10",
+    "self.conda.installfail.nopause": "REQ-016.9",
     "self.conda.installfail.cascade": "REQ-009",
 }
 
@@ -216,7 +216,7 @@ class ScriptShape(unittest.TestCase):
         self.text.encode("ascii")
 
     def test_wrong_tag_is_caught(self):
-        bad = mutate(self.text, "id = 'self.conda.installfail.lock'; req = 'REQ-024'; pass = $lockPass", "id = 'self.conda.installfail.lock'; req = 'REQ-099'; pass = $lockPass")
+        bad = mutate(self.text, "id = 'self.conda.installfail.lock'; req = 'REQ-024.10'; pass = $lockPass", "id = 'self.conda.installfail.lock'; req = 'REQ-099'; pass = $lockPass")
         self.assertTrue(any("row ids and tags" in f for f in script_problems(bad)))
 
     def test_renamed_id_is_caught(self):
