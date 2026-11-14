@@ -1757,6 +1757,34 @@ self.runtime.install.failed
 self.runtime.install.rebuildfailed
 ```
 
+## selfapps-choice-cancel NDJSON rows (selfapps_choice_cancel.ps1, contract-uv lane only, GATING)
+
+Item 105, README REQ-005.10, REQ-008.11, REQ-018.15 and REQ-018.2: only an explicit yes accepts a timed question. `choice.exe`
+leaves errorlevel 1 for the first key it lists (Y), 2 for the second (N, and what the 30 second default gives), 0 for Ctrl+C or
+Ctrl+Break and 255 for an error, and cmd.exe then asks "Terminate batch job (Y/N)?"; a person who answers N lets the batch go on
+with errorlevel 0. `if errorlevel 2` is true for 2 and above, so it catches 255 and not 0, and three timed gates sent errorlevel 2
+to the decline and every smaller number to the yes. One row per question; each cuts the real block out of `run_setup.bat`
+(`:cascade_consent_gate` up to `:visa_subfolder_gate`, `:visa_subfolder_gate` up to `:dll_bundle_recover`, `:runtime_install_offer`
+up to `:rti_install_one`, `:hidden_import_consent` up to `:run_exe_smokerun`), wraps it in a driver batch file with stubs for what it
+calls, replaces the one console read (the line that starts with `choice`) by a stub that records its arguments and answers with the
+errorlevel of the scenario, and runs it with `cmd.exe` and closed standard input once per answer: yes (1), no (2), Ctrl+C (0) and an
+error (255), sixteen runs in all. A gate passes when only yes accepts and the other three decline, each decision logged exactly
+once, the question printed once and read once with `/C YN`, `/T 30` and `/D N`, and no step beyond the question (the stubs of the
+install, the rebuild and the check runs record a `REACHED` line, which is a problem). The yes run gives the others their meaning: it
+shows the stub reaches the question and the block accepts, so a Ctrl+C run cannot pass because nothing was asked. A gate that sends
+only errorlevel 2 to its decline fails its row: it needs the second line `if not errorlevel 1`, which `:hidden_import_consent` has
+had since Item 97, and `self.consent.cancel.repair` is that control (it passes whatever the other three gates do).
+`tests/test_choice_cancel.py` pins what the cut needs from `run_setup.bat` (labels once and in order, calls, variable reads, one
+console read per block, the heading and decision lines) and runs the judging functions through real `pwsh` on synthetic runs. The
+rows skip with `skip=true` off Windows. The `install` row needs a python on the runner for the helper that lists the packages.
+
+```
+self.consent.cancel.cascade
+self.consent.cancel.visa
+self.consent.cancel.install
+self.consent.cancel.repair
+```
+
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
 
 CLAUDE.md Item 78 slice 2 (README REQ-008). An `import visa` that sits only below a subfolder (an archived

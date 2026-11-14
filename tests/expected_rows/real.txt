@@ -55,6 +55,9 @@ self.ci.cache_selfheal.no_binary
 self.ci.cache_selfheal.prefix_heal_failed
 self.ci.cache_selfheal.prefix_healed
 self.collect.submodules
+self.conda.installfail.control
+self.conda.installfail.lock
+self.conda.installfail.nopause
 self.conda.retry5xx.bounded
 self.conda.retry5xx.bulk
 self.conda.retry5xx.control

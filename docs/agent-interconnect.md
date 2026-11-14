@@ -1468,6 +1468,15 @@ fixing all of them was out of scope for this pass. A companion "dependencies may
 note (`HP_DEP_MAYBE_INCOMPLETE`, set when a cascade candidate was detected but not approved) warns
 at decision time and again right before the EXE launches -- a note, never a second gate.
 
+**All four timed `choice` gates (`:cascade_consent_gate`, `:visa_subfolder_gate`, `:runtime_install_offer`, `:hidden_import_consent`)
+send errorlevel 0 to the decline as well as 2 (Item 105).** `choice` leaves 0 for Ctrl+C or Ctrl+Break and 255 for an error, and
+`if errorlevel 2` is true only for 2 or more, so each read is followed directly by `if errorlevel 2 goto <decline>` and
+`if not errorlevel 1 goto <decline>` (nothing between the `choice` line and the first guard, not even a `rem`), and only a code of exactly 1
+reaches the accept line. A new timed gate needs the same two lines, an entry in `$gates` of `tests/selfapps_choice_cancel.ps1` (the
+driver that answers 1, 2, 0 and 255; rows `self.consent.cancel.*`, contract-uv lane, gating) and its decline label in `DECLINE_LABELS` of
+`tests/test_choice_cancel.py`, which pins the two lines, their order, their target and that nothing sits between. The entry picker's
+`choice /C 123456789` takes a digit and not a yes, so it is a different shape and is not covered.
+
 ## Runtime missing-module scan (`:scan_runtime_missing_module`, Item 65 slice 1)
 
 **Touch how a run's stderr is captured, or add a new place that runs the user's program, must
@@ -1557,8 +1566,8 @@ one `[INFO] Runtime install: not offered` line and write state `not_offered`.
   answered yes through `HP_TEST_RTM_ANSWER`. `HP_TEST_FORCE_RTI_REBUILD_FAIL` (read only inside `:rti_rebuild`, named by the edge
   script and its unit test as `tests/test_flag_inventory.py` requires) hands PyInstaller an option it rejects, so the rebuild
   fails without breaking any other build; absence changes nothing (README REQ-019). The driver never runs the real `choice`
-  (Item 105 is about what it answers for Ctrl+C), and the status of a bootstrap after a failed rebuild is recorded in the row's
-  details, not asserted.
+  (`tests/selfapps_choice_cancel.ps1`, Item 105, answers 0 and 255 as well), and the status of a bootstrap after a failed rebuild
+  is recorded in the row's details, not asserted.
 - **Payload margin**: `HP_RUNTIME_MODULE_SCAN` has 354 characters left under the 8191 limit. Item 82's
   last-error-line extraction does not fit; give it its own payload or shrink this one first.
 - **Not covered**: a native DLL a newly installed conda package needs is not bundled (`:dll_bundle_recover`
@@ -1663,10 +1672,11 @@ which is filled from text that a run already printed:
   not 0 and not -1). It is the newest evidence, so the hint describes the repaired EXE's failure and does not repeat the
   hidden-import hint for a module the repair already added.
 - **Otherwise the verification run's own capture.** With no hand-over, `:exe_smokerun_hints` builds `~exe_out.txt` from
-  `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt: it runs from
-  `dist\`, and a program that reads a file relative to its working directory would be blamed for a file that exists at the
-  app root (Item 38). Item 101 has since moved the loop's starts to the app root, but the verification run's capture stays
-  the evidence: the loop's start passes no program arguments, so a program that needs them could fail there for another reason.
+  `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt. It used to run
+  from `dist\` (Item 38), where a program that reads a file relative to its working directory was blamed for a file that
+  exists at the app root; Item 101 moved the loop's starts to the app root, so that reason is gone. What keeps the
+  verification run's capture as the evidence is that the loop's start passes no program arguments, so a program that needs
+  them could fail there for another reason.
 - **Stale files**: `:run_exe_smokerun` deletes an older `~exe_out.txt` before the launch and `:hidden_import_recover_done`
   deletes it before deciding, because the subroutine can run twice per build.
 - **Known limit**: the second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only
