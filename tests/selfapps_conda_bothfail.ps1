@@ -9,8 +9,9 @@
 # New hook: HP_TEST_FORCE_JUSTME_FAIL=1 (run_setup.bat, :tci_justme) skips the real JustMe
 # `start "" /wait` call and forces a nonzero result deterministically. Combined with
 # HP_TEST_NOT_ELEVATED=1 (already reaches :tci_justme by skipping straight past the AllUsers
-# attempt), this reaches :tci_both_failed -> :die "[ERROR] Miniconda install failed (AllUsers
-# skipped -- not elevated; JustMe also failed)." without depending on a genuinely broken
+# attempt), this reaches :tci_both_failed, which logs "[ERROR] Miniconda install failed (AllUsers
+# skipped -- not elevated; JustMe also failed)." (a call :log since Item 46 Batch 6; the state=error below
+# comes from the :die of conda.bat-not-found that follows, because this scenario is conda-only) without depending on a genuinely broken
 # installer/ACL environment. (Message wording updated for Active Backlog item 16, renumbered
 # from 11 -- see docs/agent-closed-backlog.md -- to stop implying AllUsers was genuinely
 # attempted-then-failed when this scenario always skips it.)
@@ -40,7 +41,7 @@
 #
 # Also regression-tests CLAUDE.md Active Backlog Item 46 Bucket A Batch 1
 # (docs/plan-die-fatal-remediation.md's "Batch Roadmap"): a genuine Miniconda-install failure via
-# :tci_both_failed's own fall-through (its `call :die` returns via `goto :eof` to :try_conda_
+# :tci_both_failed's own fall-through (it returns via `goto :eof` to :try_conda_
 # install's caller, which then finds no conda.bat and falls into the conda-acquisition-probe chain)
 # used to be able to stack up to 4-5 redundant [ERROR]/pause pairs (conda.bat not found -> 'conda'
 # not found on PATH -> 'python' not found on PATH -> 'python -V' failed -> Conda not found at:)
