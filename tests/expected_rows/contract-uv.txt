@@ -26,6 +26,10 @@ reqspec.translate.lte
 reqspec.translate.neq
 self.bootstrap.state
 self.conda.installfail.cascade
+self.consent.cancel.cascade
+self.consent.cancel.install
+self.consent.cancel.repair
+self.consent.cancel.visa
 self.contract.uv
 self.contract.uv.pyver
 self.contract.uv.pyver.exactpin
