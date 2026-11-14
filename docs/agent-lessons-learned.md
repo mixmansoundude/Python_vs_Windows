@@ -447,6 +447,13 @@ recurring traps that have actually bitten us:
   success. `:die` itself sets `HP_BOOTSTRAP_STATE=error` unconditionally as its first action
   (before `:write_status`), so this is centralized at the source rather than needing a companion
   `set` at every one of its ~26 call sites.
+  - **`:die` is the END-of-run routine, so it must never be called from a subroutine whose caller goes
+    on** (Item 46 Batch 6): it sets state `error`, writes the status file, releases the lock folder
+    (REQ-024) and waits for a key press (REQ-016.8). `:tci_both_failed` called it while both callers
+    continued with another provider, so a run that went on to succeed had shown a key-press prompt,
+    given up its lock and reported `error`. A failure that is only the end of one TIER is a `call :log`
+    plus the return; the `:die` belongs at the point where nothing else can be tried.
+    `self.conda.installfail.*` reads the lock folder and the console text at the next provider's start.
   - **`:warn_build_incomplete`** is a non-pausing sibling of `:die` for the 3 PyInstaller-build-
     failure sites reached only AFTER the Nuitka fallback has ALSO failed, where genuinely useful
     verification work still follows (interpreter-fallback verification decides real
@@ -784,6 +791,18 @@ on its later steps if the values they read were never written. `tests/test_publi
 step's own text through `pwsh` with `$ErrorActionPreference = 'stop'`, once with an input that makes the work fail (a path
 component of 300 characters is refused on Linux and Windows) and read `GITHUB_OUTPUT`; keep the old step as a harness check that
 must lose its outputs on that input, so the test cannot go quiet.
+
+**A job's `timeout-minutes` is a sum, and a retry's `sleep` and a step's own default timeout are terms in it (the Pages publish, run
+`42384855330`).** `publish_diag` deploys the Pages artifact up to three times with a wait between. `actions/deploy-pages` gives up
+on one attempt after its `timeout` input, which is 600000 ms (ten minutes) when nothing sets it. The Pages backend left attempts 1
+and 2 running until that limit (606 s and 604 s), the 20 minute wait began about 22 minutes in, and the job's 40 minute limit
+cancelled it in the middle: the job ended as cancelled and attempt 3 never ran (worst case about 54 minutes against 40). Rules:
+(1) a job that retries holds the arithmetic (about 5 minutes of setup + every attempt's timeout + every `sleep`) at or below
+`timeout-minutes`, and `tests/test_pages_deploy_budget.py` reads the workflow text and adds it up; (2) every attempt sets its
+`timeout` itself, so the action's default is never silently a term in the sum (the test names a step that sets none); (3) when
+attempts are likely to hang to their limit, shorten the early ones (now 5, 5 and 10 minutes with waits of 30 seconds and 10
+minutes, about 36 minutes) rather than lengthening the job. The step that gave up is `continue-on-error`, so the job's own
+conclusion hid the cut for a while: a "cancelled" `publish_diag` with a long `Wait before Pages deploy retry` step is this case.
 
 **Never use "Re-run failed jobs" on a run of `batch-check.yml`.** It re-runs `publish_diag` too, which uploads a
 second artifact named `github-pages` to the same run, and `actions/deploy-pages` then fails with "Multiple artifacts
@@ -1454,7 +1473,10 @@ same `call :emit_from_base64 "~runtime_module_scan.py" HP_RUNTIME_MODULE_SCAN` i
 saw the change and the cases reported no finding. A case that passes for the wrong block is the dangerous one, because it proves
 nothing and looks like proof. **Rule: `mutate()` in `tests/test_edge_rows.py` asserts the anchor occurs exactly once (name a neighbouring
 line that only the block under test has), and a case asserts that the finding names the rule being tested, not only that something is
-reported.** The same applies to any test that edits a copy of `run_setup.bat` text.
+reported.** The same applies to any test that edits a copy of `run_setup.bat` text. It applies to the workflow too: a new
+step that repeats another step's `if:` line text (`if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}`) made
+`tests/test_edge_rows.py::test_a_step_on_another_lane_is_caught` fail its exactly-once assertion, so write the new step's
+condition in another order (`matrix.mode == 'contract-uv' && !cancelled()`).
 
 ## A gate that cuts real code out of the batch file must replace the console read, and the read has to be decided on purpose (Item 99)
 

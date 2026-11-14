@@ -544,7 +544,9 @@ self.gribapi_hook_probe.hidden_import
 
 Covers `:tci_both_failed` (both Miniconda AllUsers and JustMe install types fail), previously zero
 CI coverage. `HP_TEST_FORCE_JUSTME_FAIL=1` + `HP_TEST_NOT_ELEVATED=1` deterministically reaches
-`:tci_both_failed -> :die` without depending on a genuinely broken installer/ACL environment.
+`:tci_both_failed` without depending on a genuinely broken installer/ACL environment. Since Item 46 Batch 6 that
+block only logs the failure; state `error` here comes from the next `:die`, `conda.bat not found after bootstrap`, which
+runs because this scenario is conda-only.
 **Placement is load-bearing**: wired immediately BEFORE the provider-cascade-exec step in the `uv`
 lane, so Miniconda genuinely does not exist on the runner yet when this test's own install attempt
 runs (Miniconda installs to a shared, machine-wide path -- an earlier step installing it first
@@ -554,6 +556,39 @@ silently overwritten back to `ok`); does not assert process exit code (this repo
 
 ```
 self.conda.bothfail
+```
+
+## selfapps-conda-install-fail NDJSON rows (selfapps_conda_install_fail.ps1, real lane and contract-uv lane, gating)
+
+Item 46 Batch 6 (README REQ-024 and REQ-009; the key press is the end-of-run pause of REQ-016.8): `:tci_both_failed` (Miniconda could not be installed) ended in
+`call :die`, the END-of-run routine (state `error`, status file written, lock released, key press unless the CI marker is
+set), although both callers go on: the main flow tries embedded Python, venv and system next, and the uv to conda cascade
+keeps the build it has. Two scenarios (`CONDA_INSTALL_FAIL_SCENARIO`, default `fallback`):
+- `fallback` (real lane): two default-order runs with every `HP_*`, `PVW_*` and `NOINPUT` variable cleared by a wrapper
+  (the CI marker too, because `:die` pauses only without it), standard input closed, `HP_OFFLINE_MODE=1`,
+  `HP_TEST_FORCE_UV_FAIL=1`, and a private `TEMP` and `PUBLIC`. The failing run has a stub `miniconda.exe` in its `TEMP`
+  (never started: `HP_TEST_NOT_ELEVATED=1` skips AllUsers and `HP_TEST_FORCE_JUSTME_FAIL=1` fails JustMe before it
+  would be) and so reaches `:tci_both_failed` from the main flow; the control has no installer file and reaches the same
+  provider chain through "conda.bat not found". The script polls `~setup.log` and, the moment `Attempting venv fallback` is
+  written, looks at `~bootstrap.lock` once (the venv step takes seconds, and the line comes after everything `:die`
+  did), then stops the run. `.control`: lock in place, no key press between "conda.bat not found after bootstrap" and the
+  venv line, no failure message (so the observation can tell the difference). `.lock`: in the failing run the lock folder is
+  still in place there (red before the fix: `:die` removed it). `.nopause`: no `Press any key` between the failure message
+  and the venv line (red before the fix). Both need the precondition (the hook line, the failure message, the venv line
+  after it) so a run that never reached the failure cannot pass.
+- `cascade` (contract-uv lane): a program that exits 3 under uv, `HP_TEST_LASTCHANCE_ANSWER=C`, `HP_MINICONDA_URL` a
+  `file:///` URL of a local stub, the same two hooks. `.cascade`: after "cascading provider uv to conda" and the failure
+  message, the setup log says "cascade to conda unavailable (Miniconda not installed); keeping current build." and
+  `~bootstrap.status.json` still reads `ok` (red before the fix: `:die` set `error` and `:after_cascade_decision` wrote it).
+Limits: the elevated "both AllUsers and JustMe" wording is the other branch of the same `if` and needs an elevated
+runner; the final state after the venv tier succeeds is not read (the fallback runs are stopped at the venv line).
+Skips on non-Windows.
+
+```
+self.conda.installfail.control
+self.conda.installfail.lock
+self.conda.installfail.nopause
+self.conda.installfail.cascade
 ```
 
 ## selfapps-cascade-conda-create-fail NDJSON rows (selfapps_cascade_conda_create_fail.ps1, uv lane only, non-gating)
