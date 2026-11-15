@@ -1,0 +1,65 @@
+# Messages of run_setup.bat that talk about building, packaging or verifying and are NOT about the standalone EXE (README REQ-007.20).
+# Read by tools/exe_wording.py: `check` (tests/test_exe_wording.py, inside self.pytest.unit) holds every console message of
+# run_setup.bat to the rule, and `console` (tests/selfapps_sysbuild_accept.ps1) holds every timestamped line of a real run to it.
+#
+# A rule for a message: when it says build, bundle, package or verify, it names the artifact or the tool in plain words
+# (EXE, executable, standalone, PyInstaller, Nuitka), or its exact text is listed here under a category that says why it is
+# about something else. Reword first; list a message only when a reword would make it false or untrue to its subject.
+#
+# An entry reads "<category> | <message text as run_setup.bat writes it>". Whitespace is collapsed, ^ escapes and *** banners are
+# dropped, a %VARIABLE% stays as written (the console check lets it match any text), and a block of consecutive echo lines is one
+# message. The list can only shrink or be re-decided on purpose: an entry that no console message of run_setup.bat reads any more,
+# or that the message no longer needs (it now names the EXE), turns the unit test red until its line is removed.
+
+category: usage | the first argument was refused before any provider, dependency or EXE work started, so build only says nothing was started
+category: environment | the message is about rebuilding the conda environment, not about the EXE
+category: interpreter | the message says the check is made through the Python interpreter, which is the verification when no EXE exists
+category: provider | the message is about moving to another Python provider or keeping the current one; the build it keeps can be the EXE or an interpreter-only run
+category: embed | the message is about downloading and verifying the embedded Python, which is a Python provider, not the EXE
+category: exit_code | the line only reports the exit code of a verification run that another line announces by naming the EXE or the interpreter
+category: program | the message is about the user's own program, a second run of it or the packages it asked for, not about the EXE
+category: diagnostic | a bookkeeping line about a breadcrumb file, not a statement about the EXE
+category: prompt | a one-line question that sits directly under a block which names the standalone EXE and is held to the rule on its own
+
+usage | [ERROR] The first argument must be one of your Python files in this folder. You gave: "%~1" Usage: run_setup.bat your_script.py [arguments for your program] You can leave off the .py. Nothing was built, installed, or run.
+usage | [ERROR] REQ-002: first argument is not an existing .py file in this folder; stopping before any build or run.
+
+environment | [WARN] Env-state fast path: %HP_PY% not found; falling back to full env rebuild.
+environment | Would you like to delete it and rebuild? [Y/N]
+environment | [ERROR] Corrupt conda env; user declined rebuild.
+
+interpreter | [WARN] Interpreter smoke test failed (continuing).
+interpreter | [INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter.
+
+provider | [INFO] REQ-009: provider tiers exhausted after %HP_ENV_MODE%; keeping current build.
+provider | [WARN] REQ-009: cascade to conda unavailable (Miniconda not installed); keeping current build.
+provider | [WARN] REQ-009: cascade target conda create failed; keeping current build.
+provider | [INFO] REQ-009: conda-only mode; cascade beyond conda suppressed; keeping current build.
+provider | [WARN] REQ-009: cascade target embedded Python unavailable; keeping current build.
+provider | [WARN] REQ-009: cascade target venv unavailable; keeping current build.
+provider | [WARN] REQ-009: cascade target system Python unavailable; keeping current build.
+provider | [INFO] REQ-009: cascade declined; keeping current build.
+provider | [INFO] REQ-009: cascade approved; skipping the post-verification offers for this build.
+provider | [INFO] Last chance: automated run, no question asked; keeping this build.
+provider | [INFO] Last chance: neither; keeping this build.
+provider | [INFO] Last chance: you said it worked; keeping this build. Pass type: user_confirmed.
+provider | [INFO] Last chance: you said the window opened and worked; keeping this build. Pass type: user_confirmed.
+provider | [INFO] Last chance: window not confirmed; keeping this build.
+
+embed | [WARN] embed fallback: checksum verification or extraction failed; retrying download once.
+embed | [WARN] embed fallback: checksum verification or extraction failed.
+embed | [INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified.
+
+exit_code | [INFO] Entry smoke exit=%HP_SMOKE_RC%
+exit_code | [INFO] Entry smoke exit=%HP_EXE_EXIT%
+
+program | Verification finished -- see the Run Status above. You can run your program again now via the interpreter as an extra diagnostic check. (Optional) A second run repeats whatever your program does, such as changing files or sending messages, so say no if running it twice could cause harm.
+program | [INFO] Runtime install: not offered for this build or provider.
+program | [INFO] Runtime install: verified. The program no longer reports a missing module.
+program | [WARN] Runtime install: the check run did not happen, so the result is not verified.
+program | It may still have worked, or it may need a different Python provider. [W] It actually worked. Nothing needs to change. [C] Try again with Miniconda. This downloads it if needed and runs your program once more. Do not choose it if running it twice could cause harm. [N] Neither. Keep this build. This is the default.
+
+diagnostic | [INFO] Entry smoke breadcrumb exists: %HP_BREADCRUMB%
+diagnostic | [WARN] Entry smoke missing breadcrumb: %HP_BREADCRUMB%
+
+prompt | Build the optimized version now? [Y/N]

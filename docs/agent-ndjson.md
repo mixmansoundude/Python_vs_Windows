@@ -322,6 +322,37 @@ declined, and with the damaged folder, the stub and the installer file all gone.
 (`tests/~conda_evict_evidence.txt`, `tests/~selftest_condaevict/*/~driver*`, the offline run's `~setup.log` and
 `~bootstrap.status.json`) are in the `test-logs` artifact. Rules about the batch side are `tests/test_conda_evict.py`.
 
+```
+self.sysbuild.accept, self.sysbuild.wording
+```
+
+The two `self.sysbuild.*` rows of `tests/selfapps_sysbuild_accept.ps1` (`contract-uv` lane, gating, Item 123) cover REQ-007.17 (`req` tag
+`REQ-007.17` on `.accept`) and REQ-007.20 (`REQ-007.20` on `.wording`), which the README listed under "Not checked" because no
+scenario answered yes to the system-Python build question and no check read every message of the build step. One real bootstrap of
+the folder `~selftest_sysbuild_accept` (so the EXE is `_selftest_sysbuild_accept.exe`) with a private virtual environment made from the
+runner's python as the system Python (its `Scripts` folder first on `PATH`, so PyInstaller is installed into it and not into the runner's
+own interpreter), every other provider failed by decree (`HP_OFFLINE_MODE=1`, `HP_TEST_FORCE_CONDA_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`),
+the answers Y to both questions (`HP_TEST_SYSCON_ANSWER=Y` for REQ-014, `HP_TEST_SYSBUILD_ANSWER=Y` for REQ-007.16), `HP_CI_LANE` set so the
+elective offers after the build decline without waiting, every `HP_`/`PVW_`/`NOINPUT` variable of the runner cleared first and standard input
+closed; a watchdog (15 minutes, process tree) ends a hung run. `.accept` reads the console: the system tier was tried, the REQ-014 consent
+was accepted, the interpreter is the private one, the provider line says System Python, the REQ-007 build consent was accepted, the build
+started, PyInstaller produced `dist\<exe>`, the check run went through the packaged EXE, exited 0 and reported success, each once and in
+that order (the last two may repeat), none of the lines of the declined path (consent declined, not consented, the interpreter check in
+place of the EXE check, `Run Status: FAILED`, the caveat panel); then the EXE exists and is named on the line under `Your standalone
+application is ready:`, `~run.out.txt` holds the program's line, the status file says `degraded_env` with exit code 0, the run ended with
+exit code 0, and the EXE started on its own exits 0 and prints the line. `.wording` hands the same console to `python tools/exe_wording.py
+console --file` and takes its one JSON line: every timestamped line that talks about building, bundling, packaging or verifying names the
+artifact or the tool (EXE, executable, standalone, PyInstaller, Nuitka) or matches an entry of `tests/exe_wording_exempt.txt`, and the judge
+read enough of the run (at least 20 log lines, 3 about the build, 2 that name the EXE, 1 exempt line) that a console that never reached the
+build cannot pass. The static half is `tests/test_exe_wording.py`: `tools/exe_wording.py check` finds every console message of
+`run_setup.bat` (consecutive `echo` lines of one label, `call :log`, the prompts) and fails for one that talks about building or verifying
+and names neither, unless `tests/exe_wording_exempt.txt` lists it with a category; a stale or unneeded entry fails too, and the list is capped.
+Rules about the batch and script sides, run through a real `pwsh` on synthetic runs, are `tests/test_sysbuild_accept.py`. Stated limits: the
+interpreter is a venv of the runner's python and not the python.org installer's layout, and the messages of a failing build (the Nuitka
+fallback, the repair loops) are held to the wording rule by the static test and by the rows that reach them, not by this run. Evidence
+(`tests/~sysbuild_accept_evidence.txt`, the run's console log, `~setup.log`, `~bootstrap.status.json` and the judge's error output) is in the
+`test-logs` artifact.
+
 `self.dll_bundle.recover` (`:emit_dll_bundle_row`, all 7 outcome points inside
 `:dll_bundle_recover`) is the machine-readable record of the conda native-DLL bundling repair
 loop -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
