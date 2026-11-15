@@ -73,6 +73,9 @@ def script_problems(text):
         "function Get-NoPinProblems",
         "function Get-PyMinor",
         "function Get-PyvenvVersion",
+        "function Get-VenvInterpreterVersion",
+        "$refVersion = Get-VenvInterpreterVersion -Dir $refDir",
+        "$ver = Get-VenvInterpreterVersion -Dir (Join-Path $dir '.uv_env')",
         "-RuntimePython '3.12' -RequiresPython '>=3.13'",
         "-Name '~uv_pyver_conflict_control' -RequiresPython '>=3.13'",
         "$env:UV_PYTHON_PREFERENCE = 'only-managed'",
@@ -132,7 +135,7 @@ foreach ($__c in $__cases) {
 }
 ConvertTo-Json -InputObject @($__all) -Compress -Depth 8
 """
-WANT = "Get-PyMinor,Get-ConflictProblems,Get-NoPinProblems"
+WANT = "Get-PyMinor,Get-ConflictProblems,Get-NoPinProblems,Get-PyvenvVersion,Get-VenvInterpreterVersion"
 
 
 def run_cases(cases, tmp):
@@ -207,6 +210,79 @@ class JudgingRunsInPwsh(unittest.TestCase):
         self.assertTrue(any("without a version" in p for p in self.out["nopin_no_line"]))
 
 
+def _version(name, fn, directory):
+    return {"name": name, "fn": fn, "args": {"Dir": str(directory)}}
+
+
+def _write_cfg(directory, text):
+    Path(directory).mkdir(parents=True, exist_ok=True)
+    (Path(directory) / "pyvenv.cfg").write_text(text, encoding="ascii")
+
+
+def _write_stub_python(directory, banner):
+    scripts = Path(directory) / "Scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    stub = scripts / "python.exe"
+    stub.write_text("#!/bin/sh\necho '%s'\n" % banner, encoding="ascii")
+    stub.chmod(0o755)
+
+
+@unittest.skipIf(PWSH is None, "pwsh is not installed here")
+class VenvVersionRunsInPwsh(unittest.TestCase):
+    """The first run of self.contract.uv.pyver.nopin (run 43636493617) read an empty reference version: uv 0.11 writes
+    `version_info = 3.14` (no patch) for a managed interpreter, and the reference read pyvenv.cfg only. These cases run
+    the two readers through pwsh on venv folders of each shape."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.tmp.name)
+        cases = []
+        cfg_three = root / "cfg_three"
+        _write_cfg(cfg_three, "home = x\nversion_info = 3.15.2\nseed = true\n")
+        cfg_minor = root / "cfg_minor"
+        _write_cfg(cfg_minor, "home = x\nimplementation = CPython\nversion_info = 3.14\nseed = true\n")
+        empty = root / "empty"
+        empty.mkdir()
+        for fn in ("Get-PyvenvVersion", "Get-VenvInterpreterVersion"):
+            cases.append(_version("cfg_three_%s" % fn, fn, cfg_three))
+            cases.append(_version("cfg_minor_%s" % fn, fn, cfg_minor))
+            cases.append(_version("empty_%s" % fn, fn, empty))
+        cls.posix = os.name == "posix"
+        if cls.posix:
+            minor_stub = root / "cfg_minor_stub"
+            _write_cfg(minor_stub, "version_info = 3.14\n")
+            _write_stub_python(minor_stub, "Python 3.15.2")
+            no_cfg_stub = root / "no_cfg_stub"
+            _write_stub_python(no_cfg_stub, "Python 3.15.2")
+            for fn in ("Get-PyvenvVersion", "Get-VenvInterpreterVersion"):
+                cases.append(_version("minor_stub_%s" % fn, fn, minor_stub))
+                cases.append(_version("no_cfg_stub_%s" % fn, fn, no_cfg_stub))
+        cls.out = run_cases(cases, root)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_a_three_part_cfg_is_read_by_both(self):
+        self.assertEqual(self.out["cfg_three_Get-PyvenvVersion"], ["3.15.2"])
+        self.assertEqual(self.out["cfg_three_Get-VenvInterpreterVersion"], ["3.15.2"])
+
+    def test_a_minor_only_cfg_gives_nothing_from_the_cfg_reader_and_nothing_without_an_interpreter(self):
+        self.assertEqual(self.out["cfg_minor_Get-PyvenvVersion"], [""])
+        self.assertEqual(self.out["cfg_minor_Get-VenvInterpreterVersion"], [""])
+        self.assertEqual(self.out["empty_Get-PyvenvVersion"], [""])
+        self.assertEqual(self.out["empty_Get-VenvInterpreterVersion"], [""])
+
+    @unittest.skipUnless(os.name == "posix", "the stub interpreter is a shell script")
+    def test_a_minor_only_cfg_is_completed_by_the_interpreter(self):
+        # This is the case the reference venv of the nopin row was in: the cfg reader alone gives nothing.
+        self.assertEqual(self.out["minor_stub_Get-PyvenvVersion"], [""])
+        self.assertEqual(self.out["minor_stub_Get-VenvInterpreterVersion"], ["3.15.2"])
+        self.assertEqual(self.out["no_cfg_stub_Get-PyvenvVersion"], [""])
+        self.assertEqual(self.out["no_cfg_stub_Get-VenvInterpreterVersion"], ["3.15.2"])
+
+
 def _lines():
     return _bat()
 
@@ -250,6 +326,11 @@ class SyntheticRulesCanFail(unittest.TestCase):
         self.assertTrue(batch_problems(text))
         text = _bat().replace("with Python %HP_UV_PY_DISP%...", "with Python %HP_UV_PY_DISP%")
         self.assertTrue(batch_problems(text))
+
+    def test_a_reference_read_from_the_cfg_alone_is_reported(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertTrue(script_problems(text.replace("$refVersion = Get-VenvInterpreterVersion -Dir $refDir", "$refVersion = Get-PyvenvVersion -Dir $refDir")))
+        self.assertTrue(script_problems(text.replace("$ver = Get-VenvInterpreterVersion -Dir (Join-Path $dir '.uv_env')", "$ver = Get-PyvenvVersion -Dir (Join-Path $dir '.uv_env')")))
 
     def test_a_changed_version_less_call_is_reported(self):
         self.assertTrue(batch_problems(_bat().replace('venv --seed "%HP_UV_ENV_PATH%" >>', 'venv "%HP_UV_ENV_PATH%" >>')))

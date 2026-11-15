@@ -68,23 +68,8 @@ function Invoke-UvPyverScenario {
         Get-Content -LiteralPath $scenarioLog -Raw -ErrorAction SilentlyContinue
     } else { '' }
     if (-not $log) { $log = '' }
-    # version_info in pyvenv.cfg is the interpreter uv actually provisioned for .uv_env.
-    $ver = ''
-    $cfg = Join-Path $dir '.uv_env\pyvenv.cfg'
-    if (Test-Path -LiteralPath $cfg) {
-        $cfgText = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
-        if ($cfgText -match 'version_info\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { $ver = $Matches[1] }
-        elseif ($cfgText -match 'version\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { $ver = $Matches[1] }
-    }
-    if (-not $ver) {
-        $py = Join-Path $dir '.uv_env\Scripts\python.exe'
-        if (Test-Path -LiteralPath $py) {
-            try {
-                $out = & $py --version 2>&1
-                if ("$out" -match '([0-9]+\.[0-9]+\.[0-9]+)') { $ver = $Matches[1] }
-            } catch { $ver = '' }
-        }
-    }
+    # The interpreter uv actually provisioned for .uv_env (pyvenv.cfg, else the interpreter itself).
+    $ver = Get-VenvInterpreterVersion -Dir (Join-Path $dir '.uv_env')
     return [ordered]@{ exit = $exit; log = $log; version = $ver }
 }
 
@@ -132,6 +117,24 @@ function Get-PyvenvVersion {
     $cfgText = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
     if ($cfgText -match 'version_info\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
     if ($cfgText -match 'version\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
+    return ''
+}
+
+# The interpreter a venv holds, as major.minor.patch. pyvenv.cfg is read first, but uv 0.11 records only the minor
+# (`version_info = 3.14`) for a managed interpreter, which holds no patch to compare; the first run of
+# self.contract.uv.pyver.nopin (run 43636493617) read an empty reference version for that reason while the bootstrap's own
+# venv, which already had this fallback, gave 3.15.2. Both venvs of that row go through this one function.
+function Get-VenvInterpreterVersion {
+    param([string]$Dir)
+    $fromCfg = Get-PyvenvVersion -Dir $Dir
+    if ($fromCfg) { return $fromCfg }
+    $py = Join-Path $Dir 'Scripts\python.exe'
+    if (Test-Path -LiteralPath $py) {
+        try {
+            $out = & $py --version 2>&1
+            if ("$out" -match '([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
+        } catch { return '' }
+    }
     return ''
 }
 
@@ -422,7 +425,7 @@ if ($lane -eq 'contract-uv-fail') {
         } finally {
             if ($null -eq $prevPref) { Remove-Item Env:UV_PYTHON_PREFERENCE -ErrorAction SilentlyContinue } else { $env:UV_PYTHON_PREFERENCE = $prevPref }
         }
-        $refVersion = Get-PyvenvVersion -Dir $refDir
+        $refVersion = Get-VenvInterpreterVersion -Dir $refDir
         $noPinProblems = @(Get-NoPinProblems -BootstrapVersion $noPin.version -ReferenceVersion $refVersion -BootstrapLog $noPin.log)
         $noPinDetails = [ordered]@{
             bootstrapVersion = $noPin.version

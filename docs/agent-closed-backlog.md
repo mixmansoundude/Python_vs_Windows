@@ -7829,7 +7829,7 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   code is cut out and run against a local server".
 - **Not covered.** The uv download (a text pin in the unit test). REQ-013.12 followed in Item 116.
 
-### Item 113 (filed 2026-11-14, PR pending; REQ-023.1, the venv canary probe with the real command)
+### Item 113 (filed 2026-11-14, PR #533; REQ-023.1, the venv canary probe with the real command)
 
 - **The gap.** `UNTRACED_SHALLS` carried REQ-023.1 as "shown by inspection": the existing rows (`self.venv.canary_fail`) force the decline through
   `HP_TEST_FORCE_VENV_CANARY_FAIL`, which skips the probe command, so no row ran `"%HP_PY%" -c "import sys"` against an interpreter that fails.
@@ -7837,9 +7837,13 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   `run_setup.bat` and runs it under cmd.exe with a compiled stub Python; `tests/test_venv_probe.py` pins what the script assumes and runs its judging
   functions through pwsh; README REQ-023's tests note names the rows; the REQ-023.1 `gap:` entry is gone (233 of 265 shalls named). Design and coupling:
   `docs/agent-interconnect.md`, "The venv fallback's interpreter probe is cut out and run with a stub Python".
+- **Red first.** Run `43636493617` (head `7ff2a27`, rows only, no fix): `self.venvprobe.command`, `.nofile` and `.declines` true on `real`; `self.venvprobe.crash` red, and for the
+  right reason. Both negative exit codes of the stub (`-1` and `-1073741515`, the missing-DLL code) ended with `venv fallback ready`, `Selected Python provider: Local venv (fallback)`,
+  tier return 0 and `HP_PY` and `HP_ENV_MODE` set, i.e. the venv was selected although its probe failed. The cause is the product, not the test: `if errorlevel 1` is true only for a code of 1 or
+  more, so a negative exit code read as a pass. The fix reads `%ERRORLEVEL%` into a variable and compares it with `0` in both canary probes (the venv tier and the embedded tier, which had the same line).
 
 
-### Item 114 (filed 2026-11-14, PR pending; REQ-004.3 and .4, the two uv version cases that had no row)
+### Item 114 (filed 2026-11-14, PR #533; REQ-004.3 and .4, the two uv version cases that had no row)
 
 - **The gap.** `UNTRACED_SHALLS` carried REQ-004.3 (runtime.txt wins when both files name a version) as a unit test of the helper only, and REQ-004.4 (no request: the
   provider's newest Python) as a gap: no row started a bootstrap with both files, or with neither, and read the interpreter that was set up.
@@ -7848,8 +7852,12 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   alone must give a newer minor) so that 3.12 can only mean runtime.txt was read. The no-request row compares with a plain `uv venv --seed` under
   `UV_PYTHON_PREFERENCE=only-managed`, the same call the batch makes without a version, so it shows "no version forwarded, uv chooses" and not an absolute "newest".
   The conda and embedded providers are not covered for these two shalls. 235 of 265 shalls named.
+- **First run, a test bug (run `43636493617`).** `conflict` was true (3.12.16, control 3.15.2). `nopin` was red for a reason of its own: the reference venv was made (the row printed
+  uv's output) and its version read as empty, because uv 0.11 writes `version_info = 3.14` (minor only) to `pyvenv.cfg` for a managed interpreter, and only the bootstrap's venv had the
+  fallback to the interpreter itself. Both venvs now go through `Get-VenvInterpreterVersion` (cfg first, then `Scripts\python.exe --version`), run through pwsh on venv folders of each shape by
+  `tests/test_pyver_rows.py`.
 
-### Item 115 (filed 2026-11-14, PR pending; REQ-003.2, the Miniconda folder)
+### Item 115 (filed 2026-11-14, PR #533; REQ-003.2, the Miniconda folder)
 
 - **The gap.** `UNTRACED_SHALLS` carried REQ-003.2 as a gap: the provider rows install Miniconda and are tagged REQ-003, but no row asserted the folder.
 - **What shipped.** `self.env.smoke.minicondafolder` in `tests/selfapps_envsmoke.ps1` (every lane that runs the script, gating from the first run). When the
@@ -7861,7 +7869,7 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
 - **Not covered.** REQ-003.1 (the Windows floor, `curl` and PowerShell from System32) and REQ-003.3 (the working files go to the folder where the bootstrapper was
   started, owned by the other thread).
 
-### Item 116 (filed 2026-11-14, PR pending; REQ-013.12 and REQ-003.1, the last two gap entries of the REQ-013 and REQ-003 families I took)
+### Item 116 (filed 2026-11-14, PR #533; REQ-013.12 and REQ-003.1, the last two gap entries of the REQ-013 and REQ-003 families I took)
 
 - **The gap.** `UNTRACED_SHALLS` carried REQ-013.12 (offline mode uses an installed Miniconda or uv as it is: no row had one installed) and REQ-003.1 (Windows 10 1809 or newer,
   using the curl and PowerShell Windows ships: rows were tagged REQ-003 but none named the shall).
