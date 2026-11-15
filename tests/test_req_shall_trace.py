@@ -49,23 +49,17 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 # Shall id -> reason it has no tagged row. Delete an entry when a row is tagged with the shall's id.
 UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-002.15": "unit: tests/test_picker_gate.py::PickerWait the prompt of :pick_entry_interactive waits HP_PICK_T seconds, 30 unless the test setting HP_TEST_FORCE_PICKER shortens it to 2; self.entry.picker (default taken, REQ-002.22) and self.entry.picker.number (a typed number) run with the shortened wait, so no row waits the full 30 seconds",
-    "REQ-003.1": "gap: rows are tagged REQ-003 (selfapps_unc, selfapps_justme, selfapps_exefail) but none names this shall; the Windows 10 (1809) floor and the curl and PowerShell it relies on are shown only by the runners",
-    "REQ-003.2": "gap: selfapps_justme and the provider rows install Miniconda under %PUBLIC%\\Documents\\Miniconda3 and are tagged REQ-003; none asserts the install folder as this shall",
-    "REQ-004.3": "unit: tests/test_detect_python.py::DetectRequiresPython test_runtime_txt_wins_over_pyproject pins the helper that both providers read; no row starts a bootstrap with a runtime.txt and a pyproject.toml that name different versions and reads the Python that was set up",
-    "REQ-004.4": "gap: no row compares the Python that a provider set up, with no request in the folder, with the newest version that provider offers; self.uv.managed.interpreter shows the managed CPython is the one in use and the version-agnostic row cannot tell newest from older",
     "REQ-007.12": "unit: tests/test_collect_submodules.py::GatingMatrix a curated package is collected only when the program uses it and the interpreter has it installed, so an unused library never enters the build",
     "REQ-007.17": "gap: no row answers yes to the system-Python build question; doing so would install PyInstaller into the runner's own system Python (self.sysbuild.decline, .nuitka_prompt and .ci_marker stop at the question)",
     "REQ-007.20": "gap: no check reads every message of the build step; self.exe.build.xfail reads the PyInstaller failure messages, and the word executable in the other messages is not searched",
     "REQ-008.5": "unit: tests/test_detect_visa.py::VisaDetection a nested folder is scanned (result 2, a match below a subfolder), folders starting with ~ or . and files starting with ~ are skipped, a file that is not .py is skipped",
     "REQ-008.6": "unit: tests/test_detect_visa.py::VisaDetection import pyvista, import vision and import pyviscoelastic are not matches, a dotted submodule import of pyvisa still is",
     "REQ-008.12": "inspection: run_setup.bat :: set \"HP_VISA_T=30\"\nthe wait of the timed choice in :visa_subfolder_gate; self.nivisa.subfolder.timeout shortens it to 2 seconds with a test setting to stay fast, so no row waits the full 30 seconds",
-    "REQ-013.12": "gap: no row has an installed Miniconda or uv, chooses offline mode and shows the installed one used without a download; self.ux.connectivity.offline.uv.skip and .conda.skip look at the skip lines only",
     "REQ-016.8": "inspection: run_setup.bat :: rem REQ-016: retain terminal window on success so user can read the output.\nthe pause that ends :success, and the one in :die (rem REQ-016: retain terminal window on error), each behind if not defined HP_CI_LANE; every CI lane carries the marker, so no row reaches a pause and the shall is read from the code",
     "REQ-018.6": "unit: tests/test_exe_smokerun.py::ActivityAwareStop output before the deadline keeps the run going past 30 seconds, with or without a trailing newline; KillTimeout in the same file shows a silent hang is stopped and 30000 ms is the default",
     "REQ-018.13": "unit: tests/test_runtime_module_scan.py::WhatIsNotReported standard library names and a module next to the script are not reported; the cached-EXE skip is the scan's no-interpreter return",
     "REQ-018.19": "unit: tests/test_runtime_module_scan.py::BatchCallSites the rebuild adds --hidden-import and --collect-submodules for each installed module and puts both on the PyInstaller command line; self.runtime.install.accept shows the first flag by behavior (the check run is clean only if the EXE holds the package), nothing runs the second flag",
     "REQ-018.30": "unit: tests/test_window_confirm.py::WindowQuestionWiring the question says the check stops the program after about 30 seconds (static wording pin)",
-    "REQ-023.1": "inspection: run_setup.bat :: \"%HP_PY%\" -c \"import sys\"\nthe probe command that :try_venv_fallback runs after the venv is created; self.venv.canary_fail forces the probe's failure with a hook that jumps past the command, so no row makes the real command fail",
 }
 
 
