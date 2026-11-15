@@ -134,6 +134,11 @@ function Invoke-Bootstrap {
     try {
         $lines = @('@echo off')
         foreach ($k in $clearVars) { if (-not $setVars.ContainsKey($k)) { $lines += ('set "' + $k + '="') } }
+        # Item 120: every bootstrap gets its own empty PUBLIC, so a Miniconda an earlier step left in the runner's shared
+        # Public folder can never be found by the main flow (run 43608572893), and the launch file records what it saw.
+        $pub = $Work + '_public'
+        New-Item -ItemType Directory -Force -Path $pub | Out-Null
+        $lines += ('set "PUBLIC=' + $pub + '"')
         $lines += '>~embver_public.txt echo PUBLIC=%PUBLIC%'
         $lines += ('call run_setup.bat > ' + $LogName + ' 2>&1 < nul')
         $lines += 'exit /b %ERRORLEVEL%'
@@ -174,7 +179,7 @@ function Invoke-Bootstrap {
 function New-Scratch {
     param([string]$Name, [string]$RuntimeTxt, [string]$Pyproject = '')
     $work = Join-Path $here ('~selftest_embed_ver_' + $Name)
-    foreach ($stale in @($work, ($work + '_decoy'))) {
+    foreach ($stale in @($work, ($work + '_decoy'), ($work + '_public'))) {
         if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Recurse -Force }
     }
     New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -294,7 +299,7 @@ $d['swapMinor'] = $swapMinor
 $d['dllExpected'] = $wantDll
 $passSwap = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and $d.swappedLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.swap'; req = 'REQ-009, REQ-004.1'; pass = [bool]$passSwap
     desc = 'README REQ-009 Tier 5: a requested minor other than the newest is downloaded, swapped into ~embed_python (not nested) and is the interpreter the program runs under'
@@ -311,7 +316,7 @@ $d['floorMinor'] = $floorMinor
 $d['dllExpected'] = $wantDll
 $passFloor = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq $floorMinor) -and ($d.appLine -eq $floorMinor) -and ($d.interpreterMinor -eq $floorMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.floor'; req = 'REQ-009'; pass = [bool]$passFloor
     desc = 'README REQ-009 Tier 5: a request below the oldest minor the embed table holds warns that it is not in the table and runs under the floor minor'
@@ -328,7 +333,7 @@ $d['floorMinor'] = $floorMinor
 $d['dllExpected'] = $wantDll
 $passCeiling = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swappedLog) -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq $latestMinor) -and ($d.appLine -eq $latestMinor) -and ($d.interpreterMinor -eq $latestMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = [bool]$passCeiling
     desc = 'README REQ-009 Tier 5: a request above the newest minor the embed table holds warns that it is not in the table, downloads nothing more and runs under the newest minor'
@@ -346,7 +351,7 @@ $d['swapMinor'] = $swapMinor
 $d['dllExpected'] = $wantDll
 $passRange = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and $d.swappedLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.range'; req = 'REQ-009, REQ-004.2'; pass = [bool]$passRange
     desc = 'README REQ-009 Tier 5: a requires-python range in pyproject.toml gets the newest minor the range allows from the embed table, not the range lower bound'
