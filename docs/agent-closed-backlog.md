@@ -4427,7 +4427,7 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   not covered. The four new row ids belong in `tests/expected_rows/contract-uv.txt` once they have appeared in green runs (lane 1 owns
   those lists).
 
-### Pages publish deploy-retry budget (closed 2026-11-14, PR #528, no item number; found in run `42384855330`, the Pages publish of a green `main` run)
+### Item 121: Pages publish deploy-retry budget (closed 2026-11-14, PR #528; found in run `42384855330`, the Pages publish of a green `main` run)
 
 - **The problem.** `publish_diag` deployed the Pages artifact up to three times with a `sleep 1200` between attempts and no `timeout`
   on the `actions/deploy-pages` steps, so each hung attempt ran to the action's 10 minute default (606 s and 604 s in that run). The
