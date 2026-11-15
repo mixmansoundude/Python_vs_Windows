@@ -654,6 +654,47 @@ unchanged until Tier B matures (`docs/prd-av-safe-build-path.md`).
 
 ---
 
+## Console messages about the build: the ratchet, the exempt list, the console judge and the accept scenario read the same text (Item 123)
+
+**Touch a `call :log`, `echo` or prompt line of `run_setup.bat` that says build, rebuild, package, bundle, smoke or verify,
+`tests/exe_wording_exempt.txt`, `tools/exe_wording.py`, `tests/selfapps_sysbuild_accept.ps1` or one of the two system-Python consent gates,
+must understand the others.** README REQ-007.20: every message about the build, the check run of the EXE or its failure names the artifact and
+the tool in plain words, so a reader can tell it is about the optional one-file program and not about the environment, which is installed.
+- **One rule, two readers.** `python tools/exe_wording.py check` (run inside `self.pytest.unit`, so on every lane, by
+  `tests/test_exe_wording.py` `RealFiles`) reads the batch file as text. One message is a `call :log "..."` text (a `call :sub "[TAG] ..."`
+  too), a run of consecutive line-start `echo` lines of one label, a `set /p` or `choice /M` prompt, an inline `if ... echo` or either
+  branch of a one-line if/else; `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines are not messages, `:log` keeps them off the console. A message
+  with a trigger word (build, builds, building, built, rebuild, packaging, packaged, bundle, smoke, verification) needs a plain word (EXE,
+  `.exe`, executable, PyInstaller, Nuitka, standalone, or `%HP_FAST_EXE_PATH%`), or its normalized text (whitespace flattened, each `%VAR%`
+  kept as written) must be an entry of `tests/exe_wording_exempt.txt` under a category that says why. `console --file <log>` applies the
+  same rules to the timestamped lines of a real run (`self.sysbuild.wording` uses it); there an exempt entry with a `%VAR%` is a template
+  that matches the filled-in line.
+- **Adding or rewording a message**: say EXE or the tool in it, and insert or append rather than rewrite, because tests pin prefixes and
+  substrings (`Optimized build: declined` in three scripts and `tests/test_offers_noninteractive.py`, `Pre-build collect-submodules:`,
+  `[REPAIR] rebuild complete after warnfix.`, `Repair loop: declined.`, `attempting a fallback build`, the `[STATUS] Run Status: TIMED OUT
+  (hit the ~30s verification cap` regex, `Your app is ready.`). A message that is honestly about something else (usage, the environment, the
+  interpreter, a provider, the embedded Python, an exit code, the user's own program, a diagnostic, a prompt) is listed in the exempt file
+  instead, and that list may not grow past `MAX_EXEMPT_ENTRIES` (34 in `tests/test_exe_wording.py`) without the number changing in the same
+  change with a reason. An entry no message reads, one a message no longer needs and a category nobody uses fail too, so moving or
+  rewording a message that has an entry means editing the entry.
+- **The accept scenario's sequence is live `call :log` text.** `tests/selfapps_sysbuild_accept.ps1` waits, each once and in order, for the
+  log lines of the tried tier, the REQ-014 consent, the private interpreter, the provider, the REQ-007 consent, the start of the build,
+  `PyInstaller produced dist\<exe>` and the check run, and for the ready line with the EXE under it. `STEPS`, `NEVER` (the declined-path lines
+  that must not appear) and `BATCH_LOG_TEXTS` in `tests/test_sysbuild_accept.py` pin each text to exactly one live line of the batch file,
+  so a reworded line fails locally and names the script to update. The two consent gates (`:system_python_consent_gate` for REQ-014,
+  `:system_build_consent_gate` for REQ-007.16) must keep testing `HP_TEST_SYSCON_ANSWER` and `HP_TEST_SYSBUILD_ANSWER` before the CI marker:
+  the scenario sets `HP_CI_LANE` as every lane does, so that the elective offers after the build decline without waiting, and a gate that
+  read the marker first would take the scenario's Y for a no.
+- **The system Python is a stand-in.** A venv made from the runner's python is first on `PATH` and the other tiers fail by decree
+  (`HP_OFFLINE_MODE=1`, `HP_TEST_FORCE_CONDA_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`), so PyInstaller is installed into the venv and never into
+  the runner's own interpreter; the layout differs from python.org's only in the path. `tests/selfapps_sysbuild.ps1` holds the rows of the
+  other answers (decline, the Nuitka wording, the CI marker).
+- **Floors.** `self.sysbuild.wording` needs at least 30 timestamped lines, 6 about the build, 4 that name the EXE and 1 exempt (about two
+  thirds of the first real run: 48, 9, 7 after the rewording, and 2), so a console that stopped before the build cannot pass. A change to
+  the real console that moves those numbers is a change to the floors in the script and to `FLOORS` of the unit test together.
+
+---
+
 ## Standalone Python-download tier (REQ-009 Tier 5 by naming; executed 3rd in provider order)
 
 **Provider chain: `uv -> conda -> embed -> venv -> system`** (embed sits right after conda, not

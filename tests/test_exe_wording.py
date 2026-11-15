@@ -611,5 +611,65 @@ class RealFiles(unittest.TestCase):
         self.assertEqual(problems, [], "README REQ-007.20: %d problem(s)\n%s" % (len(problems), "\n".join(problems)))
 
 
+class TheFirstWindowsRun(unittest.TestCase):
+    """The two console lines the first Windows run of the scenario flagged, as that run printed them, and the same two after the rewording.
+
+    Run 43740185058 (contract-uv) judged the console of the accepted system-Python build with the real exempt list: 48 timestamped
+    lines, 9 about the build, 5 naming the EXE, 2 exempt and these 2 violations. The lines are copied from its console log with the
+    CRLF line ends a cmd.exe redirect writes and the date form of that runner (two-digit hour), so the judge is shown to read the
+    real shape of a console line and not only the shape the synthetic cases above use. The second pair is what the same two
+    messages print since the rewording, copied from a local run of the real batch file."""
+
+    OLD = (
+        "Sun 11/15/2026 17:26:39.44 [INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / "
+        "~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and "
+        "_frozen_importlib_external are expected on Windows and are filtered out automatically; cStringIO and StringIO "
+        "(Python-2-only compatibility shims some packages still reference) are filtered out automatically too.",
+        "Sun 11/15/2026 17:26:41.29 [INFO] Optimized build: declined.",
+    )
+    NEW = (
+        OLD[0].replace("automatically bundled (full list", "automatically bundled into the EXE (full list"),
+        OLD[1] + " No optimized EXE was built and your current EXE is unchanged.",
+    )
+    FILLER = (
+        "Sun 11/15/2026 17:26:30.10 [INFO] Selected Python provider: system.",
+        "Sun 11/15/2026 17:26:31.20 [INFO] Building standalone executable -- this may take a minute or two...",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rules = ew.parse_rules(read(RULES))
+
+    def _console(self, *lines):
+        return "\r\n".join(self.FILLER + tuple(lines)) + "\r\n"
+
+    def test_the_two_lines_as_the_run_printed_them_are_the_only_violations(self):
+        problems, stats = ew.console_check(self._console(*self.OLD), self.rules)
+        self.assertEqual(stats["violations"], 2, problems)
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(problems[0].endswith(self.OLD[0].split(" ", 3)[3]), problems[0])
+        self.assertTrue(problems[1].endswith("[INFO] Optimized build: declined."), problems[1])
+        self.assertEqual((stats["timestamped"], stats["triggered"], stats["named"]), (4, 3, 1))
+
+    def test_the_same_two_messages_after_the_rewording_pass_and_are_counted_as_naming_the_exe(self):
+        problems, stats = ew.console_check(self._console(*self.NEW), self.rules)
+        self.assertEqual(problems, [])
+        self.assertEqual((stats["timestamped"], stats["triggered"], stats["named"], stats["violations"]), (4, 3, 3, 0))
+
+    def test_either_line_alone_is_enough_to_fail_the_run(self):
+        for index in (0, 1):
+            with self.subTest(old_line=index):
+                lines = [self.NEW[0], self.NEW[1]]
+                lines[index] = self.OLD[index]
+                problems, stats = ew.console_check(self._console(*lines), self.rules)
+                self.assertEqual((len(problems), stats["violations"]), (1, 1), problems)
+
+    def test_the_old_wording_of_the_two_lines_is_no_longer_in_the_batch_file(self):
+        bat = read(BATCH).replace("\r\n", "\n")
+        self.assertIn("could not be automatically bundled into the EXE (full list in", bat)
+        self.assertNotIn("could not be automatically bundled (full list in", bat)
+        self.assertIn("Optimized build: declined. No optimized EXE was built and your current EXE is unchanged.", bat)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,7 +54,8 @@ UPLOADS = (
     "tests/~selftest_sysbuild_accept/~wording_judge.err.txt",
 )
 JUDGES = ["Find-ConsoleLine", "Measure-ConsoleLines", "Get-AcceptProblems", "Get-WordingProblems"]
-FLOORS = {"minTimestamped": 20, "minTriggered": 3, "minNamed": 2, "minExempt": 1}
+# about two thirds of the first real run (48 timestamped lines, 9 about the build, 7 naming the EXE, 2 exempt, run 43740185058 after the rewording)
+FLOORS = {"minTimestamped": 30, "minTriggered": 6, "minNamed": 4, "minExempt": 1}
 
 # The console lines of the accepted build, in the order the run must show them: (key, label the judge prints, text of the line,
 # whether the line must be there exactly once). The texts are the live `call :log` lines of run_setup.bat.
@@ -376,7 +377,8 @@ def judge_result(**stats):
 
 def wording_args(json_text=None, **over):
     args = dict(JudgeRan=True, JudgeError="", JudgeExit=0, JsonText=judge_result() if json_text is None else json_text,
-                MinTimestamped=20, MinTriggered=3, MinNamed=2, MinExempt=1)
+                MinTimestamped=FLOORS["minTimestamped"], MinTriggered=FLOORS["minTriggered"], MinNamed=FLOORS["minNamed"],
+                MinExempt=FLOORS["minExempt"])
     args.update(over)
     return args
 
@@ -476,10 +478,10 @@ ONE_PROBLEM = {
     "wording_no_stats": "the judge printed no result it could be read from (exit code 0)",
     "wording_ok_but_exit_1": "the judge says ok and exits with 1",
     "wording_not_ok_names_no_line": "the judge says not ok and names no line",
-    "wording_low_timestamped": "the judge read 5 log lines, expected at least 20",
-    "wording_low_triggered": "the judge found 2 lines about the build, expected at least 3",
-    "wording_low_named": "1 of the lines about the build name the EXE or the tool, expected at least 2",
-    "wording_low_exempt": "0 of the lines about the build matched an exempt entry, expected at least 1",
+    "wording_low_timestamped": "the judge read 5 log lines, expected at least %d" % FLOORS["minTimestamped"],
+    "wording_low_triggered": "the judge found 2 lines about the build, expected at least %d" % FLOORS["minTriggered"],
+    "wording_low_named": "1 of the lines about the build name the EXE or the tool, expected at least %d" % FLOORS["minNamed"],
+    "wording_low_exempt": "0 of the lines about the build matched an exempt entry, expected at least %d" % FLOORS["minExempt"],
 }
 ONE_PROBLEM.update(step_needles())
 # the cases with their own tests below: the three that give two problems (status empty, status not JSON, two violations), the one
@@ -781,7 +783,7 @@ class ScriptRulesCanFail(unittest.TestCase):
                 self.assertIsNotNone(m)
                 low = self.script.replace(m.group(0), "$%s = %d" % (name, floor - 1), 1)
                 self.assertTrue(any("floor $%s" % name in f for f in self.problems(low)), self.problems(low))
-        gone = mutate(self.script, "$minNamed       = 2\n", "")
+        gone = mutate(self.script, "$minNamed       = 4\n", "")
         self.assertTrue(any("floor $minNamed is missing" in f for f in self.problems(gone)))
 
     def test_a_verdict_that_stops_handing_a_judge_what_it_needs_is_caught(self):

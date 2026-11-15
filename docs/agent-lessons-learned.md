@@ -1615,3 +1615,30 @@ two hosts, and the failure is loud, so the cheap check is to run the function on
 The same test showed a second trap of hand-built drivers: the generated batch file may hold a line twice (`set "NEED_VISA=1"` is in the
 head and in the stub of the subfolder question), so a mutation case edits the head line by its index and not by a text search
 (see the entry above on mutation anchors).
+
+## A wording ratchet over console text judges messages the way a person reads them, and its escape hatch needs a ceiling (Item 123)
+
+README REQ-007.20 asks that every message about the EXE build, its check run or its failure says EXE or names the tool. Of the 642 console
+messages of `run_setup.bat`, 130 talk about building, bundling, packaging or verifying; 61 already named the EXE or a tool, 36 are about
+something else and 33 did not (`Optimized build: declined.`, `the next run will rebuild.`, `Building with the fallback build system only.`),
+which no test had ever shown. What made the rule usable and hard to cheat:
+- **A message is what the console shows, not a line of the file.** A sentence wraps over several `echo` lines, so the unit is a run of
+  consecutive line-start `echo` lines of one label (the trigger word on one line and the EXE on the next is one clean message). A
+  `call :log "..."` text (also behind a `call :sub "[TAG] ..."`), a `set /p` or `choice /M` prompt, an inline `if ... echo` and each branch
+  of a one-line if/else are messages too. `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines never reach the console and are not judged.
+- **A word rule needs an escape hatch, and the hatch needs a ceiling.** Most messages that say "build" are about something else (usage,
+  the environment, the interpreter, the user's own program). `tests/exe_wording_exempt.txt` holds the exact normalized text of each, under a
+  category with a sentence that says why. An entry no message reads, one the message no longer needs, a duplicate and a category nobody
+  uses fail, and the count is capped in the test (34), so growing the list is a change to that number with a reason and never a quiet
+  addition. Without the list the rule flags 69 messages and with it 33, so the list is the larger part of the judgement.
+- **Reword by inserting or appending.** Tests pin prefixes and substrings of console text (`Optimized build: declined`,
+  `[REPAIR] rebuild complete after warnfix.`, `attempting a fallback build`); an edit that only adds words keeps them. Before editing, scan
+  `tests/`, the workflows and the docs for each old text, and read the end-anchored regexes by eye (a substring scan cannot see
+  `declined\.$`); after editing run the whole suite, because a scan misses what a test builds from parts.
+- **A judge of a real run needs floors, taken from a real run.** `self.sysbuild.wording` judges only the timestamped lines of the console
+  (the `echo` text of the same messages is the static rule's job) and fails a run that read fewer than 30 lines, 6 about the build, 4 naming
+  the EXE or 1 exempt: about two thirds of the first real run (48, 9, 7 after the rewording, 2). A console that stopped before the build
+  would otherwise pass for want of violations. Set the first floors low, read the first real run, tighten them in the next commit.
+- **A scenario that installs into "the system Python" must not install into the runner's.** The accept scenario makes a venv from the
+  runner's python, puts its `Scripts` folder first on `PATH`, fails the other tiers by decree and answers Y to both consent questions, so
+  PyInstaller lands in the venv; the layout differs from python.org's only in the path.

@@ -66,7 +66,13 @@ sentence, and the extrapolated walkthroughs (Scenarios 32, 33 and 35) carry them
 every other scenario were taken before the change and do not contain them. Item 97 (2026-11-06) added one question
 before the `--hidden-import` repair loop starts the program again (five heading lines, the timed `choice` text and a
 log line, all source excerpts); Scenario 35 carries it, and the captured blocks of Scenario 16 and the other repair
-scenarios were taken before it and do not contain it.
+scenarios were taken before it and do not contain it. Item 123 (2026-11-15) put the word EXE, or the tool's name, into 33 messages that said
+build, rebuild, bundle, package or verify without saying what they were about, by inserting or appending words only: `[INFO] Optimized build:
+declined.` now continues `No optimized EXE was built and your current EXE is unchanged.`, `[REPAIR] rebuild complete after warnfix.` continues
+`The standalone EXE was rebuilt.`, `warnfix: some modules could not be automatically bundled` continues `into the EXE`, and the optimized-build
+offer has a third line (`*** It is a second standalone EXE, built with Nuitka, and it replaces your current EXE only if it builds and runs. ***`).
+The source excerpts (Scenario 5, the no-interpreter message of Scenario 29 and Scenario 35) carry the new wording; the captured blocks of the
+other scenarios were taken before the change and show the shorter text, and so do the extrapolated walkthroughs that splice them.
 
 **Scope:** grouped by feature area, ordered roughly the way a real user would actually encounter
 each area -- the default happy path and its immediate variations first, narrower and more advanced
@@ -570,7 +576,8 @@ though the surrounding framing text is a real capture.
 same log as Scenario 4 above); the two `set /p` prompt lines themselves are
 `[Extrapolated Branch]`, cited from `:run_postexec_checkpoint` and `:offer_optimized_build`
 respectively. The one sentence in each prompt that names the risk of running the program twice is
-newer than that capture (Item 94a) and is a source excerpt, not part of it.
+newer than that capture (Item 94a) and is a source excerpt, not part of it, and so is the line that says the optimized build is a second
+standalone EXE (Item 123).
 
 **Relationship to README.md's `[REQ-018]` spec, since the two don't map 1:1 in an obvious way:**
 `:run_postexec_checkpoint`'s own log line is explicitly tagged `REQ-018` in source (`[INFO]
@@ -611,6 +618,7 @@ continues to the second prompt:
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** It is a second standalone EXE, built with Nuitka, and it replaces your current EXE only if it builds and runs. ***
 *** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
   Build the optimized version now? [Y/N] _
 ```
@@ -2248,7 +2256,7 @@ mechanism was judged out of scope for this fix). `:preflight_compile` checks thi
 if set, reports the real cause instead of running `py_compile` against an empty interpreter path:
 
 ```
-*** [ERROR] No Python interpreter is available; your program was not run or built. ***
+*** [ERROR] No Python interpreter is available; your program was not run and no EXE was built. ***
 *** This is not a syntax error -- the Python interpreter itself could not be used. ***
 *** Either every automatic Python-acquisition method -- uv, conda, a fresh download, ***
 *** or a local virtual environment -- failed, usually from no internet connection, a ***
@@ -2960,13 +2968,13 @@ failed check run stays the only start of the program, and the usual hint for add
 
 ```
   Start your program again to try the repair? [Y/N, defaults to N after 30s]
-[INFO] Repair loop: declined. Your program was not started again and nothing was rebuilt.
+[INFO] Repair loop: declined. Your program was not started again and the EXE was not rebuilt.
 [HINT][HIDDEN_IMPORT] Hidden import likely missing: colorama
 [HINT][HIDDEN_IMPORT] Consider adding: --hidden-import=colorama
 ```
 
 A non-interactive run prints the five heading lines and then only `[INFO] Repair loop: not asked in a non-interactive run, so
-your program is not started again and nothing is rebuilt.`; with `HP_PVW_KNOWN_IDEMPOTENT` set (the user's own word that the
+your program is not started again and the EXE is not rebuilt.`; with `HP_PVW_KNOWN_IDEMPOTENT` set (the user's own word that the
 program is safe to run more than once) no question is asked and the repair goes ahead.
 
 ### Scenario 36: Full walkthrough -- `HP_PVW_KNOWN_IDEMPOTENT`, with the actual input and output files

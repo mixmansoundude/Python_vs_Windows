@@ -333,10 +333,11 @@ $exeName     = ($appName -replace '[^A-Za-z0-9_-]', '_') + '.exe'
 $programLine = 'sysbuild-accept-app-line-7731'
 $consoleName = '~sysbuild_accept.log'
 
-# thresholds of the wording row (first set before the first real run, tightened to what that run showed)
-$minTimestamped = 20
-$minTriggered   = 3
-$minNamed       = 2
+# floors of the wording row: about two thirds of what the first real run showed (48 timestamped lines, 9 about the build, 7 that name
+# the EXE once the messages were reworded, 2 exempt), so a console that stops before the build or before its closing messages fails
+$minTimestamped = 30
+$minTriggered   = 6
+$minNamed       = 4
 $minExempt      = 1
 
 # The runner's python: the first one on PATH, asked for its real path (a Microsoft Store alias would print nothing).
