@@ -1595,3 +1595,11 @@ that, and a venv with a broken interpreter was selected (README REQ-023.1 to .4;
 and the copy, because any command resets the code. `HP_HELPER_RC` and `HP_SMOKE_RC` already follow this. A row for such a branch has to be fed a
 negative code: a stub that returns 1 proves only the case `if errorlevel 1` always handled (`tests/selfapps_venv_probe.ps1` feeds 1, 2, 255, -1,
 -1073741515 and -1073741819, and `.crash` was the red one).
+
+## uv 0.11 records only the minor in a managed venv's `pyvenv.cfg`; a test that compares versions asks the interpreter (Item 114)
+
+A `uv venv` on a managed CPython writes `version_info = 3.14` (no patch) to `pyvenv.cfg`, so a reader that wants `3.15.2` from the cfg alone gets nothing (the first run of
+`self.contract.uv.pyver.nopin`, run `43636493617`: the reference venv's version read as empty while the bootstrap's own `.uv_env`, which had a fallback, gave 3.15.2). **Rule: read the
+version of a venv with `Get-VenvInterpreterVersion` in `tests/selfapps_contract_uv.ps1` (cfg first, then `Scripts\python.exe --version`) for every venv a row compares, never from one of the two
+places alone, and check a new reader against a venv folder of each shape** (`tests/test_pyver_rows.py` runs three-part, minor-only, no-cfg and empty folders through pwsh). Two venvs of one row that
+are read by two different pieces of code are a comparison nobody can trust: the bug showed up only because one of them happened to have the fallback.
