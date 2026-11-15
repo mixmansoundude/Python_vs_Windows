@@ -4534,6 +4534,72 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Evidence.** The reading of the eight rows on their first run is in the squash commit message. The eight ids join the contract-uv list
   in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
 
+### Item 122 (shipped 2026-11-15; the third batch of `gap:` entries of `tests/test_req_shall_trace.py`, after Items 106 and 111)
+
+- **The problem.** Four README shalls had no row able to fail for them: REQ-008.2 (an NI-VISA driver that is already installed is
+  neither downloaded nor installed again), REQ-008.15 (the Python `pyvisa` package is installed whether the answer to the subfolder
+  question of REQ-008.7 is yes or no), REQ-020.5 (after the answer Y the damaged conda installation is deleted and a fresh Miniconda is
+  installed in its place) and REQ-020.9 (when no conda installation exists after that, the run ends with exit code 4 and says that the
+  fresh install failed). The README Tests note of REQ-020 called the last two "shown by inspection of `run_setup.bat`": the existing rows
+  reach the answer Y only through `HP_TEST_SKIP_EVICT`, which skips the deletion and the download so that the CI Miniconda stays intact, or
+  stop at a locked file (REQ-020.6), so nothing ran the deletion followed by the install and nothing ran the exit code 4. For REQ-008.2 no
+  hosted runner has the driver (a real install attempt there ends with installer exit code -125202) and the registry value the block looks
+  for cannot be written without a permanent change to HKLM, so the branch for a present driver never ran; and no row listed the packages
+  of the environment after either answer to the subfolder question.
+- **What shipped.** Two new scripts, one extended script, six rows and one helper module; five rows in two gating steps of the contract-uv
+  lane (the lane with the most wall-clock headroom), one in the existing real and conda-full pyvisa step. `tests/selfapps_conda_evict.ps1`
+  cuts the block `:evict_and_rebuild` and the subroutine `:select_conda_bat` out of `run_setup.bat` and runs them under cmd.exe with closed
+  standard input against a driver of stubs (a `:log` and a `:die` that write to a ledger, a `:download_miniconda_exe` and a
+  `:try_conda_install` that record whether the folder of the damaged installation is already gone). Scenario evict: the damaged
+  installation (a `conda.bat` that exits 1, a marker file and a nested folder, in a private PUBLIC folder) is deleted by the block's own
+  `rmdir`, the download and the install start with the folder gone, and the run goes on at `:after_conda_bat_validation` with `CONDA_BAT`
+  pointing at the fresh `conda.bat`, `HP_CONDA_JUST_INSTALLED` set and nothing left of the old installation
+  (`self.corrupt.conda.evict.install`). Control: the same with `HP_TEST_SKIP_EVICT` set, so nothing is deleted and the stubs are never
+  called, which keeps the first scenario's result from being the driver's. Scenario nofresh: the install leaves no `conda.bat`, the block
+  calls `:die` with the fresh-install message and the code 4 and ends with exit code 4 without reaching the line after it. One real
+  bootstrap (private PUBLIC with a damaged conda, private TEMP, `HP_FORCE_CONDA_ONLY=1`, `HP_TEST_HEAL_ANSWER=Y`, `HP_OFFLINE_MODE=1`, every
+  other `HP_` and `PVW_` variable cleared) shows the whole path: the real health check fails, the answer Y deletes the installation, the
+  offline mode skips the Miniconda download, and the run must end with exit code 4 after the four log lines of the contract, in order
+  (`self.corrupt.conda.evict.installfail`). `tests/selfapps_visa_present.ps1` cuts the NI-VISA block (`:visa_wanted` to `:visa_done`) out of
+  `run_setup.bat`, replaces its two `reg query` lines, its two download lines, the installer call and `:visa_subfolder_gate` by recording
+  stubs and runs it under cmd.exe in three scenarios with one ledger file that the driver, the stubs and the block's own log lines write in
+  order. noinstall: `NEED_VISA=1` and the registry value is there from the start, so the block logs `[VISA] present` once and downloads
+  nothing, installs nothing and logs no skip (`self.nivisa.present.noinstall`). subfolder: `NEED_VISA=2` (the import is only in a
+  subfolder) with the value there, the same, and the question of REQ-008.7 is not asked because the look for a present driver comes before
+  it (`self.nivisa.present.subfolder`). control: the value is absent at the first look and there after the installer stub ran, and the same
+  block downloads once, starts the installer once, looks again and logs install_success, so the first two rows cannot pass because the block
+  never installs (`self.nivisa.present.control`; its installer file is a four byte `MZ` file, so the block's own PowerShell check of the
+  download runs on it). `tests/selfapps_pyvisa_subfolder.ps1` got a fifth row, `self.nivisa.pyvisa.installed`: it reads
+  `~dependency_installed.txt`, the pip freeze the bootstrapper writes after the dependency install and before the NI-VISA step, of the
+  declined run and of the accepted run, and requires the answer to be on record, the setup log to say that the installed packages were
+  captured, and a `pyvisa` line (`pyvisa==...`, or `PyVISA @ ...` as conda lists it; `pyvisa-py` is another package) in both. The unit
+  tests of the two new scripts share `tests/judge_support.py`.
+- **How it is kept honest.** `tests/test_conda_evict.py`, `tests/test_visa_present.py` and `tests/test_judge_support.py` pin each script
+  (literal row ids and tags, its own `exit 1` / `exit 0`, closed standard input, the environment of every run, the process-tree kill and the
+  time limit), the cut blocks (each label once; only the calls, jumps and variables the driver defines; the deletion and the install
+  behind the `HP_TEST_SKIP_EVICT` guard in the order the ledger reads; exactly two live `reg query` lines and the look at the registry
+  before the question, the download and the installer; each line the driver replaces exactly once), the texts the rows look for (each is
+  written by a live `call :log` or `:die` line), the workflow steps and the registry. The two drivers are built from the real blocks and run
+  through real `pwsh`, and the judging functions run in strict mode on synthetic runs with one red case for each comparison (a download or an
+  installer call for a present driver, a question that was asked, a control that never installed, a deletion that did not happen, an install
+  that started with the old folder still there, a wrong exit code, a log line out of order, a freeze without `pyvisa`). Every mutation case
+  edits a line that `mutate()` has shown to occur exactly once. The four `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **Stated limits (also in the scripts' headers).** The registry answer of the visa rows is the scenario's: they prove what the block does
+  after each answer, and that its two lines look at the key and the value that NI-VISA writes is pinned as text. The real NI-VISA installer
+  is not run (a hosted runner cannot install it), and the evict rows do not run the real Miniconda installer (a download of about 100 MB;
+  the conda-full lane runs the same two subroutines on every bootstrap). Both pyvisa folders declare `pyvisa` in `requirements.txt`, so the
+  row shows that the answer does not change which packages are installed, not that the import alone adds the package.
+- **For the README owner (lane 3 owns README.md; the proposed wording is in the PR body).** The Tests note of REQ-020 says the fresh install
+  of REQ-020.5 and the exit code of REQ-020.9 are shown by inspection of `run_setup.bat`; it can name `self.corrupt.conda.evict.install` and
+  `self.corrupt.conda.evict.installfail` instead. The Tests bullet of REQ-008 can add `self.nivisa.present.noinstall`, `.subfolder` and
+  `.control` (REQ-008.2) and `self.nivisa.pyvisa.installed` (REQ-008.15).
+- **Left.** REQ-007.17 (answering yes to the system-Python build question would install PyInstaller into the runner's own Python) and
+  REQ-007.20 (no check reads every message of the build step), REQ-016.8 (read from code: every CI lane carries the CI marker, so no row
+  reaches a `pause`), and the shalls that are unit-tested only and can become rows later: REQ-008.5, .6 and .12, REQ-018.6, .13, .19 and
+  .30. The REQ-013 family, REQ-003.1 and .2, REQ-004.3 and .4 and REQ-023.1 are lane 3's.
+- **Evidence.** The reading of the six rows on their first run is in the squash commit message. The five contract-uv ids and the pyvisa row
+  (real and conda-full) join `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

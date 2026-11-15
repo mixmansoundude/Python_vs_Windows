@@ -24,8 +24,15 @@
 #              from installing; `skipped (disabled)` shows it went straight to the install branch checks)
 #   timeout  : HP_TEST_FORCE_INTERACTIVE_VISA=1 reaches the timed `choice` prompt (2s) and nobody answers
 #
+# Item 122 (README REQ-008.15): the Python pyvisa package is installed whether the answer to the subfolder question is yes or no.
+# self.nivisa.pyvisa.installed reads ~dependency_installed.txt of the declined and of the accepted run (the pip freeze the
+# bootstrapper writes after the dependency install, which comes before the NI-VISA step, so the file is there whatever the answer
+# was) and requires a pyvisa line in both. Limit, stated so that nobody reads more into the row than it shows: both folders declare
+# pyvisa in requirements.txt, so the row shows that the answer does not change which packages are installed; it does not show that
+# the import alone would add the package. tests/test_visa_present.py runs the two judging functions below on synthetic lists.
+#
 # Emits: self.nivisa.subfolder.declined, self.nivisa.subfolder.accepted, self.nivisa.topfolder.noprompt,
-#        self.nivisa.subfolder.timeout
+#        self.nivisa.subfolder.timeout, self.nivisa.pyvisa.installed
 #
 # Lanes: real and conda-full (gating), wired in batch-check.yml next to the existing pyvisa step.
 param()
@@ -52,6 +59,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.subfolder.accepted'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.topfolder.noprompt'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.subfolder.timeout';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.pyvisa.installed'; req = 'REQ-008.15'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
     exit 0
 }
 
@@ -99,6 +107,56 @@ function Invoke-VisaScenario {
     $console = if (Test-Path -LiteralPath $consolePath) { Get-Content -LiteralPath $consolePath -Raw -Encoding Ascii } else { '' }
     $setup = if (Test-Path -LiteralPath $setupPath) { Get-Content -LiteralPath $setupPath -Raw -Encoding Ascii } else { '' }
     return [pscustomobject]@{ Exit = $exit; Console = $console; Setup = $setup; Work = $work }
+}
+
+# Judging for the row self.nivisa.pyvisa.installed: plain values in, a list of problems out (tests/test_visa_present.py runs the
+# two functions through a real pwsh on synthetic lists, one red case for each comparison).
+function Read-Text {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    $t = Get-Content -LiteralPath $Path -Raw -Encoding ASCII
+    if ($null -eq $t) { return '' }
+    return [string]$t
+}
+
+# The first line of a pip freeze list that names the pyvisa package: pyvisa==1.14.1, or PyVISA @ file:///... as conda lists a package
+# it installed. A package whose name only begins with those letters (pyvisa-py) is another package. The line is cut to 120 printable
+# ASCII characters; empty when there is none.
+function Get-PyvisaLine {
+    param([string]$FreezeText)
+    foreach ($raw in ($FreezeText -split "`r?`n")) {
+        $l = $raw.Trim()
+        if ($l -match '^pyvisa(\s*==|\s*@|\s|$)') {
+            $clean = ($l -replace '[^\x20-\x7E]', '?')
+            if ($clean.Length -gt 120) { $clean = $clean.Substring(0, 120) }
+            return $clean
+        }
+    }
+    return ''
+}
+
+# One run of the row: the answer to the question must be on record (otherwise the package check says nothing about it), the setup log
+# must say that the installed packages were captured, and the list must have a pyvisa line.
+function Get-PyvisaFreezeProblems {
+    param([string]$Label, [bool]$AnswerShown, [string]$SetupText, [string]$FreezeText)
+    $out = New-Object System.Collections.ArrayList
+    if (-not $AnswerShown) {
+        [void]$out.Add("${Label}: the run does not show the answer to the subfolder question, so the package check says nothing about it")
+        return $out.ToArray()
+    }
+    if ($SetupText.IndexOf('DEP_INSTALLED_CAPTURED=1', [System.StringComparison]::Ordinal) -lt 0) {
+        [void]$out.Add("${Label}: the setup log does not say that the installed packages were captured, so the list is not this run's")
+        return $out.ToArray()
+    }
+    if ([string]::IsNullOrWhiteSpace($FreezeText)) {
+        [void]$out.Add("${Label}: ~dependency_installed.txt is missing or empty")
+        return $out.ToArray()
+    }
+    $line = Get-PyvisaLine -FreezeText $FreezeText
+    if (-not $line) {
+        [void]$out.Add("${Label}: the list of installed packages has no pyvisa line")
+    }
+    return $out.ToArray()
 }
 
 $mainPlain = "print('pyvisa-subfolder-main-ran')"
@@ -173,5 +231,19 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ exit = $a.Exit; foundLine = $aFound; promptEchoed = $aPrompt; acceptedLogged = $aAcceptedLine; reachedInstallBranch = $aReachedBranch; notDeclined = $aNotDeclined }
 })
 
-if (-not ($dPass -and $aPass -and $tPass -and $oPass)) { exit 1 }
+# ---- pyvisa: the Python package is installed whichever way the question was answered (REQ-008.15) ----------------
+# The list is the pip freeze of the run, taken before the NI-VISA step; both folders declare pyvisa in requirements.txt.
+$dFreeze = Read-Text (Join-Path $d.Work '~dependency_installed.txt')
+$aFreeze = Read-Text (Join-Path $a.Work '~dependency_installed.txt')
+$pyProblems = @(Get-PyvisaFreezeProblems -Label 'declined' -AnswerShown ([bool]$dSkipped) -SetupText $d.Setup -FreezeText $dFreeze) + @(Get-PyvisaFreezeProblems -Label 'accepted' -AnswerShown ([bool]($aAcceptedLine -and $aNotDeclined)) -SetupText $a.Setup -FreezeText $aFreeze)
+$pyPass = [bool](@($pyProblems).Count -eq 0)
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.nivisa.pyvisa.installed'
+    req     = 'REQ-008.15'
+    pass    = $pyPass
+    desc    = 'The Python pyvisa package is installed whether the subfolder question was answered yes or no'
+    details = [ordered]@{ declinedLine = (Get-PyvisaLine -FreezeText $dFreeze); acceptedLine = (Get-PyvisaLine -FreezeText $aFreeze); problems = @($pyProblems) }
+})
+
+if (-not ($dPass -and $aPass -and $tPass -and $oPass -and $pyPass)) { exit 1 }
 exit 0

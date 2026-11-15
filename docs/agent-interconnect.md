@@ -1593,6 +1593,55 @@ name, or `:visa_subfolder_gate`, must understand these.**
 - `tests/selfapps_pyvisa_subfolder.ps1` still runs the real bootstraps of the same gate and stays the proof that the main flow calls it; the
   new script proves the gate alone.
 
+## Two more blocks are cut out and run against stubs: the conda eviction and the NI-VISA install (Item 122)
+
+**Touch `:evict_and_rebuild` (up to `:conda_bulk_install`), `:select_conda_bat` (up to `:download_miniconda_exe`), the NI-VISA block
+(`:visa_wanted` up to `:visa_done`), a `[VISA]` or `Self-healing:` log text, the two `reg query` lines, the pip freeze lines before the block
+or `tests/judge_support.py`, must understand these.** The technique is that of `selfapps_conda_transient.ps1`, `selfapps_choice_cancel.ps1` and
+`selfapps_visa_signals.ps1`: the script cuts the real block by exact trimmed lines, wraps it in a driver batch file that defines everything
+the block reaches and runs it under cmd.exe with closed standard input. One ledger file (`~driver_ledger.txt`) is written in order by the
+driver, the stubs and the block's own `:log` lines, so the order of the calls is the evidence and a stub's record cannot vouch for a log
+line. The driver is built from the real block, so a change to the block changes what runs; the unit test lists what the block may reach
+and fails with the script to update.
+- **Conda eviction** (`tests/selfapps_conda_evict.ps1`, `self.corrupt.conda.evict.install` and `.installfail`, REQ-020.5 and .9). The block
+  deletes `%MINICONDA_ROOT%` inside `if not defined HP_TEST_SKIP_EVICT (`, calls `:download_miniconda_exe` and `:try_conda_install`, selects
+  the fresh `conda.bat` with `:select_conda_bat` and goes on at `:after_conda_bat_validation`, or ends the run with `call :die "[ERROR] Fresh
+  Miniconda install failed after self-healing eviction." 4` followed by `exit /b 4`. The driver's stubs record whether the damaged
+  installation's folder is already gone when the download and the install start (that order is the claim of REQ-020.5), and the control
+  scenario (`HP_TEST_SKIP_EVICT` set) shows the result is the block's and not the driver's. The one real bootstrap uses
+  `HP_FORCE_CONDA_ONLY=1`, `HP_TEST_HEAL_ANSWER=Y`, `HP_OFFLINE_MODE=1` and a private `PUBLIC` and `TEMP`, so the Miniconda download is
+  skipped and the run must end with exit code 4; it reads four log texts (`Corrupt conda binary detected at: `, `Self-healing: corrupt conda
+  evicted from `, `Offline mode: skipping Miniconda download.`, `Fresh Miniconda install failed after self-healing eviction.`), each of which
+  must stay in exactly one live `call :log` or `:die` line, and a reworded one fails `tests/test_conda_evict.py` first. The real Miniconda
+  installer is not run: the conda-full lane runs `:try_conda_install` on every bootstrap.
+- **NI-VISA** (`tests/selfapps_visa_present.ps1`, `self.nivisa.present.noinstall`, `.subfolder` and `.control`, REQ-008.2). The block reads the
+  registry only through two lines that start with `reg query` (the look before the install and the poll after it); the driver replaces
+  both, the two download lines (curl and the PowerShell second method), the installer call and `:visa_subfolder_gate` by recording stubs
+  (`:stub_reg_query`, `:stub_curl`, `:stub_ps_download`, `:run_installer_timeout`, `:visa_subfolder_gate`). The order the block keeps is the
+  shall: the look for a present driver comes before the question and before the download, so `[VISA] present` ends the block with nothing
+  downloaded, installed or asked, for `NEED_VISA=2` too. The control (absent at the first look, present after the installer stub) must download
+  once, install once and log `install_success`, which is what the other two are compared with. Four log texts are matched by the judges and
+  stay in one live `call :log` line each (`[VISA] present`, `[VISA] download method: `, `[VISA] installer exit code: `,
+  `[VISA] install_success`); a new `[VISA]` line that says a driver was downloaded, installed or skipped needs the judge's pattern
+  (`SAID` in `tests/test_visa_present.py`) looked at on purpose. The control's installer file is a four byte `MZ` file because the block runs
+  a real PowerShell check of the download before it starts the installer. **What the rows do not show**: the registry answer is the
+  scenario's, so that the two lines look at `HKLM\SOFTWARE\National Instruments\NI-VISA` and the value `CurrentVersion` is pinned as text
+  only, and a real NI-VISA install is not run (a hosted runner cannot install it, installer exit code -125202).
+- **The pyvisa package** (`self.nivisa.pyvisa.installed`, `tests/selfapps_pyvisa_subfolder.ps1`, REQ-008.15) reads `~dependency_installed.txt`
+  of the declined and of the accepted run. The freeze is written by the install step before the NI-VISA block, and the setup log's
+  `DEP_INSTALLED_CAPTURED=1` line says that the file is this run's; a change that moves the freeze behind the block or drops that line turns
+  the row red with the missing piece named (`flow_problems` pins the order). Both folders declare `pyvisa` in `requirements.txt`, so the row
+  shows that the answer does not change which packages are installed, not that the import alone adds the package. Its two
+  `~dependency_installed.txt` upload patterns are forward-slash only and sit far down the 56k-character `path:` list of the `test-logs`
+  upload (CLAUDE.md, "Persisted CI run-page warnings"): if a late scenario's file goes missing from the artifact, suspect that list first.
+- **`tests/judge_support.py`** is the one copy of the helpers these two tests share (`cut_block`, `live_bat`, `variables_in`, `mutate`, the
+  ledger builders, `step_block`, the strict pwsh driver for judging functions). `mutate()` asserts that its anchor occurs exactly once,
+  `step_block()` finds a workflow step by the script it runs and gives it no comment of the step above, and the driver runs each judging
+  function alone in strict mode with `$__`-prefixed variables. A change to a helper is a change to every test that imports it, and
+  `tests/test_judge_support.py` is where the helper's behavior is pinned. The older tests of this family (`test_visa_signals.py`,
+  `test_choice_cancel.py`, `test_repair_consent.py`, `test_edge_rows.py` and others) still carry their own copies of the same helpers;
+  moving them over is a separate change.
+
 ## Post-execution checkpoint (Slice 2b-C, second half)
 
 `:run_postexec_checkpoint` is a **consent gate** (echo prompt unconditionally, then
