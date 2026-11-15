@@ -5397,8 +5397,15 @@ rem every other start of the program, so a program that opens a file by a relati
 rem same files here as in the primary verification. The EXE is named by its absolute path in an
 rem environment variable, and its output goes to dist\~exe_out.txt, which the scan below and the
 rem Item 96 hand-over in :hidden_import_recover_done already read.
+rem Item 106, README REQ-018.7: the 30 second cap must end the program and not only the process this line starts. A
+rem PyInstaller onefile EXE is two processes, the bootloader that is started here and the program it starts. Process.Kill
+rem ends only the first one, the second kept the output pipes open, and the read after the kill then waited until a program
+rem that keeps printing ended by itself. The stop is therefore taskkill /F /T on the process tree, with Kill as the fallback
+rem when taskkill cannot be started, and each read waits at most 5 seconds for its pipe, so nothing the program does can
+rem hold this line. The last line printed stays the exit code, or -1 for a run that did not finish, because for /f keeps
+rem the last line it reads.
 set "HP_HIR_EXE=%CD%\dist\%ENVNAME%.exe"
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_HIR_EXE;$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};($so.Result+$se.Result)|Set-Content -Path 'dist\~exe_out.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_HIR_EXE;$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$k=New-Object System.Diagnostics.ProcessStartInfo;$k.FileName=$env:SystemRoot+'\System32\taskkill.exe';$k.Arguments='/F /T /PID '+$p.Id;$k.UseShellExecute=$false;$k.CreateNoWindow=$true;$k.RedirectStandardOutput=$true;$k.RedirectStandardError=$true;[void][System.Diagnostics.Process]::Start($k).WaitForExit(5000)}catch{};try{$p.Kill()}catch{}};$t='';try{if($so.Wait(5000)){$t+=$so.Result};if($se.Wait(5000)){$t+=$se.Result}}catch{};$t|Set-Content -Path 'dist\~exe_out.txt' -Encoding ASCII;if($done){$p.ExitCode}else{-1}"`) do set "HP_EXE_EXIT=%%X"
 set "HP_HIR_EXE="
 if not defined HP_EXE_EXIT set "HP_EXE_EXIT=-1"
 if "%HP_EXE_EXIT%"=="0" goto :hidden_import_recover_done
