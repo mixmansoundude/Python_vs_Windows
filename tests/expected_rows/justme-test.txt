@@ -57,6 +57,7 @@ self.entry.req011.sameDir
 self.entry.results
 self.entry.spaced-path
 self.env.smoke.conda
+self.env.smoke.minicondafolder
 self.env.smoke.run
 self.env.smoke.uv
 self.envname.allsep

@@ -82,6 +82,7 @@ self.entry.results
 self.entry.spaced-path
 self.entrysmoke.no_interpreter_guard
 self.env.smoke.conda
+self.env.smoke.minicondafolder
 self.env.smoke.run
 self.env.smoke.uv
 self.envname.allsep

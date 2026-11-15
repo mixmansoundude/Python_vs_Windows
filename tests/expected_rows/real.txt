@@ -89,6 +89,7 @@ self.embed.fallback.decline
 self.embed.fallback.real
 self.embed.version.ceiling
 self.embed.version.floor
+self.embed.version.isolated
 self.embed.version.range
 self.embed.version.swap
 self.empty_repo.msg
@@ -117,6 +118,7 @@ self.entryarg.noext
 self.entryarg.stops_release_lock
 self.entryarg.wildcard
 self.env.smoke.conda
+self.env.smoke.minicondafolder
 self.env.smoke.run
 self.env.smoke.uv
 self.envname.allsep
@@ -194,6 +196,9 @@ self.netres.miniconda.checkorder
 self.netres.miniconda.offline
 self.netres.miniconda.powershell
 self.netres.miniconda.retry
+self.netres.offline.conda
+self.netres.offline.uv
+self.netres.shipped.tools
 self.netres.swap.retry
 self.nivisa.subfolder.accepted
 self.nivisa.subfolder.declined
@@ -315,6 +320,10 @@ self.vcruntime.warn.unrelated_error
 self.venv.canary_fail
 self.venv.fallback
 self.venv.nopip_retry
+self.venvprobe.command
+self.venvprobe.crash
+self.venvprobe.declines
+self.venvprobe.nofile
 self.warn.unc
 self.warn.unc.probe
 self.warnfix.noise.library
