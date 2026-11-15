@@ -7922,7 +7922,7 @@ cross-line or redirection. `check_delimiters.py`'s `line != last.line` exemption
 entirely as a result, surfacing 63 further genuine findings in `run_setup.bat` (on top of the 26
 the `rem`-generalization pass had already found), all fixed by rewording with no functional change.
 
-### Item 112 (filed 2026-11-14, PR pending; REQ-013 rows for the download, check and swap code)
+### Item 112 (filed 2026-11-14, PR #532; REQ-013 rows for the download, check and swap code)
 
 - **The gap.** README REQ-013.1, .3, .10, .11, .14, .15, .17 and .18 had no row (`gap:` entries of `tests/test_req_shall_trace.py`):
   nothing showed curl's `--retry 3`, the Windows PowerShell second method, the check running before the secondary URL, the repeat of each
@@ -7932,7 +7932,62 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
 - **What shipped.** `tests/selfapps_net_resilience.ps1` (14 `self.netres.*` rows, real lane, gating from the first run) cuts the five
   real blocks out of `run_setup.bat` and runs them under cmd.exe against a local `HttpListener` and a compiled stub `ping.exe`/`curl.exe`;
   `tests/test_net_resilience.py` pins what the script assumes; README REQ-013's tests note names the rows; eight `gap:` entries were removed
-  from `UNTRACED_SHALLS` (REQ-013.12 stays). Design and coupling: `docs/agent-interconnect.md`, "The REQ-013 download, check and swap
+  from `UNTRACED_SHALLS` (REQ-013.12 stayed; Item 116 closed it). Design and coupling: `docs/agent-interconnect.md`, "The REQ-013 download, check and swap
   code is cut out and run against a local server".
-- **Not covered.** The uv download (a text pin in the unit test) and REQ-013.12.
+- **Not covered.** The uv download (a text pin in the unit test). REQ-013.12 followed in Item 116.
 
+### Item 113 (filed 2026-11-14, PR #533; REQ-023.1, the venv canary probe with the real command)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-023.1 as "shown by inspection": the existing rows (`self.venv.canary_fail`) force the decline through
+  `HP_TEST_FORCE_VENV_CANARY_FAIL`, which skips the probe command, so no row ran `"%HP_PY%" -c "import sys"` against an interpreter that fails.
+- **What shipped.** `tests/selfapps_venv_probe.ps1` (4 `self.venvprobe.*` rows, real lane, gating from the first run) cuts `:try_venv_fallback` out of
+  `run_setup.bat` and runs it under cmd.exe with a compiled stub Python; `tests/test_venv_probe.py` pins what the script assumes and runs its judging
+  functions through pwsh; README REQ-023's tests note names the rows; the REQ-023.1 `gap:` entry is gone (233 of 265 shalls named). Design and coupling:
+  `docs/agent-interconnect.md`, "The venv fallback's interpreter probe is cut out and run with a stub Python".
+- **Red first.** Run `43636493617` (head `7ff2a27`, rows only, no fix): `self.venvprobe.command`, `.nofile` and `.declines` true on `real`; `self.venvprobe.crash` red, and for the
+  right reason. Both negative exit codes of the stub (`-1` and `-1073741515`, the missing-DLL code) ended with `venv fallback ready`, `Selected Python provider: Local venv (fallback)`,
+  tier return 0 and `HP_PY` and `HP_ENV_MODE` set, i.e. the venv was selected although its probe failed. The cause is the product, not the test (next bullet).
+- **The finding.** The probe line was followed by `if errorlevel 1 goto :venv_canary_fail`. `if errorlevel N` is true for N or more, so a probe that exits
+  with a negative code (`0xC0000135`, a DLL that cannot be loaded, is -1073741515; an access violation is -1073741819; the stub's `-1`) was read as a
+  pass and the venv was selected, which is the failure README REQ-023 exists for. Fixed in the fix commit that follows the red run, by copying the code to `HP_CANARY_RC` and
+  comparing it as text; the embedded Python tier's canary had the same line and got the same fix, pinned as text only. Not found elsewhere by this
+  work: a search for other `if errorlevel` tests that follow a launch of an interpreter is a separate audit (CLAUDE.md, Item 46 style batches).
+
+
+### Item 114 (filed 2026-11-14, PR #533; REQ-004.3 and .4, the two uv version cases that had no row)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-004.3 (runtime.txt wins when both files name a version) as a unit test of the helper only, and REQ-004.4 (no request: the
+  provider's newest Python) as a gap: no row started a bootstrap with both files, or with neither, and read the interpreter that was set up.
+- **What shipped.** `self.contract.uv.pyver.conflict` and `self.contract.uv.pyver.nopin` in `tests/selfapps_contract_uv.ps1` (contract-uv lane, gating through the aggregate check
+  from the first run), judged by pure functions that `tests/test_pyver_rows.py` runs through pwsh. The conflict row has a control scenario (the same `pyproject.toml`
+  alone must give a newer minor) so that 3.12 can only mean runtime.txt was read. The no-request row compares with a plain `uv venv --seed` under
+  `UV_PYTHON_PREFERENCE=only-managed`, the same call the batch makes without a version, so it shows "no version forwarded, uv chooses" and not an absolute "newest".
+  The conda and embedded providers are not covered for these two shalls. 235 of 265 shalls named.
+- **First run, a test bug (run `43636493617`).** `conflict` was true (3.12.16, control 3.15.2). `nopin` was red for a reason of its own: the reference venv was made (the row printed
+  uv's output) and its version read as empty, because uv 0.11 writes `version_info = 3.14` (minor only) to `pyvenv.cfg` for a managed interpreter, and only the bootstrap's venv had the
+  fallback to the interpreter itself. Both venvs now go through `Get-VenvInterpreterVersion` (cfg first, then `Scripts\python.exe --version`), run through pwsh on venv folders of each shape by
+  `tests/test_pyver_rows.py`.
+
+### Item 115 (filed 2026-11-14, PR #533; REQ-003.2, the Miniconda folder)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-003.2 as a gap: the provider rows install Miniconda and are tagged REQ-003, but no row asserted the folder.
+- **What shipped.** `self.env.smoke.minicondafolder` in `tests/selfapps_envsmoke.ps1` (every lane that runs the script, gating from the first run). When the
+  setup log says conda was the selected provider, the interpreter the bootstrap printed has to be in an environment folder of the Miniconda under
+  `%PUBLIC%\Documents\Miniconda3` and its `conda.bat` has to be there; where uv is the provider the row skips, and with `HP_FORCE_CONDA_ONLY=1` (`conda-full`) a
+  missing provider line fails it. The folder alone is not enough: a GitHub runner image holds a Miniconda of its own (`C:\Miniconda3`) that the script's search for
+  `conda.bat` falls back to, so the printed interpreter path is what shows which one was used. The judging is a pure function that
+  `tests/test_miniconda_folder.py` runs through pwsh on synthetic runs. 236 of 265 shalls named.
+- **Not covered.** REQ-003.1 (the Windows floor, `curl` and PowerShell from System32) and REQ-003.3 (the working files go to the folder where the bootstrapper was
+  started, owned by the other thread).
+
+### Item 116 (filed 2026-11-14, PR #533; REQ-013.12 and REQ-003.1, the last two gap entries of the REQ-013 and REQ-003 families I took)
+
+- **The gap.** `UNTRACED_SHALLS` carried REQ-013.12 (offline mode uses an installed Miniconda or uv as it is: no row had one installed) and REQ-003.1 (Windows 10 1809 or newer,
+  using the curl and PowerShell Windows ships: rows were tagged REQ-003 but none named the shall).
+- **What shipped.** Three rows in `tests/selfapps_net_resilience.ps1` (real lane, gating from the first run). `self.netres.offline.uv` and `self.netres.offline.conda` cut the uv
+  acquisition and the Miniconda folder decision out of `run_setup.bat`, run them under `HP_OFFLINE_MODE=1` with a stub `uv.exe` or `conda.bat` installed (the installed one has to be
+  the one used, untouched, with no request to the server) and with nothing installed (the offline skip line must appear, so the gate is shown to be live). `self.netres.shipped.tools`
+  runs the real get-pip.py download with PATH cut to the System32 folders, curl failing once and Windows PowerShell delivering, and compares the User-Agent of each request with
+  `System32\curl.exe --version` and `WindowsPowerShell/5.1`, on a build at or above 17763. 238 of 265 shalls named. The REQ-003.1 row is honest about its limit: the bootstrapper
+  makes no version check of its own, so it shows the runner at the floor and the download code independent of everything but the Windows-shipped programs.
+- **Not covered.** The Windows floor itself on a real 1809 machine (no runner image is that old), and REQ-003.3.

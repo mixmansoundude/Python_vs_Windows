@@ -1730,6 +1730,17 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_net_resilience.ps1
+
+      # derived requirement: Item 113 -- README REQ-023 (venv fallback canary probe) shown with the real probe command: the
+      # real :try_venv_fallback block is cut out of run_setup.bat and run against a stub python.exe that builds
+      # .venv\Scripts\python.exe as a copy of itself and exits with the code each scenario chooses for the probe, including the
+      # negative codes of a crash (a missing DLL), which `if errorlevel 1` does not see. Gating on purpose (aggregate check); one
+      # lane is enough because nothing here depends on a provider.
+      - name: "Self-test: venv fallback probe with the real command (real only)"
+        if: ${{ matrix.mode == 'real' && !cancelled() }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_venv_probe.ps1
       # derived requirement: CLAUDE.md Item 73 -- a failed PEP 723 write-back must log the reason uv
       # gave, not only ERROR:uv_rc_1. Gating on purpose (real lane, uv-first); the row is the
       # regression test the fix must turn green. Uses the helper's HP_TEST_PEP723_UV_ERR hook.
@@ -2618,6 +2629,7 @@ jobs:
             tests\~selftest_entryarg\~bootstrap.status.json
             tests/~selftest_conda5xx/**
             tests/~selftest_netres/**
+            tests/~selftest_venvprobe/**
             tests/~selftest_pep723_uverr/~uverr_bootstrap.log
             tests\~selftest_pep723_uverr\~uverr_bootstrap.log
             tests/~selftest_pep723_uverr/~setup.log

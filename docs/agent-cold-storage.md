@@ -409,3 +409,20 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   copies a helper by hand into another project, or asks for one), or a report that a pasted QuickStart-style
   recipe was wanted for something the helpers already do. Until then the helpers can be copied from `tools/`
   as they are.
+
+- **Restore the entry picker's remembered answer inside `:determine_entry`, not inside `:pick_entry_interactive`.**
+  Technical debt, not a defect anyone has hit. CodeRabbit's finding on PR #527 (Item 109, 2026-11-14); the maintainer
+  left the call to the project and the decision is to defer it. **What it is**: a bootstrap runs `:determine_entry` twice,
+  and the answer the user typed is kept in `HP_PICKED_ENTRY`, read in the first lines of `:pick_entry_interactive`. That
+  subroutine runs only when `:determine_entry` returns 3 (several candidates, none preferred). If a preferred file such
+  as `main.py` appears between the two calls, the second call returns it with 0, the picker is skipped, the restore line
+  never runs and the program that is packaged and run is `main.py`, not the file the user picked. **The suggested change**:
+  move the `if defined HP_PICKED_ENTRY` pair into `:determine_entry`, after the explicit-argument block and before
+  automatic discovery; delete it from the picker; correct the Item 109 comment in the picker; add a row that creates the
+  preferred file between the two calls (`tests/selfapps_entry_picker.ps1` already drives the picker; `PickerAsksOnce` in
+  `tests/test_picker_gate.py` pins where the variable is cleared, set and read, so it moves with the code). **Why it waits**:
+  the folder has to change in the middle of a bootstrap, which a person double-clicking `run_setup.bat` does not do, and
+  the move changes where an answer is honored for every entry rule (REQ-002.14 to .19), so it needs its own row and a full
+  run, not a drive-by edit. **Trigger to thaw**: the next change to the picker or to `:determine_entry` for a behavior
+  reason (make this change in the same pull request, with the row), or a report that the program that ran was not the file
+  the user picked.

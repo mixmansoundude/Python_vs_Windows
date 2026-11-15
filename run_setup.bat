@@ -2939,9 +2939,14 @@ rem PyInstaller only to fail later with a more confusing error. Goto-based (not 
 rem an if/else block) per "Provider-cascade dispatch is goto-based on purpose" in
 rem docs/agent-lessons-learned.md, so the probe call + %ERRORLEVEL% read is never frozen by
 rem cmd's parse-time %VAR% expansion.
+rem derived requirement: the probe's exit code is copied to HP_CANARY_RC and compared as text, never tested with
+rem if errorlevel 1. That test is true only for a code of 1 or more, and Windows reports a missing DLL
+rem (0xC0000135) or an access violation (0xC0000005) as a NEGATIVE code, which it read as a pass, so a venv whose
+rem interpreter cannot start was selected (Item 113, README REQ-023.1, self.venvprobe.crash).
 if "%HP_TEST_FORCE_VENV_CANARY_FAIL%"=="1" goto :venv_canary_fail
 "%HP_PY%" -c "import sys" >nul 2>&1
-if errorlevel 1 goto :venv_canary_fail
+set "HP_CANARY_RC=%ERRORLEVEL%"
+if not "%HP_CANARY_RC%"=="0" goto :venv_canary_fail
 goto :venv_canary_ok
 :venv_canary_fail
 call :log "[WARN] venv fallback: interpreter created but failed canary probe (import sys)."
@@ -3204,8 +3209,11 @@ if errorlevel 1 (
 del "%HP_GETPIP_PY%" >nul 2>&1
 
 rem --- canary probe (matches REQ-023's venv canary probe) ---
+rem derived requirement: copy the exit code and compare it as text, as the venv probe does; if errorlevel 1 reads a
+rem negative code, such as a missing DLL, as a pass (Item 113).
 "%HP_EMBED_PY%" -c "import sys, pip" >nul 2>&1
-if errorlevel 1 (
+set "HP_CANARY_RC=%ERRORLEVEL%"
+if not "%HP_CANARY_RC%"=="0" (
   call :log "[WARN] embed fallback: interpreter created but failed canary probe (import sys, pip)."
   exit /b 1
 )

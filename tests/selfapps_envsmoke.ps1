@@ -33,6 +33,31 @@ function Get-LineSnippet {
     return ''
 }
 
+# Item 115 judging (REQ-003.2). Plain values in, a list of problems out (empty = the row passes), so that
+# tests/test_miniconda_folder.py can run it through pwsh on synthetic runs that must be red. A parameter and a local never
+# differ only by case (PowerShell variable names ignore case).
+function Get-CondaFolderProblems {
+    param([bool]$CondaSelected, [bool]$ForcedConda, [string]$PublicRoot, [string]$InterpreterPath, [bool]$CondaBatExists, [string]$EnvName)
+    $found = New-Object System.Collections.Generic.List[string]
+    if (-not $CondaSelected) {
+        if ($ForcedConda) { $found.Add('conda was forced (HP_FORCE_CONDA_ONLY) and the setup log does not say it was selected') }
+        return @($found)
+    }
+    if (-not $PublicRoot) {
+        $found.Add('PUBLIC is not set, so the folder of REQ-003.2 cannot be named')
+        return @($found)
+    }
+    $base = $PublicRoot.TrimEnd('\') + '\Documents\Miniconda3'
+    $envPrefix = ($base + '\envs\' + $EnvName + '\').ToLowerInvariant()
+    if (-not $InterpreterPath) {
+        $found.Add('the bootstrap printed no Interpreter line')
+    } elseif (-not $InterpreterPath.ToLowerInvariant().StartsWith($envPrefix)) {
+        $found.Add('the interpreter ' + $InterpreterPath + ' is not under ' + $base + '\envs\' + $EnvName)
+    }
+    if (-not $CondaBatExists) { $found.Add('neither condabin\conda.bat nor Scripts\conda.bat exists under ' + $base) }
+    return @($found)
+}
+
 $script:RecordedPipreqs = $false
 
 function Check-PipreqsFailure {
@@ -443,6 +468,38 @@ Write-NdjsonRow ([ordered]@{
     pass=$uvSmokePass
     desc='uv env creation and dependency install'
     details=$uvSmokeDetails
+})
+
+# self.env.smoke.minicondafolder (REQ-003.2): when conda is the selected provider the Miniconda is the one under
+# %PUBLIC%\Documents\Miniconda3: its conda.bat is there and the environment of the program is a folder of it. A runner
+# image holds a Miniconda of its own (C:\Miniconda3, which the search for conda.bat above falls back to), so the
+# path of the interpreter the bootstrap printed is what shows which one was used. The shall is conditional: a lane
+# where uv is the provider skips (conda-full forces conda, so there a missing provider line fails the row).
+$folderPublic = [Environment]::GetEnvironmentVariable('PUBLIC')
+if ($folderPublic) { $folderPublic = $folderPublic.Trim().Trim('"') } else { $folderPublic = '' }
+$folderBase = if ($folderPublic) { $folderPublic.TrimEnd('\') + '\Documents\Miniconda3' } else { '' }
+$folderBatExists = $false
+if ($folderBase) {
+    $folderBatExists = ((Test-Path -LiteralPath ($folderBase + '\condabin\conda.bat')) -or (Test-Path -LiteralPath ($folderBase + '\Scripts\conda.bat')))
+}
+$folderCondaSelected = [bool]($setup -match [regex]::Escape('Selected Python provider: Conda (Portable)'))
+$folderForced = ($env:HP_FORCE_CONDA_ONLY -eq '1')
+$folderProblems = @(Get-CondaFolderProblems -CondaSelected $folderCondaSelected -ForcedConda $folderForced -PublicRoot $folderPublic -InterpreterPath $interpreterPath -CondaBatExists $folderBatExists -EnvName $condaEnvName)
+Write-NdjsonRow ([ordered]@{
+    id='self.env.smoke.minicondafolder'
+    req='REQ-003.2'
+    pass=[bool]($folderProblems.Count -eq 0)
+    desc='With conda as the provider the Miniconda and the environment are under %PUBLIC%\Documents\Miniconda3'
+    details=[ordered]@{
+        skip = [bool]((-not $folderCondaSelected) -and (-not $folderForced))
+        condaSelected = $folderCondaSelected
+        forcedConda = $folderForced
+        publicRoot = $folderPublic
+        expectedBase = $folderBase
+        interpreterPath = $interpreterPath
+        condaBatExists = $folderBatExists
+        problems = $folderProblems
+    }
 })
 
 # self.uv.managed.interpreter (REQ-004): when uv created the venv, assert its base

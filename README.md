@@ -233,6 +233,14 @@ found on every run.
 >   the folder where the bootstrapper was started (REQ-011 stops a file from another folder), so this folder is
 >   the one of REQ-003.3. A program that opens `config.json` by that bare name therefore finds the file next to
 >   its `.py` source on a fresh build and on every later run alike, even though the EXE it runs sits in `dist`.
+> - REQ-003.1 is `self.netres.shipped.tools` (`tests/selfapps_net_resilience.ps1`, real lane; its row text is in the REQ-013 tests note). The bootstrapper has no version check of its own, so the row shows the two halves of the shall that can be shown: the runner's build is at or above 17763, and the download code works with only the programs Windows ships on PATH (the System32 `curl.exe` and Windows PowerShell 5.1), not with anything else the runner image happens to carry.
+> - REQ-003.2 is `self.env.smoke.minicondafolder` (`tests/selfapps_envsmoke.ps1`, every lane that runs the script;
+>   `tests/test_miniconda_folder.py` runs its judging function on synthetic runs). When conda was the selected
+>   provider, the interpreter the setup printed has to sit in an environment folder of the Miniconda under `%PUBLIC%`,
+>   and its `conda.bat` has to be there. A GitHub runner image holds a Miniconda of its own (`C:\Miniconda3`), which the
+>   script's search for `conda.bat` falls back to, so the printed interpreter path, not the presence of a `conda.bat`,
+>   is what shows which one was used. Where uv is the provider the row skips; in the conda-only `conda-full` lane a
+>   missing provider line fails it.
 > - Not covered: a double-click on `dist\<env>.exe` is the user's own launch, which Windows starts in the `dist`
 >   folder, and a file located from the program's own path (`__file__`, `sys.argv[0]`) is not affected either way:
 >   the EXE's `__file__` points into PyInstaller's temporary extraction folder and `sys.argv[0]` to the EXE.
@@ -296,7 +304,12 @@ name.
 >   longer than the character it replaces.
 > - Where each shall is shown: the version rows `self.contract.uv.pyver`, `.pyver.range` and `.pyver.exactpin` (uv) and
 >   `self.embed.version.*` (embedded) read the Python that was set up; `pyproject.precedence.writeback` (conda)
->   reads the version written back; `self.envname.*` reads the logged name.
+>   reads the version written back; `self.envname.*` reads the logged name. REQ-004.3 is shown by
+>   `self.contract.uv.pyver.conflict` (a `runtime.txt` of `python-3.12` next to a `pyproject.toml` that asks for
+>   `>=3.13` gives a 3.12.x interpreter, while the same `pyproject.toml` alone gives a newer one) and REQ-004.4 by
+>   `self.contract.uv.pyver.nopin` (a folder with neither file forwards no version to uv and gets the interpreter that
+>   a plain `uv venv` of the same uv gives under the same managed-only preference, which is uv's newest managed CPython);
+>   both run in the contract-uv lane, and the conda and embedded providers are not covered for these two shalls.
 
 ## [REQ-009] Environment Providers
 
@@ -1113,7 +1126,7 @@ program that is valid.
 > - Download methods: `curl` is called with `--retry 3 --retry-delay 5 --max-time 120` (curl itself decides which errors are transient: a timeout, a refused or dropped connection, a 5xx answer). Windows PowerShell (`Invoke-WebRequest`) is the second method for Miniconda, `get-pip.py` and the embedded Python; the uv download uses `curl` only. The embedded Python has no secondary URL (REQ-009). The directory swap of REQ-013.18 retries because another program (an antivirus scan) can hold a file in the old folder for a moment, not because of the network.
 > - Log contract: `[INFO] REQ-013: Connectivity check: internet reachable. Cascading to fallback.` (also `... reachable via HTTPS (ICMP blocked). ...`), `[WARN] REQ-013: Connectivity check: no internet detected (ICMP and HTTPS check failed).`, `[INFO] REQ-013: Connectivity prompt: user chose offline (N).`, `[INFO] REQ-013: Connectivity prompt: empty input; defaulting offline.`, `[INFO] REQ-013: Connectivity restored after retry.`, `[INFO] REQ-013: Still offline after Y; re-prompting.`, `[INFO] REQ-013: Offline mode: skipping uv download.` (and `... Miniconda download.`, `... get-pip.py download.`), `[WARN] embed fallback: download failed; retrying once.`, `[WARN] venv fallback: python -m venv failed; retrying once with --without-pip.`
 > - Tests (`tests/selfapps_ux_hardening.ps1` unless stated; each runs a bootstrap in a scratch folder with the check forced and no program, so it ends at once): `self.ux.connectivity.online` (REQ-013.2) uses the runner's own network and is repeated up to three times, only while the product itself reports no internet; `.prompt.shown` (REQ-013.4) requires the exact warning and question; `.offline.n` (REQ-013.4, REQ-013.6) and `.override` (REQ-013.6) answer no, the second through the explicit answer and requiring that the empty-answer line is absent; `.empty` (REQ-013.7) closes standard input and requires the empty-answer line; `.noinput` and `.nonint` (REQ-013.8) each set one of the two signals and require the decline without the empty-answer line; `.retry` (REQ-013.5) answers yes and then no; `.offline.uv.skip` (REQ-013.9) requires the skip line, or the line of the lane that bypasses uv by design; `self.dl.conda.fallback` and `self.dl.uv.fallback` (`tests/selfapps_dl_fallback.ps1`, REQ-013.13) make the primary URL fail and require the secondary URL to be tried and to deliver; `self.embed.dl.retry` (REQ-013.16) fails the first download and requires the second to finish the tier; `self.venv.nopip_retry` (REQ-013.19) fails the plain venv creation and requires the retry, the pip bootstrap, the venv as provider and the program running. `.offline.conda.skip` keeps the requirement number: it also passes when no Miniconda download was attempted, which is every lane that has Miniconda installed.
-> - Tests of the real download behavior (`tests/selfapps_net_resilience.ps1`, real lane): the download, check and folder-swap code is cut out of `run_setup.bat` and run against a local HTTP server and a stub `ping` and `curl`, so each row reads real requests in order. `self.netres.getpip.retry`, `self.netres.miniconda.retry` and `self.netres.embed.retry` (REQ-013.14) answer 503 three times and require curl's fourth request to deliver, with no other method tried; `self.netres.getpip.powershell`, `self.netres.miniconda.powershell` and `self.netres.embed.powershell` (REQ-013.15) answer curl with 404 (not retried) and require Windows PowerShell to fetch the same URL and deliver; `self.netres.getpip.fallback` (REQ-013.13, REQ-013.14) requires four curl requests and one PowerShell request on the primary URL and then the secondary URL; `self.netres.miniconda.checkorder` (REQ-013.1, REQ-013.13) requires the request order primary by curl, primary by PowerShell, the connectivity check, secondary URL (the uv half of REQ-013.1 is pinned as text in `tests/test_net_resilience.py`, because uv's URL cannot be redirected); `self.netres.getpip.offline` (REQ-013.11) and `self.netres.miniconda.offline` (REQ-013.10) require no request and the skip line; `self.netres.embed.checksum` and `self.netres.embed.extractfail` (REQ-013.17) require the second download after a wrong checksum and after a body that is no zip, and no third; `self.netres.check.repeat` (REQ-013.3) requires one repeat of an unanswered ICMP echo request and of an unanswered HTTPS request, and no more; `self.netres.swap.retry` (REQ-013.18) holds a file of the old folder open and requires success on the second attempt once it is released, and three attempts with two pauses when it never is. REQ-013.12 has no row yet.
+> - Tests of the real download behavior (`tests/selfapps_net_resilience.ps1`, real lane): the download, check and folder-swap code is cut out of `run_setup.bat` and run against a local HTTP server and a stub `ping` and `curl`, so each row reads real requests in order. `self.netres.getpip.retry`, `self.netres.miniconda.retry` and `self.netres.embed.retry` (REQ-013.14) answer 503 three times and require curl's fourth request to deliver, with no other method tried; `self.netres.getpip.powershell`, `self.netres.miniconda.powershell` and `self.netres.embed.powershell` (REQ-013.15) answer curl with 404 (not retried) and require Windows PowerShell to fetch the same URL and deliver; `self.netres.getpip.fallback` (REQ-013.13, REQ-013.14) requires four curl requests and one PowerShell request on the primary URL and then the secondary URL; `self.netres.miniconda.checkorder` (REQ-013.1, REQ-013.13) requires the request order primary by curl, primary by PowerShell, the connectivity check, secondary URL (the uv half of REQ-013.1 is pinned as text in `tests/test_net_resilience.py`, because uv's URL cannot be redirected); `self.netres.getpip.offline` (REQ-013.11) and `self.netres.miniconda.offline` (REQ-013.10) require no request and the skip line; `self.netres.embed.checksum` and `self.netres.embed.extractfail` (REQ-013.17) require the second download after a wrong checksum and after a body that is no zip, and no third; `self.netres.check.repeat` (REQ-013.3) requires one repeat of an unanswered ICMP echo request and of an unanswered HTTPS request, and no more; `self.netres.swap.retry` (REQ-013.18) holds a file of the old folder open and requires success on the second attempt once it is released, and three attempts with two pauses when it never is; `self.netres.offline.uv` and `self.netres.offline.conda` (REQ-013.12) cut the uv acquisition and the Miniconda folder decision out of the batch file, run them under offline mode with a stub `uv.exe` or a stub `conda.bat` installed, and require that the installed one is the one used, that no request reaches the server and that the stub is untouched, with a control run (nothing installed) that must show the offline skip line, so that "no request" cannot pass for a gate that is missing; `self.netres.shipped.tools` (REQ-003.1) runs the get-pip.py download with PATH cut to the System32 folders, curl failing once and Windows PowerShell delivering, and requires that the requests came from the System32 `curl.exe` (its version is the one in the User-Agent) and from Windows PowerShell 5.1 on a build at or above 17763 (1809).
 
 ---
 
@@ -1402,8 +1415,10 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 > - Rationale: a venv can be created (the folder and `python.exe` are there) and still not run, because of missing
 >   DLLs, broken links or an execution-policy block. Without this check a broken venv would reach PyInstaller and
 >   fail later with a more confusing error, or be reported as setup success for an environment that cannot run code.
-> - Mechanism: `:try_venv_fallback` runs `"%HP_PY%" -c "import sys"` and clears `HP_PY` on a failure, so a later
->   check does not take the failed tier for a selected provider. Log contract: `[WARN] venv fallback: interpreter
+> - Mechanism: `:try_venv_fallback` runs `"%HP_PY%" -c "import sys"`, copies the exit code to `HP_CANARY_RC` and
+>   compares the copy as text with `0` (a signed `if errorlevel 1` test would read a negative code, which is how Windows
+>   reports a missing DLL or an access violation, as a pass), and clears `HP_PY` on a failure, so a later
+>   check does not take the failed tier for a selected provider. The embedded Python tier's own probe is read the same way. Log contract: `[WARN] venv fallback: interpreter
 >   created but failed canary probe (import sys).`; the next provider then logs its own `[WARN] Attempting system
 >   Python fallback (degraded)...` line.
 > - The retry of a plain venv creation that fails outright (the `--without-pip` retry and the `get-pip.py` download)
@@ -1411,8 +1426,14 @@ makes the first attempt fail, and should not repeat a failure that waiting will 
 > - Tests (`tests/selfapps_ux_hardening.ps1`): `self.venv.canary_fail` (REQ-023.2 to .4) lets the venv be created for
 >   real and forces only the probe to fail, then requires the warning, that the venv is not selected and that the
 >   system Python tier is attempted next. `self.venv.fallback` (REQ-009) shows the other half: a healthy venv passes
->   the probe and is selected. No row makes the real probe command fail, so REQ-023.1 is shown by inspection of
->   `run_setup.bat`.
+>   the probe and is selected. Those two rows run a whole bootstrap and reach the probe command only through a hook that
+>   jumps past it. `tests/selfapps_venv_probe.ps1` (`self.venvprobe.command`, `self.venvprobe.nofile`,
+>   `self.venvprobe.declines`, `self.venvprobe.crash`) cuts
+>   `:try_venv_fallback` out of `run_setup.bat` and runs the real probe line against a stub interpreter: REQ-023.1 (the
+>   interpreter inside the venv is run once with `-c "import sys"`, after the creation and before the venv is selected,
+>   and not at all when the creation leaves no interpreter file), REQ-023.2 and REQ-023.3 (an exit code of 1, 2 or 255,
+>   and the negative codes a crash gives, -1, -1073741515 for a DLL that cannot be loaded and -1073741819 for an access
+>   violation, each leave the venv unselected and the warning in the log).
 
 ---
 

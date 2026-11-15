@@ -266,8 +266,45 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
   a new variable read in a block, a moved cut line or a reordered attempt fails that unit test with the block named. The expected counts follow
   from the batch: `--retry 3` means four curl requests, each probe of the check is tried twice, the swap has three attempts and so two pauses.
   A change of any of those numbers in `run_setup.bat` is a change to README REQ-013, the script and the unit test together.
-- **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only; REQ-013.12 (an installed
-  Miniconda or uv is used as it is in offline mode) has no row.
+- **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only.
+- **Item 116 adds three rows to the same script**, with three more cuts: the uv acquisition (`:pvw_uv_exe_skip` up to `:uv_acquire_done`, the driver puts a stub `uv.exe` under
+  `~uv_bin` or leaves the folder empty), the Miniconda folder decision (the line that sets `MC` up to `:after_conda_bat_validation`, plus `:select_conda_bat`, with a scratch `PUBLIC` that
+  holds a stub `condabin\conda.bat` or nothing) and the same get-pip.py block run with `PATH` set to the System32 folders (`where curl` and `where powershell` are recorded; the server
+  keeps the first User-Agent per path and client kind, so the curl version in it is compared with `System32\curl.exe --version` and the PowerShell one must say `WindowsPowerShell/5.1`).
+  REQ-013.12 holds when the installed binary is taken BEFORE the offline test (a gate placed in front of it makes an installed uv or Miniconda unusable offline) and Miniconda is
+  installed only when `CONDA_BAT` is undefined; each has a control run with nothing installed that must show the offline skip line, so "no request" cannot pass for a missing
+  gate. `tests/test_net_resilience.py` pins the order of those lines and which labels and variables the three new blocks reach (`CONDA_MAIN` and `CONDA_ALT` come from the folder block,
+  which runs first in the same driver). REQ-003.1 is the weakest of the three: the bootstrapper has no version check of its own, so the row shows the runner's build at or above
+  17763 and that the download code works with only the System32 programs, which is what "using the curl and PowerShell that Windows ships" can be tested as.
+
+
+---
+
+## The venv fallback's interpreter probe is cut out and run with a stub Python (Item 113)
+
+**Touch `:try_venv_fallback`, its canary probe line, `:venv_canary_fail`/`:venv_canary_ok`, the `[WARN] venv fallback: ...` and `[INFO] venv fallback ready:`
+log texts, or the labels `:resolve_system_python` and `:download_get_pip` it calls, must understand `tests/selfapps_venv_probe.ps1` and
+`tests/test_venv_probe.py`.** README REQ-023.1 says the fallback runs a probe command in the new interpreter and declines the tier when it does not pass.
+The older rows (`self.venv.canary_fail`) force the decline through `HP_TEST_FORCE_VENV_CANARY_FAIL`, which skips the probe command, so they cannot show
+what the real command does for the exit codes a broken interpreter gives. `tests/selfapps_venv_probe.ps1` (`self.venvprobe.*`, real lane, gating):
+- **The cut**: the block from the line `:try_venv_fallback` up to the line `:try_system_fallback` (each exactly once), in a driver that defines `LOG`,
+  `:log`, `:resolve_system_python` (sets `HP_SYS_CMD` and `HP_SYS_ARGS` to the stub) and `:download_get_pip` (never reached: the stub always has pip).
+- **The stub**: a C# program compiled with `csc` and used as the system Python. `-m venv .\.venv` builds `.venv\Scripts\python.exe` as a copy of the stub
+  itself (`VP_VENV_MODE=nofile` builds the folder and no file); any other call, which is the probe `-c "import sys"` run by the copy, exits with
+  `VP_PROBE_EXIT`. Every call is appended to the `VP_LEDGER` file, so a row reads which command ran, not only what the batch logged.
+- **The rows**: `.command` (the probe is called as `-c|import sys` on the venv's own interpreter and a passing exit selects the venv), `.nofile` (no interpreter
+  file, so no probe at all and the tier is declined), `.declines` (exit 1, 2 and 255 each decline), `.crash` (a negative exit code, which is how Windows
+  reports a missing DLL or an access violation, declines too). The verdicts are pure functions (`Get-ProbeProblems`) that `tests/test_venv_probe.py`
+  runs through real `pwsh` on synthetic ledgers, so a judge that could not go red is found locally.
+- **The probe reads its exit code as text** (Item 113): the line after the probe copies `%ERRORLEVEL%` to `HP_CANARY_RC` and the next compares that copy
+  with `0`. The first version of the block used `if errorlevel 1`, which is true only for 1 or more, so a negative code (a missing DLL is `0xC0000135`,
+  an access violation `0xC0000005`) selected a venv whose interpreter cannot start; `self.venvprobe.crash` was the row that showed it. The embedded
+  Python tier's canary (`:try_embed_fallback`, `"%HP_EMBED_PY%" -c "import sys, pip"`) had the same line and got the same fix; no row runs it with a
+  failing code (the tier downloads Python), so `tests/test_venv_probe.py` pins its two lines as text (`result_problems`). The copy has to sit at the top
+  level of the subroutine, never inside a parenthesized block.
+- **Coupling**: exactly one unindented probe line `"%HP_PY%" -c "import sys" >nul 2>&1`, placed after `:venv_create_pip_ready`; a probe line inside a parenthesized
+  block would read its errorlevel at parse time (the Provider-cascade entry in `docs/agent-lessons-learned.md`).
+  The unit test names the script to update when a label, a variable read or a log text moves.
 
 ---
 
@@ -1177,6 +1214,11 @@ tests both an exact pin staying pinned and a loose range resolving to latest-sat
 floor, via `HP_UV_PY_REQ`/operator-free `HP_UV_PY_DISP`), `self.uv.first.miniconda.skip`,
 `self.contract.uv.fail` (contract-uv-fail), `self.uv.managed.interpreter` (all uv-first lanes),
 `uv.python.preference.configured` (static), `self.dl.uv.fallback` (justme-test, passes via skip).
+Item 114 added `self.contract.uv.pyver.conflict` (runtime.txt `python-3.12` next to `requires-python >=3.13` gives 3.12.x; the same
+pyproject.toml alone is the control and must give a newer minor) and `self.contract.uv.pyver.nopin` (neither file: the log line without a
+version and the interpreter of a plain `uv venv --seed`). They read two `call :log` lines (`uv: creating venv at .uv_env with Python ...`
+and `uv: creating venv at .uv_env...`) and the version-less `"%HP_UV_EXE%" venv --seed` call; `tests/test_pyver_rows.py` pins them. The
+helper `Invoke-UvPyverScenario` writes `runtime.txt` and `pyproject.toml` each on its own condition (both, or neither, is a valid scenario).
 
 **Gap**: the real uv DL-fallback URL path (`HP_TEST_UV_DL_FALLBACK=1`) has no lane exercising it
 without also short-circuiting before download is reached.
@@ -1336,6 +1378,12 @@ checkpoint can still launch an OPTIONAL second run). Touching this flow requires
   of this fix -- an inherent EXE-vs-script difference, not something to normalize.
   If any of this vocabulary/paths changes, `harness.ps1`'s `batch.smoke.single_verify` and
   `self.env.smoke.run`/`self.prime.run`/`self.prime.bootstrap` break.
+- **`self.env.smoke.minicondafolder` (Item 115, README REQ-003.2) reads two more strings of the batch file:** the provider line
+  `[BOOT] REQ-009: Selected Python provider: Conda (Portable).` (the row's only way to know conda was selected; a reworded line turns the row into a skip
+  in every lane except `conda-full`, where it fails it) and `Interpreter: %HP_PY%` (the printed path is compared with `%PUBLIC%\Documents\Miniconda3\envs\<name>\`,
+  because a runner image's own Miniconda `C:\Miniconda3` is a valid fallback for the script's `conda.bat` search and would otherwise pass). The Miniconda folder is set
+  once (`set "MC=%PUBLIC%\Documents\Miniconda3"`, then `CONDA_MAIN`, `CONDA_ALT` and `MINICONDA_ROOT`) and `ENV_PATH` is built from `MINICONDA_ROOT`;
+  `tests/test_miniconda_folder.py` pins those lines, so moving the folder is a change to README REQ-003.2, the script and the test together.
 - **No-EXE path** runs the interpreter ONCE via `:verify_no_exe_interpreter`, UNTIMED on purpose
   (the interpreter run IS the user's real run there, not a throwaway) -- skipped when an EXE
   exists, the fast path ran it, or `HP_SKIP_ENTRY_SMOKE`.
