@@ -245,6 +245,32 @@ name a failure that waiting can fix.
 
 ---
 
+## The REQ-013 download, check and swap code is cut out and run against a local server (Item 112)
+
+**Touch `:download_get_pip`, `:download_miniconda_exe`, the embed download and extraction (from `set "HP_EMBED_DL_ATTEMPT=0"`), the embed folder
+swap (from `set "HP_EMBED_SWAP_ATTEMPT=0"`), `:check_net_after_dl_fail`, any `curl --fail -L --retry 3` line, or a `call :log` text the script
+matches, must understand `tests/selfapps_net_resilience.ps1` and `tests/test_net_resilience.py`.** The script (`self.netres.*`, real lane,
+gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartLine/-EndLine`), wraps each in a driver batch file (it defines
+`LOG`, `TEMP`, `:log`, and for the embed block `:emit_from_base64` by copying `tools/embed_extract.ps1`, for the Miniconda block a
+`:check_net_after_dl_fail` that makes one `curl` request to the server's `/checkpoint`) and runs it under cmd.exe:
+- **The server**: `System.Net.HttpListener` on a free loopback port in its own runspace; one plan per path and client (`curl*` or
+  `*WindowsPowerShell*` User-Agent), each plan a list of `<status>[:<body name>]` with the last item repeating, and an ordered request log
+  (`<client>|<status>|<path>`). Row verdicts read that log: counts per role (`p1` primary URL, `p2` secondary) and client, and the whole order.
+- **The stubs**: a C# program compiled with `csc` and copied as `ping.exe` and `curl.exe` into a scenario folder. cmd.exe searches the current
+  folder before PATH, which is why the product's bare `ping`/`curl` calls reach them (the script scrubs `NoDefaultCurrentDirectoryInExePath`).
+  The stub records its arguments before it does anything else and then answers from `<name>.plan` (`exit[:sleepms]`, the last item repeating).
+- **Real, not stubbed**: curl and Windows PowerShell for every download, `tools/embed_extract.ps1` for checksum and extraction, `rd` and `move`
+  for the folder swap (a `FileShare.Read` handle makes `rd /s /q` fail; the harness releases it when the stub ping, the pause between
+  attempts, has been called once, and the stub then sleeps so the next attempt always sees the release).
+- **Coupling**: the five blocks may reach only the labels and variables `tests/test_net_resilience.py` lists (the script's driver defines them);
+  a new variable read in a block, a moved cut line or a reordered attempt fails that unit test with the block named. The expected counts follow
+  from the batch: `--retry 3` means four curl requests, each probe of the check is tried twice, the swap has three attempts and so two pauses.
+  A change of any of those numbers in `run_setup.bat` is a change to README REQ-013, the script and the unit test together.
+- **Not covered by a row**: the uv download (inline in the main flow, URL not redirectable) is pinned as text only; REQ-013.12 (an installed
+  Miniconda or uv is used as it is in offline mode) has no row.
+
+---
+
 ## `.github/dependabot.yml`, `tests/test_dependabot_config.py` and the `no-automerge` label (Item 90 follow-up)
 
 **Touch the file, the test's name lists, or `pr-automerge.yml`'s label handling, must understand the others.** Dependabot
@@ -1049,6 +1075,18 @@ for a conflict). The old behavior was winner takes all (`copy /y` of the highest
   pipreqs fallback (only when nothing is declared). **Item 91**: the Item 65 runtime-install offer appends its package to
   `requirements.txt` for every dependency source; `:dep_merge_snapshot` records the file as it stands at `:success`, appended
   line included, so the next run's merge keeps it as an ordinary entry.
+- **Edge rows (Item 106, README REQ-005.1.6, .12, .13, .14)**: `tests/selfapps_dep_merge_edges.ps1` (`self.depmerge.failed.records`,
+  `.header.userwrote`, `.fallback.emit`, `.fallback.helper`; contract-uv lane, gating) bootstraps four folders for real with no user
+  program started (the build still runs). It matches these texts in `Get-DmFacts`, so rewording one means rewording its pattern there: the
+  report lines `Removed <name>: you removed it from ...` and `... still lists it, so it stays`, the `[INFO] Removed <name> from the
+  PEP 723 header.` line, `uv pip install -r requirements.txt failed`, both `PEP 723 write-back skipped (...)` reasons, `PEP 723 header
+  write-back succeeded via uv add --script`, `[WARN] The dependency lists could not be merged; using the highest ranked list only.`
+  (console and setup log), the `[TEST] HP_TEST_FORCE_EMIT_FAIL=HP_DEP_MERGE` line and the helper's own `dep_merge: ...` error line
+  (stderr, so it is in `~setup.log`). The `H` scenario holds `~requirements.merge.tmp` open with `FileShare.None` so the helper cannot
+  write its result: that temp name is part of the contract between the helper and the script (`tests/test_dep_merge_edges.py` pins it).
+  The `F` scenario's failed install is `six==999.0.0`, a pin no index has. A header record exists only for a header the bootstrapper
+  wrote (`HP_DM_HDR_WRITTEN`), so `U` switches the write-back off (`HP_SKIP_PEP723_WRITEBACK`) in its first run to get a header with
+  no record.
 
 ### `HP_TEST_FORCE_UV_FAIL` / `HP_TEST_CORRUPT_UV` interaction
 
@@ -1473,6 +1511,40 @@ state `ok` and exit code 0. Both read the console text with whitespace flattened
 several `echo` lines), so a reworded or re-wrapped sentence only needs the test string updated, but a changed
 heading or log line breaks the rows by design.
 
+## Four rows read the post-flight briefing's console text, and one cuts the NI-VISA gate out of the batch file (Item 111)
+
+**Touch `:print_postflight_briefing` (a heading, the keep or delete list, the two lines `Your standalone application is ready:` and
+`dist\%ENVNAME%.exe`, the interpreter command line, the two `REQ-016` log lines), the derivation of the environment name from the folder
+name, or `:visa_subfolder_gate`, must understand these.**
+- `self.tilde.keepfiles` and `.deletable` (`tests/selfapps_tilde_files.ps1`) read the console of a default run of a program in a folder
+  named `~tilde_work`: the files under `KEEP these files with your project:` (the first word of each line with a ` -- ` after it, up to
+  `SAFE TO DELETE`) and the EXE on the line directly under the ready line. Each named file must exist in that run, so a keep-list line for
+  a file the bootstrapper does not write turns the row red with the file named (REQ-015.7). The folder name is chosen because the
+  derivation `-replace '[^A-Za-z0-9_-]', '_'` turns `~tilde_work` into `_tilde_work`: the expected EXE is `_tilde_work.exe`, so a
+  derivation that kept the `~` is a red row with both names. The deletion step removes every `~` entry of the program folder, `dist` and
+  `build`, and the first run's own logs with it, so the script keeps the last lines of both in `tests/~tilde_files_evidence.txt`
+  (written last, after every folder was listed, so it cannot be taken for something the bootstrapper created).
+- `self.caveat.runline` and `.sentences` (`tests/selfapps_caveat_briefing.ps1`) read the caveat variant of the same block: the heading
+  `SETUP COMPLETE -- WITH A CAVEAT`, the text up to `RUNNING YOUR APP` (flattened to one line: it must hold `Your Python environment was
+  set up and the packaging step completed without a fatal error.` and no sentence that names dependencies or an install together with
+  a verification word that is not negated: a negator stands at most two words in front of the word, or the word starts with un-, and a
+  negator elsewhere in the sentence does not count, "verified, not just installed" is a claim; a console that also carries the success
+  wording `Your standalone application is ready:` fails both rows), the first line that starts with a double quote under `directly via the interpreter at any
+  time:` (two quoted paths, written to a `.cmd` file as printed and run from the program folder, which must print the program's line and
+  leave its exit code), and the setup log's `[WARN] REQ-016: Post-flight briefing printed; EXE unverified, advised direct run.` (never
+  the `[INFO]` line). Reword a sentence of the caveat and the row names the missing sentence; the unit tests replay the real echo lines of
+  the block (`simulate()` in `tests/test_tilde_files.py` and `tests/test_caveat_briefing.py`) and hand the text to the scripts' own
+  judging functions through real `pwsh`, so the wording is checked locally before a lane run.
+- `self.nivisa.signals.*` (`tests/selfapps_visa_signals.ps1`) cut `:visa_subfolder_gate` up to `:dll_bundle_recover` out of the batch file
+  and run it under cmd.exe, like `selfapps_choice_cancel.ps1` does for the Ctrl+C gates. The block must keep: the five labels of the
+  gate, only variables the driver sets or clears (`KNOWN_VARIABLES` in `tests/test_visa_signals.py`), the four signal lines each once and
+  live in the order test answer, `HP_CI_LANE`, `NOINPUT`, `HP_NONINTERACTIVE`, then the timer line and exactly one live `choice` line,
+  which the driver replaces with a recording stub that answers yes. The answer is the point: a gate that read the console in spite of the
+  signal would take the yes and accept, so a signal row cannot pass by a stub that declines, and the control run (no signal) shows the stub
+  is reachable.
+- `tests/selfapps_pyvisa_subfolder.ps1` still runs the real bootstraps of the same gate and stays the proof that the main flow calls it; the
+  new script proves the gate alone.
+
 ## Post-execution checkpoint (Slice 2b-C, second half)
 
 `:run_postexec_checkpoint` is a **consent gate** (echo prompt unconditionally, then
@@ -1773,6 +1845,26 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
   question to the risk-sentence rule of the other prompts.
 - **Left for later** (CLAUDE.md, "Item 97 follow-ups"): reading `~run.err.txt` first, "do not ask again for N runs", the
   known-idempotent skip on the other four offers, and the maintainer's up-front consent question.
+- **The cap on each of the loop's runs (Item 106, README REQ-018.7)**: the loop's start line (`:hidden_import_loop`, the inline
+  PowerShell after `set "HP_HIR_EXE=..."`) starts both pipe reads, waits 30 seconds, ends the process TREE with `taskkill /F /T /PID`
+  (started from `%SystemRoot%\System32`, waited for at most 5 seconds; `$p.Kill()` stays as the fallback when taskkill cannot be
+  started), reads each pipe for at most 5 seconds and prints the exit code, or -1 for a run that did not finish, as its LAST line
+  (`for /f` keeps the last line it reads). A run that did not finish ends the loop with the TIMED OUT status line. A PyInstaller
+  onefile EXE is two processes, the bootloader that is started and the program it starts. The first version of the line called
+  `Kill()` and then read both pipes without a limit: `Kill()` ends the bootloader only, the program kept the output pipes open, and
+  the read waited until the program ended by itself (`self.repair.cap` on its first run, run `43532440009`: all 100 printed lines,
+  100.1 s on the program's own clock, the loop's -1 and the TIMED OUT line only after that). The PowerShell text lives inside one
+  `-Command "..."` of a `for /f` line, so it holds no `"`, `%`, `^`, `!`, `<`, `>` or `&` (a unit test names the character). The same
+  Kill-only shape is still in `:offer_optimized_build`'s verification line and in `tools/exe_smokerun.ps1` (see "Active Backlog"
+  Item 110 in CLAUDE.md); no row asks either one to end a program that keeps printing, and the smoke runner's orphan may be wanted
+  for the window question of the last-chance offer, so neither was changed here. `tests/selfapps_repair_cap.ps1` (`self.repair.cap`,
+  contract-uv lane, gating) measures the program's own clock through a ledger at an absolute path (its first line to its last must span
+  10 to 45 seconds and it must never reach `done`) and lists the processes still running from `dist` after the bootstrap returns;
+  `tests/test_repair_cap.py` pins the line's pieces and their order (reads started before the wait, `WaitForExit(30000)`, the
+  taskkill call with `/F /T /PID` and its 5 second wait, the fallback `Kill()`, both reads bounded, the result last, the default -1 before
+  the test for 0), and on a POSIX host with pwsh runs the line's own text against stand-in programs with the waits shortened (a program
+  whose child holds the pipes, one that only starts, one that exits by itself, a stand-in taskkill that records its arguments, and the
+  first version of the line as the control that must show the defect). Any change to that one line is a change to the shall's only code.
 
 ### Cascade signal reliability
 
