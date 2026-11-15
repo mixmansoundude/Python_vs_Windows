@@ -237,11 +237,13 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   - pipreqs is told to ignore `tests` (`HP_PIPREQS_IGNORE`), and `dep_merge.py` reads only
     `[project].dependencies`, so a test-only dependency (pytest, a mocking library) is never found or
     installed. A pytest-style folder would need pytest installed first.
-  - `tools/find_entry.py` has no notion of test files. A folder with a library `calc.py` (no `__main__`
-    guard) and a `test_calc.py` that ends in `if __name__ == "__main__": unittest.main()` selects
-    `test_calc.py` as the entry (exit 0, rule 3 of REQ-002), so today the bootstrapper would build and
-    verify an EXE of the test runner. With a third unguarded file the alphabetical fallback picks `calc.py`
-    instead. Tests become the program only by accident of that rule. Not filed as a bug: no field report.
+  - `tools/find_entry.py` used to have no notion of test files: a folder with a library `calc.py` (no
+    `__main__` guard) and a `test_calc.py` that ends in `if __name__ == "__main__": unittest.main()` selected
+    `test_calc.py` as the entry (exit 0, rule 3 of REQ-002) and the bootstrapper built and verified an EXE of
+    the test runner. Fixed by backlog Item 125 (README REQ-002.27 and .28): a file named `test_X.py` or
+    `X_test.py` that imports `unittest` or `pytest` is skipped by the guard rule and the alphabetical fallback
+    while the folder holds any other `.py` file. This idea's detection (a `tests` folder, `conftest.py`,
+    `pytest.ini`) is still not in the helper.
   - Nothing checks, before a run, that the entry's imports resolve. `runtime_module_scan.py` reads stderr
     after a run; `collect_submodules.py` calls `find_spec` only for a curated list and
     `hidden_import_scan.py` only for names an error already named.

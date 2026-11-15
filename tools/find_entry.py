@@ -10,9 +10,10 @@ stdout and diagnostic [BOOT] lines to stderr. Selection order:
      guard, else any .py file -- so something always runs/builds rather than the
      entry resolving to empty (which silently skips run + packaging).
 
-This is the canonical source for the HP_FIND_ENTRY base64 payload embedded in
-run_setup.bat. After editing, re-encode and paste it into the `set "HP_FIND_ENTRY=..."`
-line; tests/test_find_entry.py asserts the embedded payload matches this file.
+Rules 3 and 4 skip a test module (REQ-002.27) unless every file is one (REQ-002.28).
+
+Canonical source of the HP_FIND_ENTRY payload in run_setup.bat; after editing run
+`python tools/sync_payload.py HP_FIND_ENTRY tools/find_entry.py`.
 """
 import ast
 import os
@@ -58,22 +59,42 @@ def _is_substantive(stmt):
     return True
 
 
+def _parse(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            return ast.parse(handle.read())
+    except Exception:
+        # Unparseable source is a poor entry candidate; do not resurrect the old
+        # substring heuristic (which mis-fired on "__main__" in strings/comments).
+        return None
+
+
+def is_test_module(path):
+    """REQ-002.27: test_X.py or X_test.py that imports unittest or pytest (a lab script
+    named test_scope.py is a program, so the name alone is not enough)."""
+    lower = path.lower()
+    if not (lower.startswith("test_") or lower.endswith("_test.py")):
+        return False
+    tree = _parse(path)
+    if tree is None:
+        return False
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            roots.add((node.module or "").split(".")[0])
+    return bool(roots & {"unittest", "pytest"})
+
+
 def has_main(path):
     """True if the file has an `if __name__ == "__main__":` guard that does real work.
 
     A guard whose body is exclusively pass/comments/docstring/`...` does not count
     (it self-identifies the module as non-runnable), so a sibling real entry wins.
     """
-    try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
-            src = handle.read()
-    except Exception:
-        return False
-    try:
-        tree = ast.parse(src)
-    except Exception:
-        # Unparseable source is a poor entry candidate; do not resurrect the old
-        # substring heuristic (which mis-fired on "__main__" in strings/comments).
+    tree = _parse(path)
+    if tree is None:
         return False
     # Only a module-level guard marks a runnable script; a guard nested inside a
     # function or class (e.g. a helper's `def run(): ... if __name__ == ...`) is not.
@@ -116,7 +137,9 @@ def main():
         emit(files[0])
         return 0
 
-    candidates = [name for name in files if has_main(name)]
+    # REQ-002.27/.28: test modules take no part below unless nothing else exists.
+    base = [name for name in files if not is_test_module(name)] or files
+    candidates = [name for name in base if has_main(name)]
     if len(candidates) == 1:
         emit(candidates[0])
         return 0
@@ -125,7 +148,7 @@ def main():
     # substantive __main__ guard. Prefer files that declared a guard, else any file.
     # This ambiguous path exits AMBIGUOUS_RC so the batch may offer the interactive
     # picker before accepting this alphabetical default.
-    pool = candidates if candidates else files
+    pool = candidates if candidates else base
     if pool:
         choice = sorted(pool)[0]
         sys.stderr.write(

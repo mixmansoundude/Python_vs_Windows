@@ -7991,3 +7991,21 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   `System32\curl.exe --version` and `WindowsPowerShell/5.1`, on a build at or above 17763. 238 of 265 shalls named. The REQ-003.1 row is honest about its limit: the bootstrapper
   makes no version check of its own, so it shows the runner at the floor and the download code independent of everything but the Windows-shipped programs.
 - **Not covered.** The Windows floor itself on a real 1809 machine (no runner image is that old), and REQ-003.3.
+
+### Item 125 (filed 2026-11-15, PR #536; a test module was taken as the entry script, a side finding of the unit-test idea in `docs/agent-cold-storage.md`)
+
+- **The bug.** `tools/find_entry.py` had no notion of test files. A folder with `weather.py` and `test_weather.py` (a unittest runner with `if __name__ == "__main__": unittest.main()`)
+  has two guarded files, so the alphabetical fallback chose `test_weather.py` (it sorts first) and a beginner who double-clicked got an EXE of the test runner built and verified. A folder with
+  a library `calc.py` (no guard) and `calc_test.py` chose `calc_test.py` by rule 3, the sole guarded file, with exit code 0 and no picker.
+- **README.** REQ-002.27 (a test module is not a candidate of REQ-002.11 or .12 while the folder holds a `.py` file that is not one) and REQ-002.28 (when every file is a test module, the rules apply to all of
+  them, so something still runs). A test module is a file named `test_<name>.py` or `<name>_test.py` whose source imports `unittest` or `pytest`.
+- **Design call (reversible).** The name alone is not enough: lab and instrument scripts called `test_scope.py` are common for this audience (VISA users) and are programs, so the file must also
+  import a framework (an import anywhere in the file counts, including inside a function; a word in a string or comment does not; an unparseable file is not a test module). `test.py`, `tests.py` and
+  `conftest.py` do not match. The preferred names, a sole `.py` file and a named first argument are decided earlier and do not change. The picker still lists test modules. If the maintainer prefers
+  name-only matching, only `is_test_module` and REQ-002.27 change.
+- **Red first, read in CI.** Run `43708861560` (head `de14545`, the commit with the tests only): on the four short lanes (`uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, read from each lane's
+  `ci_test_results` artifact) `self.entry.testmodule.guard` was red with `chosen: test_weather.py` and `.library` red with `chosen: calc_test.py`; `.script` and `.only` (the controls) were green; the only other
+  red rows were `self.entry.results` (it summarizes the four) and `self.pytest.unit` (the nine unit tests written first). The fix was pushed once those rows were read (the early-push rule).
+- **The fix.** `is_test_module` and a `_parse` helper in `tools/find_entry.py`; `main()` takes `base = [non-test files] or all files` for the guard rule and the fallback. The payload was 249 characters over the 8191 limit
+  at first (`tools/sync_payload.py` refused it), so the module docstring was cut and the import scan folded into one set; margin 151. 251 of 267 shalls named.
+- **Not covered.** A `tests` folder, `conftest.py` and `pytest.ini` are not read (those belong to the unit-test idea in cold storage); a test module that imports neither framework (a script of plain asserts) stays a candidate.

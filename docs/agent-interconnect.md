@@ -1534,6 +1534,13 @@ calls must make the same once-per-bootstrap decision (compare `HP_RTI_OFFERED`, 
 `tests/test_picker_gate.py` (`PickerAsksOnce`) pins the clear, the set and the read.
 The list itself is built by one pipeline (`dir /b /a-d *.py`, then `findstr /v /b /c:"~"`, then `findstr /v /b /l /c:"._"`, then `sort`) whose two filters must
 stay equal to what `find_entry.py` skips (README REQ-002.13); `PickerMenuFilter` pins both stages and `self.entry.picker.metafile` shows a `._` copy is not listed (Item 108).
+**A test module is skipped by `find_entry.py`'s rules 3 and 4 only, never by the picker (Item 125, README REQ-002.27 and .28).** `is_test_module` in `tools/find_entry.py` takes a
+file named `test_X.py` or `X_test.py` (any letter case) whose AST imports `unittest` or `pytest` (an import inside a function counts, a word in a string or comment does not, an unparseable file is not
+one); `main()` removes those files from the pool of the guard rule and the alphabetical fallback and puts them back only when nothing else is left, so a folder of nothing but test modules
+still runs one. The preferred names, a sole `.py` file and a named first argument are decided before that point and do not change; the picker still lists every `*.py` (a user may
+mean the test file), and the exit code 3 of the fallback is unchanged, so `calc.py` (no guard) next to `test_calc.py` is `calc.py` with the picker offered, not a silent pick. The name alone is not
+enough on purpose: a lab script called `test_scope.py` that drives an instrument is a program, and the audience (VISA users) writes those (`self.entry.testmodule.script`). The helper is Python 3.9
+grammar and has 151 characters of payload margin; `self.entry.testmodule.guard`/`.library` are the rows that were red on the short lanes before the fix.
 
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 

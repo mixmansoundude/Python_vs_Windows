@@ -302,7 +302,7 @@ Test files and what they cover:
 |------|--------|
 | `test_apply_patch.py` | Unified/legacy diff parsing and application |
 | `test_entry_selection.py` | Entry file precedence (main > app > run > cli > __main__) |
-| `test_find_entry.py` | find_entry.py selection matrix: substantive `__main__` detection, alphabetical fallback (REQ-002), HP_FIND_ENTRY base64 sync |
+| `test_find_entry.py` | find_entry.py selection matrix: substantive `__main__` detection, alphabetical fallback (REQ-002), test modules (`test_X.py`/`X_test.py` that import unittest or pytest) skipped by rules 3 and 4 unless every file is one (REQ-002.27/.28, Item 125: name AND import, `test_scope.py` without a framework stays a candidate; the four `self.entry.testmodule.*` rows are pinned by `FindEntryTestModuleRows`), HP_FIND_ENTRY base64 sync |
 | `test_entry_single.py` | Single Python file bootstrap (Windows only, skipped on Linux) |
 | `test_inline_model_fix_decision.py` | Model quick-fix decision logic |
 | `test_ndjson_fail_list.py` | Fail list extraction from NDJSON artifacts |
