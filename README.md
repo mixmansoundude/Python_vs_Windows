@@ -180,6 +180,11 @@ choice should never come out empty. A person who names a file should get that fi
 - **REQ-002.19** [minor] The bootstrapper **shall** ask the question of REQ-002.14 at most once in a run.
 - **REQ-002.26** [minor] The bootstrapper **shall** use the file that the question of REQ-002.14 selected, whether
   the user chose it or the default was taken, in every later step of that run.
+- **REQ-002.27** [major] The bootstrapper **shall not** take a test module as a candidate of REQ-002.11 or
+  REQ-002.12 when the folder holds a `.py` file that is not one. A test module is a file named `test_<name>.py` or
+  `<name>_test.py` whose source imports `unittest` or `pytest`.
+- **REQ-002.28** [minor] The bootstrapper **shall**, when every `.py` file of the folder is a test module, apply
+  REQ-002.11 and REQ-002.12 to all of them, so that some file still runs.
 
 > **Notes (non-normative).**
 > - Order of precedence, highest first: a named file (REQ-002.3), `main.py`, `app.py`, `run.py` and `cli.py`, the
@@ -201,6 +206,15 @@ choice should never come out empty. A person who names a file should get that fi
 > - REQ-002.20 to REQ-002.26 were split out of REQ-002.6, REQ-002.7, REQ-002.15, REQ-002.17, REQ-002.18 and
 >   REQ-002.19 so that each id states one obligation; each sits next to the shall it came from, and the older ids
 >   keep their first obligation.
+> - REQ-002.27 and REQ-002.28 (backlog Item 125): a folder with `weather.py` and a `test_weather.py` that ends in
+>   `unittest.main()` used to take the test runner as the program, because both files have a guard and the
+>   alphabetical rule of REQ-002.12 puts `test_weather.py` first; with a library `calc.py` and a `calc_test.py`
+>   the test file was the one file with a guard, so it won by REQ-002.11. Only a file that is named like a test
+>   and also imports `unittest` or `pytest` is set aside: a script called `test_scope.py` that drives an
+>   instrument and imports neither stays a candidate, and so do `test.py` and `tests.py`. A named file
+>   (REQ-002.3), `main.py`, `app.py`, `run.py` and `cli.py` (REQ-002.10) and a folder with one `.py` file
+>   (REQ-002.2) are not affected, and the list of REQ-002.14 still shows the test modules, so a person who wants
+>   to run one can type its number. A test module that does not parse is not a test module.
 
 ---
 

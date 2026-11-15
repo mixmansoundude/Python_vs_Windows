@@ -58,6 +58,10 @@ self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self
 self.entry.guard, self.entry.fallback, self.entry.fallback.guard, self.entry.ignored,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
 self.entry.picker.overflow, self.entry.picker.number, self.entry.picker.metafile,
+self.entry.testmodule.guard, self.entry.testmodule.library, self.entry.testmodule.script, self.entry.testmodule.only
+(real, conda-full and every other lane -- selfapps_entry.ps1; REQ-002.27 and .28, Item 125: a test module is not taken as the entry while the folder holds a
+program file; `.guard` and `.library` are the two that were red before the fix, `.script` is the control that a test_*.py file without a framework import stays
+a candidate, `.only` is the control that a folder of nothing but test modules still runs one),
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.entry.req011.case, self.isolation.req010.pythonpath,
 entry.single.direct, entry.expected, helper.invoke,
 self.envname.hyphen, self.envname.ampersand, self.envname.longname, self.envname.longtrim,

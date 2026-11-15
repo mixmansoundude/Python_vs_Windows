@@ -168,6 +168,117 @@ class FindEntrySelection(unittest.TestCase):
         self.assertEqual(out, "real.py")
 
 
+UNITTEST_RUNNER = (
+    "import unittest\n"
+    "class T(unittest.TestCase):\n"
+    "    def test_x(self):\n"
+    "        self.assertTrue(True)\n"
+    "if __name__ == '__main__':\n"
+    "    unittest.main()\n"
+)
+UNITTEST_NO_GUARD = "import unittest\nclass T(unittest.TestCase):\n    pass\n"
+PROGRAM_GUARD = "if __name__ == '__main__':\n    print('go')\n"
+
+
+class FindEntryTestModules(unittest.TestCase):
+    """README REQ-002.27 and REQ-002.28 (backlog Item 125): a test module is not taken as the
+    program while another file could be, and is still taken when nothing else exists."""
+
+    def test_unittest_runner_loses_to_the_program_it_tests(self):
+        # Both files have a guard, so the alphabetical rule applied: test_weather.py sorts before weather.py.
+        self.assertEqual(
+            _rc({"weather.py": PROGRAM_GUARD, "test_weather.py": UNITTEST_RUNNER}),
+            ("weather.py", 0),
+        )
+
+    def test_test_module_with_the_only_guard_loses_to_a_library(self):
+        out, err = _run({"calc.py": "x = 1\n", "calc_test.py": UNITTEST_RUNNER})
+        self.assertEqual(out, "calc.py")
+        self.assertIn("selecting 'calc.py' (alphabetical fallback)", err)
+
+    def test_library_and_tests_stay_ambiguous(self):
+        # No program is named, so the picker of an interactive run is still offered (exit 3).
+        self.assertEqual(_rc({"calc.py": "x = 1\n", "test_calc.py": UNITTEST_RUNNER}), ("calc.py", 3))
+
+    def test_pytest_import_makes_a_test_module(self):
+        for source in ("import pytest\n", "from pytest import fixture\n", "import unittest.mock\n",
+                       "from unittest import TestCase\n"):
+            with self.subTest(source=source):
+                files = {"tool.py": PROGRAM_GUARD, "test_tool.py": source + PROGRAM_GUARD}
+                self.assertEqual(_rc(files), ("tool.py", 0))
+
+    def test_an_import_inside_a_function_counts(self):
+        source = "def run():\n    import unittest\n    return unittest\nif __name__ == '__main__':\n    run()\n"
+        self.assertEqual(_rc({"app_logic.py": PROGRAM_GUARD, "test_logic.py": source}), ("app_logic.py", 0))
+
+    def test_a_script_named_like_a_test_that_imports_no_framework_is_kept(self):
+        # A lab script that drives an instrument and is called test_scope.py is a program.
+        files = {"scope.py": "x = 1\n", "test_scope.py": PROGRAM_GUARD}
+        self.assertEqual(_rc(files), ("test_scope.py", 0))
+
+    def test_names_that_only_look_like_tests_are_kept(self):
+        for name in ("test.py", "tests.py", "latest_test_data.py", "contest.py", "testing_tools.py"):
+            with self.subTest(name=name):
+                self.assertEqual(_rc({"lib.py": "x = 1\n", name: UNITTEST_RUNNER}), (name, 0))
+
+    def test_the_name_alone_is_not_enough_for_a_framework_word_in_text(self):
+        # The word is in a string and a comment, not an import statement.
+        source = "note = 'import unittest'  # import pytest\n" + PROGRAM_GUARD
+        self.assertEqual(_rc({"lib.py": "x = 1\n", "test_lib.py": source}), ("test_lib.py", 0))
+
+    def test_a_test_module_that_does_not_parse_is_not_one(self):
+        files = {"zeta.py": PROGRAM_GUARD, "test_broken.py": "import unittest\ndef (:\n"}
+        self.assertEqual(_rc(files), ("zeta.py", 0))
+
+    def test_only_test_modules_still_give_an_entry(self):
+        self.assertEqual(_rc({"test_a.py": UNITTEST_RUNNER, "test_b.py": UNITTEST_NO_GUARD}), ("test_a.py", 0))
+        out, rc = _rc({"test_a.py": UNITTEST_NO_GUARD, "test_b.py": UNITTEST_NO_GUARD})
+        self.assertEqual((out, rc), ("test_a.py", 3))
+        out, rc = _rc({"test_a.py": UNITTEST_RUNNER, "b_test.py": UNITTEST_RUNNER})
+        self.assertEqual((out, rc), ("b_test.py", 3))
+
+    def test_the_four_names_a_sole_file_and_a_pick_do_not_change(self):
+        self.assertEqual(_rc({"main.py": "x = 1\n", "test_main.py": UNITTEST_RUNNER}), ("main.py", 0))
+        self.assertEqual(_rc({"test_only.py": UNITTEST_RUNNER}), ("test_only.py", 0))
+        self.assertEqual(_rc({"test_only.py": UNITTEST_NO_GUARD}), ("test_only.py", 0))
+
+    def test_name_match_ignores_case(self):
+        files = {"weather.py": PROGRAM_GUARD, "Test_Weather.py": UNITTEST_RUNNER}
+        self.assertEqual(_rc(files), ("weather.py", 0))
+
+
+class FindEntryTestModuleRows(unittest.TestCase):
+    """The Windows rows that show REQ-002.27 and REQ-002.28 keep literal ids and tags, because the
+    trace scans read them as text (tests/test_req_trace.py, tests/test_req_shall_trace.py)."""
+
+    ROWS = (
+        ("self.entry.testmodule.guard", "REQ-002.27"),
+        ("self.entry.testmodule.library", "REQ-002.27"),
+        ("self.entry.testmodule.script", "REQ-002.27"),
+        ("self.entry.testmodule.only", "REQ-002.28"),
+    )
+
+    def setUp(self):
+        self.text = (REPO / "tests" / "selfapps_entry.ps1").read_text(encoding="utf-8")
+
+    def test_each_row_is_written_once_with_its_tag(self):
+        for row_id, tag in self.ROWS:
+            with self.subTest(row=row_id):
+                pattern = re.compile(r"Write-EntryRow -Id '%s'[^\r\n]*-Tag @\{ req = '%s' \}" % (re.escape(row_id), re.escape(tag)))
+                self.assertEqual(len(pattern.findall(self.text)), 1, row_id)
+
+    def test_each_row_is_in_the_results_summary(self):
+        for row_id, _ in self.ROWS:
+            with self.subTest(row=row_id):
+                self.assertIn("@{ Id = '%s'; Expected = " % row_id, self.text)
+
+    def test_the_registry_names_every_row(self):
+        doc = (REPO / "docs" / "agent-ndjson.md").read_text(encoding="utf-8")
+        for row_id, _ in self.ROWS:
+            with self.subTest(row=row_id):
+                self.assertIn(row_id, doc)
+
+
 class FindEntryPayloadSync(unittest.TestCase):
     def test_embedded_base64_matches_source(self):
         bat = (REPO / "run_setup.bat").read_text(encoding="utf-8", errors="replace")
