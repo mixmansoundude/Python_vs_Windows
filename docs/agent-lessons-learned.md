@@ -1606,3 +1606,15 @@ A `uv venv` on a managed CPython writes `version_info = 3.14` (no patch) to `pyv
 version of a venv with `Get-VenvInterpreterVersion` in `tests/selfapps_contract_uv.ps1` (cfg first, then `Scripts\python.exe --version`) for every venv a row compares, never from one of the two
 places alone, and check a new reader against a venv folder of each shape** (`tests/test_pyver_rows.py` runs three-part, minor-only, no-cfg and empty folders through pwsh). Two venvs of one row that
 are read by two different pieces of code are a comparison nobody can trust: the bug showed up only because one of them happened to have the fallback.
+
+## A function of a Windows-only script that a unit test runs through `pwsh` on Linux must be handed a POSIX folder (Item 122)
+
+`New-PresentDriver` in `tests/selfapps_visa_present.ps1` builds its file paths with `Join-Path $Dir '~driver_ledger.txt'`. The unit test that
+runs it through real `pwsh` on the Linux host first passed the kind of folder the Windows script passes (`C:\w\visa\noinstall`), and
+`Join-Path` threw "Cannot find drive. A drive with the name 'C' does not exist." before a single rule was judged. **Rule: a unit test that
+evaluates such a function on Linux gives it a POSIX folder (`/w/visa/noinstall`), and the rules that read the text it generates accept both
+separators (`[\\/]`).** Anything that parses a path (`Join-Path`, `Split-Path`, `Test-Path` on a drive letter) behaves differently on the
+two hosts, and the failure is loud, so the cheap check is to run the function once on the host before the pins are written around it.
+The same test showed a second trap of hand-built drivers: the generated batch file may hold a line twice (`set "NEED_VISA=1"` is in the
+head and in the stub of the subfolder question), so a mutation case edits the head line by its index and not by a text search
+(see the entry above on mutation anchors).

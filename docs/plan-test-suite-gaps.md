@@ -94,7 +94,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-005 | 18 | 18 | 0 | 32 |
 | REQ-006 | 2 | 2 | 0 | 5 |
 | REQ-007 | 20 | 17 | 3 | 13 |
-| REQ-008 | 23 | 18 | 5 | 10 |
+| REQ-008 | 23 | 20 | 3 | 10 |
 | REQ-009 | 13 | 13 | 0 | 22 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
@@ -106,7 +106,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-017 | 1 | 1 | 0 | 0 |
 | REQ-018 | 37 | 33 | 4 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
-| REQ-020 | 9 | 7 | 2 | 6 |
+| REQ-020 | 9 | 9 | 0 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
 | REQ-022 | 3 | 3 | 0 | 0 |
 | REQ-023 | 4 | 4 | 0 | 0 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-251 of 267 numbered shalls are named by at least one row tag.
+255 of 267 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.15, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
+Shalls no row names: REQ-002.15, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.5, REQ-008.6, REQ-008.12, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -237,7 +237,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 005.12, .13 | autopep723 merge, execute-mode discovery | `self.autopep_discovery.merge`, `self.pvw_idempotent.discovery` (u) | Medium: one row each, non-gating | Item 35 |
 | 006 | conda channel policy | `reqspec.conda.dryrun.req006`, `.channelpin.req006` (all), `pandas_excel.conda.install.req006` (F) | Strong | |
 | 007 | Executable build | `self.exe.*` (all), `self.exe.build.xfail`, `self.exe.warnfix.*`, `self.exe.fastpath.graceful` (R,F), `self.parse_warn.table*` (all); `self.exe.smokerun` (c) **red** | Strong | |
-| 008 | NI-VISA optional | `pyvisa.detect/.nivisa.*` x5 (R,F); subfolder case Item 78 | Strong for the flow | |
+| 008 | NI-VISA optional | `pyvisa.detect/.nivisa.*` x5 (R,F); subfolder case Item 78; `self.nivisa.present.noinstall/.subfolder/.control` (k, Item 122, REQ-008.2: a driver already on the machine is never installed again, with the import in the top folder or in a subfolder, and the control run with the driver absent installs it); `self.nivisa.pyvisa.installed` (R,F, REQ-008.15: the Python pyvisa package is in the environment after a declined and after an accepted subfolder question) | Strong for the flow | REQ-008.5, .6 and .12 are `unit:` and `inspection:` entries (Item 124) |
 | 009 | Provider chain and cascade | `self.venv.fallback`, `self.embed.fallback.*`, `self.embed.dl.retry` (all), `self.cascade.detect/.consent` (R,F), `self.cascade.timed` (F); `self.cascade.exec` (u) **red**, `.conda_create_fail` (u), `self.layered_e2e.chain` (c) | Medium: execution only in non-gating lanes | T4 |
 | 010 | Session isolation | `self.isolation.req010.pythonpath` (all); runs under `HP_CI_SKIP_ENV=1` with system Python | Weak: `PYTHONPATH` only | T1 |
 | 011 | Directory integrity | `self.entry.req011.crossdir/.sameDir` (all) | Strong | |
@@ -249,7 +249,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 017 | Size limit | `self.size.tripwire` (all, tagged `REQ-017.1`); README section REQ-017 (one shall) | Strong | |
 | 018 | Controlled execution of user code | `self.exe.smokerun.cwd_consistency`, `self.failfast.probe.*`, `self.checkpoint.*` (R,F), `self.fastpath.hash.backdated_mtime`, `self.interactive.stdin.roundtrip` (u) | Medium: no run counter | T1 |
 | 019 | Flags are scaffolding | none; a manual standing directive in `docs/agent-lessons-learned.md` | None | T6 |
-| 020 | Cache corruption | `self.corrupt.conda.real_detect/.real_ci/.real_ask/.real_decline/.real_locked/.real_override` and `self.corrupt.uv.real_probe` (all, tagged `REQ-020.1` to `.4`, `.6`, `.7`, `.8`; a private `PUBLIC` folder with a stub `conda.bat` makes the real health check fail, no Miniconda or network needed); the hook-based `self.corrupt.conda.detect/.heal.decline/.heal.accept/.override_exit` and `self.corrupt.uv.detect` (tagged `REQ-020`); README section REQ-020 (nine shalls) | Strong for .1 to .4, .6 to .8; REQ-020.5 (delete and install a fresh Miniconda, a 150 MB download) and .9 (the fresh install fails, exit 4) have no row | row for REQ-020.5 and .9 |
+| 020 | Cache corruption | `self.corrupt.conda.real_detect/.real_ci/.real_ask/.real_decline/.real_locked/.real_override` and `self.corrupt.uv.real_probe` (all, tagged `REQ-020.1` to `.4`, `.6`, `.7`, `.8`; a private `PUBLIC` folder with a stub `conda.bat` makes the real health check fail, no Miniconda or network needed); the hook-based `self.corrupt.conda.detect/.heal.decline/.heal.accept/.override_exit` and `self.corrupt.uv.detect` (tagged `REQ-020`); `self.corrupt.conda.evict.install` and `.evict.installfail` (k, Item 122, tagged `REQ-020.5` and `REQ-020.9`: the real eviction block run under cmd.exe against stubs for the download and the install, plus one offline bootstrap of a damaged conda that ends with exit code 4); README section REQ-020 (nine shalls) | Strong for all nine; the 150 MB Miniconda download itself is never made (stubs), only the code that deletes, installs and continues is run | |
 | 021 | Static pre-flight | `self.preflight.*` (R,F), `batch.preflight.compile` | Strong | |
 | 022 | conda create retry | `self.stub.conda_create_retry/.conda_create_exhausted/.conda_create_nonretry` (all, tagged `REQ-022.1/.2/.3`); README section REQ-022 (three shalls); the retry-exhausted path inside a cascade through `self.cascade.conda_create_fail` (u, tagged REQ-009) | Strong; the non-retry case uses a test hook, not a real conda failure | |
 | 023, 023b | venv canary, no-pip retry | `self.venv.canary_fail` (all, tagged `REQ-023.2/.3/.4`, now also requires that the system tier is attempted next), `self.venv.nopip_retry` (all); README section REQ-023 (four shalls) | Strong for .2 to .4 (the hook skips the probe command and forces its failure); REQ-023.1 (the probe command itself runs) through `self.venvprobe.*` (real lane, gating; Item 113, a stub Python in the cut-out `:try_venv_fallback` answers 0, a missing file and each failing exit code) | |
