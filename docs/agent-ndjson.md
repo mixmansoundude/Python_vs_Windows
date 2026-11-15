@@ -299,6 +299,29 @@ deletion leaves the folder (exit 3); `real_override` names the stub in `PVW_COND
 deleted. `uv.real_probe` puts a text file in place of `~uv_bin\uv.exe` with `HP_OFFLINE_MODE=1` (skipped in the
 conda-only lane): it requires the health-check warning, the removed file and the offline-download line.
 
+```
+self.corrupt.conda.evict.install, self.corrupt.conda.evict.installfail
+```
+
+The two `self.corrupt.conda.evict.*` rows (`tests/selfapps_conda_evict.ps1`, `contract-uv` lane, gating, Item 122) cover REQ-020.5
+(`req` tag `REQ-020.5` on `.install`) and REQ-020.9 (`REQ-020.9` on `.installfail`), which the README used to call "shown by
+inspection". The script cuts `:evict_and_rebuild` (up to `:conda_bulk_install`) and `:select_conda_bat` (up to
+`:download_miniconda_exe`) out of `run_setup.bat` and runs them under cmd.exe against a driver of stubs (`:log`, `:die`,
+`:download_miniconda_exe`, `:try_conda_install`) in three scenarios, each with a private `PUBLIC` folder that holds a damaged
+installation (a `conda.bat` that exits 1, a marker file, a nested folder): `evict` (the answer Y, the stub install leaves a fresh
+`condabin\conda.bat`: the damaged folder is gone, the download came after the deletion, the install had its installer, the run
+goes on with `CONDA_BAT` set and `HP_CONDA_JUST_INSTALLED=1`, `HP_ENV_STATE_RESULT` is cleared, and `conda.bat info` of the fresh
+installation answers 0), `control` (the test flag `HP_TEST_SKIP_EVICT` set: nothing is deleted, downloaded or installed, which is what
+makes the `evict` scenario's deletion and install visible) and `nofresh` (the stub install leaves nothing: the failure is reported
+once with exit code 4, and the run does not go on). `.install` needs `evict` and `control` clean; `.installfail` needs `nofresh`
+clean and the real bootstrapper run once with the answer Y (`HP_TEST_HEAL_ANSWER`), `HP_OFFLINE_MODE=1`, a private `TEMP` and the
+damaged installation, which must end with exit code 4 after exactly these four setup-log lines in order (the detection, the
+eviction, the skipped download, the failure of the fresh install), with no line that says files may be locked or that the user
+declined, and with the damaged folder, the stub and the installer file all gone. Not covered: the real Miniconda installer (the
+`conda-full` lane installs it on every run), so the stub install is the stated limit of `.install`. Evidence files
+(`tests/~conda_evict_evidence.txt`, `tests/~selftest_condaevict/*/~driver*`, the offline run's `~setup.log` and
+`~bootstrap.status.json`) are in the `test-logs` artifact. Rules about the batch side are `tests/test_conda_evict.py`.
+
 `self.dll_bundle.recover` (`:emit_dll_bundle_row`, all 7 outcome points inside
 `:dll_bundle_recover`) is the machine-readable record of the conda native-DLL bundling repair
 loop -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
@@ -2018,6 +2041,36 @@ self.nivisa.signals.nonint
 self.nivisa.signals.control
 ```
 
+## selfapps-visa-present NDJSON rows (selfapps_visa_present.ps1, contract-uv lane only, GATING)
+
+Item 122, README REQ-008.2: an NI-VISA driver that is already installed is neither downloaded nor installed again. `run_setup.bat`
+looks for the driver in the registry (`HKLM\SOFTWARE\National Instruments\NI-VISA`, value `CurrentVersion`) before it does anything
+else about the driver and logs `[VISA] present` when the value exists. No hosted runner has the driver (a real install attempt there
+ends with installer exit code -125202) and writing the value needs a permanent change to HKLM, so no row ever took that branch and the
+README called the shall untested. Three driver runs of the real block, cut out of `run_setup.bat` from `:visa_wanted` to `:visa_done`,
+under cmd.exe with closed standard input, every variable the block reads cleared first. The two lines that start with `reg query`
+become a call of a stub that answers from the scenario, the `curl` line and the PowerShell `Invoke-WebRequest` line become recording
+stubs, `:run_installer_timeout` and `:visa_subfolder_gate` are recording stubs and `:log` writes one ledger line; the ledger is one file
+that takes every stub call and every log line in order, so the order of the calls is the evidence. `self.nivisa.present.noinstall`
+(`NEED_VISA=1`, the value there from the start) passes when the ledger shows one look at the registry, one `[VISA] present` line, no
+download by either method, no installer start, no subfolder question, no `download method`, `installer`, `install_` or `skipped` log
+line, `NEED_VISA` unchanged and the installer file `~ni-visa-runtime.exe` absent; `self.nivisa.present.subfolder` (`NEED_VISA=2`, the
+import is only in a subfolder) passes under the same conditions, which includes the question of REQ-008.7 not being asked (the look at
+the registry comes before the question); `self.nivisa.present.control` (`NEED_VISA=1`, the value absent at the first look and there
+after the installer stub ran) passes when the calls are `REG CURL INSTALL REG` with one `download method: curl`, one `installer exit
+code: 0` and one `install_success` line, logged after the second look, and no `install_failed` line. The control is what stops the two
+rows above from passing because the block never installs anything. Stated limit: the registry answer is the scenario's and the
+installer is a stub, so the rows prove what the block does after each answer; that the two lines look at the key and the value the
+NI-VISA installer writes is pinned as text, and the main flow's call of the block is shown by the real bootstraps of
+`selfapps_pyvisa_subfolder.ps1`. `tests/test_visa_present.py` pins the cut (labels once, the order of the block's lines, only
+variables the driver sets or clears) and runs the judging functions through real `pwsh` on synthetic runs. The rows skip with
+`skip=true` off Windows. Evidence (`tests/~visa_present_evidence.txt`, `tests/~selftest_visapresent/*/~driver*`) is in the `test-logs`
+artifact.
+
+```
+self.nivisa.present.noinstall, self.nivisa.present.subfolder, self.nivisa.present.control
+```
+
 ## selfapps-pyvisa-subfolder NDJSON rows (selfapps_pyvisa_subfolder.ps1, real and conda-full lanes, GATING)
 
 CLAUDE.md Item 78 slice 2 (README REQ-008). An `import visa` that sits only below a subfolder (an archived
@@ -2037,8 +2090,19 @@ reason=non-windows-host` off Windows. Expected red on the commit that adds it (t
 1 and the batch never asked). The unit side is `tests/test_detect_visa.py` (the 0/1/2 contract, the three-path
 cap, the character set of the logged path).
 
+Item 122 (README REQ-008.15) added a fifth row that reads two of the four runs: `self.nivisa.pyvisa.installed` takes the
+`~dependency_installed.txt` of `declined` and of `accepted` (the pip freeze the bootstrapper writes after the dependency install and
+before the NI-VISA step, so the file is there whichever way the question was answered) and requires, for each run, that the answer is
+on record (`[VISA] skipped (subfolder_only)` and the accepted line, with no `subfolder_only` skip), that `~setup.log` says
+`DEP_INSTALLED_CAPTURED=1` (the list is this run's) and that the list holds a `pyvisa` line (`pyvisa==...`, or `PyVISA @ file:///...` as a
+conda environment lists a package it installed; `pyvisa-py` is another package). Stated limit: both folders declare `pyvisa` in
+`requirements.txt`, so the row shows that the answer does not change which packages are installed, not that the import alone would
+add the package. `tests/test_visa_present.py` runs its two judging functions (`Get-PyvisaLine`, `Get-PyvisaFreezeProblems`) through real
+`pwsh` on synthetic lists.
+
 ```
 self.nivisa.subfolder.declined, self.nivisa.subfolder.accepted, self.nivisa.topfolder.noprompt, self.nivisa.subfolder.timeout
+self.nivisa.pyvisa.installed
 ```
 
 ## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
