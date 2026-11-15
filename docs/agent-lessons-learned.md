@@ -454,6 +454,15 @@ recurring traps that have actually bitten us:
     given up its lock and reported `error`. A failure that is only the end of one TIER is a `call :log`
     plus the return; the `:die` belongs at the point where nothing else can be tried.
     `self.conda.installfail.*` reads the lock folder and the console text at the next provider's start.
+  - **Classify a `:die` by what the call itself does to a run that goes on, not only by what follows it** (Item 46 Batch 4). The
+    first pass called six sites "benign" because the code after them is harmless (a helper file that could not be written, a
+    copy of `.condarc`), and left them: the `:die` is still a lock release, a forced state `error` and a key press in the middle
+    of the run. A failed write of something the run can do without is a `[WARN]` plus the goto or flag that makes the later code
+    read the skip (`HP_PREP_UNAVAILABLE`, `:visa_detector_unwritten`); it is `:die` only where nothing useful can follow. Give the
+    skipped feature a visible consequence in the log (the VISA check says "skipped", never "no import found"). A row for such a
+    site needs a control next to it, because "no key press" and "lock held" are only meaningful against a run that has them
+    (`self.softfail.control.*`). A fix that adds a state `error` on purpose (the dependency-list copy) says so in the row's
+    expected state, so the contrast with the other rows is asserted and not assumed.
   - **`:warn_build_incomplete`** is a non-pausing sibling of `:die` for the 3 PyInstaller-build-
     failure sites reached only AFTER the Nuitka fallback has ALSO failed, where genuinely useful
     verification work still follows (interpreter-fallback verification decides real
@@ -883,6 +892,18 @@ reports the premise failing** (here the offline line; up to three runs, 20 secon
 run's real result so a network that stays down stays red, never retry an outcome with neither line (a real failure), and record
 `attempts` in the row. Do not "fix" it with `pass:true` plus a flag, and do not use "Re-run failed jobs" (duplicate Pages
 artifact, see the GitHub Actions entry): the fix is a new commit. `tests/test_connectivity_online_retry.py` pins the shape.
+
+**A scenario's premise can also be broken by an earlier scenario's fallback in the same job, not only by the network.** Run
+`43608572893` (PR #531, `real` lane): `~envsmoke` could not download uv from github.com ("uv: all download URLs failed"),
+fell back to conda and really installed Miniconda into `C:\Users\Public\Documents\Miniconda3`, the runner's shared location.
+Twenty-five minutes later the four `self.embed.version.*` rows found a Miniconda there, so the main flow computed `PYSPEC`
+itself and the embed tier never printed its own "a Python version request was found" line, which each row requires. The
+product was right (the swap happened and the program ran under the requested minor, `appLine`/`dlls` in the details), the
+row's premise (no uv, no Miniconda: the chain the README names for this tier) was not true any more, and a PR whose diff
+touched none of it was held. The `installfail` scenarios already point `PUBLIC` at a scratch folder; a scenario that assumes
+"no Miniconda" must do the same, and a row that fails on a log line while its other details are right should say which
+premise it needs (`requestLog` false with `swappedLog` true is this case). Open follow-up: `tests/selfapps_embed_version.ps1`
+still uses the runner's real `PUBLIC`.
 ---
 
 ## A conda call that talks to conda-forge needs one bounded retry, and a 502 on the sharded repodata path does not look like a conda error (Item 92)
