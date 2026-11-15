@@ -39,7 +39,7 @@ row was found/fixed" bug-hunt detail belongs in `docs/agent-closed-backlog.md`.
 ```
 self.harness.started, self.bootstrap.state, self.empty_repo.msg,
 self.empty_repo.no_spurious_warn,
-self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, envsmoke.run,
+self.env.smoke.conda, self.env.smoke.run, self.env.smoke.uv, self.env.smoke.minicondafolder, envsmoke.run,
 self.uv.managed.interpreter,
 self.exe.build, self.exe.run, self.exe.build.xfail,
 self.builder.override,
@@ -172,6 +172,8 @@ self.contract.uv
 self.contract.uv.pyver
 self.contract.uv.pyver.range
 self.contract.uv.pyver.exactpin
+self.contract.uv.pyver.conflict
+self.contract.uv.pyver.nopin
 self.uv.first.miniconda.skip
 ```
 
@@ -1620,7 +1622,30 @@ driver's exit state.
 self.netres.getpip.retry, self.netres.getpip.powershell, self.netres.getpip.fallback, self.netres.getpip.offline,
 self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.miniconda.checkorder, self.netres.miniconda.offline,
 self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
-self.netres.check.repeat, self.netres.swap.retry
+self.netres.check.repeat, self.netres.swap.retry,
+self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools
+```
+
+## selfapps-venv-probe NDJSON rows (selfapps_venv_probe.ps1, real lane only, GATING)
+
+Item 113 (README REQ-023.1, .2, .3). No provider, no Python and no network: the block `:try_venv_fallback` of `run_setup.bat`
+is cut out, wrapped in a driver batch file and run by cmd.exe. The "system Python" is a small compiled stub (`csc`) copied as
+`python.exe` into the scenario folder: `-m venv .\.venv` builds `.venv\Scripts\python.exe` as a copy of the stub, and any other
+call exits with the code the scenario chose (`VP_PROBE_EXIT`, negative values included). Every call is written to one ledger
+with the full path of the program that ran, and the driver's `:log` writes into the same ledger, so the order of creation, probe
+and the lines that select the venv is read from one file. `command` (healthy venv: created once, the interpreter inside it run
+exactly once with `-c import sys`, before the "ready" and "selected" lines; the tier returns 0 and `HP_PY` and `HP_ENV_MODE` name
+the venv), `nofile` (the creation leaves no interpreter file: the probe is not run, the missing-interpreter warning is logged, the
+tier returns 1), `declines` (the probe exits 1, 2 or 255: the canary warning, no "ready" or "selected" line, the tier returns 1,
+`HP_PY` cleared, `HP_ENV_MODE` unset), `crash` (the same for the exit codes of a crash that cmd.exe reports as negative: -1,
+-1073741515 for a DLL that cannot be loaded and -1073741819 for an access violation; `if errorlevel 1` is false for them). The
+script's judging is a set of pure functions that `tests/test_venv_probe.py` runs through a real pwsh on synthetic ledgers. Skips
+with `skip=true, reason=non-windows-host` off Windows. Each row's details carry the ledger and the facts read from it. The
+existing `self.venv.canary_fail` and `self.venv.fallback` rows (`selfapps_ux_hardening.ps1`) show the same tier inside a real
+bootstrap; these rows run the real probe line, which that row's hook jumps past.
+
+```
+self.venvprobe.command, self.venvprobe.nofile, self.venvprobe.declines, self.venvprobe.crash
 ```
 
 ## selfapps-honest-wording NDJSON rows (selfapps_honest_wording.ps1, real lane only, GATING)

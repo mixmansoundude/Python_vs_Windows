@@ -89,17 +89,17 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-002 | 26 | 25 | 1 | 7 |
-| REQ-003 | 6 | 4 | 2 | 18 |
-| REQ-004 | 12 | 10 | 2 | 8 |
+| REQ-003 | 6 | 6 | 0 | 18 |
+| REQ-004 | 12 | 12 | 0 | 10 |
 | REQ-005 | 18 | 18 | 0 | 32 |
-| REQ-006 | 2 | 2 | 0 | 3 |
+| REQ-006 | 2 | 2 | 0 | 5 |
 | REQ-007 | 20 | 17 | 3 | 13 |
-| REQ-008 | 23 | 18 | 5 | 9 |
+| REQ-008 | 23 | 18 | 5 | 10 |
 | REQ-009 | 13 | 13 | 0 | 22 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
 | REQ-012 | 6 | 6 | 0 | 1 |
-| REQ-013 | 19 | 18 | 1 | 4 |
+| REQ-013 | 19 | 19 | 0 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
 | REQ-015 | 9 | 9 | 0 | 1 |
 | REQ-016 | 9 | 8 | 1 | 4 |
@@ -109,16 +109,16 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-020 | 9 | 7 | 2 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
 | REQ-022 | 3 | 3 | 0 | 0 |
-| REQ-023 | 4 | 3 | 1 | 0 |
-| REQ-024 | 10 | 10 | 0 | 1 |
+| REQ-023 | 4 | 4 | 0 | 0 |
+| REQ-024 | 10 | 10 | 0 | 11 |
 | REQ-025 | 4 | 4 | 0 | 0 |
 | REQ-026 | 6 | 6 | 0 | 0 |
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-243 of 265 numbered shalls are named by at least one row tag.
+249 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.1, REQ-003.2, REQ-004.3, REQ-004.4, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.15, REQ-013.12, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9, REQ-023.1.
+Shalls no row names: REQ-002.15, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.15, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -169,9 +169,9 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    briefing, run as printed, runs the program, and no caveat sentence claims what was not verified) and REQ-008.14
    (`self.nivisa.signals.noinput`, `.nonint`, `.control`, `tests/selfapps_visa_signals.ps1`: the NI-VISA subfolder
    question is declined without waiting under `NOINPUT` or `HP_NONINTERACTIVE`, and a run with no signal reaches it),
-   all three scripts in the contract-uv lane. What is left, by size of the user-visible risk: REQ-003.1 and .2 (the
-   Windows floor, the Miniconda folder). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response,
-   so a row is optional.
+   all three scripts in the contract-uv lane. REQ-003.1 (the Windows floor, the programs Windows ships) is
+   `self.netres.shipped.tools` (Item 116) and REQ-003.2 (the Miniconda folder) is `self.env.smoke.minicondafolder` (Item 115).
+   REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
@@ -188,7 +188,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision). Done in the change that converts
    the last five sections: REQ-002 (18 shalls), REQ-004 (12), REQ-006 (2), REQ-010 (3) and REQ-011 (4); `tests/test_picker_gate.py`
    (the 30 second wait and the three non-interactive signals of the entry picker) and the `gap:` entries for REQ-004.3 and .4 say what
-   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 stays open.
+   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 followed in Item 116 (`self.netres.offline.uv` and `.offline.conda`: an installed uv or Miniconda is used as it is in offline mode, with a control run that has nothing installed), together with REQ-003.1 (`self.netres.shipped.tools`: the downloads work with only the curl and PowerShell that Windows ships). Item 115 (REQ-003.2): `self.env.smoke.minicondafolder` in `tests/selfapps_envsmoke.ps1` requires the interpreter of a conda run to sit under the Miniconda in `%PUBLIC%`, not under the runner image's own `C:\Miniconda3`. Item 114 (REQ-004.3 and .4): two rows in `tests/selfapps_contract_uv.ps1` (contract-uv lane), `self.contract.uv.pyver.conflict` (a `runtime.txt` of 3.12 next to `requires-python >=3.13` gives 3.12.x, and the same `pyproject.toml` alone gives a newer minor, which is the control) and `self.contract.uv.pyver.nopin` (no file, no version forwarded, the interpreter equals what a plain `uv venv` gives); the conda and embedded providers are not covered for these two shalls. Item 113 (REQ-023.1, the probe command itself): `tests/selfapps_venv_probe.ps1` runs the real `:try_venv_fallback` block under cmd.exe with a stub Python that answers each exit code a probe can see (`self.venvprobe.command/.nofile/.declines/.crash`); the first run of `.crash` (run `43636493617`) is the proof that a probe which exits with a negative code (a missing DLL, an access violation) was read as a pass: both negative codes ended with the venv selected, and `.command`, `.nofile` and `.declines` were green. The same run showed that the first version of `self.contract.uv.pyver.nopin` could not read its reference venv (uv 0.11 records only the minor in `pyvenv.cfg`), a test bug fixed before the product fix.
 
 ---
 
@@ -223,8 +223,8 @@ aggregate row `self.pytest.unit` in every lane.
 |---|---|---|---|---|
 | 001 | Prime Directive end to end | `self.prime.bootstrap/.run/.exe.build/.exe.run/.spaced-path` (all) | Strong | |
 | 002 | Entry selection order | `self.entry.entry1/A/B/C/D/override/helper.invoke.absent/results/spaced-path` (all), `self.entry.picker/.overflow` (F), `test_find_entry.py` | Strong | |
-| 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R); REQ-003.6 (every run starts in the folder of the entry file): `self.exe.smokerun.cwd_consistency` (R,F, tagged REQ-018) proves the fresh-build verification and the fast path | Medium; REQ-003.6 is met by the verification run and the fast path only: the optimized build's verification and the `--hidden-import` repair re-run still start from `dist` (backlog Item 38 deferral, owned by the thread of the 96/97 bundle), and no row covers the interpreter run, the checkpoint or the hint capture | T8, T9 done; rows for REQ-003.6 |
-| 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin and range only `self.contract.uv.pyver*` (k) | Strong, with the uv exact-pin case non-gating | |
+| 003 | Platform and locations | `self.env.smoke.conda/.uv/.run`, `self.env.smoke.minicondafolder` (REQ-003.2, Item 115: with conda as the provider the interpreter the setup printed is in an environment folder of the Miniconda under `%PUBLIC%`; skips where uv is the provider), `self.exe.build/.run`, `self.fastpath` (all), `self.warn.onedrive/.sysdir/.path_negative` (all), `self.prime.unicode-path`, `self.warn.unc*`, `self.longpath.near.*` (R); REQ-003.6 (every run starts in the folder of the entry file): `self.exe.smokerun.cwd_consistency` (R,F, tagged REQ-018) proves the fresh-build verification and the fast path | Medium; REQ-003.6 is met by the verification run and the fast path only: the optimized build's verification and the `--hidden-import` repair re-run still start from `dist` (backlog Item 38 deferral, owned by the thread of the 96/97 bundle), and no row covers the interpreter run, the checkpoint or the hint capture | T8, T9 done; rows for REQ-003.6 |
+| 004 | Python version precedence, write-back | `self.envname.*`, `self.uv.managed.interpreter` (all), `self.runtime.writeback`, `pyproject.precedence.*` (R,F); exact pin, range, runtime.txt over pyproject.toml and no request only `self.contract.uv.pyver*` (k, uv provider only; `.conflict` and `.nopin` are Item 114) | Strong, with the uv cases non-gating | |
 | 005 / 005.1 | Dependency source order | `reqspec.*` x16 (all), `self.pep723.pyproject.merge` (all), `self.pyproject.malformed` (all), `pyproject.dep.detect/.noproj` (R,F) | Medium: pairwise only | T2 |
 | 005.2, .3 | conda bulk retry, per-package fallback | `self.stub.conda_retry`, `self.stub.conda_perpkg` (all) | Strong | |
 | 005.4 | pipreqs scan | `pipreqs.flags` (harness), `self.pipreqs.encoding.*` x3, `self.pipreqs.output.*` x4 (R), `self.depcheck.*` (R,F) | Strong | |
@@ -242,7 +242,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 010 | Session isolation | `self.isolation.req010.pythonpath` (all); runs under `HP_CI_SKIP_ENV=1` with system Python | Weak: `PYTHONPATH` only | T1 |
 | 011 | Directory integrity | `self.entry.req011.crossdir/.sameDir` (all) | Strong | |
 | 012 | Execution-skip hooks | `self.skiphooks.combined` (F), both flags set together | Weak: no single-flag case | T1 |
-| 013 | Network resilience | `self.ux.connectivity.*` x10 (all, tagged `REQ-013.2/.4` to `.9`), `self.dl.conda.fallback`, `self.dl.uv.fallback` (`.13`), `self.embed.dl.retry` (`.16`), `self.venv.nopip_retry` (`.19`), `self.netres.*` x14 (Item 112: the probe repeat `.3`, the check before the secondary URL `.1`, the offline skips `.10`, `.11`, curl retry `.14`, PowerShell method `.15`, embed checksum and extraction retry `.17`, swap retry `.18`); README section REQ-013 (19 shalls) | Strong. The uv half of `.1` is a text pin in `tests/test_net_resilience.py`; no row for the installed provider kept in offline mode (`.12`) | T1, Item 112 |
+| 013 | Network resilience | `self.ux.connectivity.*` x10 (all, tagged `REQ-013.2/.4` to `.9`), `self.dl.conda.fallback`, `self.dl.uv.fallback` (`.13`), `self.embed.dl.retry` (`.16`), `self.venv.nopip_retry` (`.19`), `self.netres.*` x17 (Item 112: the probe repeat `.3`, the check before the secondary URL `.1`, the offline skips `.10`, `.11`, curl retry `.14`, PowerShell method `.15`, embed checksum and extraction retry `.17`, swap retry `.18`; Item 116: `self.netres.offline.uv` and `.conda` for `.12`, `self.netres.shipped.tools` for REQ-003.1); README section REQ-013 (19 shalls) | Strong. The uv half of `.1` is a text pin in `tests/test_net_resilience.py` | T1, Items 112 and 116 |
 | 014 | System Python consent | `self.ux.system.gate.*` x4 (all) | Strong | |
 | 015 | Git config merge | `self.ux.gitignore.*`, `self.ux.gitattributes.*` x6 (all) | Strong | |
 | 016 | Post-flight briefing | `self.ux.postflight` (all), `self.exe.hidden_import*` (R,F), `self.postflight.runline.*` (j,u) | Strong | |
@@ -252,7 +252,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 020 | Cache corruption | `self.corrupt.conda.real_detect/.real_ci/.real_ask/.real_decline/.real_locked/.real_override` and `self.corrupt.uv.real_probe` (all, tagged `REQ-020.1` to `.4`, `.6`, `.7`, `.8`; a private `PUBLIC` folder with a stub `conda.bat` makes the real health check fail, no Miniconda or network needed); the hook-based `self.corrupt.conda.detect/.heal.decline/.heal.accept/.override_exit` and `self.corrupt.uv.detect` (tagged `REQ-020`); README section REQ-020 (nine shalls) | Strong for .1 to .4, .6 to .8; REQ-020.5 (delete and install a fresh Miniconda, a 150 MB download) and .9 (the fresh install fails, exit 4) have no row | row for REQ-020.5 and .9 |
 | 021 | Static pre-flight | `self.preflight.*` (R,F), `batch.preflight.compile` | Strong | |
 | 022 | conda create retry | `self.stub.conda_create_retry/.conda_create_exhausted/.conda_create_nonretry` (all, tagged `REQ-022.1/.2/.3`); README section REQ-022 (three shalls); the retry-exhausted path inside a cascade through `self.cascade.conda_create_fail` (u, tagged REQ-009) | Strong; the non-retry case uses a test hook, not a real conda failure | |
-| 023, 023b | venv canary, no-pip retry | `self.venv.canary_fail` (all, tagged `REQ-023.2/.3/.4`, now also requires that the system tier is attempted next), `self.venv.nopip_retry` (all); README section REQ-023 (four shalls) | Strong for .2 to .4 (the hook skips the probe command and forces its failure); REQ-023.1 (the probe command itself runs) is shown by inspection, no row makes the real command fail | |
+| 023, 023b | venv canary, no-pip retry | `self.venv.canary_fail` (all, tagged `REQ-023.2/.3/.4`, now also requires that the system tier is attempted next), `self.venv.nopip_retry` (all); README section REQ-023 (four shalls) | Strong for .2 to .4 (the hook skips the probe command and forces its failure); REQ-023.1 (the probe command itself runs) through `self.venvprobe.*` (real lane, gating; Item 113, a stub Python in the cut-out `:try_venv_fallback` answers 0, a missing file and each failing exit code) | |
 | 024 | concurrent-instance lock | `self.stub.lock_start/.lock_held_message/.lock_held_decline/.lock_held_kept/.lock_held_nostatus/.lock_stale_evict/.lock_indeterminate/.lock_evict_blocked/.lock_no_leak` (all, tagged `REQ-024.1` to `.9`); README section REQ-024 (nine shalls) | Strong; the lock-start row stops a background run, so it depends on the lock appearing before the first download | |
 | 025 | low disk warning | `self.stub.low_disk_warn/.low_disk_continues/.low_disk_absent` (all, tagged `REQ-025.1/.2/.3`, the first two forced by `HP_TEST_FORCE_LOW_DISK`); README section REQ-025 (four shalls) | Strong for .1 to .4 (.3 needs a drive with 2 GB or more free, which every CI runner has; on a shorter drive the row passes with its `inconclusive` flag set; .4 is `self.stub.low_disk_unreadable`, a drive the free-space reading cannot find, through `HP_TEST_FORCE_DISK_READ_FAIL`) | none |
 | 026 | argv passthrough | helper-level only: `test_exe_smokerun.py`, `test_failfast_probe.py`; Item 67 will cover the bad `%1` | Weak: nothing at batch level | T1 |

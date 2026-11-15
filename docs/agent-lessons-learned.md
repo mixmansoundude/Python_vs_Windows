@@ -1588,3 +1588,23 @@ the accept only for 1 (`tests/selfapps_choice_cancel.ps1`); `tests/test_choice_c
 and that nothing sits between. Adding the guard moved a line that two mutation cases in `tests/test_edge_rows.py` used as an anchor, and
 they failed with "anchor not found" and not with a finding: when a fix inserts a line into a block that mutation cases edit, run them
 before pushing and keep each anchor to one unique line.
+
+## `if errorlevel 1` after a program launch misses a negative exit code; copy `%ERRORLEVEL%` and compare it as text (Item 113)
+
+`if errorlevel N` compares as a signed 32-bit number and is true for N or MORE. A program that cannot start because a DLL is missing exits with
+`0xC0000135` (-1073741515), one that crashes on an access violation with `0xC0000005` (-1073741819), and a helper that returns `-1` does the same: all
+of them are below 1, so `if errorlevel 1 goto :failed` falls through as if the program had succeeded. `:try_venv_fallback`'s canary probe did exactly
+that, and a venv with a broken interpreter was selected (README REQ-023.1 to .4; the red run of `self.venvprobe.crash` is named in the Item 113 entry of `docs/agent-closed-backlog.md`).
+**Rule: after a launch whose failure must stop the run, write `set "RC=%ERRORLEVEL%"` on the next line at the top level and test
+`if not "%RC%"=="0"`.** The copy cannot be inside a parenthesized block (the parse-time expansion entry above), and nothing may sit between the launch
+and the copy, because any command resets the code. `HP_HELPER_RC` and `HP_SMOKE_RC` already follow this. A row for such a branch has to be fed a
+negative code: a stub that returns 1 proves only the case `if errorlevel 1` always handled (`tests/selfapps_venv_probe.ps1` feeds 1, 2, 255, -1,
+-1073741515 and -1073741819, and `.crash` was the red one).
+
+## uv 0.11 records only the minor in a managed venv's `pyvenv.cfg`; a test that compares versions asks the interpreter (Item 114)
+
+A `uv venv` on a managed CPython writes `version_info = 3.14` (no patch) to `pyvenv.cfg`, so a reader that wants `3.15.2` from the cfg alone gets nothing (the first run of
+`self.contract.uv.pyver.nopin`, run `43636493617`: the reference venv's version read as empty while the bootstrap's own `.uv_env`, which had a fallback, gave 3.15.2). **Rule: read the
+version of a venv with `Get-VenvInterpreterVersion` in `tests/selfapps_contract_uv.ps1` (cfg first, then `Scripts\python.exe --version`) for every venv a row compares, never from one of the two
+places alone, and check a new reader against a venv folder of each shape** (`tests/test_pyver_rows.py` runs three-part, minor-only, no-cfg and empty folders through pwsh). Two venvs of one row that
+are read by two different pieces of code are a comparison nobody can trust: the bug showed up only because one of them happened to have the fallback.

@@ -23,6 +23,8 @@
 #   self.netres.embed.retry / .powershell / .checksum / .extractfail    REQ-013.14, .15, .17, .17
 #   self.netres.check.repeat                                            REQ-013.3
 #   self.netres.swap.retry                                              REQ-013.18
+#   self.netres.offline.uv / .conda                                     REQ-013.12 (Item 116: an installed uv or Miniconda is used as it is, offline)
+#   self.netres.shipped.tools                                           REQ-003.1 (Item 116: the downloads work with only what Windows ships on PATH)
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -61,6 +63,9 @@ function Write-AllRows {
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.embed.extractfail'; req = 'REQ-013.17'; pass = $Pass; desc = 'embedded Python: a download that cannot be extracted is downloaded once more, not a third time, and the tier then fails'; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.check.repeat'; req = 'REQ-013.3'; pass = $Pass; desc = 'the reachability check repeats an unanswered ICMP echo once and an unanswered HTTPS request once, and no more'; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.swap.retry'; req = 'REQ-013.18'; pass = $Pass; desc = 'the replacement of the embedded Python folder is tried again after a failure, three attempts at most, with a pause between them'; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.netres.offline.uv'; req = 'REQ-013.12'; pass = $Pass; desc = 'offline mode: a uv that is already installed is used as it is, and nothing is downloaded'; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.netres.offline.conda'; req = 'REQ-013.12'; pass = $Pass; desc = 'offline mode: a Miniconda that is already installed is used as it is, and nothing is downloaded'; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.netres.shipped.tools'; req = 'REQ-003.1'; pass = $Pass; desc = 'with only the programs Windows ships on PATH the real download code reaches a server with the System32 curl and with Windows PowerShell, on a build at or above 1809'; details = $Details })
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -107,7 +112,10 @@ $condaBlock  = Get-BatBlock -StartLine ':download_miniconda_exe' -EndLine ':down
 $embedBlock  = Get-BatBlock -StartLine 'set "HP_EMBED_DL_ATTEMPT=0"' -EndLine 'call :log "[INFO] embed fallback: %HP_EMBED_LATEST_PATCH% extracted and verified."'
 $swapBlock   = Get-BatBlock -StartLine 'set "HP_EMBED_SWAP_ATTEMPT=0"' -EndLine ':embed_pyver_check_tagcheck'
 $checkBlock  = Get-BatBlock -StartLine ':check_net_after_dl_fail' -EndLine ':system_python_consent_gate'
-if ((-not $getpipBlock) -or (-not $condaBlock) -or (-not $embedBlock) -or (-not $swapBlock) -or (-not $checkBlock)) {
+$uvBlock     = Get-BatBlock -StartLine ':pvw_uv_exe_skip' -EndLine ':uv_acquire_done'
+$mcDirBlock  = Get-BatBlock -StartLine 'set "MC=%PUBLIC%\Documents\Miniconda3"' -EndLine ':after_conda_bat_validation'
+$selectBlock = Get-BatBlock -StartLine ':select_conda_bat' -EndLine ':download_miniconda_exe'
+if ((-not $getpipBlock) -or (-not $condaBlock) -or (-not $embedBlock) -or (-not $swapBlock) -or (-not $checkBlock) -or (-not $uvBlock) -or (-not $mcDirBlock) -or (-not $selectBlock)) {
     Write-AllRows -Pass $false -Details ([ordered]@{
         error = 'could not cut the code blocks out of run_setup.bat; the lines the harness needs moved'
         getpipFound = [bool]$getpipBlock
@@ -115,6 +123,9 @@ if ((-not $getpipBlock) -or (-not $condaBlock) -or (-not $embedBlock) -or (-not 
         embedFound = [bool]$embedBlock
         swapFound = [bool]$swapBlock
         checkFound = [bool]$checkBlock
+        uvFound = [bool]$uvBlock
+        minicondaFolderFound = [bool]$mcDirBlock
+        selectFound = [bool]$selectBlock
     })
     exit 1
 }
@@ -217,6 +228,7 @@ $state = [hashtable]::Synchronized(@{
     Counts = @{}
     Bodies = @{}
     Log    = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    Agents = @{}
 })
 
 # One plan per path and client kind ('<path>|curl' or '<path>|ps'): a list of '<status>[:<body name>]', one item per
@@ -234,6 +246,7 @@ $serverBlock = {
             $kind = 'other'
             if ($ua -like 'curl*') { $kind = 'curl' } elseif ($ua -like '*WindowsPowerShell*') { $kind = 'ps' }
             $key = $path + '|' + $kind
+            if (-not $state.Agents.ContainsKey($key)) { $state.Agents[$key] = $ua }
             $n = 0
             if ($state.Counts.ContainsKey($key)) { $n = [int]$state.Counts[$key] }
             $state.Counts[$key] = $n + 1
@@ -297,7 +310,9 @@ function New-DriverHead {
         'setlocal',
         ('set "LOG=' + (Join-Path $Dir '~driver.log') + '"'),
         ('set "TEMP=' + (Join-Path $Dir 'tmp') + '"'),
-        ('set "TMP=' + (Join-Path $Dir 'tmp') + '"')
+        ('set "TMP=' + (Join-Path $Dir 'tmp') + '"'),
+        # The server is on the loopback address; a proxy inherited from the runner or a developer machine must not take it.
+        'set "NO_PROXY=127.0.0.1"'
     )
 }
 
@@ -365,13 +380,21 @@ function Set-Plan {
 # A scenario that downloads: Block is getpip, miniconda or embed. Offline sets HP_OFFLINE_MODE. Sha is the checksum the
 # embed block expects. The driver writes RESULT lines to ~driver_result.txt; the rest of the evidence is the server log.
 function Invoke-DownloadScenario {
-    param([string]$Block, [string]$Name, [string]$Offline = '', [string]$Sha = '')
+    param([string]$Block, [string]$Name, [string]$Offline = '', [string]$Sha = '', [bool]$ShippedOnly = $false)
     $dir = New-ScenarioDir -Name $Name
     $result = Join-Path $dir '~driver_result.txt'
     $url1 = $base + '/' + $Name + '/p1'
     $url2 = $base + '/' + $Name + '/p2'
     $lines = New-DriverHead -Dir $dir
     if ($Offline -eq '1') { $lines += 'set "HP_OFFLINE_MODE=1"' }
+    if ($ShippedOnly) {
+        # Only what Windows ships: the System32 folders and nothing from the runner image (Git, Strawberry Perl, pwsh ...).
+        $lines += @(
+            'set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"',
+            ('where curl > "' + (Join-Path $dir '~where_curl.txt') + '" 2>&1'),
+            ('where powershell > "' + (Join-Path $dir '~where_powershell.txt') + '" 2>&1')
+        )
+    }
     if ($Block -eq 'getpip') {
         $lines += @(
             ('set "HP_GETPIP_URL=' + $url1 + '"'),
@@ -743,6 +766,161 @@ Write-NdjsonRow ([ordered]@{
         okScenario = (Get-Brief -S $swOk)
         stuckScenario = (Get-Brief -S $swStuck)
     }
+})
+
+# ---- an installed uv or Miniconda in offline mode (Item 116, REQ-013.12) ----
+# The uv block (from :pvw_uv_exe_skip) and the Miniconda folder block (from the line that sets MC) run for real under
+# HP_OFFLINE_MODE=1. Installed: a stub uv.exe under ~uv_bin, a stub conda.bat under condabin in a scratch PUBLIC. The control
+# of each has nothing installed, so the offline skip shows the gate is live and "no request" cannot pass for a missing gate.
+function Invoke-InstalledScenario {
+    param([string]$Kind, [string]$Name, [bool]$Installed)
+    $dir = New-ScenarioDir -Name $Name
+    $result = Join-Path $dir '~driver_result.txt'
+    $lines = (New-DriverHead -Dir $dir) + @('set "HP_OFFLINE_MODE=1"')
+    $installedFile = ''
+    if ($Kind -eq 'uv') {
+        $bin = Join-Path $dir '~uv_bin'
+        New-Item -ItemType Directory -Force -Path $bin | Out-Null
+        $installedFile = Join-Path $bin 'uv.exe'
+        if ($Installed) { Copy-Item -LiteralPath $stubExe -Destination $installedFile -Force }
+        $lines += @(
+            ('set "HP_SCRIPT_ROOT=' + $dir + '\"'),
+            ('set "HP_UV_URL=' + $base + '/' + $Name + '/p1"'),
+            ('set "HP_UV_FALLBACK_URL=' + $base + '/' + $Name + '/p2"'),
+            'set "HP_UV_MIN_BYTES=1000"'
+        ) + $uvBlock + @(
+            ':uv_acquire_done',
+            ('echo UV=%HP_UV_EXE% > "' + $result + '"'),
+            'exit /b 0',
+            ':check_net_after_dl_fail',
+            'call :log "UNEXPECTED: the connectivity check ran"',
+            'exit /b 0'
+        ) + $logLines
+    } else {
+        $pub = Join-Path $dir 'pub'
+        $mc = Join-Path $pub 'Documents\Miniconda3'
+        New-Item -ItemType Directory -Force -Path $pub | Out-Null
+        $installedFile = Join-Path $mc 'condabin\conda.bat'
+        if ($Installed) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $mc 'condabin') | Out-Null
+            [System.IO.File]::WriteAllText($installedFile, "@echo stub conda`r`n", [System.Text.Encoding]::ASCII)
+        }
+        $lines += @(
+            ('set "PUBLIC=' + $pub + '"'),
+            ('set "HP_MINICONDA_URL=' + $base + '/' + $Name + '/p1"'),
+            ('set "HP_MINICONDA_FALLBACK_URL=' + $base + '/' + $Name + '/p2"')
+        ) + $mcDirBlock + @(
+            ':after_conda_bat_validation',
+            ('echo CONDA_BAT=%CONDA_BAT% > "' + $result + '"'),
+            ('echo JUST=%HP_CONDA_JUST_INSTALLED% >> "' + $result + '"'),
+            'exit /b 0'
+        ) + $selectBlock + $condaBlock + @(
+            ':try_conda_install',
+            'call :log "UNEXPECTED: the Miniconda installer ran"',
+            'exit /b 0',
+            ':check_net_after_dl_fail',
+            'call :log "UNEXPECTED: the connectivity check ran"',
+            'exit /b 0'
+        ) + $logLines
+    }
+    Write-CrLf -Path (Join-Path $dir '~driver.bat') -Lines $lines
+    $run = Invoke-Driver -Dir $dir -TimeoutSec 120
+    $entries = Get-RequestEntries -Name $Name
+    $callsPath = Join-Path $dir '~uv_bin\uv.calls'
+    return [ordered]@{
+        scenario = $Name
+        run = $run
+        result = ((Read-Text -Path $result) -replace "`r", '' -replace '\s+$', '' -replace '\s*\n\s*', ';')
+        log = (Read-Text -Path (Join-Path $dir '~driver.log'))
+        console = (Read-Text -Path (Join-Path $dir '~driver_console.txt'))
+        requests = $entries.Count
+        installedStillThere = [bool](Test-Path -LiteralPath $installedFile)
+        installedText = $(if (Test-Path -LiteralPath $installedFile) { ((Read-Text -Path $installedFile) -replace '\s+$', '') } else { '' })
+        uvCalls = @((Read-Text -Path $callsPath) -split "`r?`n" | Where-Object { $_ -ne '' })
+        dir = $dir
+        installedPath = $installedFile
+    }
+}
+
+$ofUv = Invoke-InstalledScenario -Kind 'uv' -Name 'of_uv' -Installed $true
+$ofUvNone = Invoke-InstalledScenario -Kind 'uv' -Name 'of_uv_none' -Installed $false
+$ofMc = Invoke-InstalledScenario -Kind 'conda' -Name 'of_mc' -Installed $true
+$ofMcNone = Invoke-InstalledScenario -Kind 'conda' -Name 'of_mc_none' -Installed $false
+
+$uvUsed = ($ofUv.result -eq ('UV=' + $ofUv.installedPath)) -and ($ofUv.log -match 'uv: cached binary found at ~uv_bin\\uv\.exe') -and ($ofUv.log -notmatch 'skipping uv download') -and ($ofUv.requests -eq 0) -and $ofUv.installedStillThere -and (-not $ofUv.run.timedOut)
+$uvControl = ($ofUvNone.result -eq 'UV=') -and ($ofUvNone.log -match 'Offline mode: skipping uv download') -and ($ofUvNone.requests -eq 0) -and (-not $ofUvNone.run.timedOut)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.netres.offline.uv'
+    req = 'REQ-013.12'
+    pass = [bool]($uvUsed -and $uvControl)
+    desc = 'offline mode: a uv that is already installed is used as it is, and nothing is downloaded'
+    details = [ordered]@{
+        installedUsed = [bool]$uvUsed
+        controlSkipsDownload = [bool]$uvControl
+        installed = (Get-Brief -S $ofUv)
+        control = (Get-Brief -S $ofUvNone)
+    }
+})
+
+$mcBat = $ofMc.installedPath
+$mcUsed = ($ofMc.result -eq ('CONDA_BAT=' + $mcBat + ';JUST=')) -and ($ofMc.requests -eq 0) -and $ofMc.installedStillThere -and ($ofMc.installedText -eq '@echo stub conda') -and ($ofMc.console -notmatch 'Installing Miniconda') -and ($ofMc.log -notmatch 'UNEXPECTED') -and (-not $ofMc.run.timedOut)
+$mcControl = ($ofMcNone.result -eq 'CONDA_BAT=;JUST=1') -and ($ofMcNone.log -match 'Offline mode: skipping Miniconda download') -and ($ofMcNone.console -match 'Installing Miniconda') -and ($ofMcNone.requests -eq 0) -and ($ofMcNone.log -notmatch 'UNEXPECTED') -and (-not $ofMcNone.run.timedOut)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.netres.offline.conda'
+    req = 'REQ-013.12'
+    pass = [bool]($mcUsed -and $mcControl)
+    desc = 'offline mode: a Miniconda that is already installed is used as it is, and nothing is downloaded'
+    details = [ordered]@{
+        installedUsed = [bool]$mcUsed
+        controlSkipsDownload = [bool]$mcControl
+        installed = (Get-Brief -S $ofMc)
+        control = (Get-Brief -S $ofMcNone)
+    }
+})
+
+# ---- the downloads with only what Windows ships (Item 116, REQ-003.1) ----
+# The real get-pip.py download runs with PATH cut to the System32 folders. curl fails once (404, which curl does not retry), so
+# Windows PowerShell delivers: both programs are then the ones in System32, which the User-Agent each sent says by version.
+$state.Bodies['good'] = [System.Text.Encoding]::ASCII.GetBytes($bodyGetpip)
+Set-Plan -Name 'gp_ship' -Role 'p1' -Kind 'curl' -Items @('404')
+Set-Plan -Name 'gp_ship' -Role 'p1' -Kind 'ps' -Items @('200:good')
+$gpShip = Invoke-DownloadScenario -Block 'getpip' -Name 'gp_ship' -ShippedOnly $true
+$sysDir = Join-Path $env:windir 'System32'
+$curlExe = Join-Path $sysDir 'curl.exe'
+$psExe = Join-Path $sysDir 'WindowsPowerShell\v1.0\powershell.exe'
+$curlVersion = ''
+if (Test-Path -LiteralPath $curlExe) {
+    $first = (& $curlExe --version 2>&1 | Select-Object -First 1)
+    $m = [regex]::Match([string]$first, '^curl (\S+)')
+    if ($m.Success) { $curlVersion = $m.Groups[1].Value }
+}
+$osBuild = [Environment]::OSVersion.Version.Build
+$curlAgent = [string]$state.Agents['/gp_ship/p1|curl']
+$psAgent = [string]$state.Agents['/gp_ship/p1|ps']
+$whereCurl = (@((Read-Text -Path (Join-Path $gpShip.dir '~where_curl.txt')) -split "`r?`n" | Where-Object { $_ -ne '' }) | Select-Object -First 1)
+$wherePs = (@((Read-Text -Path (Join-Path $gpShip.dir '~where_powershell.txt')) -split "`r?`n" | Where-Object { $_ -ne '' }) | Select-Object -First 1)
+$shipFile = Test-FileHasText -Path (Join-Path $gpShip.dir 'tmp\get-pip.py') -Text $bodyGetpip
+$resolvedHere = ([string]$whereCurl).ToLower().StartsWith($sysDir.ToLower() + '\') -and ([string]$wherePs).ToLower().StartsWith($sysDir.ToLower() + '\')
+$agentsMatch = ($curlVersion -ne '') -and ($curlAgent -eq ('curl/' + $curlVersion)) -and ($psAgent -match 'WindowsPowerShell/5\.1')
+Write-NdjsonRow ([ordered]@{
+    id = 'self.netres.shipped.tools'
+    req = 'REQ-003.1'
+    pass = [bool](($osBuild -ge 17763) -and (Test-Path -LiteralPath $curlExe) -and (Test-Path -LiteralPath $psExe) -and $resolvedHere -and $agentsMatch -and ($gpShip.p1Curl -eq 1) -and ($gpShip.p1Ps -eq 1) -and (($gpShip.p2Curl + $gpShip.p2Ps) -eq 0) -and ($gpShip.result -eq 'GETPIP=present') -and $shipFile -and (-not $gpShip.run.timedOut))
+    desc = 'with only the programs Windows ships on PATH the real download code reaches a server with the System32 curl and with Windows PowerShell, on a build at or above 1809'
+    details = (Get-Brief -S $gpShip -Extra @{
+        osBuild = $osBuild
+        floorBuild = 17763
+        curlExists = [bool](Test-Path -LiteralPath $curlExe)
+        powershellExists = [bool](Test-Path -LiteralPath $psExe)
+        curlVersion = $curlVersion
+        curlAgent = $curlAgent
+        powershellAgent = $psAgent
+        whereCurl = $whereCurl
+        wherePowershell = $wherePs
+        resolvedInSystem32 = [bool]$resolvedHere
+        agentsMatch = [bool]$agentsMatch
+        fileHasBody = $shipFile
+    })
 })
 
 # --- teardown ----------------------------------------------------------------------------------------------------------

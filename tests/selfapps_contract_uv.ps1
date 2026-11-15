@@ -40,9 +40,11 @@ function Invoke-UvPyverScenario {
     # requires-python from it, so the chosen interpreter is never re-validated against an
     # exact `==X.Y` constraint (which PEP 440 would not match against X.Y.patch). pyproject
     # (Tier 2) is used for loose ranges, which uv satisfies with the latest version.
+    # A scenario may hold both files (REQ-004.3, the two name different versions) or neither (REQ-004.4).
     if ($RuntimePython) {
         Set-Content -LiteralPath (Join-Path $dir 'runtime.txt') -Value "python-$RuntimePython" -NoNewline
-    } else {
+    }
+    if ($RequiresPython) {
         $pyproj = "[project]`r`nname = `"pyvertest`"`r`nversion = `"0.0.0`"`r`nrequires-python = `"$RequiresPython`"`r`n"
         Set-Content -LiteralPath (Join-Path $dir 'pyproject.toml') -Value $pyproj -Encoding Ascii
     }
@@ -66,24 +68,74 @@ function Invoke-UvPyverScenario {
         Get-Content -LiteralPath $scenarioLog -Raw -ErrorAction SilentlyContinue
     } else { '' }
     if (-not $log) { $log = '' }
-    # version_info in pyvenv.cfg is the interpreter uv actually provisioned for .uv_env.
-    $ver = ''
-    $cfg = Join-Path $dir '.uv_env\pyvenv.cfg'
-    if (Test-Path -LiteralPath $cfg) {
-        $cfgText = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
-        if ($cfgText -match 'version_info\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { $ver = $Matches[1] }
-        elseif ($cfgText -match 'version\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { $ver = $Matches[1] }
-    }
-    if (-not $ver) {
-        $py = Join-Path $dir '.uv_env\Scripts\python.exe'
-        if (Test-Path -LiteralPath $py) {
-            try {
-                $out = & $py --version 2>&1
-                if ("$out" -match '([0-9]+\.[0-9]+\.[0-9]+)') { $ver = $Matches[1] }
-            } catch { $ver = '' }
-        }
-    }
+    # The interpreter uv actually provisioned for .uv_env (pyvenv.cfg, else the interpreter itself).
+    $ver = Get-VenvInterpreterVersion -Dir (Join-Path $dir '.uv_env')
     return [ordered]@{ exit = $exit; log = $log; version = $ver }
+}
+
+# Item 114 judging. Each function takes plain values and returns a list of problems (empty = the row passes), so that
+# tests/test_pyver_rows.py can run it through pwsh on synthetic runs that must be red. A parameter and a local never
+# differ only by case (PowerShell variable names ignore case).
+function Get-PyMinor {
+    param([string]$VersionText)
+    if ($VersionText -match '^3\.([0-9]+)\.') { return [int]$Matches[1] }
+    return -1
+}
+
+# REQ-004.3: runtime.txt wins when it and pyproject.toml name different versions. The control is the same pyproject.toml
+# alone: it has to give a newer minor, or an interpreter of 3.12 would show nothing about which file was read.
+function Get-ConflictProblems {
+    param([string]$ControlVersion, [string]$ConflictVersion, [string]$ConflictLog)
+    $found = New-Object System.Collections.Generic.List[string]
+    $controlMinor = Get-PyMinor -VersionText $ControlVersion
+    if ($controlMinor -lt 13) { $found.Add("control: requires-python >=3.13 alone gave '" + $ControlVersion + "', not 3.13 or newer, so the conflict result shows nothing") }
+    if ($ConflictVersion -notmatch '^3\.12\.') { $found.Add("runtime.txt python-3.12 with requires-python >=3.13 gave '" + $ConflictVersion + "', expected 3.12.x") }
+    if ($ConflictLog -notmatch [regex]::Escape('[INFO] uv: creating venv at .uv_env with Python 3.12')) { $found.Add('the log has no line that forwards 3.12 to uv') }
+    if ($ConflictLog -match 'with Python 3\.12 or newer') { $found.Add('the log says 3.12 or newer, so the version was taken as a floor and not as runtime.txt names it') }
+    return @($found)
+}
+
+# REQ-004.4: with no request in the folder the bootstrapper forwards none, and the interpreter is the one a plain uv venv
+# (same uv, same managed-only preference) gives.
+function Get-NoPinProblems {
+    param([string]$BootstrapVersion, [string]$ReferenceVersion, [string]$BootstrapLog)
+    $found = New-Object System.Collections.Generic.List[string]
+    if (-not $ReferenceVersion) { $found.Add('the reference uv venv made no interpreter, so nothing can be compared') }
+    if (-not $BootstrapVersion) { $found.Add('the bootstrap made no .uv_env interpreter') }
+    if ($ReferenceVersion -and $BootstrapVersion -and ($ReferenceVersion -ne $BootstrapVersion)) {
+        $found.Add("the bootstrap set up Python " + $BootstrapVersion + " and a plain uv venv gives " + $ReferenceVersion)
+    }
+    if ($BootstrapLog -notmatch [regex]::Escape('[INFO] uv: creating venv at .uv_env...')) { $found.Add('the log has no line for creating the venv without a version') }
+    if ($BootstrapLog -match 'creating venv at \.uv_env with Python') { $found.Add('the log forwards a version to uv although the folder names none') }
+    return @($found)
+}
+
+function Get-PyvenvVersion {
+    param([string]$Dir)
+    $cfg = Join-Path $Dir 'pyvenv.cfg'
+    if (-not (Test-Path -LiteralPath $cfg)) { return '' }
+    $cfgText = Get-Content -LiteralPath $cfg -Raw -ErrorAction SilentlyContinue
+    if ($cfgText -match 'version_info\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
+    if ($cfgText -match 'version\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
+    return ''
+}
+
+# The interpreter a venv holds, as major.minor.patch. pyvenv.cfg is read first, but uv 0.11 records only the minor
+# (`version_info = 3.14`) for a managed interpreter, which holds no patch to compare; the first run of
+# self.contract.uv.pyver.nopin (run 43636493617) read an empty reference version for that reason while the bootstrap's own
+# venv, which already had this fallback, gave 3.15.2. Both venvs of that row go through this one function.
+function Get-VenvInterpreterVersion {
+    param([string]$Dir)
+    $fromCfg = Get-PyvenvVersion -Dir $Dir
+    if ($fromCfg) { return $fromCfg }
+    $py = Join-Path $Dir 'Scripts\python.exe'
+    if (Test-Path -LiteralPath $py) {
+        try {
+            $out = & $py --version 2>&1
+            if ("$out" -match '([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
+        } catch { return '' }
+    }
+    return ''
 }
 
 # derived requirement: this script asserts the uv contract using only artifacts
@@ -318,6 +370,77 @@ if ($lane -eq 'contract-uv-fail') {
         pass    = [bool]$exactPass
         desc    = 'Exact pin (runtime.txt python-X.Y) pins uv venv --python to X.Y (does not drift to latest)'
         details = $exactDetails
+        lane    = $lane
+    })
+
+    # self.contract.uv.pyver.conflict: REQ-004.3. runtime.txt names 3.12 and pyproject.toml asks for 3.13 or newer; the
+    # interpreter has to be 3.12.x. The control scenario (the same pyproject.toml alone) must give a newer minor, which is
+    # what makes 3.12 evidence that runtime.txt was read first. In contract-uv uv is always acquired by the step before,
+    # so a missing uv fails the row (the earlier rows of this script skip instead).
+    $conflictProblems = @()
+    $conflictDetails = [ordered]@{}
+    if (-not $uvBinExists) {
+        $conflictProblems = @('uv was not acquired in the contract-uv lane: ' + $uvBin)
+        $conflictDetails = [ordered]@{ reason = 'uv-not-acquired'; uvBin = $uvBin }
+    } else {
+        $control  = Invoke-UvPyverScenario -Name '~uv_pyver_conflict_control' -RequiresPython '>=3.13' -UvBin $uvBin -Repo $repo -Here $here
+        $conflict = Invoke-UvPyverScenario -Name '~uv_pyver_conflict' -RuntimePython '3.12' -RequiresPython '>=3.13' -UvBin $uvBin -Repo $repo -Here $here
+        $conflictProblems = @(Get-ConflictProblems -ControlVersion $control.version -ConflictVersion $conflict.version -ConflictLog $conflict.log)
+        $conflictDetails = [ordered]@{
+            runtimeTxt      = 'python-3.12'
+            requiresPython  = '>=3.13'
+            controlVersion  = $control.version
+            resolvedVersion = $conflict.version
+            controlExit     = $control.exit
+            exitCode        = $conflict.exit
+            problems        = $conflictProblems
+        }
+    }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.contract.uv.pyver.conflict'
+        req     = 'REQ-004.3'
+        pass    = [bool]($conflictProblems.Count -eq 0)
+        desc    = 'runtime.txt python-3.12 with requires-python >=3.13 in pyproject.toml: the interpreter is 3.12.x (runtime.txt wins), and pyproject.toml alone gives a newer one'
+        details = $conflictDetails
+        lane    = $lane
+    })
+
+    # self.contract.uv.pyver.nopin: REQ-004.4. No runtime.txt, no pyproject.toml: no version is forwarded to uv, and the
+    # interpreter is the one a plain `uv venv --seed` (the call the batch makes without a version) gives under the same
+    # managed-only preference. Both calls go to the same uv at the same moment, so they see the same offers.
+    $noPinProblems = @()
+    $noPinDetails = [ordered]@{}
+    if (-not $uvBinExists) {
+        $noPinProblems = @('uv was not acquired in the contract-uv lane: ' + $uvBin)
+        $noPinDetails = [ordered]@{ reason = 'uv-not-acquired'; uvBin = $uvBin }
+    } else {
+        $noPin = Invoke-UvPyverScenario -Name '~uv_pyver_nopin' -UvBin $uvBin -Repo $repo -Here $here
+        $refDir = Join-Path $here '~uv_pyver_nopin_ref'
+        if (Test-Path -LiteralPath $refDir) { Remove-Item -LiteralPath $refDir -Recurse -Force -ErrorAction SilentlyContinue }
+        $prevPref = [Environment]::GetEnvironmentVariable('UV_PYTHON_PREFERENCE')
+        $env:UV_PYTHON_PREFERENCE = 'only-managed'
+        $refOut = ''
+        try {
+            $refOut = (& $uvBin venv --seed $refDir 2>&1 | Out-String)
+        } finally {
+            if ($null -eq $prevPref) { Remove-Item Env:UV_PYTHON_PREFERENCE -ErrorAction SilentlyContinue } else { $env:UV_PYTHON_PREFERENCE = $prevPref }
+        }
+        $refVersion = Get-VenvInterpreterVersion -Dir $refDir
+        $noPinProblems = @(Get-NoPinProblems -BootstrapVersion $noPin.version -ReferenceVersion $refVersion -BootstrapLog $noPin.log)
+        $noPinDetails = [ordered]@{
+            bootstrapVersion = $noPin.version
+            referenceVersion = $refVersion
+            exitCode         = $noPin.exit
+            referenceOutput  = ($refOut.Trim() -replace '[^\x20-\x7e]', '?')
+            problems         = $noPinProblems
+        }
+    }
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.contract.uv.pyver.nopin'
+        req     = 'REQ-004.4'
+        pass    = [bool]($noPinProblems.Count -eq 0)
+        desc    = 'No runtime.txt and no pyproject.toml: no version is forwarded to uv, and the interpreter is the one a plain uv venv gives'
+        details = $noPinDetails
         lane    = $lane
     })
 }
