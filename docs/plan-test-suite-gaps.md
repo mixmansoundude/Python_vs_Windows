@@ -89,36 +89,36 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 |---|---|---|---|---|
 | REQ-001 | 2 | 2 | 0 | 7 |
 | REQ-002 | 26 | 25 | 1 | 7 |
-| REQ-003 | 6 | 5 | 1 | 18 |
-| REQ-004 | 12 | 12 | 0 | 8 |
-| REQ-005 | 18 | 14 | 4 | 32 |
-| REQ-006 | 2 | 2 | 0 | 3 |
+| REQ-003 | 6 | 6 | 0 | 18 |
+| REQ-004 | 12 | 12 | 0 | 10 |
+| REQ-005 | 18 | 18 | 0 | 32 |
+| REQ-006 | 2 | 2 | 0 | 5 |
 | REQ-007 | 20 | 17 | 3 | 13 |
-| REQ-008 | 23 | 17 | 6 | 9 |
+| REQ-008 | 23 | 18 | 5 | 10 |
 | REQ-009 | 13 | 13 | 0 | 22 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
 | REQ-012 | 6 | 6 | 0 | 1 |
 | REQ-013 | 19 | 19 | 0 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
-| REQ-015 | 9 | 7 | 2 | 1 |
-| REQ-016 | 9 | 6 | 3 | 4 |
+| REQ-015 | 9 | 9 | 0 | 1 |
+| REQ-016 | 9 | 8 | 1 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
-| REQ-018 | 37 | 32 | 5 | 16 |
+| REQ-018 | 37 | 33 | 4 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
 | REQ-020 | 9 | 7 | 2 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
 | REQ-022 | 3 | 3 | 0 | 0 |
 | REQ-023 | 4 | 4 | 0 | 0 |
-| REQ-024 | 10 | 10 | 0 | 1 |
+| REQ-024 | 10 | 10 | 0 | 11 |
 | REQ-025 | 4 | 4 | 0 | 0 |
 | REQ-026 | 6 | 6 | 0 | 0 |
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-238 of 265 numbered shalls are named by at least one row tag.
+249 of 265 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-002.15, REQ-003.3, REQ-005.1.6, REQ-005.1.12, REQ-005.1.13, REQ-005.1.14, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.14, REQ-008.15, REQ-015.7, REQ-015.8, REQ-016.6, REQ-016.7, REQ-016.8, REQ-018.6, REQ-018.7, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
+Shalls no row names: REQ-002.15, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.2, REQ-008.5, REQ-008.6, REQ-008.12, REQ-008.15, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30, REQ-020.5, REQ-020.9.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -155,12 +155,23 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    `tests/selfapps_runtime_install_edges.ps1`, contract-uv lane, through the hook `HP_TEST_FORCE_RTI_REBUILD_FAIL`),
    REQ-018.5 (`self.launch.warning.throwaway`, the throwaway-check warning before the verification run of a build and of a
    rebuild) and REQ-012.5 (`self.skiphooks.exe_only.panel`, the neutral note when EXE verification is skipped), the last
-   two in `tests/selfapps_skiphooks_single.ps1`. What is left, by size of the user-visible risk:
-   REQ-018.7 (the 30 second cap on the re-verification run),
-   REQ-005.1.6, .12, .13 and .14 (a failed install records nothing; the header is never removed from; a merge that
-   cannot run falls back with a warning) and REQ-003.3 (where the
-   working files go; REQ-003.1, the Windows floor and the programs Windows ships, is `self.netres.shipped.tools`, Item 116; REQ-003.2, the Miniconda folder, is `self.env.smoke.minicondafolder`, Item 115). REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is
-   optional.
+   two in `tests/selfapps_skiphooks_single.ps1`. Done 2026-11-13 (Item 106): REQ-018.7 (`self.repair.cap`,
+   `tests/selfapps_repair_cap.ps1`: the repair loop's re-verification run of a program that prints every second for 100
+   seconds is ended at about 30 seconds and nothing of it is left running) and REQ-005.1.6, .12, .13 and .14
+   (`self.depmerge.failed.records`, `.header.userwrote`, `.fallback.emit`, `.fallback.helper`,
+   `tests/selfapps_dep_merge_edges.ps1`: a failed install records nothing, a header the user wrote is never removed from,
+   a merge that cannot run falls back with a warning and the run goes on), both in the contract-uv lane. Done 2026-11-14
+   (Item 111): REQ-003.3 (`self.tilde.workfolder`: the working files and the EXE are in the program's own folder and
+   nowhere else), REQ-015.7 and .8 (`self.tilde.keepfiles`, `.deletable`, `tests/selfapps_tilde_files.ps1`: a program in a
+   folder named `~tilde_work`, every file the briefing says to keep exists under a name without `~`, the EXE is
+   `_tilde_work.exe`, and deleting every `~` entry loses nothing and the next run ends ok), REQ-016.6 and .7
+   (`self.caveat.runline`, `.sentences`, `tests/selfapps_caveat_briefing.ps1`: the interpreter command of the caveat
+   briefing, run as printed, runs the program, and no caveat sentence claims what was not verified) and REQ-008.14
+   (`self.nivisa.signals.noinput`, `.nonint`, `.control`, `tests/selfapps_visa_signals.ps1`: the NI-VISA subfolder
+   question is declined without waiting under `NOINPUT` or `HP_NONINTERACTIVE`, and a run with no signal reaches it),
+   all three scripts in the contract-uv lane. REQ-003.1 (the Windows floor, the programs Windows ships) is
+   `self.netres.shipped.tools` (Item 116) and REQ-003.2 (the Miniconda folder) is `self.env.smoke.minicondafolder` (Item 115).
+   REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
@@ -168,7 +179,8 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    goal and shalls, each in the change that works on its tests. Done in the change that adds REQ-003.6 (the same
    working folder for every run of the program): REQ-017, REQ-020 and REQ-023. Done in the change that adds the
    system-gate, git-config and briefing rows: REQ-014, REQ-015 and REQ-016 (`gap:` and `inspection:` entries
-   for REQ-015.7, .8 and REQ-016.6 to .8 say what no row shows). Done in the change that adds the connectivity rows:
+   for REQ-015.7, .8 and REQ-016.6 to .8 say what no row shows; Item 111 later gave REQ-015.7, .8, REQ-016.6 and .7 rows).
+   Done in the change that adds the connectivity rows:
    REQ-013 (nine `gap:` and `inspection:` entries say what no row shows; `self.ux.connectivity.empty`, `.noinput` and
    `.nonint` are new). Done in the change that retags the NI-VISA rows: REQ-008 (six `gap:`, `unit:` and `inspection:` entries
    say what no row shows; `self.nivisa.not_required` is new). Done in the change that retags the executable rows: REQ-007 (three
@@ -176,7 +188,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    with exit code 0, and `tests/test_fast_check.py` gained four cases for the file set and the content decision). Done in the change that converts
    the last five sections: REQ-002 (18 shalls), REQ-004 (12), REQ-006 (2), REQ-010 (3) and REQ-011 (4); `tests/test_picker_gate.py`
    (the 30 second wait and the three non-interactive signals of the entry picker) and the `gap:` entries for REQ-004.3 and .4 say what
-   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 stays open. Item 114 (REQ-004.3 and .4): two rows in `tests/selfapps_contract_uv.ps1` (contract-uv lane), `self.contract.uv.pyver.conflict` (a `runtime.txt` of 3.12 next to `requires-python >=3.13` gives 3.12.x, and the same `pyproject.toml` alone gives a newer minor, which is the control) and `self.contract.uv.pyver.nopin` (no file, no version forwarded, the interpreter equals what a plain `uv venv` gives); the conda and embedded providers are not covered for these two shalls. Item 113 (REQ-023.1, the probe command itself): `tests/selfapps_venv_probe.ps1` runs the real `:try_venv_fallback` block under cmd.exe with a stub Python that answers each exit code a probe can see (`self.venvprobe.command/.nofile/.declines/.crash`); the first run of `.crash` is the proof that a probe which exits with a negative code (a missing DLL, an access violation) was read as a pass.
+   no row shows. REQ-002.19 (the question is asked once per run) came from the first run of `self.entry.picker.number` (Item 109); REQ-002.20 to REQ-002.26 were split out of REQ-002.6, .7, .15, .17, .18 and .19 on PR #527's review (one obligation per id). REQ-024.10 (the lock stays while a provider fails and the run goes on) and REQ-016.9 (no key press then) came from Item 46 Batch 6 (#528); the rows `self.conda.installfail.lock` and `.nopause` carry them. Every README requirement with a goal now has numbered shalls, so the last line of the table above reads `none`. Item 112 (the REQ-013 network rows): `tests/selfapps_net_resilience.ps1` runs the real download, check and swap code against a local server and a stub ping and curl (14 `self.netres.*` rows), which removes eight `gap:` and `inspection:` entries; REQ-013.12 followed in Item 116 (`self.netres.offline.uv` and `.offline.conda`: an installed uv or Miniconda is used as it is in offline mode, with a control run that has nothing installed), together with REQ-003.1 (`self.netres.shipped.tools`: the downloads work with only the curl and PowerShell that Windows ships). Item 115 (REQ-003.2): `self.env.smoke.minicondafolder` in `tests/selfapps_envsmoke.ps1` requires the interpreter of a conda run to sit under the Miniconda in `%PUBLIC%`, not under the runner image's own `C:\Miniconda3`. Item 114 (REQ-004.3 and .4): two rows in `tests/selfapps_contract_uv.ps1` (contract-uv lane), `self.contract.uv.pyver.conflict` (a `runtime.txt` of 3.12 next to `requires-python >=3.13` gives 3.12.x, and the same `pyproject.toml` alone gives a newer minor, which is the control) and `self.contract.uv.pyver.nopin` (no file, no version forwarded, the interpreter equals what a plain `uv venv` gives); the conda and embedded providers are not covered for these two shalls. Item 113 (REQ-023.1, the probe command itself): `tests/selfapps_venv_probe.ps1` runs the real `:try_venv_fallback` block under cmd.exe with a stub Python that answers each exit code a probe can see (`self.venvprobe.command/.nofile/.declines/.crash`); the first run of `.crash` (run `43636493617`) is the proof that a probe which exits with a negative code (a missing DLL, an access violation) was read as a pass: both negative codes ended with the venv selected, and `.command`, `.nofile` and `.declines` were green. The same run showed that the first version of `self.contract.uv.pyver.nopin` could not read its reference venv (uv 0.11 records only the minor in `pyvenv.cfg`), a test bug fixed before the product fix.
 
 ---
 

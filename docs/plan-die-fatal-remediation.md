@@ -6,7 +6,8 @@ current `run_setup.bat` source via `tools/audit_batch_exit_paths.py` and manual 
 written from memory or inference. **Batch 1 is merged** (PR #468). Batches 2, 3, 5, and one site of
 Batch 4 (the `Could not stage ~condarc` site) are implemented, with regression tests and CI wiring,
 landing as a follow-on PR stacked on Batch 1. Batch 6 (PR #528) is done as `call :die` to `call :log`, no
-coordination flag; the "Active Python interpreter not resolved" sink remains deferred, per "Batch Roadmap" below. See CLAUDE.md's Item 46 entry for the
+coordination flag. **The rest of Batch 4 (the six failed-write sites) is done too (PR #531, see "Batch 4, second pass"
+below)**; the "Active Python interpreter not resolved" sink remains deferred, per "Batch Roadmap" below. See CLAUDE.md's Item 46 entry for the
 full incident history (Bucket B, closed; Bucket A slice 1, closed) this plan picks up from, and
 "Batch Roadmap" below for exactly what's implemented vs. what remains.
 **Owner:** Supervisor (Python_vs_Windows)
@@ -90,17 +91,17 @@ how much the file's line numbers drift as unrelated work lands.
 | 3 | `:after_conda_bat_validation` | 'python' not found on PATH | next probe in chain | **Fixed** (Batch 1) |
 | 4 | `:after_conda_bat_validation` | 'python -V' failed | channel-policy check (row 5) | **Fixed** (Batch 1) |
 | 5 | `:after_conda_probes` | Conda not found at: `%CONDA_BAT%` | `:try_conda_create` with broken `CONDA_BAT` -> row 7 (already safe) | **Fixed** (Batch 1) |
-| 6 | `:after_conda_probes` | Could not write `~detect_python.py` | doomed subprocess call, output redirected to file/log only (never console); `PYSPEC` stays empty, a valid "no constraint" default | No fix -- benign (Batch 4, reclassified) |
+| 6 | `:after_conda_probes` | Could not write `~detect_python.py` | doomed subprocess call, output redirected to file/log only (never console); `PYSPEC` stays empty, a valid "no constraint" default | **Fixed** (Batch 4 second pass, PR #531: `[WARN]` and `goto :detect_python_done`) |
 | 7 | `:conda_create_failed` | conda env create failed | -- | Pre-existing safe (`goto`, slice 1) |
 | 8 | `:conda_create_done` | python.exe missing, non-cascade | rest of `:conda_create_done` body: writes `.condarc`, then the misleading `[BOOT] ... Selected Python provider: Conda (Portable).` success line | **Fixed** (Batch 2: `goto`) |
-| 9 | `:conda_create_done` | Could not write `~print_pyver.py` | `runtime.txt` write silently skipped; `HP_PY` still valid, no cascade | No fix -- benign (Batch 4, reclassified) |
-| 10 | `:conda_create_done` | Could not stage `~condarc` | doomed `copy` attempt -> cascades into row 11's own `:die` | **Fixed** (Batch 4: `goto`) |
-| 11 | `:conda_create_done` | Could not write `%ENV_PATH%\.condarc` (reached via its OWN direct trigger, not row 10's cascade) | logs the TRUTHFUL `[BOOT] ... Selected Python provider` line (`HP_PY` genuinely valid here) | No fix -- benign (Batch 4, reclassified) |
-| 12 | `:after_env_mode_selection` | Could not write `~prep_requirements.py` | REQ-005.8 heuristic dep-augmentation silently skipped later (confirmed via its own invocation site downstream, output redirected `>nul`) | No fix -- benign (Batch 4, reclassified) |
+| 9 | `:conda_create_done` | Could not write `~print_pyver.py` | `runtime.txt` write silently skipped; `HP_PY` still valid, no cascade | **Fixed** (Batch 4 second pass, PR #531: `[WARN]` and `goto :print_pyver_done`) |
+| 10 | `:conda_create_done` | Could not stage `~condarc` | doomed `copy` attempt -> cascades into row 11's own `:die` | **Fixed** (Batch 4: `goto`; second pass, PR #531: `[WARN]` and `goto :condarc_done`, the provider line is still written) |
+| 11 | `:conda_create_done` | Could not write `%ENV_PATH%\.condarc` (reached via its OWN direct trigger, not row 10's cascade) | logs the TRUTHFUL `[BOOT] ... Selected Python provider` line (`HP_PY` genuinely valid here) | **Fixed** (Batch 4 second pass, PR #531: `[WARN]`, then the provider line as before) |
+| 12 | `:after_env_mode_selection` | Could not write `~prep_requirements.py` | REQ-005.8 heuristic dep-augmentation silently skipped later (confirmed via its own invocation site downstream, output redirected `>nul`) | **Fixed** (Batch 4 second pass, PR #531: `HP_PREP_UNAVAILABLE`, `[WARN]`, the helper call and the conda list step are skipped) |
 | 13 | `:after_env_mode_selection` | Active Python interpreter not resolved (the sink every other batch's `goto` routes toward) | wasted interpreter-smoke-test attempt + a redundant `:determine_entry` call; Item 45's own `if not exist "%HP_PY%"` guard in `:run_entry_smoke` backstops the one dangerous consequence regardless | No fix -- deferred, lowest priority |
 | 14 | `:after_env_mode_selection` | Could not determine entry point (`:determine_entry`'s 1st of 2 per-run calls) | the ENTIRE dependency-install/pipreqs/warnfix/pyvisa block runs pointlessly (real network/disk work) before the 2nd call reproduces the identical failure | **Fixed** (Batch 3: `goto`) |
-| 15 | `:after_env_mode_selection` | Could not stage PEP 723 requirements | falls through 1 line to an unchecked 2nd `copy`, then `goto :after_pipreqs_run` 6 lines later regardless (already the success path's own target) | No fix -- already converges (Batch 4, reclassified) |
-| 16 | `:lock_done` | Could not write `~detect_visa.py` | `NEED_VISA` stays `"0"`, logs `[INFO] No pyvisa/visa imports detected.` -- inaccurate if the app genuinely needs pyvisa (detection never ran), silently skips the optional NI-VISA install | No fix -- low-severity, flagged for a future pass (Batch 4, reclassified) |
+| 15 | `:after_env_mode_selection` | Could not stage PEP 723 requirements | falls through 1 line to an unchecked 2nd `copy`, then `goto :after_pipreqs_run` 6 lines later regardless (already the success path's own target) | **Fixed** (Batch 4 second pass, PR #531: the successor `:dm_copy_one` logs `[ERROR]`, keeps state `error` and returns) |
+| 16 | `:lock_done` | Could not write `~detect_visa.py` | `NEED_VISA` stays `"0"`, logs `[INFO] No pyvisa/visa imports detected.` -- inaccurate if the app genuinely needs pyvisa (detection never ran), silently skips the optional NI-VISA install | **Fixed** (Batch 4 second pass, PR #531: `[WARN]` and `[VISA] skipped (detector_unavailable)`, never "No pyvisa/visa imports detected") |
 | 17 | `:ci_skip_entry` | CI skip: entry helper staging failed | doomed helper-verify attempt -> cascades into row 18's own `:die` | **Fixed** (Batch 5: `goto`) |
 | 18 | `:ci_skip_entry` | find_entry helper syntax error (reached via its OWN direct trigger) | "locate a Python"/run attempt fails silently (output to file/log only) -> converges to the graceful "no entry script detected" branch | No fix -- benign (Batch 5, reclassified) |
 | 19 | `:after_env_bootstrap` | Could not determine entry point (`:determine_entry`'s 2nd of 2 per-run calls) | immediately followed by the benign `if "%HP_ENTRY%"=="" (skip packaging)` check, 1 line down | No fix -- already benign |
@@ -391,6 +392,34 @@ for several batches is now already done and waiting.
   New shared `HP_TEST_FORCE_EMIT_FAIL=<VARNAME>` hook added to `:emit_from_base64` itself (the
   subroutine behind all 7 -- and every other embedded-helper write in the file) to make the
   `~condarc` staging site testable; `condarc` scenario in `tests/selfapps_die_emit_fallthrough.ps1`.
+- **Batch 4, second pass (PR #531, 2026-11-14): the six "benign" sites were not benign, because the `:die` itself was the
+  harm.** The first pass judged each site by what the CONTINUATION did (a doomed helper call whose output goes to the
+  log, a skipped optional step) and called it harmless. It never asked what the `call :die` itself costs when the run goes
+  on: `:die` is the END-of-run routine, so it forces state `error`, writes the status file, RELEASES the lock folder
+  (README REQ-024, so a second copy of the bootstrapper could start in the same folder mid-build) and, without
+  `HP_CI_LANE`, waits for a key press in the middle of the run (REQ-016.8 says one, at the end). A default double-click
+  run with one unwritable helper therefore stopped on a "Press any key" while the install and the build still lay ahead.
+  `tests/selfapps_die_writefail.ps1` (ten `self.softfail.*` rows, real lane for the uv scenario and conda-full for the
+  conda one, gating; `.prep.conda` was added after review, the other nine proved it from the first run, run `43561468853`): a clean control keeps the lock folder until the
+  build line, prints no key press before the end and ends with state `ok`; each failing run released the lock, printed
+  one extra key press and ended in state `error` (the dependency list site ended in `error` by design, see below).
+  The fix makes each site log one line and go on: `[WARN]` for `~detect_python.py` (PYSPEC stays empty), `~print_pyver.py`
+  (no runtime.txt write-back), the `~condarc` staging and copy (every conda command of the run names
+  `--override-channels -c conda-forge` itself, so only the file for later hand-typed commands is missing; the
+  `[BOOT] ... Selected Python provider` line is still written) and `~prep_requirements.py` (`HP_PREP_UNAVAILABLE`: the
+  helper call, its "complete" trace line and the conda list step, which needs the `~reqs_conda.txt` the helper writes, are
+  skipped, and the pip step installs everything from requirements.txt); `[WARN]` plus `[VISA] skipped
+  (detector_unavailable)` for `~detect_visa.py`, never "No pyvisa/visa imports detected"; and for the dependency list
+  copy in `:dm_copy_one` an `[ERROR]` line with state `error` KEPT (`HP_BOOTSTRAP_STATE`, so the final status says it and
+  `:dep_merge_snapshot` records nothing) but no `:die`. New hook `HP_TEST_FORCE_CONDARC_WRITE_FAIL` (absent changes
+  nothing) gives the `.condarc` copy a destination that cannot be written, because `HP_TEST_FORCE_EMIT_FAIL` only reaches
+  the staging write. The `condarc` scenario of `tests/selfapps_die_emit_fallthrough.ps1` takes the new contract
+  (a `[WARN]`, the provider line, state `ok`). `tests/test_die_writefail.py` pins the six shapes and each can fail.
+  **Rule for the rest of the inventory: classify a `:die` by what the call itself does to a run that goes on, not only by
+  what follows it.** A site whose caller goes on is a `call :log` or `[WARN]`; only a site where nothing else can be
+  tried keeps `:die`. Unproven on Windows at the time of writing: the dependency list row's trigger (a read-only
+  requirements.txt next to a pyproject.toml makes the merge helper's `os.replace` fail, which sends the run through
+  `:dm_fallback` to `:dm_copy_one`); the red run showed the fallback warning and the `:die` line, so it fires.
 - **Batch 5 (the 2 sites inside `:ci_skip_entry`)** -- SAME correction pattern as Batch 4, applied
   to a 2-site batch instead of 7. `CI skip: entry helper staging failed` (`~find_entry.py` staging)
   genuinely cascades into `find_entry helper syntax error` (`:verify_find_entry_helper` also fails

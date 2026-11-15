@@ -33,16 +33,18 @@
 # - "condarc" (Batch 4, the same :conda_create_done subroutine's own .condarc-staging step,
 #   right after the "missing_python" site above): HP_FORCE_CONDA_ONLY=1 drives a REAL,
 #   successful conda create (python.exe genuinely produced) so :conda_create_done reaches its own
-#   normal .condarc-staging step. HP_TEST_FORCE_EMIT_FAIL=HP_CONDARC fails that staging; before
-#   this fix, the fall-through then attempted `copy /y "~condarc" ...` (doomed, since the source
-#   was never staged), triggering a SECOND, redundant call :die ("Could not write ...\.condarc")
-#   AND still logging the misleading "[BOOT] ... Selected Python provider: Conda (Portable)."
-#   success line right after. The fix (goto :after_env_mode_selection right after the first
-#   call :die) skips both. Asserts the cascade message and the misleading success line are both
-#   absent, HP_PY was genuinely valid throughout (proving this is NOT the same failure class as
-#   Item 46's earlier "python.exe missing" fix), and ~bootstrap.status.json still reads
-#   state=error (the correct, honest report -- :die's own centralized HP_BOOTSTRAP_STATE=error set
-#   is not undone by the graceful continuation downstream).
+#   normal .condarc-staging step. HP_TEST_FORCE_EMIT_FAIL=HP_CONDARC fails that staging. Two
+#   generations of the fix, the second is the current contract:
+#   * Batch 4 (first pass): a goto after the first call :die skipped a doomed copy (which would
+#     have been a SECOND, redundant call :die) and the "[BOOT] ... Selected Python provider"
+#     line, and the status stayed state=error.
+#   * Batch 4 (Item 46, docs/plan-die-fatal-remediation.md): :die is the END-of-run routine (state
+#     error, lock released, key press), and the run goes on, so the site is no longer a call :die
+#     at all. A ~condarc that cannot be staged is a [WARN] line (every conda command names
+#     --override-channels -c conda-forge itself, so the file is a second line of defence), the
+#     doomed copy is not tried, the provider line IS written (HP_PY is valid, the provider is
+#     selected) and the status reads state=ok. tests/selfapps_die_writefail.ps1 holds the lock and
+#     key press halves of the same contract with real default runs.
 #
 # - "ci_skip_entry" (Batch 5, :ci_skip_entry): HP_CI_SKIP_ENV=1 takes the cheap, no-conda/no-uv system-
 #   Python path. HP_TEST_FORCE_EMIT_FAIL=HP_FIND_ENTRY fails :ci_skip_entry's own ~find_entry.py
@@ -281,16 +283,19 @@ switch ($scenario) {
     }
     'condarc' {
         $hookFired      = $combined -match [regex]::Escape('HP_TEST_FORCE_EMIT_FAIL=HP_CONDARC: simulating embedded helper write failure')
-        $dieMsgFound    = $combined -match [regex]::Escape('[ERROR] Could not stage ~condarc')
+        # Item 46 Batch 4: the step is a warning now, not an end-of-run call :die.
+        $warnMsgFound   = $combined -match [regex]::Escape('[WARN] Could not stage ~condarc')
+        $errorMsgFound  = $combined -match [regex]::Escape('[ERROR] Could not stage ~condarc')
         $cascadeMsgFound = $combined -match 'Could not write [^\r\n]*\.condarc'
-        $misleadingMsgFound = $combined -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Conda (Portable).')
-        $pass = $hookFired -and $dieMsgFound -and (-not $cascadeMsgFound) -and (-not $misleadingMsgFound) -and ($statusState -eq 'error')
+        $providerMsgFound = $combined -match [regex]::Escape('[BOOT] REQ-009: Selected Python provider: Conda (Portable).')
+        $pass = $hookFired -and $warnMsgFound -and (-not $errorMsgFound) -and (-not $cascadeMsgFound) -and $providerMsgFound -and ($statusState -eq 'ok')
         $details = [ordered]@{
             scenario            = $scenario
             hookFired           = [bool]$hookFired
-            dieMsgFound         = [bool]$dieMsgFound
+            warnMsgFound        = [bool]$warnMsgFound
+            errorMsgFound       = [bool]$errorMsgFound
             cascadeMsgFound     = [bool]$cascadeMsgFound
-            misleadingMsgFound  = [bool]$misleadingMsgFound
+            providerMsgFound    = [bool]$providerMsgFound
             statusState         = $statusState
             bootstrapExit       = $runExit
             log                 = $bootstrapLog
