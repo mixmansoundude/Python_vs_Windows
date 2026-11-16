@@ -307,6 +307,23 @@ class MessageReader(unittest.TestCase):
         self.assertEqual([t for _, t in msgs(batch)],
                          ["Verifying the executable", "Packaging your app", "x1", "y1", "z1", "x2", "y2", "z2"])
 
+    def test_the_else_branch_is_read_whatever_the_first_branch_is(self):
+        # What stands up to the parenthesis that closes the first branch is one command and `else ...` after it is the next one,
+        # whether the first command is an echo or not. The reader looked for the else branch only after an echo, so a branch of
+        # `if ... (set A=1) else (echo ...)` was never judged.
+        for line in (
+            "if defined X (set A=1) else (echo Building it)",
+            "if defined X (call :sub) else (echo Building it)",
+            "if defined X (set A=1 & set B=2) else (echo Building it)",
+            "if defined X (goto :next) else echo Building it",
+            "if defined X (if defined Y (set A=1)) else (echo Building it)",
+            "for %%I in (a b) do if defined X (set A=1) else (echo Building it)",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(msgs(":a\n" + line + "\n"), [("echo", "Building it")])
+        self.assertEqual(msgs(":a\nif defined X (echo a) else (set B=1)\n"), [("echo", "a")])
+        self.assertEqual(msgs(":a\nif defined X (set A=1) else (set B=1) & echo c\n"), [("echo", "c")])
+
     def test_a_block_with_an_else_branch_is_read_line_by_line(self):
         batch = ":a\nif defined A (\n  echo first\n) else (\n  echo Rebuilding things\n)\n"
         self.assertEqual(msgs(batch), [("echo", "first"), ("echo", "Rebuilding things")])
@@ -501,6 +518,7 @@ class CheckCanFail(unittest.TestCase):
 
     def test_the_other_branch_of_a_one_line_if_else_is_a_violation(self):
         self._one_violation(["if defined HP_FLAG (echo fine) else (echo Packaging the widget.)"], "Packaging the widget.")
+        self._one_violation(["if defined HP_FLAG (set A=1) else (echo Packaging the widget.)"], "Packaging the widget.")
 
     def test_a_set_p_prompt_is_a_violation(self):
         self._one_violation(["set /p ANSWER=Build the widget now? [Y/N] "], "Build the widget now? [Y/N]")
