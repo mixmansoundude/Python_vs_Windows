@@ -143,11 +143,66 @@ class MessageReader(unittest.TestCase):
             "(echo a & echo b) > f.txt",
         ):
             with self.subTest(line=line):
-                found = msgs(":a\n" + line + "\n")
-                self.assertNotIn(("echo", "x"), found)
-                self.assertNotIn(("echo", "Bundling"), found)
+                # The whole line goes to the file or the pipe, so nothing of it is a console message. The first version of this
+                # check asked only that `x` and `Bundling` were absent, which no line here prints, and the group lines passed.
+                self.assertEqual(msgs(":a\n" + line + "\n"), [])
         self.assertEqual(msgs(':a\necho Building > "f.txt"\n'), [])
         self.assertEqual(msgs(":a\n>> \"%LOG%\" echo Building it\n"), [])
+
+    def test_every_command_of_a_group_that_a_redirect_or_a_pipe_follows_writes_to_it(self):
+        for line in (
+            "(echo Building the widget & echo done) > f.txt",
+            '(echo first & echo Bundling now) >> "%LOG%" 2>&1',
+            "if defined X (echo Building it & echo Rebuilding it) > nul",
+            "(echo Building it & echo done) | findstr y",
+            '(call :log "[INFO] Building it." & call :log "[INFO] Bundling it.") >> "%LOG%"',
+            "( (echo a) & echo Building it ) > f.txt",
+            "(echo a & echo Building it) 2> f.txt",
+            # A parenthesis inside quotes is not a bracket of the group.
+            '(echo "x)" & echo Building it) > f.txt',
+            "(echo a & echo Building it)>f.txt",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(msgs(":a\n" + line + "\n"), [])
+        # What stands outside the group is still read, and the redirect of a command that is not the group's is that command's own.
+        self.assertEqual(msgs(":a\necho before & (echo Building it & echo done) > f.txt\n"), [("echo", "before")])
+        self.assertEqual(msgs(":a\n(echo a & echo b) > f.txt & echo after\n"), [("echo", "after")])
+        self.assertEqual(msgs(":a\n(echo a) & echo b > f.txt\n"), [("echo", "a")])
+
+    def test_a_group_that_nothing_redirects_keeps_every_command(self):
+        self.assertEqual(msgs(":a\n(echo a & echo b)\n"), [("echo", "a"), ("echo", "b")])
+        self.assertEqual(msgs(":a\n(echo a & echo b) & echo c\n"), [("echo", "a"), ("echo", "b"), ("echo", "c")])
+        self.assertEqual(msgs(":a\nif defined X (echo a) else (echo b)\n"), [("echo", "a"), ("echo", "b")])
+        self.assertEqual(msgs(":a\nfor %%I in (a b) do echo Verifying %%I\n"), [("echo", "Verifying %%I")])
+        # `||` runs the next command when the group fails: it is not a pipe, so the group still prints.
+        self.assertEqual(msgs(":a\n(echo a & echo b) || echo c\n"), [("echo", "a"), ("echo", "b"), ("echo", "c")])
+        # Parentheses in the text of an echo are not groups, and a caret-escaped pair is text whatever follows it.
+        self.assertEqual(msgs(":a\necho Building (the EXE) now\n"), [("echo", "Building (the EXE) now")])
+        self.assertEqual(msgs(":a\necho Building ^(the EXE^) now\n"), [("echo", "Building (the EXE) now")])
+
+    def test_a_closing_parenthesis_escaped_by_a_caret_is_text_and_does_not_end_the_group(self):
+        self.assertEqual(msgs(":a\nif defined FLAG (echo Note ^) Building the widget)\n"), [("echo", "Note ) Building the widget")])
+        self.assertEqual(msgs(":a\necho Step 1^) Verifying the widget\n"), [("echo", "Step 1) Verifying the widget")])
+        self.assertEqual(msgs(":a\nif defined A (echo ^(one^) Building it) else (echo ^(two^) Rebuilding it)\n"),
+                         [("echo", "(one) Building it"), ("echo", "(two) Rebuilding it")])
+        # An unescaped one still ends it, and what follows is the next branch.
+        self.assertEqual(msgs(":a\nif defined A (echo one) else (echo two)\n"), [("echo", "one"), ("echo", "two")])
+        # An even run of carets escapes the caret, not the parenthesis.
+        self.assertEqual(msgs(":a\nif defined A (echo one^^) else (echo two)\n"), [("echo", "one^"), ("echo", "two")])
+
+    def test_the_rest_of_a_line_is_read_after_a_log_call_a_tagged_call_or_a_prompt(self):
+        self.assertEqual(msgs(':a\ncall :log "[INFO] PyInstaller is ready." & echo Building the widget\n'),
+                         [("log", "[INFO] PyInstaller is ready."), ("echo", "Building the widget")])
+        self.assertEqual(msgs(':a\ncall :hint "[HINT] Packaging failed." & echo Rebuilding the widget\n'),
+                         [("log", "[HINT] Packaging failed."), ("echo", "Rebuilding the widget")])
+        self.assertEqual(msgs(':a\nchoice /C YN /N /M "Verify it? [Y/N] " & echo Building the widget\n'),
+                         [("prompt", "Verify it? [Y/N]"), ("echo", "Building the widget")])
+        self.assertEqual(msgs(':a\nif defined X call :log "[INFO] one." & if defined Y echo two\n'),
+                         [("log", "[INFO] one."), ("echo", "two")])
+        # A line that is only a log call or a prompt adds nothing else, and it still ends a block of echo lines.
+        self.assertEqual(msgs(':a\ncall :log "[INFO] one." >> "%LOG%" & echo after\n'), [("echo", "after")])
+        self.assertEqual(msgs(':a\necho one\ncall :log "[INFO] x"\necho two\n'), [("echo", "one"), ("log", "[INFO] x"), ("echo", "two")])
+        self.assertEqual(msgs(':a\necho one\nchoice /C YN /M "Q? "\necho two\n'), [("echo", "one"), ("prompt", "Q?"), ("echo", "two")])
 
     def test_a_caret_escaped_redirect_is_text(self):
         self.assertEqual(msgs(":a\necho the symbol ^> here\n"), [("echo", "the symbol > here")])
@@ -212,6 +267,22 @@ class Judging(unittest.TestCase):
 
     def test_visual_studio_build_tools_does_not_hide_a_real_trigger(self):
         self.assertTrue(ew.is_about_build("Install Visual Studio Build Tools and build it."))
+
+    def test_the_verb_package_with_what_it_packages_is_about_the_build(self):
+        for text in ("Package your app now?", "We could not package your app into a double-clickable program.", "package my app",
+                     "Package this folder.", "Package up the files.", "[INFO] Package our program."):
+            with self.subTest(text=text):
+                self.assertTrue(ew.is_about_build(text))
+
+    def test_the_noun_package_is_a_dependency_and_stays_quiet(self):
+        for text in ("Retrying package installation...", "Package installation could not complete.", "Installing the packages",
+                     "the package that provides it", "a package a library needs only at run time", "the package list",
+                     "Package names are not case sensitive.", "which package to install", "the package the program needs", "packages",
+                     # A determiner in front of it makes it the noun even when a pronoun follows.
+                     "the package your program needs", "a package our helper installs", "each package this program imports",
+                     "any package my script names", "that package your code uses", "No package these tools need is missing."):
+            with self.subTest(text=text):
+                self.assertFalse(ew.is_about_build(text))
 
     def test_a_message_names_the_artifact_or_the_tool_with_one_of_these_words(self):
         for text in ("the EXE", "the exe file", "dist\\x.exe", "an executable", "PyInstaller", "pyinstaller", "Nuitka", "a standalone app",
@@ -337,6 +408,36 @@ class CheckCanFail(unittest.TestCase):
     def test_a_banner_does_not_hide_the_words(self):
         self._one_violation(["echo *** Packaging your widget ***"], "Packaging your widget")
 
+    def test_the_imperative_package_is_a_violation_in_an_echo_a_prompt_and_a_log_call(self):
+        self._one_violation(["echo Package your widget now?"], "Package your widget now?")
+        self._one_violation(["set /p ANSWER=Package your widget now? [Y/N] "], "Package your widget now? [Y/N]")
+        self._one_violation(['call :log "[WARN] We could not package your widget."'], "[WARN] We could not package your widget.")
+
+    def test_a_dependency_message_with_the_noun_package_is_not_a_violation(self):
+        mutated, _ = with_lines("echo Retrying package installation...", 'call :log "[WARN] A package the program needs is missing."')
+        self.assertEqual(check_text(mutated), [])
+
+    def test_a_message_after_a_log_call_on_the_same_line_is_judged(self):
+        self._one_violation(['call :log "[INFO] PyInstaller is ready." & echo Building the widget'], "Building the widget")
+        self._one_violation(['choice /C YN /N /M "Is it fine? [Y/N] " & echo Rebuilding the widget'], "Rebuilding the widget")
+
+    def test_a_message_after_a_caret_escaped_parenthesis_is_judged(self):
+        self._one_violation(["if defined HP_FLAG (echo Note ^) Building the widget)"], "Note ) Building the widget")
+
+    def test_the_echoes_of_a_group_that_writes_to_a_file_are_not_judged_and_the_same_group_without_the_redirect_is(self):
+        mutated, _ = with_lines("(echo Building the widget & echo Bundling it) > f.txt")
+        self.assertEqual(check_text(mutated), [])
+        mutated, _ = with_lines("(echo Building the widget & echo Bundling it)")
+        problems = check_text(mutated)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("Building the widget", problems[0])
+        self.assertIn("Bundling it", problems[1])
+        # The redirect of the second command is that command's own: the group's first echo still reaches the console.
+        mutated, _ = with_lines("(echo Building the widget) & echo Bundling it > f.txt")
+        problems = check_text(mutated)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("Building the widget", problems[0])
+
     def test_the_same_words_with_the_name_are_clean(self):
         for new in ('call :log "[INFO] Building the widget EXE now."', "echo Packaging the widget as a standalone app",
                     'call :log "[INFO] Verifying dist\\widget.exe now."', 'call :log "[INFO] Rebuilding with Nuitka."',
@@ -453,6 +554,15 @@ class ConsoleJudge(unittest.TestCase):
     def test_a_line_without_a_timestamp_is_not_judged(self):
         problems, stats = ew.console_check("Building the widget.\nVerifying the widget.\n", ew.parse_rules(GOOD_RULES))
         self.assertEqual((problems, stats["timestamped"], stats["triggered"]), ([], 0, 0))
+
+    def test_the_verb_package_is_judged_in_a_run_and_the_noun_is_not(self):
+        log = ("Sat 11/14/2026  9:05:03.10 [INFO] Package your widget now?\n"
+               "Sat 11/14/2026  9:05:04.11 [INFO] Retrying package installation...\n"
+               "Sat 11/14/2026  9:05:05.12 [INFO] Package your widget into a standalone EXE.\n")
+        problems, stats = ew.console_check(log, ew.parse_rules(GOOD_RULES))
+        self.assertEqual(problems, ["console line talks about building or verifying and does not name the EXE or the tool: "
+                                    "[INFO] Package your widget now?"])
+        self.assertEqual((stats["triggered"], stats["named"], stats["violations"]), (2, 1, 1))
 
     def test_an_exempt_message_with_a_variable_matches_the_line_the_variable_was_filled_into(self):
         rules = ew.parse_rules("category: interpreter | the check runs through the interpreter\n"
