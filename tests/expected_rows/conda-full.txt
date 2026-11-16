@@ -123,6 +123,7 @@ self.honest.noexe.caveat
 self.isolation.req010.pythonpath
 self.launch.count.failed_run
 self.launch.count.repaired_run
+self.nivisa.pyvisa.installed
 self.nivisa.subfolder.accepted
 self.nivisa.subfolder.declined
 self.nivisa.subfolder.timeout
