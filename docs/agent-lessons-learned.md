@@ -1254,7 +1254,7 @@ silently: `bootstrap.log` has only 1-3 early lines, the CI job completes in ~1s.
 
 **Budget**: max b64 content = 8191 - `len('set "HP_VARNAME=')` - 1 (closing quote). Current
 tightest margins (re-verify before expanding any payload): `HP_PREP_REQUIREMENTS` (192-char
-margin), `HP_FIND_ENTRY` (151-char margin since Item 125, which had to cut the module docstring and fold
+margin), `HP_FIND_ENTRY` (87-char margin since Item 125 and its BOM fix, which had to cut the module docstring and fold
 the import scan into one set to fit), `HP_COLLECT_SUBMODULES` (459-char margin) -- others have 354 or more
 (`HP_RUNTIME_MODULE_SCAN` 354, `HP_DEP_MERGE` 560, see the payload table in CLAUDE.md); `tools/sync_payload.py`
 prints the margin and refuses to write a line over the limit, so run it BEFORE writing a test that pins the new text.

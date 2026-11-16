@@ -195,7 +195,8 @@ choice should never come out empty. A person who names a file should get that fi
 > - REQ-002.7 to REQ-002.9 and REQ-002.21 also hold on the stop of REQ-011.1. A name without `.py` is logged as
 >   `[INFO] REQ-002: first argument had no .py extension; using the .py file of that name.`
 > - The guard is looked for at the top level of the file: a guard inside a function or a class does not count, and
->   neither does the text `__main__` in a string or a comment. A file that does not parse has no guard.
+>   neither does the text `__main__` in a string or a comment. A file that does not parse has no guard. A leading UTF-8
+>   byte order mark (Windows PowerShell 5.1 and older Notepad write one) is ignored, for the guard and for REQ-002.27.
 > - `find_entry` exits with code 3 when it uses the alphabetical default; the batch file reads that code to decide
 >   whether to offer the list of REQ-002.14.
 > - The 30 seconds of REQ-002.15 are the `HP_PICK_T` setting of `:pick_entry_interactive`; the test setting

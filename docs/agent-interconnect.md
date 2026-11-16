@@ -1540,7 +1540,8 @@ one); `main()` removes those files from the pool of the guard rule and the alpha
 still runs one. The preferred names, a sole `.py` file and a named first argument are decided before that point and do not change; the picker still lists every `*.py` (a user may
 mean the test file), and the exit code 3 of the fallback is unchanged, so `calc.py` (no guard) next to `test_calc.py` is `calc.py` with the picker offered, not a silent pick. The name alone is not
 enough on purpose: a lab script called `test_scope.py` that drives an instrument is a program, and the audience (VISA users) writes those (`self.entry.testmodule.script`). The helper is Python 3.9
-grammar and has 151 characters of payload margin; `self.entry.testmodule.guard`/`.library` are the rows that were red on the short lanes before the fix.
+grammar and has 87 characters of payload margin; `self.entry.testmodule.guard`/`.library` are the rows that were red on the short lanes before the fix.
+**`_parse` reads with `utf-8-sig`, not `utf-8`** (CodeRabbit, PR #536): a BOM stays in a text-mode string as U+FEFF and `ast.parse` refuses it, so a BOM-prefixed file was "unparseable", which hid its guard from rule 3 as well (a defect older than Item 125) and made a BOM test module look like a program. `errors="ignore"` stays, because parsing the raw bytes would drop the tolerance for a stray cp1252 byte (`test_bytes_that_are_not_utf8_are_still_read`). Pins: `test_a_byte_order_mark_does_not_hide_a_test_module` and `_a_guard` in `tests/test_find_entry.py`.
 
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 

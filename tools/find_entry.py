@@ -61,7 +61,8 @@ def _is_substantive(stmt):
 
 def _parse(path):
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+        # utf-8-sig: a BOM breaks ast.parse
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as handle:
             return ast.parse(handle.read())
     except Exception:
         # Unparseable source is a poor entry candidate; do not resurrect the old
