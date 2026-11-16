@@ -218,7 +218,8 @@ class EmbedVersionScenarioPins(unittest.TestCase):
 
     SCRIPT = REPO / "tests" / "selfapps_embed_version.ps1"
     WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
-    IDS = ("self.embed.version.swap", "self.embed.version.floor", "self.embed.version.ceiling", "self.embed.version.range")
+    IDS = ("self.embed.version.swap", "self.embed.version.floor", "self.embed.version.ceiling", "self.embed.version.range",
+           "self.embed.version.isolated")
 
     @classmethod
     def script_issues(cls, text):
@@ -228,14 +229,73 @@ class EmbedVersionScenarioPins(unittest.TestCase):
             if len(re.findall(r"id\s*=\s*'" + re.escape(row_id) + r"'", text)) < 4:
                 issues.append("literal id missing: " + row_id)
         tail = [ln.strip() for ln in text.splitlines() if ln.strip()][-2:]
-        if tail != ["if (-not ($passSwap -and $passFloor -and $passCeiling -and $passRange)) { exit 1 }", "exit 0"]:
+        if tail != ["if (-not ($passSwap -and $passFloor -and $passCeiling -and $passRange -and $passIsolated)) { exit 1 }", "exit 0"]:
             issues.append("script must end with its own exit 1 / exit 0")
-        if text.count("$d.requestLog") < 4:
+        if text.count("$d.requestLog") < 5:
             issues.append("every scenario must require the request log line")
         if "taskkill" not in text:
             issues.append("no watchdog")
         if any(ord(c) > 127 for c in text):
             issues.append("not ascii")
+        return issues
+
+    @staticmethod
+    def _function_body(text, name):
+        """The text of `function <name> { ... }` up to the next top-level function (or the end of the file)."""
+        m = re.search(r"(?ms)^function " + re.escape(name) + r"\b.*?(?=^function |\Z)", text)
+        return m.group(0) if m else ""
+
+    @classmethod
+    def isolation_issues(cls, text):
+        """Item 120: no scenario may depend on what the runner's shared Public folder holds (run 43608572893: an earlier
+        step had installed Miniconda there, the main flow found conda.bat, computed PYSPEC itself and the embed tier never
+        logged its own request line). Every bootstrap gets its own empty PUBLIC from its launch file, and the `isolated`
+        row proves that against a decoy Miniconda that the process environment points PUBLIC at."""
+        issues = []
+        boot = cls._function_body(text, "Invoke-Bootstrap")
+        if not boot:
+            return ["Invoke-Bootstrap not found"]
+        if 'set "PUBLIC=' not in boot:
+            issues.append("the launch file does not give the bootstrap its own PUBLIC")
+        if "$Work + '_public'" not in boot:
+            issues.append("the scratch PUBLIC is not a folder of its own beside the work folder")
+        if boot.count("echo PUBLIC=%PUBLIC%") != 1:
+            issues.append("the launch file must record the PUBLIC the bootstrap saw, once")
+        # the record is written before the bootstrap starts, so a run that stops early still shows what it saw
+        if boot.find("echo PUBLIC=%PUBLIC%") > boot.find("call run_setup.bat"):
+            issues.append("PUBLIC is recorded after run_setup.bat started")
+        if boot.find('set "PUBLIC=') > boot.find("echo PUBLIC=%PUBLIC%") >= 0:
+            issues.append("PUBLIC is recorded before it is set")
+        facts = cls._function_body(text, "Get-EmbedFacts")
+        if "[switch]$Polluted" not in facts:
+            issues.append("Get-EmbedFacts has no -Polluted switch")
+        if "SetEnvironmentVariable('PUBLIC', $f.decoyPublic)" not in facts:
+            issues.append("the polluted scenario does not put the decoy in the process environment")
+        if "finally" not in facts or "SetEnvironmentVariable('PUBLIC', $savedPublic)" not in facts:
+            issues.append("the process PUBLIC is not restored in a finally block")
+        if "$f.publicIsolated" not in facts:
+            issues.append("publicIsolated is not computed")
+        decoy = cls._function_body(text, "New-DecoyPublic")
+        if "Miniconda3" not in decoy or "conda.bat" not in decoy or 'if /i "%~1"=="run" echo python=3.12' not in decoy:
+            issues.append("the decoy is not a Miniconda whose conda.bat answers `conda run`")
+        if "python.cmd" not in decoy:
+            issues.append("the decoy has no python.cmd for the PATH probes")
+        if "echo conda %*" not in decoy:
+            issues.append("the decoy does not record its calls")
+        m = re.search(r"\$d = Get-EmbedFacts 'isolated'[^\n]*-Polluted\n(.*?)Write-NdjsonRow", text, re.S)
+        if not m:
+            issues.append("the isolated scenario does not call Get-EmbedFacts with -Polluted")
+        else:
+            block = m.group(1)
+            for need in ("$d.publicIsolated", "$d.decoyCalls -eq 0", "$d.requestLog", "(-not $d.swappedLog)"):
+                if need not in block:
+                    issues.append("the isolated pass condition lacks " + need)
+        # the four older scenarios judge their own isolation too, so a runner that leaves a Miniconda behind cannot
+        # make them red or green for a reason that is not the product's
+        for name in ("passSwap", "passFloor", "passCeiling", "passRange"):
+            m = re.search(r"\$" + name + r" = (.*?)\nWrite-NdjsonRow", text, re.S)
+            if not m or "$d.publicIsolated" not in m.group(1):
+                issues.append(name + " does not require publicIsolated")
         return issues
 
     @classmethod
@@ -278,6 +338,9 @@ class EmbedVersionScenarioPins(unittest.TestCase):
     def test_script_is_wired_correctly(self):
         self.assertEqual(self.script_issues(self.SCRIPT.read_text(encoding="utf-8")), [])
 
+    def test_every_scenario_has_its_own_public_folder(self):
+        self.assertEqual(self.isolation_issues(self.SCRIPT.read_text(encoding="utf-8")), [])
+
     def test_workflow_step_gates_on_the_real_lane(self):
         self.assertEqual(self.step_issues(self.WORKFLOW.read_text(encoding="utf-8")), [])
 
@@ -289,12 +352,77 @@ class EmbedVersionScenarioPins(unittest.TestCase):
         self.assertNotEqual("3.12", LATEST_MINOR)
         self.assertNotEqual("3.12", FLOOR_MINOR)
 
+    # A synthetic script that satisfies every isolation rule, so each mutation below fails for ITS rule and not because the
+    # real script does not have the isolation yet.
+    GOOD_ISOLATION = "\n".join([
+        "function Invoke-Bootstrap {",
+        "    param([string]$Work, [string]$LogName)",
+        "    $pub = $Work + '_public'",
+        "    $lines += ('set \"PUBLIC=' + $pub + '\"')",
+        "    $lines += '>~embver_public.txt echo PUBLIC=%PUBLIC%'",
+        "    $lines += ('call run_setup.bat > ' + $LogName + ' 2>&1 < nul')",
+        "}",
+        "function New-DecoyPublic {",
+        "    $mc = Join-Path (Join-Path $pub 'Documents') 'Miniconda3'",
+        "    $conda = @('@echo off', ('>> \"' + $Marker + '\" echo conda %*'), 'if /i \"%~1\"==\"run\" echo python=3.12')",
+        "    Set-Content -Path (Join-Path $cb 'conda.bat') -Value $conda",
+        "    Set-Content -Path (Join-Path $mc 'python.cmd') -Value $py",
+        "}",
+        "function Get-EmbedFacts {",
+        "    param([string]$Name, [switch]$Polluted)",
+        "    try {",
+        "        [Environment]::SetEnvironmentVariable('PUBLIC', $f.decoyPublic)",
+        "        $f.publicIsolated = $true",
+        "    } finally {",
+        "        [Environment]::SetEnvironmentVariable('PUBLIC', $savedPublic)",
+        "    }",
+        "}",
+        "$passSwap = $a -and $d.publicIsolated",
+        "Write-NdjsonRow ([ordered]@{ id = 'x' })",
+        "$passFloor = $a -and $d.publicIsolated",
+        "Write-NdjsonRow ([ordered]@{ id = 'x' })",
+        "$passCeiling = $a -and $d.publicIsolated",
+        "Write-NdjsonRow ([ordered]@{ id = 'x' })",
+        "$passRange = $a -and $d.publicIsolated",
+        "Write-NdjsonRow ([ordered]@{ id = 'x' })",
+        "$d = Get-EmbedFacts 'isolated' 'python-3.99' -Polluted",
+        "$passIsolated = $d.requestLog -and (-not $d.swappedLog) -and $d.publicIsolated -and ($d.decoyCalls -eq 0)",
+        "Write-NdjsonRow ([ordered]@{ id = 'x' })",
+        "",
+    ])
+
+    def test_the_isolation_rules_can_fail(self):
+        good = self.GOOD_ISOLATION
+        self.assertEqual(self.isolation_issues(good), [])
+        self.assertIn("PUBLIC", "".join(self.isolation_issues(good.replace('set \"PUBLIC=', 'set \"PUBLIX='))))
+        self.assertTrue(self.isolation_issues(good.replace("$Work + '_public'", "$Work + '_pub'")))
+        self.assertTrue(self.isolation_issues(good.replace("echo PUBLIC=%PUBLIC%'", "echo X'")))
+        # recorded before it is set: move the record line above the set line
+        a = "    $lines += ('set \"PUBLIC=' + $pub + '\"')\n"
+        b = "    $lines += '>~embver_public.txt echo PUBLIC=%PUBLIC%'\n"
+        self.assertTrue(self.isolation_issues(good.replace(a + b, b + a)))
+        # recorded after run_setup.bat started
+        c = "    $lines += ('call run_setup.bat > ' + $LogName + ' 2>&1 < nul')\n"
+        self.assertTrue(self.isolation_issues(good.replace(b + c, c + b)))
+        self.assertTrue(self.isolation_issues(good.replace("[switch]$Polluted", "[string]$Polluted")))
+        self.assertTrue(self.isolation_issues(good.replace("SetEnvironmentVariable('PUBLIC', $f.decoyPublic)", "SetEnvironmentVariable('X', $f.decoyPublic)")))
+        self.assertTrue(self.isolation_issues(good.replace("SetEnvironmentVariable('PUBLIC', $savedPublic)", "SetEnvironmentVariable('PUBLIC', $null)")))
+        self.assertTrue(self.isolation_issues(good.replace("} finally {", "}\n    if ($true) {")))
+        self.assertTrue(self.isolation_issues(good.replace("'if /i \"%~1\"==\"run\" echo python=3.12'", "'rem'").replace("echo python=3.12", "rem")))
+        self.assertTrue(self.isolation_issues(good.replace("python.cmd", "python.txt")))
+        self.assertTrue(self.isolation_issues(good.replace("echo conda %*", "echo conda")))
+        self.assertTrue(self.isolation_issues(good.replace(" -and ($d.decoyCalls -eq 0)", "")))
+        self.assertTrue(self.isolation_issues(good.replace("Get-EmbedFacts 'isolated' 'python-3.99' -Polluted", "Get-EmbedFacts 'isolated' 'python-3.99'")))
+        for name in ("passSwap", "passFloor", "passCeiling", "passRange"):
+            self.assertTrue(self.isolation_issues(good.replace("$" + name + " = $a -and $d.publicIsolated", "$" + name + " = $a")), name)
+
     def test_each_rule_can_fail(self):
         good = self.SCRIPT.read_text(encoding="utf-8")
         self.assertTrue(self.script_issues(good.replace("self.embed.version.floor", "self.embed.version.flor")))
         self.assertTrue(self.script_issues(good.rstrip() + "\nexit 3\n"))
         self.assertTrue(self.script_issues(good.replace("taskkill", "kill")))
         self.assertTrue(self.script_issues(good.replace("$d.requestLog", "$d.swappedLog")))
+        self.assertTrue(self.script_issues(good.replace(" -and $passIsolated)) { exit 1 }", ")) { exit 1 }")))
         wf = self.WORKFLOW.read_text(encoding="utf-8")
         self.assertTrue(self.step_issues(wf.replace("selfapps_embed_version.ps1", "selfapps_other.ps1", 1)))
         self.assertTrue(self.step_issues(wf.replace(
