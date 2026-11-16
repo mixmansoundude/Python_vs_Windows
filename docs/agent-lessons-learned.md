@@ -902,8 +902,13 @@ product was right (the swap happened and the program ran under the requested min
 row's premise (no uv, no Miniconda: the chain the README names for this tier) was not true any more, and a PR whose diff
 touched none of it was held. The `installfail` scenarios already point `PUBLIC` at a scratch folder; a scenario that assumes
 "no Miniconda" must do the same, and a row that fails on a log line while its other details are right should say which
-premise it needs (`requestLog` false with `swappedLog` true is this case). Open follow-up: `tests/selfapps_embed_version.ps1`
-still uses the runner's real `PUBLIC`.
+premise it needs (`requestLog` false with `swappedLog` true is this case). Fixed by Item 120: every bootstrap of
+`tests/selfapps_embed_version.ps1` gets its own empty `PUBLIC` (`<work>_public`) from its launch file, the launch file records the
+`PUBLIC` the bootstrap saw (`~embver_public.txt`), all five rows require it, and the fifth row (`self.embed.version.isolated`) puts a
+decoy Miniconda in the PROCESS `PUBLIC` and requires that its `conda.bat` was never called. The first run of that row against the
+unfixed script (run `43685182910`, real lane) was red for the right reason: the decoy's `conda.bat` was called once (`python -V`),
+`publicSeen` was the decoy folder, no request line and no embed provider line. A scenario that must not see something the runner
+may hold proves it with a planted copy of that thing, not only by running where it happens to be absent.
 ---
 
 ## A conda call that talks to conda-forge needs one bounded retry, and a 502 on the sharded repodata path does not look like a conda error (Item 92)

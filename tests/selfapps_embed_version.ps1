@@ -21,6 +21,12 @@
 #            happens, and the program runs under the newest minor.
 #   range    pyproject.toml asks for requires-python ">=3.11,<3.13" and there is no runtime.txt: the newest minor the
 #            range allows (3.12) is the one swapped in, not the range's lower bound.
+#   isolated (Item 120) the same chain as a runner whose shared Public folder already holds a Miniconda: the inherited
+#            PUBLIC points at a decoy Documents\Miniconda3 (a conda.bat that answers `python=3.12` to `conda run` and
+#            records every call, a python.cmd), and runtime.txt asks for 3.99. The run must not see the decoy at all:
+#            no decoy call, the embed tier does its own request detection (the log line), the WARN names the newest minor
+#            and the program runs under it. A run that reached the decoy takes `python=3.12` from it, swaps to 3.12 and
+#            logs no request line.
 # All four first showed the same failure (run 40074772192, PR #507): the program ran under the newest minor with no WARN and
 # no swap, because this chain (no uv, no Miniconda) reaches the embed tier before ~detect_python.py ever ran, so the
 # tier saw no request at all. The tier now runs the helper under its own fresh interpreter and logs that it found a
@@ -28,13 +34,18 @@
 # Expected minors come from tools/embed_pyver_check.py (LATEST_MINOR, FLOOR_MINOR, EMBED_PYTHON_TABLE), so a table
 # refresh does not need a change here; the test fails if 3.12 ever leaves the table or becomes the newest or oldest
 # minor, because the swap and range scenarios would then prove nothing.
+# Item 120: every scenario runs with its own empty PUBLIC folder, never the runner's. Run 43608572893 (PR #531) had all four
+# rows red although the product was right: an earlier step of the same job had really installed Miniconda into the
+# runner's shared C:\Users\Public\Documents\Miniconda3 after a one-off uv download failure, so the main flow found conda.bat,
+# computed PYSPEC itself and the embed tier never logged its own request line. The `isolated` row proves the isolation
+# against a decoy, so the four rows cannot go quiet or red because of what a runner left behind.
 #
 # derived requirement: ids stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py scans text,
 # not PowerShell).
 #
 # Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Four full builds. Skipped under
 # HP_FORCE_CONDA_ONLY=1 like the other embed rows (that mode forbids every non-conda provider).
-# Emits: self.embed.version.swap, self.embed.version.floor, self.embed.version.ceiling, self.embed.version.range
+# Emits: self.embed.version.swap, self.embed.version.floor, self.embed.version.ceiling, self.embed.version.range, self.embed.version.isolated
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -58,6 +69,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.floor'; req = 'REQ-009'; pass = $true; desc = 'Embed version floor (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = $true; desc = 'Embed version ceiling (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.range'; req = 'REQ-009'; pass = $true; desc = 'Embed version range (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
+    Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.isolated'; req = 'REQ-009'; pass = $true; desc = 'Embed version isolated (skipped on non-Windows)'; details = [ordered]@{ skip = $true; reason = 'non-windows-host' } })
     exit 0
 }
 if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
@@ -66,6 +78,7 @@ if ($env:HP_FORCE_CONDA_ONLY -eq '1') {
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.floor'; req = 'REQ-009'; pass = $true; desc = 'Embed version floor (skipped in conda-only mode)'; details = $skip })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = $true; desc = 'Embed version ceiling (skipped in conda-only mode)'; details = $skip })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.range'; req = 'REQ-009'; pass = $true; desc = 'Embed version range (skipped in conda-only mode)'; details = $skip })
+    Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.isolated'; req = 'REQ-009'; pass = $true; desc = 'Embed version isolated (skipped in conda-only mode)'; details = $skip })
     exit 0
 }
 $batchPath  = Join-Path $repo 'run_setup.bat'
@@ -76,6 +89,7 @@ if (-not (Test-Path -LiteralPath $batchPath) -or -not (Test-Path -LiteralPath $h
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.floor'; req = 'REQ-009'; pass = $false; desc = 'Embed version floor: inputs missing'; details = $why })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = $false; desc = 'Embed version ceiling: inputs missing'; details = $why })
     Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.range'; req = 'REQ-009'; pass = $false; desc = 'Embed version range: inputs missing'; details = $why })
+    Write-NdjsonRow ([ordered]@{ id = 'self.embed.version.isolated'; req = 'REQ-009'; pass = $false; desc = 'Embed version isolated: inputs missing'; details = $why })
     exit 1
 }
 
@@ -120,6 +134,12 @@ function Invoke-Bootstrap {
     try {
         $lines = @('@echo off')
         foreach ($k in $clearVars) { if (-not $setVars.ContainsKey($k)) { $lines += ('set "' + $k + '="') } }
+        # Item 120: every bootstrap gets its own empty PUBLIC, so a Miniconda an earlier step left in the runner's shared
+        # Public folder can never be found by the main flow (run 43608572893), and the launch file records what it saw.
+        $pub = $Work + '_public'
+        New-Item -ItemType Directory -Force -Path $pub | Out-Null
+        $lines += ('set "PUBLIC=' + $pub + '"')
+        $lines += '>~embver_public.txt echo PUBLIC=%PUBLIC%'
         $lines += ('call run_setup.bat > ' + $LogName + ' 2>&1 < nul')
         $lines += 'exit /b %ERRORLEVEL%'
         Set-Content -LiteralPath (Join-Path $Work '~embver_launch.cmd') -Value $lines -Encoding ASCII
@@ -159,13 +179,32 @@ function Invoke-Bootstrap {
 function New-Scratch {
     param([string]$Name, [string]$RuntimeTxt, [string]$Pyproject = '')
     $work = Join-Path $here ('~selftest_embed_ver_' + $Name)
-    if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
+    foreach ($stale in @($work, ($work + '_decoy'), ($work + '_public'))) {
+        if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Recurse -Force }
+    }
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     Copy-Item -LiteralPath $batchPath -Destination $work -Force
     Set-Content -LiteralPath (Join-Path $work 'app.py') -Value 'import sys; print("embed-version-ok %d.%d" % sys.version_info[:2])' -Encoding Ascii
     if ($RuntimeTxt.Length -gt 0) { Set-Content -LiteralPath (Join-Path $work 'runtime.txt') -Value $RuntimeTxt -Encoding Ascii }
     if ($Pyproject.Length -gt 0) { Set-Content -LiteralPath (Join-Path $work 'pyproject.toml') -Value $Pyproject -Encoding Ascii }
     return $work
+}
+
+# A Public folder that already holds a Miniconda, the way the shared runner folder can after an earlier step of the job fell back
+# to conda. Its conda.bat records every call in $Marker, exits 0 and answers `conda run ...` with `python=3.12` (what
+# ~detect_python.py would print for a 3.12 request); its python.cmd stands in for the python the PATH probes look for. A
+# bootstrap that reaches either one leaves a line in the marker, which is how the row knows the decoy was seen.
+function New-DecoyPublic {
+    param([string]$Work, [string]$Marker)
+    $pub = $Work + '_decoy'
+    $mc = Join-Path (Join-Path $pub 'Documents') 'Miniconda3'
+    $cb = Join-Path $mc 'condabin'
+    New-Item -ItemType Directory -Force -Path $cb | Out-Null
+    $conda = @('@echo off', ('>> "' + $Marker + '" echo conda %*'), 'if /i "%~1"=="run" echo python=3.12', 'exit /b 0')
+    Set-Content -LiteralPath (Join-Path $cb 'conda.bat') -Value $conda -Encoding ASCII
+    $py = @('@echo off', ('>> "' + $Marker + '" echo python %*'), 'echo Python 3.12.0', 'exit /b 0')
+    Set-Content -LiteralPath (Join-Path $mc 'python.cmd') -Value $py -Encoding ASCII
+    return $pub
 }
 
 function Get-StatusState {
@@ -190,15 +229,25 @@ function Get-EmbedInterpreterMinor {
 
 # What every scenario shares: one bootstrap, then the facts about the folder and the program's own version line.
 function Get-EmbedFacts {
-    param([string]$Name, [string]$RuntimeTxt, [string]$Pyproject = '')
+    param([string]$Name, [string]$RuntimeTxt, [string]$Pyproject = '', [switch]$Polluted)
     $f = [ordered]@{
         timedOut = $false; exitCode = -1; statusState = ''; providerLine = $false; appLine = ''; interpreterMinor = ''
         embedDirExists = $false; swapDirLeft = $false; nested = $false; dlls = @(); swappedLog = $false; warnLine = ''
         swapFailedLog = $false; requestLog = $false; error = $null; work = ''
+        publicSeen = ''; publicIsolated = $false; polluted = [bool]$Polluted; decoyPublic = ''; decoyCalls = 0; decoyFirstCall = ''
     }
+    $pollutedSet = $false
+    $savedPublic = $null
     try {
         $work = New-Scratch $Name $RuntimeTxt $Pyproject
         $f.work = $work
+        if ($Polluted) {
+            # the runner's own environment, as a step before this one left it: PUBLIC names a folder with a Miniconda in it
+            $f.decoyPublic = New-DecoyPublic -Work $work -Marker (Join-Path $work '~embver_decoy_calls.txt')
+            $savedPublic = [Environment]::GetEnvironmentVariable('PUBLIC')
+            [Environment]::SetEnvironmentVariable('PUBLIC', $f.decoyPublic)
+            $pollutedSet = $true
+        }
         $r = Invoke-Bootstrap -Work $work -LogName '~embver_boot.log'
         $f.timedOut = $r.timedOut
         $f.exitCode = $r.exitCode
@@ -220,8 +269,17 @@ function Get-EmbedFacts {
         # python3.dll (the stable-ABI forwarder) is always there; python3NN.dll is the one that names the version.
         if (Test-Path -LiteralPath $embedDir) { $f.dlls = @(Get-ChildItem -LiteralPath $embedDir -Filter 'python3*.dll' -File | Where-Object { $_.Name -match '^python3\d+\.dll$' } | ForEach-Object { $_.Name }) }
         $f.interpreterMinor = Get-EmbedInterpreterMinor $work
+        # what the bootstrapper's own cmd.exe had as PUBLIC, and whether it saw the decoy (every decoy call leaves a line)
+        $mPub = [regex]::Match((Read-Text (Join-Path $work '~embver_public.txt')), '(?m)^PUBLIC=(.*?)\s*$')
+        if ($mPub.Success) { $f.publicSeen = $mPub.Groups[1].Value }
+        $f.publicIsolated = ($f.publicSeen.Length -gt 0) -and ($f.publicSeen -ieq ($work + '_public'))
+        $calls = @((Read-Text (Join-Path $work '~embver_decoy_calls.txt')) -split "`r?`n" | Where-Object { $_.Trim().Length -gt 0 })
+        $f.decoyCalls = $calls.Count
+        if ($calls.Count -gt 0) { $f.decoyFirstCall = ([string]$calls[0]).Trim() }
     } catch {
         $f.error = $_.Exception.Message
+    } finally {
+        if ($pollutedSet) { [Environment]::SetEnvironmentVariable('PUBLIC', $savedPublic) }
     }
     return $f
 }
@@ -241,7 +299,7 @@ $d['swapMinor'] = $swapMinor
 $d['dllExpected'] = $wantDll
 $passSwap = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and $d.swappedLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.swap'; req = 'REQ-009, REQ-004.1'; pass = [bool]$passSwap
     desc = 'README REQ-009 Tier 5: a requested minor other than the newest is downloaded, swapped into ~embed_python (not nested) and is the interpreter the program runs under'
@@ -258,7 +316,7 @@ $d['floorMinor'] = $floorMinor
 $d['dllExpected'] = $wantDll
 $passFloor = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq $floorMinor) -and ($d.appLine -eq $floorMinor) -and ($d.interpreterMinor -eq $floorMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.floor'; req = 'REQ-009'; pass = [bool]$passFloor
     desc = 'README REQ-009 Tier 5: a request below the oldest minor the embed table holds warns that it is not in the table and runs under the floor minor'
@@ -275,7 +333,7 @@ $d['floorMinor'] = $floorMinor
 $d['dllExpected'] = $wantDll
 $passCeiling = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swappedLog) -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq $latestMinor) -and ($d.appLine -eq $latestMinor) -and ($d.interpreterMinor -eq $latestMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.ceiling'; req = 'REQ-009'; pass = [bool]$passCeiling
     desc = 'README REQ-009 Tier 5: a request above the newest minor the embed table holds warns that it is not in the table, downloads nothing more and runs under the newest minor'
@@ -293,12 +351,31 @@ $d['swapMinor'] = $swapMinor
 $d['dllExpected'] = $wantDll
 $passRange = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and $d.swappedLog -and (-not $d.swapFailedLog) -and
     ($d.warnLine -eq '') -and ($d.appLine -eq $swapMinor) -and ($d.interpreterMinor -eq $swapMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
-    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1)
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated
 Write-NdjsonRow ([ordered]@{
     id = 'self.embed.version.range'; req = 'REQ-009, REQ-004.2'; pass = [bool]$passRange
     desc = 'README REQ-009 Tier 5: a requires-python range in pyproject.toml gets the newest minor the range allows from the embed table, not the range lower bound'
     details = $d
 })
 
-if (-not ($passSwap -and $passFloor -and $passCeiling -and $passRange)) { exit 1 }
+# ---------------------------------------------------------------- isolated: a runner whose Public folder already holds a Miniconda
+# runtime.txt asks for 3.99 (above the table). A run that reached the decoy gets `python=3.12` from its conda.bat, so it would
+# swap to 3.12, log no request line and print no WARN; an isolated run does the ceiling scenario's own work.
+$d = Get-EmbedFacts 'isolated' 'python-3.99' -Polluted
+$wantDll = ''
+if ($latestMinor.Length -gt 0) { $wantDll = Get-DllName $latestMinor }
+$d['tableOk'] = $tableOk
+$d['latestMinor'] = $latestMinor
+$d['floorMinor'] = $floorMinor
+$d['dllExpected'] = $wantDll
+$passIsolated = $tableOk -and (-not $d.timedOut) -and ($d.exitCode -eq 0) -and ($d.statusState -eq 'embed_env' -or $d.statusState -eq 'ok') -and $d.providerLine -and $d.requestLog -and (-not $d.swappedLog) -and (-not $d.swapFailedLog) -and
+    ($d.warnLine -eq $latestMinor) -and ($d.appLine -eq $latestMinor) -and ($d.interpreterMinor -eq $latestMinor) -and $d.embedDirExists -and (-not $d.swapDirLeft) -and (-not $d.nested) -and
+    ($d.dlls -contains $wantDll) -and ($d.dlls.Count -eq 1) -and $d.publicIsolated -and ($d.decoyCalls -eq 0)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.embed.version.isolated'; req = 'REQ-009'; pass = [bool]$passIsolated
+    desc = 'README REQ-009 Tier 5: a Miniconda already present in the shared Public folder of the runner is not seen by the scenario (own PUBLIC), so the embed tier detects the requested Python itself'
+    details = $d
+})
+
+if (-not ($passSwap -and $passFloor -and $passCeiling -and $passRange -and $passIsolated)) { exit 1 }
 exit 0

@@ -1373,11 +1373,21 @@ minor and no WARN, because a chain with neither uv nor Miniconda reaches the emb
 the tier saw no request; it now runs that helper under its own fresh interpreter. Skips on non-Windows and under
 `HP_FORCE_CONDA_ONLY=1`.
 
+`isolated` (Item 120, a `python-3.99` request like `ceiling`, run with a decoy Miniconda): every run of the script gets its own
+`PUBLIC` (`<work>_public`, set inside `Invoke-Bootstrap`, so the product never sees the runner's real
+`C:\Users\Public\Documents\Miniconda3`). The decoy scenario puts a Miniconda in the PROCESS `PUBLIC` the launched shell
+inherits (a `conda.bat` that records each call in `~embver_decoy_calls.txt` and answers `python=3.12`, and a `python.cmd`):
+the run must not reach it (`decoyCalls` 0) and must still print the request line, so the row is red for exactly the premise
+break of run `43608572893` (an earlier scenario's fallback installed Miniconda into the shared folder and the main flow then
+computed `PYSPEC` itself). The launch file records `PUBLIC=%PUBLIC%` (`~embver_public.txt`) so each of the five rows also
+requires `publicIsolated`, which says the bootstrap really saw its own folder.
+
 ```
 self.embed.version.swap
 self.embed.version.floor
 self.embed.version.ceiling
 self.embed.version.range
+self.embed.version.isolated
 ```
 
 ## selfapps-fastpath-hash NDJSON rows (selfapps_fastpath_hash.ps1, uv lane only, non-gating)
