@@ -240,6 +240,28 @@ class MessageReader(unittest.TestCase):
                  'choice /C YN /N /T 30 /D N /M "Verify it? [Y/N] "\nset /p ANSWER=\n')
         self.assertEqual(msgs(batch), [("prompt", "Build it now? [Y/N]"), ("prompt", "Package it? [Y/N]"), ("prompt", "Verify it? [Y/N]")])
 
+    def test_an_unquoted_prompt_ends_where_cmd_ends_the_command_and_the_rest_of_the_line_is_read(self):
+        # cmd gives `set /p` the text up to the first `&`, `|`, `<`, `>` or unmatched `)` that no quote or caret protects.
+        want = [("prompt", "PyInstaller ready?"), ("echo", "Building the widget")]
+        self.assertEqual(msgs(":a\nset /p ANSWER=PyInstaller ready? & echo Building the widget\n"), want)
+        self.assertEqual(msgs(":a\nset /p ANSWER=PyInstaller ready? && echo Building the widget\n"), want)
+        self.assertEqual(msgs(":a\nset /p ANSWER=PyInstaller ready? || echo Building the widget\n"), want)
+        self.assertEqual(msgs(":a\nif defined X (set /p ANSWER=PyInstaller ready? ) else (echo Building the widget)\n"), want)
+        # A parenthesis that opens inside the text closes inside it too.
+        self.assertEqual(msgs(":a\nif defined X (set /p ANSWER=PyInstaller (the EXE tool) ready? ) else (echo two)\n"),
+                         [("prompt", "PyInstaller (the EXE tool) ready?"), ("echo", "two")])
+
+    def test_a_quoted_or_caret_escaped_separator_is_text_of_the_prompt(self):
+        self.assertEqual(msgs(':a\nset /p "ANSWER=Verify & build it now? [Y/N] " & echo Rebuilding the widget\n'),
+                         [("prompt", "Verify & build it now? [Y/N]"), ("echo", "Rebuilding the widget")])
+        self.assertEqual(msgs(":a\nset /p ANSWER=Verify ^& build it now?\n"), [("prompt", "Verify & build it now?")])
+        self.assertEqual(msgs(':a\nset /p ANSWER=Do "this & that" now? & echo two\n'), [("prompt", 'Do "this & that" now?'), ("echo", "two")])
+        self.assertEqual(msgs(":a\nif defined X (set /p ANSWER=Done ^) now? ) else (echo two)\n"), [("prompt", "Done ) now?"), ("echo", "two")])
+
+    def test_reading_an_answer_from_a_file_is_not_a_prompt(self):
+        self.assertEqual(msgs(':a\nif exist "~entry.abs" set /p HP_ENTRY=<"~entry.abs"\n'), [])
+        self.assertEqual(msgs(':a\nset /p HP_SYS_EXE=<"%HP_SYS_TMP%"\n'), [])
+
     def test_a_percent_variable_stays_as_written(self):
         self.assertEqual(msgs(':a\ncall :log "[INFO] Fast path: reusing %HP_FAST_EXE_PATH%."\n'),
                          [("log", "[INFO] Fast path: reusing %HP_FAST_EXE_PATH%.")])
@@ -420,6 +442,10 @@ class CheckCanFail(unittest.TestCase):
     def test_a_message_after_a_log_call_on_the_same_line_is_judged(self):
         self._one_violation(['call :log "[INFO] PyInstaller is ready." & echo Building the widget'], "Building the widget")
         self._one_violation(['choice /C YN /N /M "Is it fine? [Y/N] " & echo Rebuilding the widget'], "Rebuilding the widget")
+
+    def test_a_message_after_an_unquoted_prompt_on_the_same_line_is_judged(self):
+        self._one_violation(["set /p ANSWER=PyInstaller ready? & echo Building the widget"], "Building the widget")
+        self._one_violation(["if defined HP_FLAG (set /p ANSWER=PyInstaller ready? ) else (echo Building the widget)"], "Building the widget")
 
     def test_a_message_after_a_caret_escaped_parenthesis_is_judged(self):
         self._one_violation(["if defined HP_FLAG (echo Note ^) Building the widget)"], "Note ) Building the widget")
