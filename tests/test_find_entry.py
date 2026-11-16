@@ -230,6 +230,26 @@ class FindEntryTestModules(unittest.TestCase):
         files = {"zeta.py": PROGRAM_GUARD, "test_broken.py": "import unittest\ndef (:\n"}
         self.assertEqual(_rc(files), ("zeta.py", 0))
 
+    def test_a_byte_order_mark_does_not_hide_a_test_module(self):
+        # Windows PowerShell 5.1 and older Notepad save UTF-8 with a BOM. The file is read as text,
+        # so the BOM stays in the string and ast.parse refused it (CodeRabbit, PR #536).
+        # With the BOM unread, test_zeta.py is no test module, so the fallback takes it (it sorts first).
+        files = {"zeta.py": "x = 1\n", "test_zeta.py": "\ufeff" + UNITTEST_RUNNER}
+        self.assertEqual(_rc(files), ("zeta.py", 3))
+
+    def test_a_byte_order_mark_does_not_hide_a_guard(self):
+        # The same defect already hid the guard of a BOM program (rule 3), whatever the file's name.
+        files = {"a_lib.py": "x = 1\n", "b_tool.py": "\ufeff" + PROGRAM_GUARD}
+        self.assertEqual(_rc(files), ("b_tool.py", 0))
+
+    def test_bytes_that_are_not_utf8_are_still_read(self):
+        # The decode ignores bad bytes, so a cp1252 comment must not make a guarded file unparseable.
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a_lib.py").write_text("x = 1\n", encoding="utf-8")
+            (Path(d) / "b_tool.py").write_bytes(b"# caf\xe9\nname = '\xe9'\n" + PROGRAM_GUARD.encode("utf-8"))
+            proc = subprocess.run([sys.executable, str(FIND_ENTRY)], cwd=d, capture_output=True, text=True)
+        self.assertEqual((proc.stdout.strip(), proc.returncode), ("b_tool.py", 0))
+
     def test_only_test_modules_still_give_an_entry(self):
         self.assertEqual(_rc({"test_a.py": UNITTEST_RUNNER, "test_b.py": UNITTEST_NO_GUARD}), ("test_a.py", 0))
         out, rc = _rc({"test_a.py": UNITTEST_NO_GUARD, "test_b.py": UNITTEST_NO_GUARD})
