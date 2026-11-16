@@ -38,6 +38,8 @@ self.contract.uv.pyver.conflict
 self.contract.uv.pyver.exactpin
 self.contract.uv.pyver.nopin
 self.contract.uv.pyver.range
+self.corrupt.conda.evict.install
+self.corrupt.conda.evict.installfail
 self.depmerge.failed.records
 self.depmerge.fallback.emit
 self.depmerge.fallback.helper
@@ -81,6 +83,9 @@ self.fastpath
 self.harness.started
 self.heuristics.pytest
 self.isolation.req010.pythonpath
+self.nivisa.present.control
+self.nivisa.present.noinstall
+self.nivisa.present.subfolder
 self.nivisa.signals.control
 self.nivisa.signals.noinput
 self.nivisa.signals.nonint
