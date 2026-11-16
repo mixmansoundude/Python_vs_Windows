@@ -663,8 +663,15 @@ the tool in plain words, so a reader can tell it is about the optional one-file 
 - **One rule, two readers.** `python tools/exe_wording.py check` (run inside `self.pytest.unit`, so on every lane, by
   `tests/test_exe_wording.py` `RealFiles`) reads the batch file as text. One message is a `call :log "..."` text (a `call :sub "[TAG] ..."`
   too), a run of consecutive line-start `echo` lines of one label, a `set /p` or `choice /M` prompt, an inline `if ... echo` or either
-  branch of a one-line if/else; `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines are not messages, `:log` keeps them off the console. A message
-  with a trigger word (build, builds, building, built, rebuild, packaging, packaged, bundle, smoke, verification) needs a plain word (EXE,
+  branch of a one-line if/else; `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines are not messages, `:log` keeps them off the console. The reader
+  follows cmd.exe's own rules for the parts that decide what reaches the console: the commands of a one-line group that a redirect or a pipe
+  follows (`(echo a & echo b) > f.txt`, `2>&1`, `| findstr`, not `||`) all write there, so none is a message (`_mask_redirected_groups`);
+  a parenthesis escaped by a caret (`^)`) is text and ends no group; the rest of a line after a log call or a prompt is read too
+  (`call :log "..." & echo ...`). A group that spans several lines and is redirected on its closing line is a stated limit: each of its
+  echo lines is read as a console message. A message
+  with a trigger word (build, builds, building, built, rebuild, packaging, packaged, bundle, smoke, verification, or the verb `package` with
+  what it packages after it: `package your app`, `package up`, not after a determiner, so the noun of `the package your program needs` and
+  of `package installation` is quiet) needs a plain word (EXE,
   `.exe`, executable, PyInstaller, Nuitka, standalone, or `%HP_FAST_EXE_PATH%`), or its normalized text (whitespace flattened, each `%VAR%`
   kept as written) must be an entry of `tests/exe_wording_exempt.txt` under a category that says why. `console --file <log>` applies the
   same rules to the timestamped lines of a real run (`self.sysbuild.wording` uses it); there an exempt entry with a `%VAR%` is a template

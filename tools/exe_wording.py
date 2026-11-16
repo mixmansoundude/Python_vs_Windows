@@ -19,7 +19,9 @@ Two checks share one set of rules (the constants below and tests/exe_wording_exe
            tests/selfapps_sysbuild_accept.ps1.
 
 What it does not see (a stated limit, not a promise): text printed by a PowerShell or Python helper, `type` of a file, and a
-message assembled from variables alone. The console check covers those only for the run it is given.
+message assembled from variables alone. The console check covers those only for the run it is given. It reads one line at a time,
+so the echo lines of a group that spans several lines and is redirected on its closing line (`( ... ) > file`) count as console
+messages here (a one-line group that a redirect or a pipe follows is understood).
 """
 import argparse
 import json
@@ -31,10 +33,14 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_BAT = REPO / "run_setup.bat"
 DEFAULT_RULES = REPO / "tests" / "exe_wording_exempt.txt"
 
-# A message is about the build, the verification or the failure of the executable when it says so.
+# A message is about the build, the verification or the failure of the executable when it says so. "package" alone is the noun
+# of the dependency messages ("package installation", "the package list"), so only the verb counts: it is followed by what it
+# packages (`package your app`, `package up`) and no determiner stands in front of it ("the package your program needs").
 TRIGGER = re.compile(
     r"\bbuild(?:s|ing)?\b|\bbuilt\b|\brebuil\w*|\bpackag(?:ing|ed)\b|\bbundl(?:e|es|ed|ing)\b"
-    r"|\bsmoke\b|\bverif(?:y|ies|ied|ication|ying)\b",
+    r"|\bsmoke\b|\bverif(?:y|ies|ied|ication|ying)\b"
+    r"|(?<!\bthe )(?<!\ba )(?<!\ban )(?<!\bthat )(?<!\bwhich )(?<!\beach )(?<!\bevery )(?<!\bany )(?<!\bno )(?<!\bone )"
+    r"\bpackage\s+(?:up\b|(?:your|my|our|this|these)\b)",
     re.IGNORECASE,
 )
 # ... and it names the artifact or the tool in plain words when it holds one of these.
@@ -68,6 +74,8 @@ _FOR = re.compile(r"^for\s+.*?\bdo\s+", re.IGNORECASE)
 _ELSE = re.compile(r"^[\s)]*else\b", re.IGNORECASE)
 _TIME = re.compile(r"\b\d{1,2}:\d{2}:\d{2}[.,]\d{2}\]?\s+(.*)$")
 _PLACEHOLDER = re.compile(r"%%~?[A-Za-z][A-Za-z0-9]*|%~[A-Za-z$:]*[0-9]|%[0-9]\b|%\*|%[^%\s]+%")
+# What can follow the closing parenthesis of a group to send its output away: `>`, `>>`, `<`, `2>`, `2>&1` or a pipe (not `||`).
+_REDIRECT_AFTER = re.compile(r"\s*(?:\d?[<>]|\|(?!\|))")
 
 
 def _caret_escaped(text, pos):
@@ -89,6 +97,29 @@ def _has_redirect(text):
         elif not quoted and ch in "<>|" and not _caret_escaped(text, i):
             return True
     return False
+
+
+def _mask_redirected_groups(line):
+    """The line with the inside of every parenthesised group blanked that a redirect or a pipe follows (`( ... ) > f.txt`).
+
+    cmd.exe sends the output of EVERY command of such a group to the file or the pipe, so none of its echoes or log calls
+    reaches the console, whichever command the redirect seems to stand next to. Quotes and caret-escaped parentheses are not
+    group brackets. The group's own parentheses and the redirect stay, so the statements around it are read as before."""
+    masked = list(line)
+    opened = []
+    quoted = False
+    for i, ch in enumerate(line):
+        if ch == '"':
+            quoted = not quoted
+        elif quoted or _caret_escaped(line, i):
+            continue
+        elif ch == "(":
+            opened.append(i)
+        elif ch == ")" and opened:
+            start = opened.pop()
+            if _REDIRECT_AFTER.match(line, i + 1):
+                masked[start + 1 : i] = " " * (i - start - 1)
+    return "".join(masked)
 
 
 def _statements(line):
@@ -137,9 +168,10 @@ def _unwrap(stmt):
 def _echo_body(command):
     """(body, tail) of an `echo` command, or None when the command is not a console echo (control words, a redirect).
 
-    A closing parenthesis that has no opening one ends the echo's group. `tail` is what follows it when that is another branch of
-    a one-line `if (...) else (...)`, so the caller reads that branch as a statement of its own; a redirect after the parenthesis
-    belongs to the group, so the echo writes a file and is not a console message."""
+    A closing parenthesis that has no opening one ends the echo's group; a parenthesis escaped by a caret (`^)`) is text and
+    ends nothing. `tail` is what follows it when that is another branch of a one-line `if (...) else (...)`, so the caller reads
+    that branch as a statement of its own; a redirect after the parenthesis belongs to the group, so the echo writes a file and
+    is not a console message."""
     m = _ECHO.match(command)
     if not m:
         return None
@@ -149,13 +181,15 @@ def _echo_body(command):
     tail = ""
     depth = 0
     for i, ch in enumerate(body):
+        if ch not in "()" or _caret_escaped(body, i):
+            continue
         if ch == "(":
             depth += 1
-        elif ch == ")":
-            if depth == 0:
-                tail = body[i + 1 :]
-                body = body[:i]
-                break
+        elif depth == 0:
+            tail = body[i + 1 :]
+            body = body[:i]
+            break
+        else:
             depth -= 1
     if _has_redirect(body):
         return None
@@ -192,22 +226,28 @@ def messages(bat_text):
         if not line or _REM.match(line):
             block = None
             continue
+        line = _mask_redirected_groups(line)
+        rest = list(line)  # the line without the messages found below, so a command after a log call is read as well
         found = False
         for pattern, kind in ((_LOG, "log"), (_TAGGED_CALL, "log")):
             for m in pattern.finditer(line):
                 found = True
+                rest[m.start() : m.end()] = " " * (m.end() - m.start())
                 if _has_redirect(_statements(line[m.end():])[0]):
                     continue
                 out.append((n, label, kind, _norm_quoted(m.group(1))))
         for pattern in (_SET_P, _CHOICE_M):
             for m in pattern.finditer(line):
                 found = True
+                rest[m.start() : m.end()] = " " * (m.end() - m.start())
                 text = _norm_quoted(m.group(1))
                 if text:
                     out.append((n, label, "prompt", text))
         if found:
-            block = None
-            continue
+            block = None  # a log call or a prompt ends a block of echo lines
+            line = "".join(rest).strip()
+            if not line:
+                continue
         statements = _statements(line)
         pure = len(statements) == 1 and _ECHO.match(line.lstrip("@ ")) is not None
         added = False
