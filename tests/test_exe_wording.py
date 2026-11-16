@@ -157,7 +157,6 @@ class MessageReader(unittest.TestCase):
             "(echo Building it & echo done) | findstr y",
             '(call :log "[INFO] Building it." & call :log "[INFO] Bundling it.") >> "%LOG%"',
             "( (echo a) & echo Building it ) > f.txt",
-            "(echo a & echo Building it) 2> f.txt",
             # A parenthesis inside quotes is not a bracket of the group.
             '(echo "x)" & echo Building it) > f.txt',
             "(echo a & echo Building it)>f.txt",
@@ -168,6 +167,88 @@ class MessageReader(unittest.TestCase):
         self.assertEqual(msgs(":a\necho before & (echo Building it & echo done) > f.txt\n"), [("echo", "before")])
         self.assertEqual(msgs(":a\n(echo a & echo b) > f.txt & echo after\n"), [("echo", "after")])
         self.assertEqual(msgs(":a\n(echo a) & echo b > f.txt\n"), [("echo", "a")])
+
+    def test_a_group_whose_redirects_are_for_standard_error_or_input_still_prints(self):
+        # Only a redirect of standard output (`>`, `>>`, `1>`, a pipe) sends what a group echoes away. `2>` and `2>&1` are about
+        # standard error, `<` is about standard input, and `>&2` writes to standard error, which is the console. The first
+        # version of the reader treated every `<` and `>` after a group alike, so `( ... ) 2>nul` lost its messages (CodeRabbit,
+        # PR #537).
+        both = [("echo", "a"), ("echo", "Building it")]
+        for line in (
+            "(echo a & echo Building it) 2> f.txt",
+            "(echo a & echo Building it) 2>> f.txt",
+            "(echo a & echo Building it) 2>nul",
+            "(echo a & echo Building it) 2>&1",
+            "(echo a & echo Building it) < in.txt",
+            "(echo a & echo Building it) 2>nul < in.txt",
+            "(echo a & echo Building it) >&2",
+            "(echo a & echo Building it) 1>&2",
+            "if defined X (echo a & echo Building it) 2>nul",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(msgs(":a\n" + line + "\n"), both)
+
+    def test_a_group_is_hidden_when_any_redirect_of_its_chain_takes_standard_output(self):
+        for line in (
+            "(echo a & echo Building it) 2>&1 > f.txt",
+            "(echo a & echo Building it) < in.txt > f.txt",
+            "(echo a & echo Building it) 2> err.txt > f.txt",
+            "(echo a & echo Building it) 1> f.txt",
+            "(echo a & echo Building it) 1>> f.txt",
+            "(echo a & echo Building it) > f.txt 2>&1",
+            "(echo a & echo Building it) 2> err.txt | findstr y",
+            "(echo a & echo Building it) 2>nul >nul",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(msgs(":a\n" + line + "\n"), [])
+        # cmd reads the redirects from left to right: `>&2` copies standard error as it is at that moment. After `2>nul` that is the
+        # null device, so the echoes are gone; in front of it, it is the console, and they stay.
+        self.assertEqual(msgs(":a\n(echo a & echo Building it) 2>nul >&2\n"), [])
+        self.assertEqual(msgs(":a\n(echo a & echo Building it) >&2 2>nul\n"), [("echo", "a"), ("echo", "Building it")])
+
+    def test_an_echo_whose_redirects_are_for_standard_error_or_input_is_a_message_without_them(self):
+        want = [("echo", "Building the widget")]
+        for line in (
+            "echo Building the widget 2> f.txt",
+            "echo Building the widget 2>nul",
+            "echo Building the widget 2>&1",
+            "echo Building the widget < f.txt",
+            "echo Building the widget >&2",
+            "echo Building the widget 1>&2",
+            "echo Building the widget 2> f.txt < g.txt",
+            "2>nul echo Building the widget",
+            "< f.txt echo Building the widget",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(msgs(":a\n" + line + "\n"), want)
+        # The text of the redirect is not part of the message.
+        self.assertEqual(msgs(":a\necho Building the widget 2> f.txt\necho and more 2>nul\n"), [("echo", "Building the widget and more")])
+
+    def test_a_digit_is_a_handle_only_at_the_start_of_a_word(self):
+        # `echo Step 2> f.txt` redirects standard error (the message is `Step`); a digit that ends a word, as in the usual
+        # `echo %TIME%>>log`, or that a space separates from the `>` is text, and the redirect takes standard output.
+        self.assertEqual(msgs(":a\necho Step 2> f.txt\n"), [("echo", "Step")])
+        self.assertEqual(msgs(":a\necho Step 2 > f.txt\n"), [])
+        self.assertEqual(msgs(":a\necho Step2> f.txt\n"), [])
+        self.assertEqual(msgs(":a\n(echo Step 2) > f.txt\n"), [])
+        self.assertEqual(msgs(":a\n(echo a & echo Building it) 1>f.txt\n"), [])
+        # The last redirect of standard output decides: copied to standard error first, then sent to a file, the text is in the file.
+        self.assertEqual(msgs(":a\necho Building the widget >&2 >f.txt\n"), [])
+
+    def test_a_log_call_whose_redirects_are_for_standard_error_or_input_is_still_a_message(self):
+        want = [("log", "[INFO] Building it.")]
+        for tail in ("2>nul", '2>> "%LOG%"', "2>&1", "< f.txt", ">&2"):
+            with self.subTest(tail=tail):
+                self.assertEqual(msgs(':a\ncall :log "[INFO] Building it." %s\n' % tail), want)
+        for tail in ('>> "%LOG%" 2>&1', "2>&1 >nul", "1>nul", "| findstr y"):
+            with self.subTest(tail=tail):
+                self.assertEqual(msgs(':a\ncall :log "[INFO] Building it." %s\n' % tail), [])
+
+    def test_a_redirect_of_the_next_branch_does_not_hide_a_log_call(self):
+        # What follows the call is the command's own redirects up to the parenthesis that closes its group; the other branch of the
+        # `if` is another command.
+        self.assertEqual(msgs(':a\nif defined X (call :log "[INFO] Building it.") else (echo a > f.txt)\n'), [("log", "[INFO] Building it.")])
+        self.assertEqual(msgs(':a\nif defined X (call :log "[INFO] Building it." > f.txt) else (echo b)\n'), [("echo", "b")])
 
     def test_a_group_that_nothing_redirects_keeps_every_command(self):
         self.assertEqual(msgs(":a\n(echo a & echo b)\n"), [("echo", "a"), ("echo", "b")])
@@ -463,6 +544,25 @@ class CheckCanFail(unittest.TestCase):
         problems = check_text(mutated)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("Building the widget", problems[0])
+
+    def test_a_group_whose_redirect_is_for_standard_error_or_input_is_still_judged(self):
+        # Only a redirect of standard output hides the echoes of a group; `2>`, `2>&1` and `<` leave them on the console.
+        for redirect in ("2> f.txt", "2>&1", "< in.txt", "2>nul < in.txt"):
+            with self.subTest(redirect=redirect):
+                mutated, _ = with_lines("(echo Building the widget & echo Bundling it) " + redirect)
+                problems = check_text(mutated)
+                self.assertEqual(len(problems), 2, problems)
+                self.assertIn("Building the widget", problems[0])
+                self.assertIn("Bundling it", problems[1])
+        for redirect in ("2>&1 > f.txt", "< in.txt > f.txt", "2>nul >nul"):
+            with self.subTest(redirect=redirect):
+                mutated, _ = with_lines("(echo Building the widget & echo Bundling it) " + redirect)
+                self.assertEqual(check_text(mutated), [])
+        mutated, first = with_lines("echo Building the widget 2>nul")
+        problems = check_text(mutated)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("line %d (main)" % first, problems[0])
+        self.assertIn("does not name the EXE or the tool: Building the widget\n", problems[0])
 
     def test_the_same_words_with_the_name_are_clean(self):
         for new in ('call :log "[INFO] Building the widget EXE now."', "echo Packaging the widget as a standalone app",
