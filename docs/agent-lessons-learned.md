@@ -1644,14 +1644,16 @@ which no test had ever shown. What made the rule usable and hard to cheat:
   (the `echo` text of the same messages is the static rule's job) and fails a run that read fewer than 30 lines, 6 about the build, 4 naming
   the EXE or 1 exempt: about two thirds of the first real run (48, 9, 7 after the rewording, 2). A console that stopped before the build
   would otherwise pass for want of violations. Set the first floors low, read the first real run, tighten them in the next commit.
-- **A reader of cmd syntax has to apply cmd's rules, or its blind spots are the review findings** (PR #537, four findings, each real). The
+- **A reader of cmd syntax has to apply cmd's rules, or its blind spots are the review findings** (PR #537, five findings, each real). The
   first reader (1) took `package` only as a noun's neighbour and so never saw the verb (`Package your app now?`, `We could not package
   your app`): the trigger now holds the verb form (`package` followed by `up` or a possessive, not after a determiner) and leaves the noun of
   the dependency messages alone; (2) read each command of a line on its own, so `(echo a & echo Building it) > f.txt` was judged as two
   console messages when cmd sends both to the file: a group that a redirect or a pipe follows is blanked first, while `||` is not a pipe and
   a redirect that follows one command (`echo b > f.txt`) is that command's own; (3) ended an `echo` at any `)`, caret-escaped or not, so
   `echo Note ^) Building it` lost its tail; (4) stopped reading a line at the first log call or prompt, so `call :log "..." & echo ...` hid its
-  echo. Each fix has a mutation case in `tests/test_exe_wording.py` that fails without it. The first check of rule (2) only asked that two
+  echo; (5) took everything after `set /p NAME=` for the prompt when no quote followed, so `set /p A=Ready? & echo Building it` hid its echo
+  (and `set /p A=<file` was a prompt named `<`): `_prompt_span` ends an unquoted prompt at the first `&`, `|`, `<`, `>` or unmatched `)` that
+  no quote or caret protects. Each fix has a mutation case in `tests/test_exe_wording.py` that fails without it. The first check of rule (2) only asked that two
   words were absent that no line printed, so the group lines passed whatever the reader did: **assert the whole result (`== []`), not the
   absence of a string the case can never produce**.
 - **A scenario that installs into "the system Python" must not install into the runner's.** The accept scenario makes a venv from the

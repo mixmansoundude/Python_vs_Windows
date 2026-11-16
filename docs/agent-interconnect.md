@@ -667,7 +667,8 @@ the tool in plain words, so a reader can tell it is about the optional one-file 
   follows cmd.exe's own rules for the parts that decide what reaches the console: the commands of a one-line group that a redirect or a pipe
   follows (`(echo a & echo b) > f.txt`, `2>&1`, `| findstr`, not `||`) all write there, so none is a message (`_mask_redirected_groups`);
   a parenthesis escaped by a caret (`^)`) is text and ends no group; the rest of a line after a log call or a prompt is read too
-  (`call :log "..." & echo ...`). A group that spans several lines and is redirected on its closing line is a stated limit: each of its
+  (`call :log "..." & echo ...`), and an unquoted `set /p A=text` ends at the first `&`, `|`, `<`, `>` or unmatched `)` that no quote or
+  caret protects (`_prompt_span`: `set /p A=Ready? & echo ...` is a prompt and an echo, `set /p A=<file` is no prompt). A group that spans several lines and is redirected on its closing line is a stated limit: each of its
   echo lines is read as a console message. A message
   with a trigger word (build, builds, building, built, rebuild, packaging, packaged, bundle, smoke, verification, or the verb `package` with
   what it packages after it: `package your app`, `package up`, not after a determiner, so the noun of `the package your program needs` and

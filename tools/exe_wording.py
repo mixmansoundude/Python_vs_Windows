@@ -57,7 +57,7 @@ _LABEL = re.compile(r"^:([A-Za-z0-9_]+)\s*$")
 _REM = re.compile(r"^(?:rem\b|::)", re.IGNORECASE)
 _LOG = re.compile(r'\bcall\s+:log\s+"([^"]*)"', re.IGNORECASE)
 _TAGGED_CALL = re.compile(r'\bcall\s+:(?!log\b)[A-Za-z0-9_]+\s+"(\[[A-Z][A-Z_]*\][^"]*)"', re.IGNORECASE)
-_SET_P = re.compile(r'\bset\s+/p\s+"?[A-Za-z0-9_]+=([^"]*)"?', re.IGNORECASE)
+_SET_P = re.compile(r'\bset\s+/p\s+("?)[A-Za-z0-9_]+=', re.IGNORECASE)
 _CHOICE_M = re.compile(r'\bchoice\b[^"\n]*?/M\s+"([^"]*)"', re.IGNORECASE)
 _ECHO = re.compile(r"^@?echo(?:\.|\s+)(.*)$", re.IGNORECASE)
 _HEAD = re.compile(r"^(?:[()\s@]|else\b)+", re.IGNORECASE)
@@ -120,6 +120,39 @@ def _mask_redirected_groups(line):
             if _REDIRECT_AFTER.match(line, i + 1):
                 masked[start + 1 : i] = " " * (i - start - 1)
     return "".join(masked)
+
+
+def _prompt_span(line, start, quoted_form):
+    """(text, end) of the prompt of the `set /p` whose `NAME=` ends at `start`; `end` is where the rest of the line goes on.
+
+    `set /p "NAME=text"` ends at the closing quote. Unquoted, cmd hands the command the text up to the first `&`, `|`, `<` or
+    `>` that no quote or caret protects, or up to a `)` that closes a group the text did not open, so `set /p A=Ready? & echo x`
+    is a prompt and an echo. A caret in front of a character is dropped like in an echo."""
+    if quoted_form:
+        close = line.find('"', start)
+        if close < 0:
+            return line[start:], len(line)
+        return line[start:close], close + 1
+    quoted = False
+    depth = 0
+    end = len(line)
+    for i in range(start, len(line)):
+        ch = line[i]
+        if ch == '"':
+            quoted = not quoted
+        elif quoted or _caret_escaped(line, i):
+            continue
+        elif ch in "&|<>":
+            end = i
+            break
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                end = i
+                break
+            depth -= 1
+    return re.sub(r"\^(.)", r"\1", line[start:end]), end
 
 
 def _statements(line):
@@ -236,13 +269,19 @@ def messages(bat_text):
                 if _has_redirect(_statements(line[m.end():])[0]):
                     continue
                 out.append((n, label, kind, _norm_quoted(m.group(1))))
-        for pattern in (_SET_P, _CHOICE_M):
-            for m in pattern.finditer(line):
-                found = True
-                rest[m.start() : m.end()] = " " * (m.end() - m.start())
-                text = _norm_quoted(m.group(1))
-                if text:
-                    out.append((n, label, "prompt", text))
+        for m in _SET_P.finditer(line):
+            found = True
+            text, end = _prompt_span(line, m.end(), m.group(1) == '"')
+            rest[m.start() : end] = " " * (end - m.start())
+            text = _norm_quoted(text)
+            if text:
+                out.append((n, label, "prompt", text))
+        for m in _CHOICE_M.finditer(line):
+            found = True
+            rest[m.start() : m.end()] = " " * (m.end() - m.start())
+            text = _norm_quoted(m.group(1))
+            if text:
+                out.append((n, label, "prompt", text))
         if found:
             block = None  # a log call or a prompt ends a block of echo lines
             line = "".join(rest).strip()
