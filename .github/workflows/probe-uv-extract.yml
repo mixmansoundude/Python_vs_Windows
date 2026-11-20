@@ -86,3 +86,56 @@ jobs:
             }
           }
           exit 0
+
+  chain:
+    name: Which Archive module Windows PowerShell loads in the pwsh to cmd.exe to powershell.exe chain
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Item 127: every test (and the lane step) starts the bootstrapper from a pwsh step, and the bootstrapper starts
+      # powershell.exe from cmd.exe. pwsh resets PSModulePath only for a powershell.exe it starts itself, not for one
+      # that cmd.exe starts, so the Windows PowerShell 5.1 of this chain can see the pwsh 7 module folders.
+      - name: Probe the chain and run the product's old and new unpack lines in it
+        shell: pwsh
+        run: |
+          $w = Join-Path $env:RUNNER_TEMP 'chainprobe'
+          New-Item -ItemType Directory -Force -Path $w | Out-Null
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $src = Join-Path $w 'src'
+          New-Item -ItemType Directory -Force -Path $src | Out-Null
+          Set-Content -LiteralPath (Join-Path $src 'uv.exe') -Value 'MZ-test' -Encoding Ascii
+          Set-Content -LiteralPath (Join-Path $src 'uvx.exe') -Value 'MZ-testx' -Encoding Ascii
+          $zip = Join-Path $w 'u.zip'
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $zip)
+          $env:HP_UV_ZIP = $zip
+          $env:HP_UV_BIN = Join-Path $w 'bin_old'
+          $env:HP_UV_BIN_NEW = Join-Path $w 'bin_new'
+          Write-Host ('PROBE chain pwsh=' + $PSVersionTable.PSVersion + ' PSModulePath=' + $env:PSModulePath)
+          foreach ($m in @(Get-ChildItem -Path 'C:\Program Files\PowerShell\7\Modules' -Directory -ErrorAction SilentlyContinue)) { Write-Host ('PROBE pwsh7 module folder ' + $m.Name) }
+          foreach ($f in @(Get-ChildItem -Path 'C:\Program Files\PowerShell\7\Modules\Microsoft.PowerShell.Archive' -Recurse -Filter '*.psd1' -ErrorAction SilentlyContinue)) {
+            Write-Host ('PROBE pwsh7 archive manifest ' + $f.FullName + ' version ' + (Import-PowerShellDataFile -LiteralPath $f.FullName).ModuleVersion)
+          }
+          $newLine = ((Get-Content -LiteralPath .\run_setup.bat) | Where-Object { $_.Trim().StartsWith('powershell ') -and $_.Contains('ZipFile]::OpenRead') } | Select-Object -First 1).Trim()
+          Write-Host ('PROBE new line found=' + [bool]$newLine)
+          $newLine = $newLine.Replace('>> "%LOG%" 2>&1', '>> "' + (Join-Path $w 'new.log') + '" 2>&1').Replace('$env:HP_UV_BIN', '$env:HP_UV_BIN_NEW')
+          $cmdText = @'
+          @echo off
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "$c = Get-Command Expand-Archive; Write-Output ('PROBE child Expand-Archive module=' + $c.Source + ' version=' + $c.Version + ' path=' + $c.Module.Path)"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "Write-Output ('PROBE child PSModulePath=' + $env:PSModulePath)"
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath $env:HP_UV_ZIP -DestinationPath $env:HP_UV_BIN -Force -ErrorAction Stop } catch { Write-Output ('PROBE old line failed: ' + $_.Exception.Message); exit 1 }"
+          echo PROBE old line rc=%ERRORLEVEL%
+          __NEW_LINE__
+          echo PROBE new line rc=%ERRORLEVEL%
+          '@
+          $cmdText = $cmdText.Replace('__NEW_LINE__', $newLine)
+          $cmdFile = Join-Path $w 'chain.cmd'
+          Set-Content -LiteralPath $cmdFile -Value $cmdText -Encoding Ascii
+          cmd.exe /d /c $cmdFile
+          foreach ($d in @('bin_old', 'bin_new')) {
+            foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $w $d) -ErrorAction SilentlyContinue)) { Write-Host ('PROBE ' + $d + ' holds ' + $f.Name + ' ' + $f.Length) }
+          }
+          if (Test-Path -LiteralPath (Join-Path $w 'new.log')) { foreach ($l in (Get-Content -LiteralPath (Join-Path $w 'new.log'))) { Write-Host ('PROBE new.log ' + $l) } }
+          exit 0
