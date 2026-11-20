@@ -8100,3 +8100,25 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   guard for rule 3. Two unit tests written first failed locally for those two reasons (`('test_zeta.py', 3) != ('zeta.py', 3)` and `('a_lib.py', 3) != ('b_tool.py', 0)`), a third (a cp1252 byte) passed as the control; the fix is `encoding="utf-8-sig"`
   (parsing raw bytes was rejected: it would drop the tolerance for stray bytes), margin 151 down to 87. The finding about stale cached EXEs after a selector change went to cold storage ("Make the cached-EXE fast path notice a change of the chosen entry").
 - **Not covered.** A `tests` folder, `conftest.py` and `pytest.ini` are not read (those belong to the unit-test idea in cold storage); a test module that imports neither framework (a script of plain asserts) stays a candidate.
+
+### Item 127 (filed 2026-11-20, PR #536; uv could not be acquired on Windows runner image 20261116.315.1, so every run fell back to Miniconda)
+
+- **The symptom.** On the new image the uv archive downloaded in full (14.84 MB) and `~uv_bin\uv.exe` did not exist afterwards: 0 of 29 acquisitions on 2026-11-20 against 120 of 120 on image
+  20261103.298.1, which held every unrelated PR (lane 1 and lane 2 saw the same failure). The old unpack line printed nothing, so the setup log said only "acquisition failed".
+- **Diagnostic first.** Two rows were written before any fix: `self.netres.uv.acquire` (REQ-009.22, a good archive must leave `uv.exe`, `uvx.exe` and `uvw.exe`, one request, the archive removed) and
+  `self.netres.uv.unpackfail` (REQ-009.23, a file that is no archive must leave a non-empty `uv: unpack failed: <reason>` log line, the listing and the fallback), in `tests/selfapps_net_resilience.ps1` over the real block
+  `:pvw_uv_exe_skip` to `:uv_acquire_done`, and the unpack line was changed to append its own output to the setup log. Both rows were red for the right reason in the real lane of run `44753214156`
+  (`UV=;REASON=acquire_failed`, no `uv.exe`, `uvExeLength` -1; `.acquire` logged `uv: unpack failed: Cannot find an overload for "ExtractToDirectory" and the argument count: "3".`, which is the
+  reason the old line had thrown away, and `.unpackfail` logged the line with an empty reason, a second red). Earlier runs `44708165167`, `44708489835` and `44708958163` had shown the symptom without a reason.
+- **Cause, proven by a probe job (run `44800976347`).** Every CI step is `pwsh` 7.6.10 whose `PSModulePath` starts with the PowerShell 7 module folders. A `powershell.exe` that pwsh starts itself gets a clean
+  path (the first probes, which therefore passed with every extraction method), but the `powershell.exe` that `cmd.exe` starts (the bootstrapper's chain: pwsh, `cmd.exe`, `powershell.exe`) inherits it, so
+  `Expand-Archive` resolved to `Microsoft.PowerShell.Archive` 1.2.7 in `c:\program files\powershell\7\Modules`, which calls an overload of `ZipFile.ExtractToDirectory` that exists only in .NET Core. The same line
+  gave rc 1 there and the raw .NET line gave rc 0 with `uv.exe` and `uvx.exe` written, in the same chain. The Windows image changed which module PowerShell 7 ships and how a child sees it; the bootstrapper
+  itself did not change between 20261103.298.1 and 20261116.315.1.
+- **The fix.** The unpack line uses `System.IO.Compression.ZipFile.OpenRead` and `ZipFileExtensions.ExtractToFile` with each entry under its bare `Name` (the route `tools/embed_extract.ps1` already takes), reads the archive
+  and folder from `$env:HP_UV_ZIP` and `$env:HP_UV_BIN`, holds no percent sign but `%LOG%` and appends the reason of a failure to the setup log through the command's own output (never `:log`). README REQ-009.22 and .23 state the two
+  conditions. `uv_unpack_problems` in `tests/test_net_resilience.py` pins the shape and names `Expand-Archive` if it comes back; the unit test runs five mutation cases of the pin.
+- **Lesson.** `docs/agent-lessons-learned.md`, "`powershell.exe` started by `cmd.exe` under a pwsh step inherits PowerShell 7's module folders". It may also explain the older note that `Get-FileHash` did not load in a `for /f` subshell (not tested).
+- **Left.** A search of `run_setup.bat` and `tools/*.ps1` finds no other call of `Expand-Archive`, `Compress-Archive` or `Get-FileHash` (only comments). The core cmdlets the cmd-started lines still use
+  (`Invoke-WebRequest`, `Test-Path`, `Get-Item`, `Get-Date`) were not affected: the three `.powershell` rows of `self.netres.*` run the real `Invoke-WebRequest` lines through the same chain and were green on the new image (run
+  `44753214156`). That is evidence for those lines only, not a proof for every cmdlet. 257 of 269 shalls named.

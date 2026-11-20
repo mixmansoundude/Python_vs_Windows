@@ -1091,6 +1091,32 @@ error, which `pwsh` surfaces the same way.
 
 ---
 
+## `powershell.exe` started by `cmd.exe` under a pwsh step inherits PowerShell 7's module folders, so a module cmdlet in `-Command` text can load PowerShell 7's copy (Item 127)
+
+On Windows runner image 20261116.315.1 the bootstrapper downloaded uv's 14.8 MB archive in full and then had no `uv.exe`: the unpack line was
+`powershell -NoProfile -Command "Expand-Archive -LiteralPath ... -DestinationPath ... -Force"` and it printed nothing (its `catch { exit 1 }`
+threw the reason away), so 29 of 29 acquisitions on the new image fell back to Miniconda (120 of 120 had worked on image 20261103.298.1). The
+reason, once the line printed it: `Cannot find an overload for "ExtractToDirectory" and the argument count: "3".` The chain probe
+(`self.netres.uv.*` first run, then a throwaway job) showed the mechanism: every CI step is `pwsh` (7.6.10), whose `PSModulePath` starts with
+`C:\Program Files\PowerShell\Modules;c:\program files\powershell\7\Modules` before the Windows PowerShell folders. pwsh resets that
+variable for a `powershell.exe` it starts itself (the 5.1 of the earlier probes printed a clean one); the 5.1 that `cmd.exe` starts (pwsh then
+`cmd.exe` then `powershell.exe`, the bootstrapper's chain) inherited it, so `Get-Command Expand-Archive` there resolved to `Microsoft.PowerShell.Archive` 1.2.7 from
+`c:\program files\powershell\7\Modules`, which calls an overload that exists only in .NET Core. The same `Expand-Archive` line works from a
+5.1 parent or a 5.1 that pwsh started itself (the earlier probes), which is why it never failed before and why a probe from the wrong parent
+proves nothing. **Rules:** (1) in `-Command` text that cmd.exe starts, use .NET types (`[System.IO.Compression.ZipFile]`, `[System.IO.File]`,
+`[System.Security.Cryptography.SHA256]`), not cmdlets from a module that PowerShell 7 also ships (`Microsoft.PowerShell.Archive`, and by the same
+inheritance possibly `Utility` and `Management`; the older "prefer raw .NET types" entry's `Get-FileHash` failure in a `for /f` subshell may
+have been this, not tested). The embedded Python tier's `tools/embed_extract.ps1` follows the rule and was green on the same image.
+(2) A command whose failure decides a provider must print the reason it failed to the log, appended through the command's own output and never
+through `:log`; the first version of this line could not say why. (3) A test of such a line has to start it from the chain the
+product uses, and the chain is part of the premise: `self.netres.uv.acquire`/`.unpackfail` run the real block under `cmd.exe` from the pwsh
+step, and the probe that started `powershell.exe` from `cmd.exe` under pwsh is what separated the working probes from the failing run.
+(4) Pass paths to such a line as environment variables (`$env:HP_UV_ZIP`, `$env:HP_UV_BIN`) and keep percent signs out of the text, so a folder
+name with an apostrophe cannot end a single-quoted literal and cmd cannot pair a stray `%`; `tests/test_net_resilience.py` (`uv_unpack_problems`)
+pins both, the absence of `Expand-Archive` and entries written under their bare name.
+
+---
+
 ## Clearing an environment variable for a child process: do not trust `SetEnvironmentVariable($name, $null)`; ask the child what it sees
 
 A test that must start the bootstrapper with no `HP_*`/`PVW_*`/`NOINPUT` variable (`tests/selfapps_noflag_default.ps1`,

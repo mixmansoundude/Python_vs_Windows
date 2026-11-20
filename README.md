@@ -406,6 +406,15 @@ name.
     no `uv.exe` in `~uv_bin`, write the reason for the failure and the file names found in `~uv_bin` to the setup
     log, log `UV_FALLBACK reason=acquire_failed` and go on with the next provider.
 
+  > - The archive is unpacked with .NET's zip classes (`ZipFile.OpenRead` and `ExtractToFile`, each entry under its bare
+  >   file name), not with the `Expand-Archive` cmdlet. When Windows PowerShell 5.1 is started by `cmd.exe` and `cmd.exe`
+  >   by PowerShell 7 (the way every CI step starts the bootstrapper), the 5.1 inherits PowerShell 7's module folders and
+  >   loads PowerShell 7's `Microsoft.PowerShell.Archive` (1.2.7 on Windows runner image 20261116.315.1), which fails on
+  >   .NET Framework with `Cannot find an overload for "ExtractToDirectory" and the argument count: "3"`. The archive
+  >   downloaded in full and no `uv.exe` resulted, so every run fell back to Miniconda (Item 127).
+  > - The reason of a failed unpack is the text the command itself prints, which goes to the setup log through the
+  >   command's own output and never through `:log`, because it is arbitrary text.
+
   **Build tool choice.** A super-user should be able to choose which tool builds the EXE, while a run with no
   choice should keep the default order: PyInstaller first, with Nuitka as the fallback after a failed PyInstaller
   build and as the elective upgrade of REQ-018.2. The value of `PVW_BUILDER` is compared without regard to letter
