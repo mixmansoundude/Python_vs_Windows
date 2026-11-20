@@ -21,7 +21,8 @@ Two checks share one set of rules (the constants below and tests/exe_wording_exe
 What it does not see (a stated limit, not a promise): text printed by a PowerShell or Python helper, `type` of a file, and a
 message assembled from variables alone. The console check covers those only for the run it is given. It reads one line at a time,
 so the echo lines of a group that spans several lines and is redirected on its closing line (`( ... ) > file`) count as console
-messages here (a one-line group that a redirect or a pipe follows is understood).
+messages here (a one-line group that a redirect of standard output or a pipe follows is understood: its commands write there. A
+redirect of standard error or input hides nothing, and the redirects of one command apply from left to right as in cmd.exe).
 """
 import argparse
 import json
@@ -74,8 +75,13 @@ _FOR = re.compile(r"^for\s+.*?\bdo\s+", re.IGNORECASE)
 _ELSE = re.compile(r"^[\s)]*else\b", re.IGNORECASE)
 _TIME = re.compile(r"\b\d{1,2}:\d{2}:\d{2}[.,]\d{2}\]?\s+(.*)$")
 _PLACEHOLDER = re.compile(r"%%~?[A-Za-z][A-Za-z0-9]*|%~[A-Za-z$:]*[0-9]|%[0-9]\b|%\*|%[^%\s]+%")
-# What can follow the closing parenthesis of a group to send its output away: `>`, `>>`, `<`, `2>`, `2>&1` or a pipe (not `||`).
-_REDIRECT_AFTER = re.compile(r"\s*(?:\d?[<>]|\|(?!\|))")
+# One redirect of a command: a pipe (not `||`), or `<`, `>` or `>>` with what it reads or writes, a file name (`target`) or `&n` for a
+# handle (`dup`). The optional digit in front is the handle the redirect is about (`2>` is standard error; none means 0 for `<` and 1
+# for `>`). Whether a digit in the middle of a command is a handle is not for this pattern to say, see _split_redirects.
+_CLAUSE = re.compile(
+    r'(?:(?P<pipe>\|)(?!\|)'
+    r'|(?:(?P<handle>[0-9])(?=[<>]))?(?P<op><|>>?)(?:&(?P<dup>[0-9])|[ \t]*(?P<target>"[^"]*"|[^\s&|<>()]+)))'
+)
 
 
 def _caret_escaped(text, pos):
@@ -88,23 +94,125 @@ def _caret_escaped(text, pos):
     return carets % 2 == 1
 
 
-def _has_redirect(text):
-    """True when the text holds an unquoted, unescaped `>`, `<` or `|` (the statement writes a file or feeds a pipe)."""
+def _group_end(text):
+    """Index of the first `)` of the text that closes a group the text did not open, or -1. Quotes and carets protect parentheses."""
+    depth = 0
     quoted = False
     for i, ch in enumerate(text):
         if ch == '"':
             quoted = not quoted
+        elif quoted or ch not in "()" or _caret_escaped(text, i):
+            continue
+        elif ch == "(":
+            depth += 1
+        elif depth == 0:
+            return i
+        else:
+            depth -= 1
+    return -1
+
+
+def _clause(match, handle=None):
+    """(kind, stream, source) of a redirect that _CLAUSE matched; `handle` is the digit the caller found in front of it."""
+    if match.group("pipe"):
+        return ("pipe", None, None)
+    if match.group("op") == "<":
+        return ("in", None, None)
+    stream = int(match.group("handle") or handle or 1)
+    if match.group("dup"):
+        return ("dup", stream, int(match.group("dup")))
+    return ("file", stream, None)
+
+
+def _hides_output(clauses):
+    """True when the redirects, applied from left to right as cmd.exe does, leave what a command writes away from the console.
+
+    Standard output is gone after `>file` or a pipe; `2>file` takes only standard error, and `<` is about standard input. `>&2` copies
+    standard error as it is at that moment (the console, unless an earlier `2>` took it) and `2>&1` copies standard output, so
+    `2>nul >&2` hides the text and `>&2 2>nul` does not."""
+    gone = {1: False, 2: False}  # the stream no longer reaches the console
+    for kind, stream, source in clauses:
+        if kind == "pipe":
+            gone[1] = True
+        elif stream in gone and kind == "file":
+            gone[stream] = True
+        elif stream in gone and kind == "dup" and source in gone:
+            gone[stream] = gone[source]
+    return gone[1]
+
+
+def _split_redirects(text):
+    """(hidden, rest) of the text of one command: `rest` is the text without its redirects, `hidden` says whether they take standard
+    output away from the console (see _hides_output).
+
+    A redirect can stand anywhere in a command, in front of it too (`2>nul echo x`). Its handle is the digit in front of it when that
+    digit starts a word: `echo Step 2> f.txt` redirects standard error and prints `Step`, while `echo Step2> f.txt` and the usual
+    `echo %TIME%>>log` write their text to the file. Quotes and carets protect the characters that would start a redirect. A pipe ends
+    the command: what follows it belongs to the next one."""
+    clauses = []
+    kept = []
+    quoted = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '"':
+            quoted = not quoted
         elif not quoted and ch in "<>|" and not _caret_escaped(text, i):
-            return True
-    return False
+            if text[i : i + 2] == "||":
+                kept.extend("||")
+                i += 2
+                continue
+            digit = None
+            if ch != "|" and kept and kept[-1] in "0123456789" and (len(kept) == 1 or kept[-2] in " \t("):
+                digit = kept[-1]
+            match = _CLAUSE.match(text, i)
+            if match:
+                if digit is not None:
+                    kept.pop()
+                clauses.append(_clause(match, digit))
+                if match.group("pipe"):
+                    break
+                i = match.end()
+                continue
+        kept.append(ch)
+        i += 1
+    return _hides_output(clauses), "".join(kept)
+
+
+def _chain_hides(text, pos):
+    """Whether the redirects that directly follow a group, from `pos` (right after its closing parenthesis), take its standard output
+    away. The chain ends at the first thing that is not a redirect (`&`, `else`, the end of the line) and at a pipe."""
+    clauses = []
+    i = pos
+    while True:
+        while i < len(text) and text[i] in " \t":
+            i += 1
+        match = _CLAUSE.match(text, i)
+        if not match:
+            break
+        clauses.append(_clause(match))
+        i = match.end()
+        if match.group("pipe"):
+            break
+    return _hides_output(clauses)
+
+
+def _hidden_after(line, pos):
+    """Whether the redirects after a log call or a tagged call (from `pos`, the end of its quoted text) hide it: those of its own
+    command, up to `&`, `&&`, `||` or the parenthesis that closes its group, not those of the next branch or command."""
+    tail = _statements(line[pos:])[0]
+    end = _group_end(tail)
+    return _split_redirects(tail if end < 0 else tail[:end])[0]
 
 
 def _mask_redirected_groups(line):
-    """The line with the inside of every parenthesised group blanked that a redirect or a pipe follows (`( ... ) > f.txt`).
+    """The line with the inside of every parenthesised group blanked that a redirect of standard output or a pipe follows
+    (`( ... ) > f.txt`).
 
     cmd.exe sends the output of EVERY command of such a group to the file or the pipe, so none of its echoes or log calls
-    reaches the console, whichever command the redirect seems to stand next to. Quotes and caret-escaped parentheses are not
-    group brackets. The group's own parentheses and the redirect stay, so the statements around it are read as before."""
+    reaches the console, whichever command the redirect seems to stand next to. A group that only redirects standard error or input
+    (`( ... ) 2>nul`) still prints. Quotes and caret-escaped parentheses are not group brackets. The group's own parentheses and the
+    redirect stay, so the statements around it are read as before."""
     masked = list(line)
     opened = []
     quoted = False
@@ -117,7 +225,7 @@ def _mask_redirected_groups(line):
             opened.append(i)
         elif ch == ")" and opened:
             start = opened.pop()
-            if _REDIRECT_AFTER.match(line, i + 1):
+            if _chain_hides(line, i + 1):
                 masked[start + 1 : i] = " " * (i - start - 1)
     return "".join(masked)
 
@@ -156,7 +264,8 @@ def _prompt_span(line, start, quoted_form):
 
 
 def _statements(line):
-    """Split a line at the unquoted, unescaped `&`, `&&` and `||` that chain commands."""
+    """Split a line at the unquoted, unescaped `&`, `&&` and `||` that chain commands. The `&` of `>&2` or `<&3` is part of the
+    redirect, which copies a handle, and chains nothing."""
     out = []
     quoted = False
     start = 0
@@ -166,7 +275,7 @@ def _statements(line):
         if ch == '"':
             quoted = not quoted
         elif not quoted and not _caret_escaped(line, i):
-            if ch == "&":
+            if ch == "&" and not (line[i - 1 : i] in ("<", ">") and not _caret_escaped(line, i - 1)):
                 out.append(line[start:i])
                 i += 2 if line[i + 1 : i + 2] == "&" else 1
                 start = i
@@ -198,39 +307,20 @@ def _unwrap(stmt):
             return rest
 
 
-def _echo_body(command):
-    """(body, tail) of an `echo` command, or None when the command is not a console echo (control words, a redirect).
-
-    A closing parenthesis that has no opening one ends the echo's group; a parenthesis escaped by a caret (`^)`) is text and
-    ends nothing. `tail` is what follows it when that is another branch of a one-line `if (...) else (...)`, so the caller reads
-    that branch as a statement of its own; a redirect after the parenthesis belongs to the group, so the echo writes a file and
-    is not a console message."""
-    m = _ECHO.match(command)
+def _echo_text(command):
+    """The text of the console echo that `command` is (the part of a statement before the parenthesis that ends its group, see
+    _group_end), or None when it is not one: another command, `echo off`, or an echo whose standard output goes to a file or a pipe.
+    The redirects of standard error and input are not part of the text and do not stop the echo from printing."""
+    hidden, command = _split_redirects(command)
+    if hidden:
+        return None
+    m = _ECHO.match(command.strip())
     if not m:
         return None
     body = m.group(1)
     if body.strip().lower() in ("off", "on"):
         return None
-    tail = ""
-    depth = 0
-    for i, ch in enumerate(body):
-        if ch not in "()" or _caret_escaped(body, i):
-            continue
-        if ch == "(":
-            depth += 1
-        elif depth == 0:
-            tail = body[i + 1 :]
-            body = body[:i]
-            break
-        else:
-            depth -= 1
-    if _has_redirect(body):
-        return None
-    if _ELSE.match(tail):
-        return body, tail
-    if _has_redirect(tail):
-        return None
-    return body, ""
+    return body
 
 
 def _norm_echo(text):
@@ -266,7 +356,7 @@ def messages(bat_text):
             for m in pattern.finditer(line):
                 found = True
                 rest[m.start() : m.end()] = " " * (m.end() - m.start())
-                if _has_redirect(_statements(line[m.end():])[0]):
+                if _hidden_after(line, m.end()):
                     continue
                 out.append((n, label, kind, _norm_quoted(m.group(1))))
         for m in _SET_P.finditer(line):
@@ -293,13 +383,21 @@ def messages(bat_text):
         queue = list(statements)
         while queue:
             command = _unwrap(queue.pop(0))
-            found_echo = _echo_body(command)
-            if found_echo is None:
-                continue
-            body, tail = found_echo
-            if tail:
+            # The parenthesis that closes the group ends the command. What follows it is the next branch of a one-line
+            # `if (...) else (...)`, read as a statement of its own, or the redirects of the group, which hide the command
+            # when they take standard output away (a group opened on this line was dealt with by _mask_redirected_groups).
+            end = _group_end(command)
+            tail = ""
+            if end >= 0:
+                command, tail = command[:end], command[end + 1 :]
+            if _ELSE.match(tail):
                 queue.insert(0, tail)
                 pure = False
+            elif _chain_hides(tail, 0):
+                continue
+            body = _echo_text(command)
+            if body is None:
+                continue
             text = _norm_echo(body)
             if not text:
                 continue

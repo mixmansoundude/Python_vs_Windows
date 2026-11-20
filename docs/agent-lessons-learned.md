@@ -1644,7 +1644,7 @@ which no test had ever shown. What made the rule usable and hard to cheat:
   (the `echo` text of the same messages is the static rule's job) and fails a run that read fewer than 30 lines, 6 about the build, 4 naming
   the EXE or 1 exempt: about two thirds of the first real run (48, 9, 7 after the rewording, 2). A console that stopped before the build
   would otherwise pass for want of violations. Set the first floors low, read the first real run, tighten them in the next commit.
-- **A reader of cmd syntax has to apply cmd's rules, or its blind spots are the review findings** (PR #537, five findings, each real). The
+- **A reader of cmd syntax has to apply cmd's rules, or its blind spots are the review findings** (PR #537, six findings and one hole, each real). The
   first reader (1) took `package` only as a noun's neighbour and so never saw the verb (`Package your app now?`, `We could not package
   your app`): the trigger now holds the verb form (`package` followed by `up` or a possessive, not after a determiner) and leaves the noun of
   the dependency messages alone; (2) read each command of a line on its own, so `(echo a & echo Building it) > f.txt` was judged as two
@@ -1653,7 +1653,15 @@ which no test had ever shown. What made the rule usable and hard to cheat:
   `echo Note ^) Building it` lost its tail; (4) stopped reading a line at the first log call or prompt, so `call :log "..." & echo ...` hid its
   echo; (5) took everything after `set /p NAME=` for the prompt when no quote followed, so `set /p A=Ready? & echo Building it` hid its echo
   (and `set /p A=<file` was a prompt named `<`): `_prompt_span` ends an unquoted prompt at the first `&`, `|`, `<`, `>` or unmatched `)` that
-  no quote or caret protects. Each fix has a mutation case in `tests/test_exe_wording.py` that fails without it. The first check of rule (2) only asked that two
+  no quote or caret protects; (6) took every `<`, `>` or `|` after a group, an echo or a log call for a redirect of standard output, so
+  `(echo a & echo Building it) 2>nul`, `echo Building it 2>nul` and `call :log "..." 2>> "%LOG%"`, which all print, were dropped, while
+  `echo Step2> f.txt` was read as printing `Step2`: the reader now models what cmd does with a redirect (which stream it names, the
+  order from left to right, a digit that starts a word is the handle, `>&2` copies a handle and chains nothing, a pipe ends the command);
+  (7) a hole found while rereading, not by a reviewer: the `else` branch of a one-line if/else was read only when the first branch was
+  an echo, so `if defined X (set A=1) else (echo Building it)` lost its echo (a command is now cut at the parenthesis that closes its
+  group and the tail is read like any other statement). **A reader that answers "does a redirect follow" has to say which stream and in
+  what order before it can be right: write the table of cases first (the red tests list about twenty shapes) and let the code follow it.**
+  Each fix has a mutation case in `tests/test_exe_wording.py` that fails without it. The first check of rule (2) only asked that two
   words were absent that no line printed, so the group lines passed whatever the reader did: **assert the whole result (`== []`), not the
   absence of a string the case can never produce**.
 - **A scenario that installs into "the system Python" must not install into the runner's.** The accept scenario makes a venv from the

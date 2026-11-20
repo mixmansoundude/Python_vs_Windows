@@ -664,8 +664,15 @@ the tool in plain words, so a reader can tell it is about the optional one-file 
   `tests/test_exe_wording.py` `RealFiles`) reads the batch file as text. One message is a `call :log "..."` text (a `call :sub "[TAG] ..."`
   too), a run of consecutive line-start `echo` lines of one label, a `set /p` or `choice /M` prompt, an inline `if ... echo` or either
   branch of a one-line if/else; `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines are not messages, `:log` keeps them off the console. The reader
-  follows cmd.exe's own rules for the parts that decide what reaches the console: the commands of a one-line group that a redirect or a pipe
-  follows (`(echo a & echo b) > f.txt`, `2>&1`, `| findstr`, not `||`) all write there, so none is a message (`_mask_redirected_groups`);
+  follows cmd.exe's own rules for the parts that decide what reaches the console: the commands of a one-line group that a redirect of
+  standard output or a pipe follows (`(echo a & echo b) > f.txt`, `> f.txt 2>&1`, `| findstr`, not `||`) all write there, so none is a
+  message (`_mask_redirected_groups`); a redirect of standard error or input (`2>nul`, `2>&1`, `< f.txt`, `>&2`) leaves the text on the
+  console, so the group, an echo or a log call with only those is still a message. The redirects of one command apply from left to right
+  (`2>nul >&2` hides the text, `>&2 2>nul` does not), a digit is a handle only at the start of a word (`echo Step 2> f.txt` prints `Step`,
+  `echo Step2> f.txt` and `echo %TIME%>>log` write their text to the file) and the `&` of `>&2` is part of the redirect and chains nothing
+  (`_split_redirects`, `_hides_output`, `_chain_hides`, `_hidden_after`, `_statements`). A command ends at the parenthesis that closes its
+  group (`_group_end`), the redirects after that parenthesis belong to the group, and the `else` after it is read whatever the first
+  branch was (`if defined X (set A=1) else (echo Building it)` is a message);
   a parenthesis escaped by a caret (`^)`) is text and ends no group; the rest of a line after a log call or a prompt is read too
   (`call :log "..." & echo ...`), and an unquoted `set /p A=text` ends at the first `&`, `|`, `<`, `>` or unmatched `)` that no quote or
   caret protects (`_prompt_span`: `set /p A=Ready? & echo ...` is a prompt and an echo, `set /p A=<file` is no prompt). A group that spans several lines and is redirected on its closing line is a stated limit: each of its
