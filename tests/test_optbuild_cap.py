@@ -663,7 +663,7 @@ class RealFiles(unittest.TestCase):
         # the repair loop's line (Item 106) and this line stop the program the same way; a change to one is a change to the other
         repair = [ln for ln in live_bat(lines_of(self.batch)) if "$env:HP_HIR_EXE" in ln and "WaitForExit(30000)" in ln]
         self.assertEqual(len(repair), 1)
-        stop = GOOD_TEXT[GOOD_TEXT.index("if(-not $done){try{$k="):GOOD_TEXT.index(FALLBACK_KILL) + len(FALLBACK_KILL) + 2]
+        stop = GOOD_TEXT[GOOD_TEXT.index("if(-not $done){try{$k="):GOOD_TEXT.index(FALLBACK_KILL) + len(FALLBACK_KILL) + 1]
         self.assertTrue(stop.startswith("if(-not $done){try{$k=New-Object") and stop.endswith("}catch{};try{$p.Kill()}catch{}}"), stop)
         self.assertIn(stop, repair[0])
 
