@@ -25,8 +25,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Run the uv extraction probe (Windows PowerShell 5.1)
+      - name: Run the uv extraction probe (Windows PowerShell 5.1 parent)
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: .\tools\probe_uv_extract.ps1
+
+      # The product's tests all start the bootstrapper from a pwsh step, so the Windows PowerShell 5.1 it
+      # starts inherits pwsh's PSModulePath; this step reproduces that parent.
+      - name: Run the uv extraction probe (pwsh parent, child is Windows PowerShell 5.1)
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          Write-Host ('PROBE pwsh parent PSModulePath=' + $env:PSModulePath)
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\probe_uv_extract.ps1
+          exit 0
