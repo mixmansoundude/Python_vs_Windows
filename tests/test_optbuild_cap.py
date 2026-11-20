@@ -598,8 +598,9 @@ class StandInCases:
     def test_a_program_that_ends_by_itself_and_leaves_a_pipe_holder_running_gives_its_exit_code_and_ends_nothing(self):
         # outside the contract on purpose (README REQ-018.36 is about a run that does not finish): the tree stop needs the started
         # process alive, and a process the program left running is not this build's to end; the two waits still give up, so the line
-        # returns after about a second and not when the holder ends (it runs for ten seconds here)
-        got = run_line_text(self.text, LEAVES_A_PIPE_HOLDER, self.tmp)
+        # returns after about a second and not when the holder ends (it runs for ten seconds here); the recording taskkill is in
+        # place so that a tree stop attempted on this path would leave a log, and a host without one cannot hide it
+        got = run_line_text(self.text, LEAVES_A_PIPE_HOLDER, self.tmp, stand_in=True)
         self.assertEqual(got["lines"], ["0"], got)
         self.assertIsNone(got["taskkill"], got)
         self.assertIsNotNone(got["child"], got)
