@@ -115,7 +115,7 @@ jobs:
           $env:HP_UV_BIN_NEW = Join-Path $w 'bin_new'
           Write-Host ('PROBE chain pwsh=' + $PSVersionTable.PSVersion + ' PSModulePath=' + $env:PSModulePath)
           foreach ($m in @(Get-ChildItem -Path 'C:\Program Files\PowerShell\7\Modules' -Directory -ErrorAction SilentlyContinue)) { Write-Host ('PROBE pwsh7 module folder ' + $m.Name) }
-          foreach ($f in @(Get-ChildItem -Path 'C:\Program Files\PowerShell\7\Modules\Microsoft.PowerShell.Archive' -Recurse -Filter '*.psd1' -ErrorAction SilentlyContinue)) {
+          foreach ($f in @(Get-ChildItem -Path 'C:\Program Files\PowerShell\7\Modules\Microsoft.PowerShell.Archive' -Recurse -Filter 'Microsoft.PowerShell.Archive.psd1' -ErrorAction SilentlyContinue)) {
             Write-Host ('PROBE pwsh7 archive manifest ' + $f.FullName + ' version ' + (Import-PowerShellDataFile -LiteralPath $f.FullName).ModuleVersion)
           }
           $newLine = ((Get-Content -LiteralPath .\run_setup.bat) | Where-Object { $_.Trim().StartsWith('powershell ') -and $_.Contains('ZipFile]::OpenRead') } | Select-Object -First 1).Trim()
