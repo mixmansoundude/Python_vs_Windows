@@ -20,7 +20,7 @@ jobs:
   probe:
     name: Probe uv extraction on the runner image
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,4 +40,49 @@ jobs:
         run: |
           Write-Host ('PROBE pwsh parent PSModulePath=' + $env:PSModulePath)
           powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\probe_uv_extract.ps1
+          exit 0
+
+      # The product itself, started the way the tests start it, far enough to reach the uv step. Its own setup log says
+      # what the unpack line printed.
+      - name: Run the real bootstrapper to the uv step
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:GITHUB_WORKSPACE 'probe_work'
+          New-Item -ItemType Directory -Force -Path $work | Out-Null
+          Copy-Item -LiteralPath .\run_setup.bat -Destination $work
+          Set-Content -LiteralPath (Join-Path $work 'hello.py') -Value "print('hi')" -Encoding Ascii
+          Set-Content -LiteralPath (Join-Path $work 'stdin.txt') -Value '' -Encoding Ascii
+          $env:HP_CI_LANE = 'probe'
+          $env:NOINPUT = '1'
+          $p = Start-Process -FilePath $env:ComSpec -ArgumentList '/d /c run_setup.bat' -WorkingDirectory $work -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $work 'out.txt') -RedirectStandardError (Join-Path $work 'err.txt') -RedirectStandardInput (Join-Path $work 'stdin.txt')
+          if (-not $p.WaitForExit(90000)) { & taskkill /F /T /PID $p.Id 2>&1 | Out-Null }
+          $log = Join-Path $work '~setup.log'
+          if (Test-Path -LiteralPath $log) {
+            foreach ($l in (Get-Content -LiteralPath $log | Where-Object { $_ -match 'uv|UV_FALLBACK|unpack|Expand' } | Select-Object -First 40)) {
+              $t = [string]$l
+              if ($t.Length -gt 300) { $t = $t.Substring(0, 300) }
+              Write-Host ('PROBE setup.log ' + $t)
+            }
+          } else { Write-Host 'PROBE no setup log' }
+          foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $work '~uv_bin') -Force -ErrorAction SilentlyContinue)) { Write-Host ('PROBE ~uv_bin holds ' + $f.Name + ' ' + $f.Length) }
+          exit 0
+
+      # The harness that holds the new rows, run the way the real lane runs it.
+      - name: Run the net resilience script (the new uv rows)
+        shell: pwsh
+        run: |
+          & .\tests\selfapps_net_resilience.ps1
+          $nd = '.\tests\~test-results.ndjson'
+          foreach ($l in (Get-Content -LiteralPath $nd | Where-Object { $_ -match 'self\.netres\.uv' })) {
+            $t = [string]$l
+            if ($t.Length -gt 3500) { $t = $t.Substring(0, 3500) }
+            Write-Host ('PROBE row ' + $t)
+          }
+          foreach ($n in @('uv_acq', 'uv_bad')) {
+            $d = ".\tests\~selftest_netres\$n"
+            foreach ($f in @('~driver.log', '~driver_console.txt', '~driver_console_err.txt')) {
+              $pp = Join-Path $d $f
+              if (Test-Path -LiteralPath $pp) { foreach ($l in (Get-Content -LiteralPath $pp | Select-Object -First 25)) { Write-Host ('PROBE ' + $n + ' ' + $f + ': ' + $l) } }
+            }
+          }
           exit 0
