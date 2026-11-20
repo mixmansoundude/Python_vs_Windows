@@ -4445,6 +4445,27 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Rule kept.** A job that retries holds the arithmetic at or below `timeout-minutes`; see `docs/agent-lessons-learned.md`
   ("A job's `timeout-minutes` is a sum") and `docs/agent-interconnect.md` (`publish_diag` "Prep site directories").
 
+### Item 120: the embed rows no longer depend on the runner's Miniconda (closed 2026-11-16, PR #534; found in run `43608572893`, PR #531)
+
+- **The problem.** The four `self.embed.version.*` rows (`tests/selfapps_embed_version.ps1`, real lane, gating) ran the bootstrapper with
+  the runner's real `PUBLIC`. In that run `~envsmoke` could not download uv from github.com, fell back to conda and installed Miniconda
+  into `C:\Users\Public\Documents\Miniconda3`; 25 minutes later the embed rows found a Miniconda there, the main flow computed `PYSPEC`
+  itself and the embed tier never printed its own "a Python version request was found" line, which each row requires. The product was
+  right (the swap happened, the program ran under the requested minor) and the premise of the rows (no uv, no Miniconda, the chain README
+  REQ-009 names for this tier) was not true, so a pull request that touched none of it was held by the aggregate check.
+- **What shipped.** Every bootstrap of the script gets its own empty `PUBLIC` (`<work>_public`) from its launch file, which also writes
+  `~embver_public.txt`; all five rows require `publicIsolated`. A fifth row, `self.embed.version.isolated`, puts a decoy Miniconda in the
+  PROCESS `PUBLIC` (a stub `condabin\conda.bat` that records each call) and requires that it was never called, that the request line and
+  the embed provider line are present and that the newest minor ran. `tests/test_embed_tier.py` pins the `PUBLIC` handling
+  (`test_every_scenario_has_its_own_public_folder`, the decoy's contents, the `isolated` scenario's conditions) with mutation cases.
+- **Evidence.** Red first, for the right reason: run `43685182910` (real lane) had the decoy's `conda.bat` called once (`python -V`),
+  `publicSeen` the decoy folder, no request line and no embed provider line. Green after the fix: runs `43734481738` (head `e8ba2e4`) and
+  `43763108492` (head `71f255a`), all five rows true with `publicIsolated` true, `decoyCalls` 0 and one `python3NN.dll`; the id
+  `self.embed.version.isolated` joined `tests/expected_rows/real.txt` from the green run `43708161372` and was written again in both.
+- **Rule kept.** A scenario that must not see something the runner may hold proves it with a planted copy of that thing, not by running
+  where it happens to be absent: `docs/agent-lessons-learned.md` ("A scenario's premise can also be broken by an earlier scenario's
+  fallback").
+
 ### Item 106 (shipped 2026-11-14; assigned 2026-11-13 from the `gap:` entries of `tests/test_req_shall_trace.py`)
 
 - **The problem.** Five README shalls had no row able to fail for them: REQ-005.1.6 (a run whose install fails records nothing, so the
@@ -4598,7 +4619,8 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   reaches a `pause`), and the shalls that are unit-tested only and can become rows later: REQ-008.5, .6 and .12, REQ-018.6, .13, .19 and
   .30. The REQ-013 family, REQ-003.1 and .2, REQ-004.3 and .4 and REQ-023.1 are lane 3's.
 - **Evidence.** The reading of the six rows on their first run is in the squash commit message. The five contract-uv ids and the pyvisa row
-  (real and conda-full) join `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+  (real and conda-full) joined `tests/expected_rows/` on 2026-11-16 (lane 1 owns it), read from the push run of #535's merge
+  (`43734580455`) and the first run after it (`43763108492`), both green with every one of the six rows true.
 
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 

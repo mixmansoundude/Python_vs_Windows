@@ -200,6 +200,7 @@ self.netres.offline.conda
 self.netres.offline.uv
 self.netres.shipped.tools
 self.netres.swap.retry
+self.nivisa.pyvisa.installed
 self.nivisa.subfolder.accepted
 self.nivisa.subfolder.declined
 self.nivisa.subfolder.timeout
