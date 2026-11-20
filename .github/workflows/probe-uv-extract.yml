@@ -1,0 +1,32 @@
+# yamllint disable rule:line-length rule:truthy
+---
+name: Probe uv extraction (Item 127, temporary)
+
+# CLAUDE.md Item 127: why uv.exe is missing after a full download on the 2026-11-16 runner image.
+# Runs only when the probe script or this file changes (a push), or by hand; removed with the fix.
+# See tools/probe_uv_extract.ps1. It reports and never fails.
+
+on:
+  workflow_dispatch: null
+  push:
+    paths:
+      - 'tools/probe_uv_extract.ps1'
+      - '.github/workflows/probe-uv-extract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe uv extraction on the runner image
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run the uv extraction probe (Windows PowerShell 5.1)
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .\tools\probe_uv_extract.ps1
