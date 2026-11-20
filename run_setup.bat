@@ -935,7 +935,7 @@ if not exist "%HP_UV_ZIP%" if not "%HP_OFFLINE_MODE%"=="1" (
 if exist "%HP_UV_ZIP%" (
   for %%S in ("%HP_UV_ZIP%") do (
     if %%~zS GEQ %HP_UV_MIN_BYTES% (
-      powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%HP_UV_ZIP%' -DestinationPath '%HP_UV_BIN%' -Force -ErrorAction Stop } catch { Write-Output ('uv: unpack failed: ' + $_.Exception.Message); exit 1 }" >> "%LOG%" 2>&1
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Add-Type -AssemblyName System.IO.Compression.FileSystem; [void][System.IO.Directory]::CreateDirectory($env:HP_UV_BIN); $z = [System.IO.Compression.ZipFile]::OpenRead($env:HP_UV_ZIP); try { foreach ($e in $z.Entries) { if ($e.Name) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, [System.IO.Path]::Combine($env:HP_UV_BIN, $e.Name), $true) } } } finally { $z.Dispose() } } catch { Write-Output ('uv: unpack failed: ' + $_.Exception.Message); exit 1 }" >> "%LOG%" 2>&1
     ) else (
       call :log "[WARN] uv: zip too small (%%~zS bytes); skipping extract."
     )

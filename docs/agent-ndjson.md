@@ -1650,8 +1650,15 @@ self.netres.getpip.retry, self.netres.getpip.powershell, self.netres.getpip.fall
 self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.miniconda.checkorder, self.netres.miniconda.offline,
 self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
 self.netres.check.repeat, self.netres.swap.retry,
-self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools
+self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools,
+self.netres.uv.acquire, self.netres.uv.unpackfail
 ```
+
+Item 127 (README REQ-009.22 and .23) added two rows to the same script, with one more cut (the uv acquisition block, as for the Item 116
+rows, with a stub `uv.exe`-sized program zipped by the script into a local archive): `uv.acquire` (the archive downloads in full, one curl
+request, and `~uv_bin\uv.exe` exists afterwards with the run's `HP_UV_EXE` pointing at it, no fallback reason) and `uv.unpackfail` (the
+body is a file of the right size that is no archive: the setup log holds a `uv: unpack failed: <reason>` line, the failure lines and the
+listing of `~uv_bin`, `UV_FALLBACK_REASON` is `acquire_failed` and no `uv.exe` exists).
 
 ## selfapps-venv-probe NDJSON rows (selfapps_venv_probe.ps1, real lane only, GATING)
 
