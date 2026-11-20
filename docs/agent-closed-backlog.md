@@ -8167,3 +8167,16 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   again, which must unpack in full without ever starting the planted file (the stub records each start in `uv.calls`); a third run is the control and must take the cached binary. The fix is a marker file `~uv_bin\~unpack.incomplete`, written before the
   unpack and removed only after one that succeeded; the cached-binary branch tests it first, and a marker left with no successful unpack this run vetoes the result like a failed exit code. 259 of 271 shalls named.
   **Red proof (run `44870788075`, `real` lane, read from the pre-harness artifact):** `self.netres.uv.survivor` false for the right reason, the second run logged `uv: cached binary found at ~uv_bin\uv.exe` with `requests` 0 and `uvCallsCount` 1 (the planted file was started) and no earlier-unpack warning, `nextRunUnpacksAgain` and `runAfterTakesCachedUv` false, `firstRunFailsTheUnpack` true; the other 20 `self.netres.*` rows were true, `self.netres.uv.partial` with both of its flags.
+
+### Item 126 (Python 3.9 grammar tests for every embedded helper, lane 3)
+
+- **The gap.** A fallback tier (venv, system, the embedded Python) can hand `HP_PY` an interpreter as old as 3.9, and an embedded helper is parsed in full before its first line runs, so one `match` statement or `except*` is a
+  `SyntaxError` that no `try/except` inside it can catch. Six helpers (`HP_DEP_MERGE`, `HP_LAST_ERROR_LINE`, `HP_PEP723_EXTRACT`, `HP_PIPREQS_PRECHECK`, `HP_PREFLIGHT_CHECK`, `HP_RUNTIME_MODULE_SCAN`) had their own
+  `ast.parse(..., feature_version=(3, 9))` test; the other sixteen Python helpers had none, and nothing made a new payload add one.
+- **What shipped.** `tests/test_helper_grammar.py` reads every payload line of `run_setup.bat` through `test_payload_inventory.embedded_payloads` (the one decoder), takes each payload's kind from its emit site (`.py` is Python, `.ps1`
+  is PowerShell, `~condarc` is listed as neither, anything else or a payload no emit site writes fails the test), and requires all 22 Python payloads to parse with `feature_version=(3, 9)` plus three rules that
+  `feature_version` does not give on a 3.12 or newer host (a quote reused inside an f-string replacement field, a starred subscript, `X | Y` in an annotation that is evaluated when the def runs). 27 tests, of which
+  24 are synthetic cases (three of them skip below Python 3.12, where `ast.parse` refuses those f-strings itself) that prove each rule and each classification branch can fail (a `match` statement, `except*`, a `type` statement, a generic def, each of the three extra rules and its non-trigger, a payload nothing
+  emits, an unknown file kind, a payload written as two kinds, a bad payload found through the whole path from a batch text).
+- **Result.** All 22 helpers pass today, so there was no red state to read first: this is a guard, not a fix, and it gates from its first run through `self.pytest.unit`. Not covered: library calls an old interpreter lacks
+  (`zip(strict=True)`, an unguarded `tomllib` import), which are a different question from grammar and need a real 3.9 interpreter in CI.

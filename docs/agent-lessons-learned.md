@@ -372,6 +372,17 @@ only":
   at parse/compile time, BEFORE any `try/except` runs, producing a hard crash. No bare
   `match`/`case` (3.10+), no `X | Y` runtime type unions in evaluated positions, no other grammar
   an older CPython would reject while tokenizing.
+- **One test holds every Python payload to 3.9 grammar (Item 126, `tests/test_helper_grammar.py`).** Six helpers had their
+  own `ast.parse(..., feature_version=(3, 9))` test and sixteen had none, so a `match` statement in one of them would have
+  reached a user on the venv or system tier as a hard `SyntaxError`. The test reads every payload line of `run_setup.bat`, takes
+  each one's kind from its emit site (`call :emit_from_base64 "<file>" HP_NAME`: a `.py` target is Python, `.ps1` is PowerShell,
+  `~condarc` is neither; an unknown file kind or a payload nothing emits fails, so a new kind is a decision and not a silent skip)
+  and parses each Python payload, so a payload added tomorrow is covered the day it is added. `feature_version` is not a complete guard
+  on a newer host, which is why the test adds rules: a quote reused inside an f-string replacement field and a comment or
+  backslash in one (PEP 701, 3.12), `a[*b]` (PEP 646, 3.11) and `X | Y` in an annotation that runs when the def runs (a `TypeError`
+  on 3.9 unless `from __future__ import annotations`). A library call that an old interpreter lacks (`zip(strict=True)`, a
+  `tomllib` import with no fallback) is not grammar and is not judged. The f-string rules need a 3.12 or newer `tokenize`, so they
+  are skipped on an older host; the grammar parse itself runs everywhere.
 
 ---
 
