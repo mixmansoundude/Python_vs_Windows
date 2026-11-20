@@ -4525,7 +4525,14 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   bootloaders with the first version of the line as the control that must show the defect. The red test went up alone (head `8a7a6db`, run `44708958163`); the fix is a separate
   commit: the line now carries the repair line's stop text (`taskkill /F /T /PID`, waited for at most 5 seconds, `Kill()` as the fallback, both reads `Wait(5000)`, exit code or
   -1 printed last).
-- **Why only the optimized build, not `tools/exe_smokerun.ps1`.** The smoke runner's silent window program may be wanted open for the last-chance offer's window question
+- **The red run, read before the fix was pushed (run `44708958163`, head `8a7a6db`).** `self.optbuild.cap` was red in contract-uv for the right reason: scenario `cap` finished with
+  the stand-in reaching its last line (100 ticks, 99.3 seconds on its own clock, driver 101 seconds, exit -1 printed, nothing left running) and three problems that name the cap,
+  the program's clock and the driver's clock; scenario `exit` (the control) was clean (0, `done`, 2.0 seconds). `self.pytest.unit` was red on every lane for the two
+  `tests/test_optbuild_cap.py::RealFiles` tests that read the real batch file (the two more that fail on a Linux host run the real line through pwsh against shell-script stand-ins and are skipped on a Windows runner). Every other red row of
+  that run was one cause that is not this change: on the Windows image `20261116.315.1` (provisioner `20261111.635`, OS build 26100.33828) the uv zip downloads (14.84 MB) and
+  `~uv_bin\uv.exe` is still missing afterwards, so uv acquisition logs `uv: acquisition failed` and the run uses conda; lanes that landed on the older image
+  `20261103.298.1` (the `uv` lane of that run, OS build 26100.33674) acquired uv 120 times. The two other branches CI started the same morning (`44708489835`, `44708165167`)
+  show the same rows red on whichever lanes got the new image (`real` in both), so the held gate is an image rollout and not a change of any of the three branches. The smoke runner's silent window program may be wanted open for the last-chance offer's window question
   (Item 82 slice 2, `~smokerun_killed.txt`), so ending its whole tree is a decision first. That is slice (b), still Item 110 in CLAUDE.md.
 - **For the README owner.** REQ-018.36 only says the log names the limit. A shall that the run ends at that limit and that nothing the run started keeps running would state what
   the row proves; the proposal is in the PR body.
