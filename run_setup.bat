@@ -935,7 +935,7 @@ if not exist "%HP_UV_ZIP%" if not "%HP_OFFLINE_MODE%"=="1" (
 if exist "%HP_UV_ZIP%" (
   for %%S in ("%HP_UV_ZIP%") do (
     if %%~zS GEQ %HP_UV_MIN_BYTES% (
-      powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%HP_UV_ZIP%' -DestinationPath '%HP_UV_BIN%' -Force } catch { exit 1 }" >> "%LOG%" 2>&1
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Expand-Archive -LiteralPath '%HP_UV_ZIP%' -DestinationPath '%HP_UV_BIN%' -Force -ErrorAction Stop } catch { Write-Output ('uv: unpack failed: ' + $_.Exception.Message); exit 1 }" >> "%LOG%" 2>&1
     ) else (
       call :log "[WARN] uv: zip too small (%%~zS bytes); skipping extract."
     )
@@ -947,6 +947,8 @@ if exist "%HP_UV_BIN%\uv.exe" (
   call :log "[INFO] uv: acquired at ~uv_bin\uv.exe"
 ) else (
   call :log "[WARN] uv: acquisition failed; will use conda for env creation."
+  call :log "[INFO] uv: ~uv_bin holds the files listed next."
+  dir /b "%HP_UV_BIN%" >> "%LOG%" 2>&1
   set "UV_FALLBACK_REASON=acquire_failed"
   call :log "[WARN] UV_FALLBACK reason=acquire_failed"
 )
