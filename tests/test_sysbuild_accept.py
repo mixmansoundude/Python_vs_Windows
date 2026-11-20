@@ -53,7 +53,7 @@ UPLOADS = (
     "tests/~selftest_sysbuild_accept/~bootstrap.status.json",
     "tests/~selftest_sysbuild_accept/~wording_judge.err.txt",
 )
-JUDGES = ["Find-ConsoleLine", "Measure-ConsoleLines", "Get-AcceptProblems", "Get-WordingProblems"]
+JUDGES = ["Find-ConsoleLine", "Measure-ConsoleLines", "Get-AcceptProblems", "Get-IsolationProblems", "Get-WordingProblems"]
 # about two thirds of the first real run (48 timestamped lines, 9 about the build, 7 naming the EXE, 2 exempt, run 43740185058 after the rewording)
 FLOORS = {"minTimestamped": 30, "minTriggered": 6, "minNamed": 4, "minExempt": 1}
 
@@ -62,6 +62,7 @@ FLOORS = {"minTimestamped": 30, "minTriggered": 6, "minNamed": 4, "minExempt": 1
 EXE = "_selftest_sysbuild_accept.exe"
 LEAF = "~selftest_sysbuild_accept_venv"
 PROGRAM = "sysbuild-accept-app-line-7731"
+PUBLIC = "C:\\w\\~selftest_sysbuild_accept_public"
 STEPS = (
     ("tried", "the system tier was tried", "[WARN] Attempting system Python fallback (degraded)...", True),
     ("consent", "the REQ-014 consent was accepted", "[INFO] REQ-014: System Python consent: user accepted.", True),
@@ -238,6 +239,26 @@ def script_problems(text):
         found.append("the run no longer puts the private interpreter first on PATH, so it would not be the system Python of the run")
     if "('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul')" not in compact:
         found.append("the bootstrap no longer runs with standard input closed (< nul) and its console in the log the judges read")
+    # the run's own PUBLIC (run 44708489835): the bootstrapper puts %PUBLIC%\Documents\Miniconda3 first on PATH whether or not it exists, so
+    # the folder must be the run's own and empty, set before the bootstrap starts, recorded by the launch file and judged
+    if "$publicDir = $appDir + '_public'" not in compact:
+        found.append("the folder of the run's own PUBLIC is no longer named from the folder of the program")
+    set_public = compact.find("('set \"PUBLIC=' + $publicDir + '\"')")
+    record = compact.find("'>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%'")
+    start_batch = compact.find("('call run_setup.bat > '")
+    if set_public < 0:
+        found.append("the run no longer gives the bootstrapper a PUBLIC of its own, so a Miniconda left in the runner's shared Public folder "
+                     "could become the system Python of the run")
+    if record < 0:
+        found.append("the launch file no longer records the PUBLIC the bootstrapper saw")
+    if set_public >= 0 and record >= 0 and set_public > record:
+        found.append("the PUBLIC is recorded before it is set, so the record would show the runner's")
+    if record >= 0 and start_batch >= 0 and record > start_batch:
+        found.append("the PUBLIC is recorded after the bootstrapper started")
+    for need in ("if (Test-Path -LiteralPath $publicDir) { Remove-Item -LiteralPath $publicDir -Recurse -Force -ErrorAction SilentlyContinue }",
+                 "New-Item -ItemType Directory -Force -Path $publicDir | Out-Null"):
+        if need not in compact:
+            found.append("the folder of the run's own PUBLIC is no longer made empty: %s is missing" % need)
     # the numbers end at a digit boundary: -LimitMs 9000000 is a different limit and must not pass as 900000
     for pattern, shown in ((r"-LimitMs 900000(?!\d)", "-LimitMs 900000"), (r"-LimitMs 60000(?!\d)", "-LimitMs 60000")):
         if not re.search(pattern, compact):
@@ -262,6 +283,13 @@ def script_problems(text):
                      "-DirectFinished ([bool]$direct.Finished)", "-DirectExitText ([string]$direct.ExitCode)", "-DirectOutText $directOut"):
             if need not in args:
                 found.append("the verdict no longer hands %s to Get-AcceptProblems" % need)
+    if "$isolationProblems = @(Get-IsolationProblems -PublicRecord $publicRecord -PublicWanted $publicDir)" not in compact:
+        found.append("the PUBLIC the bootstrapper saw is no longer judged by Get-IsolationProblems against the folder the run set")
+    combine = compact.find("$acceptProblems = @($isolationProblems) + @($acceptProblems)")
+    if combine < 0:
+        found.append("the row of self.sysbuild.accept no longer includes the problems of the PUBLIC the bootstrapper saw")
+    elif combine > compact.find("$pass = [bool](@($acceptProblems).Count -eq 0)"):
+        found.append("the problems of the PUBLIC are added to the row of self.sysbuild.accept after its verdict was taken")
     call = "$wordingProblems = @(Get-WordingProblems"
     if call not in compact:
         found.append("the console is no longer judged by Get-WordingProblems")
@@ -383,6 +411,12 @@ def wording_args(json_text=None, **over):
     return args
 
 
+def isolation_args(record=None, **over):
+    args = dict(PublicRecord="PUBLIC=" + PUBLIC + "\r\n" if record is None else record, PublicWanted=PUBLIC)
+    args.update(over)
+    return args
+
+
 def failing_json(n):
     problems = ["console line talks about building or verifying and does not name the EXE or the tool: line %d" % i for i in range(n)]
     return json.dumps({"ok": False, "stats": {"lines": 60, "timestamped": 30, "triggered": 8, "named": 6, "exempt": 2, "violations": n},
@@ -425,6 +459,15 @@ def judge_cases():
     c.append(case("accept_direct_unfinished", ac, **accept_args(DirectFinished=False, DirectExitText="-1", DirectOutText="")))
     c.append(case("accept_direct_exit_1", ac, **accept_args(DirectExitText="1")))
     c.append(case("accept_direct_no_line", ac, **accept_args(DirectOutText="")))
+    # --- Get-IsolationProblems: the run was given a PUBLIC of its own
+    iso = "Get-IsolationProblems"
+    c.append(case("isolation_good", iso, **isolation_args()))
+    c.append(case("isolation_case_blind", iso, **isolation_args("PUBLIC=" + PUBLIC.upper() + "\r\n")))
+    c.append(case("isolation_trailing_space", iso, **isolation_args("PUBLIC=" + PUBLIC + " \r\n")))
+    c.append(case("isolation_runner_public", iso, **isolation_args("PUBLIC=C:\\Users\\Public\r\n")))
+    c.append(case("isolation_parent_folder", iso, **isolation_args("PUBLIC=C:\\w\r\n")))
+    c.append(case("isolation_no_record", iso, **isolation_args("")))
+    c.append(case("isolation_empty_value", iso, **isolation_args("PUBLIC=\r\n")))
     # --- Get-WordingProblems
     c.append(case("wording_good", wd, **wording_args()))
     c.append(case("wording_judge_did_not_run", wd, **wording_args(JudgeRan=False, JudgeError="the console log of the run does not exist")))
@@ -472,6 +515,10 @@ ONE_PROBLEM = {
     "accept_direct_unfinished": "the EXE started on its own did not finish within the time limit",
     "accept_direct_exit_1": "the EXE started on its own exited with '1', expected 0",
     "accept_direct_no_line": "the EXE started on its own did not print the program's line",
+    "isolation_runner_public": "the bootstrapper saw PUBLIC 'C:\\Users\\Public', expected '" + PUBLIC + "' (a folder of its own)",
+    "isolation_parent_folder": "the bootstrapper saw PUBLIC 'C:\\w', expected '" + PUBLIC + "' (a folder of its own)",
+    "isolation_no_record": "the launch file recorded no PUBLIC",
+    "isolation_empty_value": "the launch file recorded no PUBLIC",
     "wording_judge_did_not_run": "the judge did not run: the console log of the run does not exist",
     "wording_empty_output": "the judge printed no result it could be read from (exit code 2)",
     "wording_not_json": "the judge printed no result it could be read from (exit code 1)",
@@ -487,7 +534,7 @@ ONE_PROBLEM.update(step_needles())
 # the cases with their own tests below: the three that give two problems (status empty, status not JSON, two violations), the one
 # that is cut at twenty (many violations), the clean ones, the ones that repeat a line without a problem and the six small helpers
 TWO_PROBLEMS = ("accept_status_empty", "accept_status_not_json", "wording_two_violations")
-CLEAN = ("accept_good", "accept_exit_and_success_lines_may_repeat", "wording_good")
+CLEAN = ("accept_good", "accept_exit_and_success_lines_may_repeat", "wording_good", "isolation_good", "isolation_case_blind", "isolation_trailing_space")
 HELPERS = ("find_case_blind_substring", "find_missing", "find_from_skips_the_first", "measure_counts_lines", "measure_case_blind", "measure_none")
 
 
@@ -609,9 +656,9 @@ class RealFiles(unittest.TestCase):
         accounted = set(ONE_PROBLEM) | set(TWO_PROBLEMS) | set(CLEAN) | set(HELPERS) | {"wording_many_violations"}
         self.assertEqual(sorted(set(names) - accounted), [])
         self.assertEqual(sorted(accounted - set(names)), [])
-        self.assertEqual(len(names), 6 + 3 + len(ONE_PROBLEM) + 3 + 1)
-        self.assertEqual(len(ONE_PROBLEM), 46)
-        self.assertEqual(len(names), 59)
+        self.assertEqual(len(names), 6 + len(CLEAN) + len(ONE_PROBLEM) + 3 + 1)
+        self.assertEqual(len(ONE_PROBLEM), 50)
+        self.assertEqual(len(names), 66)
 
     def test_every_judge_the_driver_is_asked_for_is_a_function_of_the_script(self):
         for name in JUDGES:
@@ -764,6 +811,16 @@ class ScriptRulesCanFail(unittest.TestCase):
                       "foreach ($l in (Get-ClearLines)) { [void]$launchLines.Add($l) }\nWrite-CrLf -Path (Join-Path $appDir '~accept_launch.cmd') -Lines $launchLines.ToArray()\n")
         self.assertTrue(any("cleared after" in f for f in self.problems(late)), self.problems(late))
 
+    def test_a_run_that_stops_recording_its_public_or_judging_it_is_caught(self):
+        bad = mutate(self.script, "    '>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%',\n", "")
+        self.assertTrue(any("no longer records the PUBLIC the bootstrapper saw" in f for f in self.problems(bad)), self.problems(bad))
+        bad = mutate(self.script, "-PublicRecord $publicRecord -PublicWanted $publicDir)", "-PublicRecord '' -PublicWanted $publicDir)")
+        self.assertTrue(any("no longer judged by Get-IsolationProblems" in f for f in self.problems(bad)), self.problems(bad))
+        bad = mutate(self.script, "$acceptProblems = @($isolationProblems) + @($acceptProblems)\n", "")
+        self.assertTrue(any("no longer includes the problems of the PUBLIC" in f for f in self.problems(bad)), self.problems(bad))
+        bad = mutate(self.script, "$publicDir   = $appDir + '_public'\n", "$publicDir   = $appDir\n")
+        self.assertTrue(any("no longer named from the folder of the program" in f for f in self.problems(bad)), self.problems(bad))
+
     def test_open_standard_input_and_a_missing_kill_or_limit_are_caught(self):
         bad = mutate(self.script, "('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul')", "('call run_setup.bat > ' + $consoleName + ' 2>&1')")
         self.assertTrue(any("standard input" in f for f in self.problems(bad)))
@@ -904,6 +961,8 @@ class JudgesCanFail(unittest.TestCase):
             ("$RunOutText.IndexOf($ProgramLine, [System.StringComparison]::Ordinal) -lt 0", "accept_run_output_without_the_line", "~run.out.txt does not hold"),
             ("$state -ne 'degraded_env'", "accept_status_state_ok", "expected degraded_env"),
             ("$code -ne '0'", "accept_status_exit_code_1", "exitCode '1', expected 0"),
+            ("$seen -eq ''", "isolation_empty_value", "the launch file recorded no PUBLIC"),
+            ("$seen -ine $want", "isolation_runner_public", "the bootstrapper saw PUBLIC"),
             ("-not $DirectFinished", "accept_direct_unfinished", "did not finish within the time limit"),
             ("$DirectExitText.Trim() -ne '0'", "accept_direct_exit_1", "exited with '1'"),
             ("$DirectOutText.IndexOf($ProgramLine, [System.StringComparison]::Ordinal) -lt 0", "accept_direct_no_line", "did not print the program's line"),

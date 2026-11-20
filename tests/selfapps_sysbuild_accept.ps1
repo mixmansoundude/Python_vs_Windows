@@ -283,6 +283,27 @@ function Get-AcceptProblems {
     return $out.ToArray()
 }
 
+# The system tier takes the first python on PATH, and the bootstrapper puts %PUBLIC%\Documents\Miniconda3 first on PATH whether or not that
+# folder exists, so a Miniconda in the PUBLIC the run inherits is found by `where python` before the private interpreter (run
+# 44708489835: an earlier scenario of the lane had installed one into the runner's shared Public folder after a uv failure, and its
+# python.exe was the system Python of this row). The run therefore needs a PUBLIC of its own, and the launch file records the PUBLIC
+# the bootstrapper saw. PublicRecord is the text of that record (PUBLIC=<folder>), PublicWanted the folder the run was meant to get.
+function Get-IsolationProblems {
+    param([string]$PublicRecord, [string]$PublicWanted)
+    $out = New-Object System.Collections.ArrayList
+    $tag = 'system-Python EXE build accepted'
+    $seen = ''
+    $m = [regex]::Match($PublicRecord, '(?m)^PUBLIC=(.*?)\s*$')
+    if ($m.Success) { $seen = $m.Groups[1].Value.Trim() }
+    $want = $PublicWanted.Trim()
+    if ($seen -eq '') {
+        [void]$out.Add("${tag}: the launch file recorded no PUBLIC, so it is not known where the bootstrapper looked for a Miniconda")
+    } elseif ($seen -ine $want) {
+        [void]$out.Add("${tag}: the bootstrapper saw PUBLIC '${seen}', expected '${want}' (a folder of its own), so a Miniconda that an earlier scenario left in the runner's shared Public folder could be found and taken as the system Python")
+    }
+    return $out.ToArray()
+}
+
 # REQ-007.20: the answer of tools/exe_wording.py console about the console of that run. JudgeRan is false when the judge could not be
 # started (JudgeError says why); JsonText is the one line it prints.
 function Get-WordingProblems {
@@ -329,6 +350,7 @@ $appName     = '~selftest_sysbuild_accept'
 $venvName    = '~selftest_sysbuild_accept_venv'
 $appDir      = Join-Path $here $appName
 $venvDir     = Join-Path $here $venvName
+$publicDir   = $appDir + '_public'
 $exeName     = ($appName -replace '[^A-Za-z0-9_-]', '_') + '.exe'
 $programLine = 'sysbuild-accept-app-line-7731'
 $consoleName = '~sysbuild_accept.log'
@@ -388,6 +410,7 @@ foreach ($l in @(
     'set "HP_TEST_SYSCON_ANSWER=Y"',
     'set "HP_TEST_SYSBUILD_ANSWER=Y"',
     ('set "HP_CI_LANE=' + $ciLaneValue + '"'),
+    '>"~accept_public.txt" echo PUBLIC=%PUBLIC%',
     ('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul'),
     '>"~accept_exit.txt" echo %ERRORLEVEL%',
     'exit /b 0'
@@ -401,6 +424,7 @@ $exitText  = Read-Text (Join-Path $appDir '~accept_exit.txt')
 $statusTxt = Read-Text (Join-Path $appDir '~bootstrap.status.json')
 $runOut    = Read-Text (Join-Path $appDir '~run.out.txt')
 $setupLog  = Read-Text (Join-Path $appDir '~setup.log')
+$publicRecord = Read-Text (Join-Path $appDir '~accept_public.txt')
 $exePath   = Join-Path $appDir ('dist\' + $exeName)
 $exeExists = Test-Path -LiteralPath $exePath
 
@@ -418,6 +442,8 @@ if (Test-Path -LiteralPath (Join-Path $appDir 'dist')) {
 $acceptProblems = @(Get-AcceptProblems -Finished ([bool]$launch.Finished) -ExitText $exitText -ConsoleText $console -StatusText $statusTxt -RunOutText $runOut `
     -VenvLeaf $venvName -ExeName $exeName -ProgramLine $programLine -ExeExists ([bool]$exeExists) -DirectFinished ([bool]$direct.Finished) `
     -DirectExitText ([string]$direct.ExitCode) -DirectOutText $directOut)
+$isolationProblems = @(Get-IsolationProblems -PublicRecord $publicRecord -PublicWanted $publicDir)
+$acceptProblems = @($isolationProblems) + @($acceptProblems)
 
 # the wording judge over the same console
 $toolPath = Join-Path $repo 'tools\exe_wording.py'
@@ -449,6 +475,7 @@ Add-Evidence -Title 'the program as the check run printed it (~run.out.txt)' -Te
 Add-Evidence -Title ('the EXE started on its own (exit ' + $direct.ExitCode + ')') -Text $directOut -MaxLines 20
 Add-Evidence -Title ('the wording judge (exit ' + $judgeExit + ')') -Text ($judgeJson + "`n" + (Read-Text $judgeErrPath)) -MaxLines 60
 Add-Evidence -Title 'setup log of the run (first lines)' -Text $setupLog -MaxLines 60
+Add-Evidence -Title 'the PUBLIC the bootstrapper saw (~accept_public.txt)' -Text ($publicRecord + "`nwanted: " + $publicDir) -MaxLines 5
 
 $allPass = $true
 
@@ -457,6 +484,7 @@ if (-not $pass) { $allPass = $false }
 $acceptDetails = [ordered]@{
     finished = [bool]$launch.Finished; seconds = $launch.Seconds; runExit = $exitText.Trim(); basePython = $basePython
     status = $statusTxt.Trim(); exeExists = [bool]$exeExists; directFinished = [bool]$direct.Finished; directExit = $direct.ExitCode
+    publicRecord = $publicRecord.Trim(); publicWanted = $publicDir
 }
 if ($launch.Error) { $acceptDetails['error'] = $launch.Error }
 if (-not $pass) { $acceptDetails['problems'] = @($acceptProblems) }
