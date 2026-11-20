@@ -1981,6 +1981,12 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
   own clock and the exit code (-1), and requires that nothing of the holder runs from `dist` after the driver returns (read through CIM
   before a leftover is stopped). Scenario `exit` (a program that ends by itself) must give 0 with `done` and no kill, so the cap cannot pass
   by killing everything. The judging function `Get-OptCapProblems` takes plain values and is run through real `pwsh` in strict mode.
+  **Where the contract stops (CodeRabbit, PR #539):** a program that ends by itself inside the 30 seconds is judged by its own exit code and
+  nothing is ended. `taskkill /T` needs the started process alive to find what is below it, and a process the program left running on purpose
+  (a launcher that starts the real program and exits) is not the bootstrapper's to end, so README REQ-018.36 is worded for the run that does
+  not finish and the line does not look for survivors after a natural exit. The two `Wait(5000)` reads still bound the line then, so a
+  survivor holding the pipes costs at most ten seconds and not the survivor's lifetime (`test_a_program_that_ends_by_itself_and_leaves_a_pipe_holder_running_gives_its_exit_code_and_ends_nothing`,
+  which the first version of the line fails at 10.5 seconds). The `exit` scenario of `self.optbuild.cap` stays a program with nothing left running.
 
 ### Cascade signal reliability
 

@@ -3991,7 +3991,10 @@ rem Kill() as the fallback, and each output pipe is waited for at most 5 seconds
 rem two processes and Kill() ends only the one that was started; the program below it keeps the
 rem pipes open, so an unbounded read held this line for as long as the program ran, and the program
 rem was left running. The same line stands in :hidden_import_loop, tests/test_optbuild_cap.py
-rem checks both against the same text.
+rem checks both against the same text. A program that ends by itself inside the 30 seconds is
+rem judged by its own exit code and nothing is ended: the tree stop needs the started process
+rem alive, and a process the program left running on purpose is not this build's to end. The two
+rem pipe waits still give up after 5 seconds each, so the line returns even then.
 rem derived requirement: HP_APP_ARGS is read via $env:HP_APP_ARGS (PowerShell's own inherited-
 rem environment access), never substituted by cmd.exe's %VAR% expansion into this -Command
 rem string -- HP_APP_ARGS already contains literal embedded double-quotes per token (see its

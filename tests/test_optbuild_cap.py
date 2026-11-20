@@ -458,6 +458,14 @@ sh -c 'i=0; while [ $i -lt %d ]; do echo tick; sleep 0.2; i=$((i+1)); done' &
 echo $! > "$CHILD_PID_FILE"
 wait
 """
+# The program ends by itself with exit code 0 and leaves the process it started running with both pipes open (ten seconds of lines).
+LEAVES_A_PIPE_HOLDER = """#!/bin/sh
+echo started
+echo $$ > "$PARENT_PID_FILE"
+sh -c 'i=0; while [ $i -lt 50 ]; do echo tick; sleep 0.2; i=$((i+1)); done' &
+echo $! > "$CHILD_PID_FILE"
+exit 0
+"""
 ONLY_A_PARENT = "#!/bin/sh\necho started\nexec sleep 30\n"
 EXITS_BY_ITSELF = "#!/bin/sh\necho hello\nexit 3\n"
 EXITS_WITH_THE_NUMBER_OF_ITS_ARGUMENTS = "#!/bin/sh\nexit $#\n"
@@ -575,6 +583,7 @@ class StandInCases:
         self.assertEqual(got["lines"], ["-1"], got)
         self.assertIsNotNone(got["parent"], got)
         self.assertEqual(got["taskkill"], "/F /T /PID %d" % got["parent"], got)
+        self.assertIsNotNone(got["child"], "the program below the bootloader never started, so its end proves nothing: %r" % (got,))
         self.assertFalse(got["child_running"], "the program the bootloader started was still running when the line returned: %r" % (got,))
 
     def test_a_program_that_keeps_the_pipes_open_does_not_hold_the_line_when_taskkill_cannot_be_started(self):
@@ -584,6 +593,17 @@ class StandInCases:
         self.assertEqual(got["lines"], ["-1"], got)
         self.assertIsNone(got["taskkill"], got)
         self.assertTrue(got["child_running"], "the line did not return before the program below the process it started ended: %r" % (got,))
+        self.assertLess(got["seconds"], 8, got)
+
+    def test_a_program_that_ends_by_itself_and_leaves_a_pipe_holder_running_gives_its_exit_code_and_ends_nothing(self):
+        # outside the contract on purpose (README REQ-018.36 is about a run that does not finish): the tree stop needs the started
+        # process alive, and a process the program left running is not this build's to end; the two waits still give up, so the line
+        # returns after about a second and not when the holder ends (it runs for ten seconds here)
+        got = run_line_text(self.text, LEAVES_A_PIPE_HOLDER, self.tmp)
+        self.assertEqual(got["lines"], ["0"], got)
+        self.assertIsNone(got["taskkill"], got)
+        self.assertIsNotNone(got["child"], got)
+        self.assertTrue(got["child_running"], got)
         self.assertLess(got["seconds"], 8, got)
 
 
@@ -614,6 +634,7 @@ class TheFirstVersionIsTheControl(unittest.TestCase):
             got = run_line_text(FIRST_VERSION_OF_THE_LINE, BOOTLOADER % 30, tmp)
         self.assertEqual(got["lines"], ["-1"], got)
         self.assertGreaterEqual(got["seconds"], 4, got)
+        self.assertIsNotNone(got["child"], got)
         self.assertFalse(got["child_running"], got)
 
     def test_the_first_version_is_what_the_batch_file_held_before_the_fix_or_is_gone(self):
