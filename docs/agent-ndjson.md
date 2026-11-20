@@ -1976,6 +1976,26 @@ the log texts) and runs the judging functions through real `pwsh` on synthetic r
 self.repair.cap
 ```
 
+## selfapps-optbuild-cap NDJSON rows (selfapps_optbuild_cap.ps1, contract-uv lane only, GATING)
+
+Item 110, README REQ-018.36: the verification run of the optimized build (`:offer_optimized_build`) ends after 30 seconds and leaves no
+process of the run behind. The block that starts the temporary EXE waited 30 seconds, called `Kill()` on the process it started and then
+read both pipes without a limit; a Nuitka onefile EXE is two processes (the bootloader and the program it starts), `Kill()` ends the first
+only, and the program below it kept the pipes open, so a program that keeps printing held the line until it ended by itself and was then
+counted by its own result (the run's exit code, not the cap) and left running. Both scenarios cut the real block out of `run_setup.bat`
+(from `set "HP_OPTBUILD_VERIFY_EXIT=-1"` up to the line that tests it) and run it under cmd.exe with closed standard input against a
+stand-in `.cmd` file in `dist` that starts a PowerShell program (a child under the process that is started, the shape of the real EXE).
+`cap`: the program prints a flushed line a second for 100 seconds; the block must give -1 within 75 seconds of the driver's own clock, the
+program's ledger must hold 10 or more ticks over at most 50 seconds, never reach `done`, and no process whose command line names the
+scenario's holder script may be running when the block has returned (read through CIM, a leftover is stopped and reported). `exit`: a
+program that prints three lines and ends by itself; the block must give its own exit code (0) and the ledger must reach `done`. The row
+skips with `skip=true` off Windows. `tests/test_optbuild_cap.py` pins the batch side (the one verification line, its pieces and their order)
+and runs the judging function and the line's own text through real `pwsh` against stand-in programs.
+
+```
+self.optbuild.cap
+```
+
 ## selfapps-tilde-files NDJSON rows (selfapps_tilde_files.ps1, contract-uv lane only, GATING)
 
 Item 111, README REQ-003.3, REQ-015.7 and REQ-015.8: where the bootstrapper works, what it calls the files a person keeps and what
