@@ -25,6 +25,7 @@
 #   self.netres.swap.retry                                              REQ-013.18
 #   self.netres.offline.uv / .conda                                     REQ-013.12 (Item 116: an installed uv or Miniconda is used as it is, offline)
 #   self.netres.shipped.tools                                           REQ-003.1 (Item 116: the downloads work with only what Windows ships on PATH)
+#   self.netres.uv.acquire / .unpackfail                                REQ-009.22, .23 (Item 127: the downloaded uv archive is unpacked into ~uv_bin, and a failed unpack says why)
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -66,6 +67,8 @@ function Write-AllRows {
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.offline.uv'; req = 'REQ-013.12'; pass = $Pass; desc = 'offline mode: a uv that is already installed is used as it is, and nothing is downloaded'; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.offline.conda'; req = 'REQ-013.12'; pass = $Pass; desc = 'offline mode: a Miniconda that is already installed is used as it is, and nothing is downloaded'; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.shipped.tools'; req = 'REQ-003.1'; pass = $Pass; desc = 'with only the programs Windows ships on PATH the real download code reaches a server with the System32 curl and with Windows PowerShell, on a build at or above 1809'; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.netres.uv.acquire'; req = 'REQ-009.22'; pass = $Pass; desc = 'uv: an archive that downloaded in full is unpacked, ~uv_bin holds uv.exe and the run uses it'; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.netres.uv.unpackfail'; req = 'REQ-009.23'; pass = $Pass; desc = 'uv: when the archive cannot be unpacked the setup log says why and lists ~uv_bin, and the run goes on without uv'; details = $Details })
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -876,6 +879,99 @@ Write-NdjsonRow ([ordered]@{
         installed = (Get-Brief -S $ofMc)
         control = (Get-Brief -S $ofMcNone)
     }
+})
+
+# ---- the uv archive is unpacked (Item 127, REQ-009.22 and REQ-009.23) ----
+# On the runner image of 2026-11-16 the uv zip downloaded in full (14.84 MB) and no uv.exe came out of it, in every bootstrap
+# that started from a pwsh step, and the setup log held nothing about why. The real uv block runs online against the local
+# server, which serves a flat zip like uv's own (uv.exe, uvx.exe and uvw.exe, here the stub program three times, stored without
+# compression so the archive is over the block's minimum size). uv.acquire needs the unpacked file and the line that says so;
+# uv.unpackfail serves 2000 bytes that are not an archive and needs the reason in the setup log, the listing of ~uv_bin
+# and the run going on without uv, so the second row cannot pass because the first one was never run.
+function New-UvZipBytes {
+    param([byte[]]$ExeBytes)
+    $ms = New-Object System.IO.MemoryStream
+    $zip = New-Object System.IO.Compression.ZipArchive($ms, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+    foreach ($n in @('uv.exe', 'uvx.exe', 'uvw.exe')) {
+        $entry = $zip.CreateEntry($n, [System.IO.Compression.CompressionLevel]::NoCompression)
+        $es = $entry.Open()
+        $es.Write($ExeBytes, 0, $ExeBytes.Length)
+        $es.Dispose()
+    }
+    $zip.Dispose()
+    $bytes = $ms.ToArray()
+    $ms.Dispose()
+    return $bytes
+}
+
+function Invoke-UvAcquireScenario {
+    param([string]$Name, [string]$Body)
+    $dir = New-ScenarioDir -Name $Name
+    $result = Join-Path $dir '~driver_result.txt'
+    Set-Plan -Name $Name -Role 'p1' -Kind 'curl' -Items @(('200:' + $Body))
+    $lines = (New-DriverHead -Dir $dir) + @(
+        ('set "HP_SCRIPT_ROOT=' + $dir + '\"'),
+        ('set "HP_UV_URL=' + $base + '/' + $Name + '/p1"'),
+        ('set "HP_UV_FALLBACK_URL=' + $base + '/' + $Name + '/p2"'),
+        'set "HP_UV_MIN_BYTES=1000"'
+    ) + $uvBlock + @(
+        ':uv_acquire_done',
+        ('echo UV=%HP_UV_EXE% > "' + $result + '"'),
+        ('echo REASON=%UV_FALLBACK_REASON% >> "' + $result + '"'),
+        'exit /b 0',
+        ':check_net_after_dl_fail',
+        'call :log "UNEXPECTED: the connectivity check ran"',
+        'exit /b 0'
+    ) + $logLines
+    Write-CrLf -Path (Join-Path $dir '~driver.bat') -Lines $lines
+    $run = Invoke-Driver -Dir $dir -TimeoutSec 120
+    $entries = Get-RequestEntries -Name $Name
+    $exePath = Join-Path $dir '~uv_bin\uv.exe'
+    $exeLength = -1
+    if (Test-Path -LiteralPath $exePath) { $exeLength = (Get-Item -LiteralPath $exePath).Length }
+    $binNames = @()
+    if (Test-Path -LiteralPath (Join-Path $dir '~uv_bin')) { $binNames = @(Get-ChildItem -LiteralPath (Join-Path $dir '~uv_bin') -Force | ForEach-Object { $_.Name }) }
+    return [ordered]@{
+        scenario = $Name
+        run = $run
+        result = ((Read-Text -Path $result) -replace "`r", '' -replace '\s+$', '' -replace '\s*\n\s*', ';')
+        log = (Read-Text -Path (Join-Path $dir '~driver.log'))
+        console = (Read-Text -Path (Join-Path $dir '~driver_console.txt'))
+        requests = $entries.Count
+        curlP1 = (Get-RequestCount -Entries $entries -Role 'p1' -Kind 'curl')
+        otherRequests = ($entries.Count - (Get-RequestCount -Entries $entries -Role 'p1' -Kind 'curl'))
+        uvExePath = $exePath
+        uvExeLength = $exeLength
+        uvBinNames = $binNames
+        zipLeft = [bool](Test-Path -LiteralPath (Join-Path $dir 'tmp\~uv_setup.zip'))
+        dir = $dir
+    }
+}
+
+$stubLength = (Get-Item -LiteralPath $stubExe).Length
+$state.Bodies['uvzip'] = New-UvZipBytes -ExeBytes ([System.IO.File]::ReadAllBytes($stubExe))
+$state.Bodies['uvjunk'] = [System.Text.Encoding]::ASCII.GetBytes('this is not an archive ' * 87)
+$uvAcq = Invoke-UvAcquireScenario -Name 'uv_acq' -Body 'uvzip'
+$uvBad = Invoke-UvAcquireScenario -Name 'uv_bad' -Body 'uvjunk'
+
+$acqExpected = 'UV=' + $uvAcq.uvExePath + ';REASON='
+$acqOk = ($uvAcq.result -eq $acqExpected) -and ($uvAcq.log -match 'uv: acquired at ~uv_bin\\uv\.exe') -and ($uvAcq.uvExeLength -eq $stubLength) -and (($uvAcq.uvBinNames -contains 'uvx.exe') -and ($uvAcq.uvBinNames -contains 'uvw.exe')) -and ($uvAcq.curlP1 -eq 1) -and ($uvAcq.otherRequests -eq 0) -and (-not $uvAcq.zipLeft) -and ($uvAcq.log -notmatch 'UNEXPECTED') -and ($uvAcq.log -notmatch 'acquisition failed') -and (-not $uvAcq.run.timedOut)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.netres.uv.acquire'
+    req = 'REQ-009.22'
+    pass = [bool]$acqOk
+    desc = 'uv: an archive that downloaded in full is unpacked, ~uv_bin holds uv.exe and the run uses it'
+    details = (Get-Brief -S $uvAcq -Extra @{ stubLength = $stubLength })
+})
+
+$badReason = [regex]::Match($uvBad.log, '(?m)^uv: unpack failed: (\S.*)$')
+$badOk = ($uvBad.result -eq 'UV=;REASON=acquire_failed') -and $badReason.Success -and ($uvBad.log -match 'uv: acquisition failed; will use conda') -and ($uvBad.log -match 'UV_FALLBACK reason=acquire_failed') -and ($uvBad.log -match 'uv: ~uv_bin holds the files listed next') -and ($uvBad.uvExeLength -eq -1) -and ($uvBad.curlP1 -eq 1) -and ($uvBad.otherRequests -eq 0) -and ($uvBad.log -notmatch 'UNEXPECTED') -and (-not $uvBad.run.timedOut)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.netres.uv.unpackfail'
+    req = 'REQ-009.23'
+    pass = [bool]$badOk
+    desc = 'uv: when the archive cannot be unpacked the setup log says why and lists ~uv_bin, and the run goes on without uv'
+    details = (Get-Brief -S $uvBad -Extra @{ reasonText = $(if ($badReason.Success) { $badReason.Groups[1].Value } else { '' }) })
 })
 
 # ---- the downloads with only what Windows ships (Item 116, REQ-003.1) ----
