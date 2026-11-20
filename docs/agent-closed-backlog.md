@@ -4686,6 +4686,18 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   lines it forbids still exist, both consent gates test the answer before the CI marker, the ready line and the EXE under it), the
   workflow step and the registry, and runs the judging functions through real `pwsh` in strict mode on synthetic consoles with one red case
   for each comparison, bridged to the real `tools/exe_wording.py`. The two `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **The accept row was not hermetic (found in run `44708489835`, PR #537 review round 3).** The bootstrapper puts
+  `%PUBLIC%\Documents\Miniconda3` and its `condabin`, `Scripts` and `Library\bin` first on `PATH` whether or not it exists, and the system
+  tier takes the first python that `where python` finds. When the uv acquisition had failed in an earlier scenario of the job (`~envsmoke`) and
+  the bootstrapper had installed Miniconda into the runner's shared `C:\Users\Public`, that Miniconda was taken for the system Python and
+  `self.sysbuild.accept` was red for that alone (the interpreter line named `C:\Users\Public\Documents\Miniconda3\python.exe`; the product,
+  the build and the EXE were fine). The script now gives the bootstrapper a `PUBLIC` of its own (`~selftest_sysbuild_accept_public`, an
+  empty folder made fresh before the run), records the value the bootstrapper saw (`~accept_public.txt`) and `Get-IsolationProblems`
+  requires it to be that folder. Two commits, the first red on purpose: the record and the judge without the `set` line (`66891f9`, run
+  `44799268601`: the launch file recorded the runner's own Public folder and not the run's folder, and the interpreter line did not name
+  the private venv), then the `set` line and the folder. `tests/test_sysbuild_accept.py` pins the naming, the order and the judge, with one
+  red case for each comparison. The other cause of the same run's reds, uv missing after a full download on the new runner image, is Item
+  127 (lane 3, PR #536).
 - **Stated limits (also in the script's header and the registry entry).** The interpreter is a venv of the runner's python and not the
   python.org layout, which differs only in the path. The messages of a failing build (the Nuitka fallback, the repair loops) are held to
   the rule by the static ratchet and by the rows that reach them, not by this run. Only the timestamped lines of the real run are judged at

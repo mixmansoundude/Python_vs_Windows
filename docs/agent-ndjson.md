@@ -334,7 +334,11 @@ runner's python as the system Python (its `Scripts` folder first on `PATH`, so P
 own interpreter), every other provider failed by decree (`HP_OFFLINE_MODE=1`, `HP_TEST_FORCE_CONDA_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`),
 the answers Y to both questions (`HP_TEST_SYSCON_ANSWER=Y` for REQ-014, `HP_TEST_SYSBUILD_ANSWER=Y` for REQ-007.16), `HP_CI_LANE` set so the
 elective offers after the build decline without waiting, every `HP_`/`PVW_`/`NOINPUT` variable of the runner cleared first and standard input
-closed; a watchdog (15 minutes, process tree) ends a hung run. `.accept` reads the console: the system tier was tried, the REQ-014 consent
+closed, and `PUBLIC` pointed at an empty folder of its own (`~selftest_sysbuild_accept_public`, made fresh before the run: the bootstrapper
+puts the Miniconda folder under `PUBLIC` first on `PATH` whether or not it exists, so a Miniconda that an earlier scenario of the job left in
+the runner's shared Public folder would be taken for the system Python, run `44708489835`); a watchdog (15 minutes, process tree) ends a hung
+run. `.accept` first requires that the `PUBLIC` the launch file recorded (`~accept_public.txt`, details `publicRecord` and `publicWanted`) is
+that folder (case blind), then reads the console: the system tier was tried, the REQ-014 consent
 was accepted, the interpreter is the private one, the provider line says System Python, the REQ-007 build consent was accepted, the build
 started, PyInstaller produced `dist\<exe>`, the check run went through the packaged EXE, exited 0 and reported success, each once and in
 that order (the last two may repeat), none of the lines of the declined path (consent declined, not consented, the interpreter check in

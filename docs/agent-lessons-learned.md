@@ -909,6 +909,22 @@ decoy Miniconda in the PROCESS `PUBLIC` and requires that its `conda.bat` was ne
 unfixed script (run `43685182910`, real lane) was red for the right reason: the decoy's `conda.bat` was called once (`python -V`),
 `publicSeen` was the decoy folder, no request line and no embed provider line. A scenario that must not see something the runner
 may hold proves it with a planted copy of that thing, not only by running where it happens to be absent.
+
+**A row that is green only while nothing before it has failed is not hermetic, however long it was green (Item 123, run
+`44708489835`, PR #537).** `self.sysbuild.accept` builds an EXE with a private virtual environment standing in for the system Python and
+passed on its first run (`43740185058`). The bootstrapper puts `%PUBLIC%\Documents\Miniconda3` (and its `condabin`, `Scripts` and
+`Library\bin`) first on `PATH` whether or not the folder exists, and the system tier takes the first python that `where python` finds. In
+`44708489835` the uv acquisition had failed in an earlier scenario of the same job (`~envsmoke`, the runner-image problem of Item 127), the
+bootstrapper had fallen back to conda and installed Miniconda into the runner's shared `C:\Users\Public`, and the system tier took that
+one: the interpreter line named `C:\Users\Public\Documents\Miniconda3\python.exe` and the row was red for that alone, with the product,
+the build and the EXE fine.
+**Rule: a scenario that assumes "no Miniconda" or "the first python on `PATH` is the one I made" runs with a `PUBLIC` of its own (an empty
+folder next to its work folder, removed and made again before the run), records the `PUBLIC` the bootstrapper saw in a file, and has a judge
+that requires that value to be that folder (case blind) and says what was seen and what was expected.** Writing the record and the judge
+first, without the `set` line (commit `66891f9`, run `44799268601`), showed the judge red for the right reason: the launch file recorded
+the runner's own Public folder and not the run's folder, and the interpreter line did not name the private venv. The same fix pattern, a
+record of what the bootstrapper saw, is what made `self.embed.version.isolated` possible (Item 120); copy it for the next scenario instead of
+trusting that the runner is clean.
 ---
 
 ## A conda call that talks to conda-forge needs one bounded retry, and a 502 on the sharded repodata path does not look like a conda error (Item 92)

@@ -20,6 +20,13 @@
 #   HP_TEST_SYSCON_ANSWER=Y (the REQ-014 question), HP_TEST_SYSBUILD_ANSWER=Y (the REQ-007.16 question this row is about) and
 #   HP_CI_LANE (the elective offers after the build decline without waiting). Standard input is closed. A watchdog ends a run that
 #   hangs (taskkill of the whole process tree), so a regression is a red row and not a held job.
+#   The run has a PUBLIC of its own. The bootstrapper puts %PUBLIC%\Documents\Miniconda3 (and its condabin, Scripts and Library\bin
+#   folders) first on PATH whether or not that folder exists, and the system tier takes the first python that `where python` finds, so
+#   a Miniconda that an earlier scenario of the job left in the runner's shared Public folder would be taken for the system Python (run
+#   44708489835: the interpreter line named C:\Users\Public\Documents\Miniconda3\python.exe and the row was red for that alone). The
+#   launch file therefore sets PUBLIC to an empty folder next to the program folder (~selftest_sysbuild_accept_public, made fresh before
+#   the run), records the value the bootstrapper saw (~accept_public.txt) and self.sysbuild.accept requires it to be that folder
+#   (Get-IsolationProblems), the way tests/selfapps_embed_version.ps1 does it since Item 120.
 #   self.sysbuild.accept (REQ-007.17). The console of the run must show, in this order: the system tier was tried, the REQ-014
 #   consent was accepted, the interpreter the run used is the private one, the provider line says System Python, the REQ-007 build
 #   consent was accepted, the build started, PyInstaller produced dist\<exe>, the check run went through the packaged EXE, exited 0
@@ -394,6 +401,8 @@ if (($venvRc -ne 0) -or (-not (Test-Path -LiteralPath $venvPython))) {
 
 if (Test-Path -LiteralPath $appDir) { Remove-Item -LiteralPath $appDir -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+if (Test-Path -LiteralPath $publicDir) { Remove-Item -LiteralPath $publicDir -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force -Path $publicDir | Out-Null
 Copy-Item -LiteralPath $batchPath -Destination (Join-Path $appDir 'run_setup.bat') -Force
 Write-CrLf -Path (Join-Path $appDir 'app.py') -Lines @('print("' + $programLine + '")')
 
@@ -410,6 +419,7 @@ foreach ($l in @(
     'set "HP_TEST_SYSCON_ANSWER=Y"',
     'set "HP_TEST_SYSBUILD_ANSWER=Y"',
     ('set "HP_CI_LANE=' + $ciLaneValue + '"'),
+    ('set "PUBLIC=' + $publicDir + '"'),
     '>"~accept_public.txt" echo PUBLIC=%PUBLIC%',
     ('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul'),
     '>"~accept_exit.txt" echo %ERRORLEVEL%',

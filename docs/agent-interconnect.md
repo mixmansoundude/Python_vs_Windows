@@ -704,6 +704,18 @@ the tool in plain words, so a reader can tell it is about the optional one-file 
   (`HP_OFFLINE_MODE=1`, `HP_TEST_FORCE_CONDA_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`), so PyInstaller is installed into the venv and never into
   the runner's own interpreter; the layout differs from python.org's only in the path. `tests/selfapps_sysbuild.ps1` holds the rows of the
   other answers (decline, the Nuitka wording, the CI marker).
+- **The run has a `PUBLIC` of its own.** `run_setup.bat` builds `MC=%PUBLIC%\Documents\Miniconda3` and puts that folder, its `condabin`,
+  `Scripts` and `Library\bin` first on `PATH` before any provider is tried, whether or not the folder exists, and the system tier takes the
+  first python that `where python` finds. A Miniconda that an earlier scenario of the same job left in the runner's shared Public folder (a
+  uv acquisition that failed and fell back to conda installs one there) is therefore found first and taken for the system Python: run
+  `44708489835` printed `C:\Users\Public\Documents\Miniconda3\python.exe` as the interpreter and the row was red for that alone. The
+  launch file sets `PUBLIC` to an empty folder next to the program folder (`~selftest_sysbuild_accept_public`, removed and made again before
+  every run), records the value the bootstrapper saw in `~accept_public.txt`, and `Get-IsolationProblems` requires it to be that folder, case
+  blind, before the console is read (the rule `tests/selfapps_embed_version.ps1` follows since Item 120). `tests/test_sysbuild_accept.py`
+  pins the folder's name, the `set` line, the order (set, record, call of the bootstrapper), the folder made empty and the judge's call, and
+  runs the judge on a recorded runner `PUBLIC`, the parent folder, a missing record and an empty value. A new scenario that starts the
+  bootstrapper and depends on what the machine has installed (a Miniconda, uv, a python on `PATH`) takes the same three steps: its own
+  `PUBLIC`, a record of what the bootstrapper saw, a judge that requires it.
 - **Floors.** `self.sysbuild.wording` needs at least 30 timestamped lines, 6 about the build, 4 that name the EXE and 1 exempt (about two
   thirds of the first real run: 48, 9, 7 after the rewording, and 2), so a console that stopped before the build cannot pass. A change to
   the real console that moves those numbers is a change to the floors in the script and to `FLOORS` of the unit test together.

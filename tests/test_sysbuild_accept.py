@@ -8,8 +8,10 @@ already installed. Until this item the README said that no scenario answered yes
 message, and the existing rows of tests/selfapps_sysbuild.ps1 answer N or let the CI marker decline.
 
 tests/selfapps_sysbuild_accept.ps1 (rows self.sysbuild.accept and self.sysbuild.wording; contract-uv lane, gating) bootstraps one folder
-for real with a private virtual environment as the system Python (its Scripts folder first on PATH), every other tier failed by decree
-and the answers Y to both questions, and judges the console twice: the sequence of the accepted build, and, through tools/exe_wording.py
+for real with a private virtual environment as the system Python (its Scripts folder first on PATH), a PUBLIC folder of its own (the
+bootstrapper puts the Miniconda folder under PUBLIC first on PATH, so one left in the runner's shared Public folder by an earlier
+scenario would be taken for the system Python, run 44708489835), every other tier failed by decree and the answers Y to both
+questions, and judges the console twice: the sequence of the accepted build, and, through tools/exe_wording.py
 `console`, the wording of every log line of that run. tests/test_exe_wording.py holds every message of run_setup.bat to the wording rule
 without running anything.
 
@@ -820,6 +822,21 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertTrue(any("no longer includes the problems of the PUBLIC" in f for f in self.problems(bad)), self.problems(bad))
         bad = mutate(self.script, "$publicDir   = $appDir + '_public'\n", "$publicDir   = $appDir\n")
         self.assertTrue(any("no longer named from the folder of the program" in f for f in self.problems(bad)), self.problems(bad))
+
+    def test_a_run_that_does_not_get_a_public_of_its_own_is_caught(self):
+        set_line = "    ('set \"PUBLIC=' + $publicDir + '\"'),\n"
+        record_line = "    '>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%',\n"
+        self.assertEqual(self.script.count(set_line), 1)
+        bad = mutate(self.script, set_line, "")
+        self.assertTrue(any("no longer gives the bootstrapper a PUBLIC of its own" in f for f in self.problems(bad)), self.problems(bad))
+        late = mutate(self.script, set_line + record_line, record_line + set_line)
+        self.assertTrue(any("recorded before it is set" in f for f in self.problems(late)), self.problems(late))
+        bad = mutate(self.script, "New-Item -ItemType Directory -Force -Path $publicDir | Out-Null\n", "")
+        found = self.problems(bad)
+        self.assertTrue(any("no longer made empty" in f and "New-Item" in f for f in found), found)
+        bad = mutate(self.script, "if (Test-Path -LiteralPath $publicDir) { Remove-Item -LiteralPath $publicDir -Recurse -Force -ErrorAction SilentlyContinue }\n", "")
+        found = self.problems(bad)
+        self.assertTrue(any("no longer made empty" in f and "Remove-Item" in f for f in found), found)
 
     def test_open_standard_input_and_a_missing_kill_or_limit_are_caught(self):
         bad = mutate(self.script, "('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul')", "('call run_setup.bat > ' + $consoleName + ' 2>&1')")
