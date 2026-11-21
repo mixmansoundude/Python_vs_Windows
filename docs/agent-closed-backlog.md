@@ -8079,3 +8079,46 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   `System32\curl.exe --version` and `WindowsPowerShell/5.1`, on a build at or above 17763. 238 of 265 shalls named. The REQ-003.1 row is honest about its limit: the bootstrapper
   makes no version check of its own, so it shows the runner at the floor and the download code independent of everything but the Windows-shipped programs.
 - **Not covered.** The Windows floor itself on a real 1809 machine (no runner image is that old), and REQ-003.3.
+
+### Item 125 (filed 2026-11-15, PR #536; a test module was taken as the entry script, a side finding of the unit-test idea in `docs/agent-cold-storage.md`)
+
+- **The bug.** `tools/find_entry.py` had no notion of test files. A folder with `weather.py` and `test_weather.py` (a unittest runner with `if __name__ == "__main__": unittest.main()`)
+  has two guarded files, so the alphabetical fallback chose `test_weather.py` (it sorts first) and a beginner who double-clicked got an EXE of the test runner built and verified. A folder with
+  a library `calc.py` (no guard) and `calc_test.py` chose `calc_test.py` by rule 3, the sole guarded file, with exit code 0 and no picker.
+- **README.** REQ-002.27 (a test module is not a candidate of REQ-002.11 or .12 while the folder holds a `.py` file that is not one) and REQ-002.28 (when every file is a test module, the rules apply to all of
+  them, so something still runs). A test module is a file named `test_<name>.py` or `<name>_test.py` whose source imports `unittest` or `pytest`.
+- **Design call (reversible).** The name alone is not enough: lab and instrument scripts called `test_scope.py` are common for this audience (VISA users) and are programs, so the file must also
+  import a framework (an import anywhere in the file counts, including inside a function; a word in a string or comment does not; an unparseable file is not a test module). `test.py`, `tests.py` and
+  `conftest.py` do not match. The preferred names, a sole `.py` file and a named first argument are decided earlier and do not change. The picker still lists test modules. If the maintainer prefers
+  name-only matching, only `is_test_module` and REQ-002.27 change.
+- **Red first, read in CI.** Run `43708861560` (head `de14545`, the commit with the tests only): on the four short lanes (`uv`, `contract-uv`, `contract-uv-fail`, `uv-dl-fallback`, read from each lane's
+  `ci_test_results` artifact) `self.entry.testmodule.guard` was red with `chosen: test_weather.py` and `.library` red with `chosen: calc_test.py`; `.script` and `.only` (the controls) were green; the only other
+  red rows were `self.entry.results` (it summarizes the four) and `self.pytest.unit` (the nine unit tests written first). The fix was pushed once those rows were read (the early-push rule).
+- **The fix.** `is_test_module` and a `_parse` helper in `tools/find_entry.py`; `main()` takes `base = [non-test files] or all files` for the guard rule and the fallback. The payload was 249 characters over the 8191 limit
+  at first (`tools/sync_payload.py` refused it), so the module docstring was cut and the import scan folded into one set; margin 151. 251 of 267 shalls named.
+- **BOM follow-up (CodeRabbit, PR #536).** `_parse` opened the file as `utf-8`, so a BOM stayed in the string as U+FEFF and `ast.parse` refused it: a BOM-prefixed test module was not recognized and, an older defect, a BOM-prefixed program had no
+  guard for rule 3. Two unit tests written first failed locally for those two reasons (`('test_zeta.py', 3) != ('zeta.py', 3)` and `('a_lib.py', 3) != ('b_tool.py', 0)`), a third (a cp1252 byte) passed as the control; the fix is `encoding="utf-8-sig"`
+  (parsing raw bytes was rejected: it would drop the tolerance for stray bytes), margin 151 down to 87. The finding about stale cached EXEs after a selector change went to cold storage ("Make the cached-EXE fast path notice a change of the chosen entry").
+- **Not covered.** A `tests` folder, `conftest.py` and `pytest.ini` are not read (those belong to the unit-test idea in cold storage); a test module that imports neither framework (a script of plain asserts) stays a candidate.
+
+### Item 127 (filed 2026-11-20, PR #536; uv could not be acquired on Windows runner image 20261116.315.1, so every run fell back to Miniconda)
+
+- **The symptom.** On the new image the uv archive downloaded in full (14.84 MB) and `~uv_bin\uv.exe` did not exist afterwards: 0 of 29 acquisitions on 2026-11-20 against 120 of 120 on image
+  20261103.298.1, which held every unrelated PR (lane 1 and lane 2 saw the same failure). The old unpack line printed nothing, so the setup log said only "acquisition failed".
+- **Diagnostic first.** Two rows were written before any fix: `self.netres.uv.acquire` (REQ-009.22, a good archive must leave `uv.exe`, `uvx.exe` and `uvw.exe`, one request, the archive removed) and
+  `self.netres.uv.unpackfail` (REQ-009.23, a file that is no archive must leave a non-empty `uv: unpack failed: <reason>` log line, the listing and the fallback), in `tests/selfapps_net_resilience.ps1` over the real block
+  `:pvw_uv_exe_skip` to `:uv_acquire_done`, and the unpack line was changed to append its own output to the setup log. Both rows were red for the right reason in the real lane of run `44753214156`
+  (`UV=;REASON=acquire_failed`, no `uv.exe`, `uvExeLength` -1; `.acquire` logged `uv: unpack failed: Cannot find an overload for "ExtractToDirectory" and the argument count: "3".`, which is the
+  reason the old line had thrown away, and `.unpackfail` logged the line with an empty reason, a second red). Earlier runs `44708165167`, `44708489835` and `44708958163` had shown the symptom without a reason.
+- **Cause, proven by a probe job (run `44800976347`).** Every CI step is `pwsh` 7.6.10 whose `PSModulePath` starts with the PowerShell 7 module folders. A `powershell.exe` that pwsh starts itself gets a clean
+  path (the first probes, which therefore passed with every extraction method), but the `powershell.exe` that `cmd.exe` starts (the bootstrapper's chain: pwsh, `cmd.exe`, `powershell.exe`) inherits it, so
+  `Expand-Archive` resolved to `Microsoft.PowerShell.Archive` 1.2.7 in `c:\program files\powershell\7\Modules`, which calls an overload of `ZipFile.ExtractToDirectory` that exists only in .NET Core. The same line
+  gave rc 1 there and the raw .NET line gave rc 0 with `uv.exe` and `uvx.exe` written, in the same chain. The Windows image changed which module PowerShell 7 ships and how a child sees it; the bootstrapper
+  itself did not change between 20261103.298.1 and 20261116.315.1.
+- **The fix.** The unpack line uses `System.IO.Compression.ZipFile.OpenRead` and `ZipFileExtensions.ExtractToFile` with each entry under its bare `Name` (the route `tools/embed_extract.ps1` already takes), reads the archive
+  and folder from `$env:HP_UV_ZIP` and `$env:HP_UV_BIN`, holds no percent sign but `%LOG%` and appends the reason of a failure to the setup log through the command's own output (never `:log`). README REQ-009.22 and .23 state the two
+  conditions. `uv_unpack_problems` in `tests/test_net_resilience.py` pins the shape and names `Expand-Archive` if it comes back; the unit test runs five mutation cases of the pin.
+- **Lesson.** `docs/agent-lessons-learned.md`, "`powershell.exe` started by `cmd.exe` under a pwsh step inherits PowerShell 7's module folders". It may also explain the older note that `Get-FileHash` did not load in a `for /f` subshell (not tested).
+- **Left.** A search of `run_setup.bat` and `tools/*.ps1` finds no other call of `Expand-Archive`, `Compress-Archive` or `Get-FileHash` (only comments). The core cmdlets the cmd-started lines still use
+  (`Invoke-WebRequest`, `Test-Path`, `Get-Item`, `Get-Date`) were not affected: the three `.powershell` rows of `self.netres.*` run the real `Invoke-WebRequest` lines through the same chain and were green on the new image (run
+  `44753214156`). That is evidence for those lines only, not a proof for every cmdlet. 257 of 269 shalls named.

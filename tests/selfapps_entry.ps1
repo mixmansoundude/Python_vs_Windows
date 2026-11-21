@@ -419,6 +419,98 @@ Write-EntryRow -Id 'self.entry.ignored' -Expected $expectedH -Scenario $scenario
 Check-PipreqsFailure -LogPath $scenarioH.setupPath -LogText $scenarioH.setupLog
 Check-HelperInvokeFailure -LogPath $scenarioH.bootstrapPath -LogText $scenarioH.bootstrapLog
 
+# Scenario I (REQ-002.27, backlog Item 125): the program and the unittest file that tests it both have a
+# guard and neither is one of the four names. test_weather.py sorts before weather.py, so before the fix the
+# alphabetical rule took the test runner as the program, with the fallback line in the log; a test module is
+# not a candidate while another file could be, so weather.py is the sole guard and nothing is reported as unclear.
+$scenarioI = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_testmodule_guard') -LogName '~entry_testmodule_guard_bootstrap.log' -Files ([ordered]@{
+    'weather.py' = @'
+if __name__ == "__main__":
+    print("from-weather")
+'@
+    'test_weather.py' = @'
+import unittest
+
+class WeatherTests(unittest.TestCase):
+    def test_truth(self):
+        self.assertTrue(True)
+
+if __name__ == "__main__":
+    unittest.main()
+'@
+})
+$expectedI = 'weather.py'
+Write-EntryRow -Id 'self.entry.testmodule.guard' -Expected $expectedI -Scenario $scenarioI -Description 'A unittest file next to the program it tests is not taken as the entry (REQ-002.27)' -Tag @{ req = 'REQ-002.27' } -ForbidText 'No clear entry found'
+Check-PipreqsFailure -LogPath $scenarioI.setupPath -LogText $scenarioI.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioI.bootstrapPath -LogText $scenarioI.bootstrapLog
+
+# Scenario J (REQ-002.27): a library with no guard and a calc_test.py that is the one file with a guard.
+# Before the fix the test file won by the sole-guard rule; now it is set aside, the library is the only
+# candidate and the fallback line names it (no program is named, so the choice is still reported as unclear).
+$scenarioJ = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_testmodule_library') -LogName '~entry_testmodule_library_bootstrap.log' -Files ([ordered]@{
+    'calc.py' = @'
+def add(a, b):
+    return a + b
+'@
+    'calc_test.py' = @'
+import unittest
+
+class CalcTests(unittest.TestCase):
+    def test_truth(self):
+        self.assertTrue(True)
+
+if __name__ == "__main__":
+    unittest.main()
+'@
+})
+$expectedJ = 'calc.py'
+Write-EntryRow -Id 'self.entry.testmodule.library' -Expected $expectedJ -Scenario $scenarioJ -Description 'A test file that holds the only guard does not beat the library it tests (REQ-002.27)' -Tag @{ req = 'REQ-002.27' } -RequireText "[BOOT] REQ-002: No clear entry found; selecting 'calc.py' (alphabetical fallback)."
+Check-PipreqsFailure -LogPath $scenarioJ.setupPath -LogText $scenarioJ.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioJ.bootstrapPath -LogText $scenarioJ.bootstrapLog
+
+# Scenario L (REQ-002.27): the name alone does not set a file aside. test_scope.py is a program that drives an
+# instrument and imports neither unittest nor pytest, so it is still the one file with a guard.
+$scenarioL = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_testmodule_script') -LogName '~entry_testmodule_script_bootstrap.log' -Files ([ordered]@{
+    'scope.py' = @'
+def read_trace():
+    return [0, 1, 2]
+'@
+    'test_scope.py' = @'
+if __name__ == "__main__":
+    print("from-test-scope")
+'@
+})
+$expectedL = 'test_scope.py'
+Write-EntryRow -Id 'self.entry.testmodule.script' -Expected $expectedL -Scenario $scenarioL -Description 'A script that is only named like a test, with no unittest or pytest import, stays a candidate (REQ-002.27)' -Tag @{ req = 'REQ-002.27' } -ForbidText 'No clear entry found'
+Check-PipreqsFailure -LogPath $scenarioL.setupPath -LogText $scenarioL.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioL.bootstrapPath -LogText $scenarioL.bootstrapLog
+
+# Scenario K (REQ-002.28): every file is a test module. Setting them all aside would leave nothing to run, so the
+# sole-guard rule applies to all of them: test_a.py has the guard and is the entry, with no fallback line.
+$scenarioK = Invoke-EntryScenario -Root (Join-Path -Path $here -ChildPath '~entry_testmodule_only') -LogName '~entry_testmodule_only_bootstrap.log' -Files ([ordered]@{
+    'test_a.py' = @'
+import unittest
+
+class ATests(unittest.TestCase):
+    def test_truth(self):
+        self.assertTrue(True)
+
+if __name__ == "__main__":
+    unittest.main()
+'@
+    'test_b.py' = @'
+import unittest
+
+class BTests(unittest.TestCase):
+    def test_truth(self):
+        self.assertTrue(True)
+'@
+})
+$expectedK = 'test_a.py'
+Write-EntryRow -Id 'self.entry.testmodule.only' -Expected $expectedK -Scenario $scenarioK -Description 'When every file is a test module the rules still pick one, so something runs (REQ-002.28)' -Tag @{ req = 'REQ-002.28' } -ForbidText 'No clear entry found'
+Check-PipreqsFailure -LogPath $scenarioK.setupPath -LogText $scenarioK.setupLog
+Check-HelperInvokeFailure -LogPath $scenarioK.bootstrapPath -LogText $scenarioK.bootstrapLog
+
 # REQ-011/REQ-010 behavioral tests moved to tests/selfapps_isolation.ps1 (runs unconditionally).
 # This file only covers REQ-002 entry-selection.
 
@@ -455,7 +547,11 @@ $expectedMap = @(
     @{ Id = 'self.entry.guard'; Expected = $expectedF },
     @{ Id = 'self.entry.fallback'; Expected = $expectedG1 },
     @{ Id = 'self.entry.fallback.guard'; Expected = $expectedG2 },
-    @{ Id = 'self.entry.ignored'; Expected = $expectedH }
+    @{ Id = 'self.entry.ignored'; Expected = $expectedH },
+    @{ Id = 'self.entry.testmodule.guard'; Expected = $expectedI },
+    @{ Id = 'self.entry.testmodule.library'; Expected = $expectedJ },
+    @{ Id = 'self.entry.testmodule.script'; Expected = $expectedL },
+    @{ Id = 'self.entry.testmodule.only'; Expected = $expectedK }
 )
 $issues = @()
 foreach ($item in $expectedMap) {

@@ -237,11 +237,13 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   - pipreqs is told to ignore `tests` (`HP_PIPREQS_IGNORE`), and `dep_merge.py` reads only
     `[project].dependencies`, so a test-only dependency (pytest, a mocking library) is never found or
     installed. A pytest-style folder would need pytest installed first.
-  - `tools/find_entry.py` has no notion of test files. A folder with a library `calc.py` (no `__main__`
-    guard) and a `test_calc.py` that ends in `if __name__ == "__main__": unittest.main()` selects
-    `test_calc.py` as the entry (exit 0, rule 3 of REQ-002), so today the bootstrapper would build and
-    verify an EXE of the test runner. With a third unguarded file the alphabetical fallback picks `calc.py`
-    instead. Tests become the program only by accident of that rule. Not filed as a bug: no field report.
+  - `tools/find_entry.py` used to have no notion of test files: a folder with a library `calc.py` (no
+    `__main__` guard) and a `test_calc.py` that ends in `if __name__ == "__main__": unittest.main()` selected
+    `test_calc.py` as the entry (exit 0, rule 3 of REQ-002) and the bootstrapper built and verified an EXE of
+    the test runner. Fixed by backlog Item 125 (README REQ-002.27 and .28): a file named `test_X.py` or
+    `X_test.py` that imports `unittest` or `pytest` is skipped by the guard rule and the alphabetical fallback
+    while the folder holds any other `.py` file. This idea's detection (a `tests` folder, `conftest.py`,
+    `pytest.ini`) is still not in the helper.
   - Nothing checks, before a run, that the entry's imports resolve. `runtime_module_scan.py` reads stderr
     after a run; `collect_submodules.py` calls `find_spec` only for a curated list and
     `hidden_import_scan.py` only for names an error already named.
@@ -426,3 +428,18 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   run, not a drive-by edit. **Trigger to thaw**: the next change to the picker or to `:determine_entry` for a behavior
   reason (make this change in the same pull request, with the row), or a report that the program that ran was not the file
   the user picked.
+
+- **Make the cached-EXE fast path notice a change of the chosen entry.** Raised by CodeRabbit on PR #536 (Item 125): a folder
+  whose earlier run chose `test_weather.py` has a `dist\<env>.exe` of the test runner, and after only `run_setup.bat` is
+  replaced the content hash (`:try_fast_exe`, `tools/fast_check.ps1`: non-infra `*.py`, `requirements.txt`, `pyproject.toml`,
+  `runtime.txt`) is unchanged, so the cached EXE is reused until a source file changes. Traced 2026-11-16: the EXE is keyed by
+  the environment (folder) name and the hash holds no entry name or selector version, so the same holds for every earlier
+  selection change (Item 108's picker filters, any REQ-002 rule) and for a different first argument; the documented remedy is
+  deleting `dist\<env>.exe`. The path needs a folder where the old rule picked the wrong file AND a successful build of it AND
+  no source edit since, and the person already ran the wrong program once. **Why it waits**: a fix changes what every existing
+  cached EXE does on the first run after an upgrade (a rebuild for all users) and puts a new input into the Prime Directive
+  fast path; it wants its own row (a cached EXE built from file A, then the entry rule or argument changed to B, must rebuild)
+  and a full run, not a side change to a selector fix. Cheapest shape when thawed: append the chosen entry file name to the
+  hash input in `fast_check.ps1` (both modes) and clear `HP_FASTPATH_USED` when it differs. **Trigger to thaw**: a user report
+  of a stale EXE after a changed entry (rule, argument or picker answer), or the next change that alters which file is picked
+  for existing folders.

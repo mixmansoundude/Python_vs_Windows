@@ -58,6 +58,10 @@ self.entry.entry1, self.entry.entryA, self.entry.entryB, self.entry.entryC, self
 self.entry.guard, self.entry.fallback, self.entry.fallback.guard, self.entry.ignored,
 self.entry.helper.invoke.absent, self.entry.results, self.entry.spaced-path, self.entry.picker,
 self.entry.picker.overflow, self.entry.picker.number, self.entry.picker.metafile,
+self.entry.testmodule.guard, self.entry.testmodule.library, self.entry.testmodule.script, self.entry.testmodule.only
+(real, conda-full and every other lane -- selfapps_entry.ps1; REQ-002.27 and .28, Item 125: a test module is not taken as the entry while the folder holds a
+program file; `.guard` and `.library` are the two that were red before the fix, `.script` is the control that a test_*.py file without a framework import stays
+a candidate, `.only` is the control that a folder of nothing but test modules still runs one),
 self.entry.req011.crossdir, self.entry.req011.sameDir, self.entry.req011.case, self.isolation.req010.pythonpath,
 entry.single.direct, entry.expected, helper.invoke,
 self.envname.hyphen, self.envname.ampersand, self.envname.longname, self.envname.longtrim,
@@ -1646,8 +1650,15 @@ self.netres.getpip.retry, self.netres.getpip.powershell, self.netres.getpip.fall
 self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.miniconda.checkorder, self.netres.miniconda.offline,
 self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
 self.netres.check.repeat, self.netres.swap.retry,
-self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools
+self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools,
+self.netres.uv.acquire, self.netres.uv.unpackfail
 ```
+
+Item 127 (README REQ-009.22 and .23) added two rows to the same script, with one more cut (the uv acquisition block, as for the Item 116
+rows, with a stub `uv.exe`-sized program zipped by the script into a local archive): `uv.acquire` (the archive downloads in full, one curl
+request, and `~uv_bin\uv.exe` exists afterwards with the run's `HP_UV_EXE` pointing at it, no fallback reason) and `uv.unpackfail` (the
+body is a file of the right size that is no archive: the setup log holds a `uv: unpack failed: <reason>` line, the failure lines and the
+listing of `~uv_bin`, `UV_FALLBACK_REASON` is `acquire_failed` and no `uv.exe` exists).
 
 ## selfapps-venv-probe NDJSON rows (selfapps_venv_probe.ps1, real lane only, GATING)
 
