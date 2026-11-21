@@ -451,10 +451,17 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   way the write can fail while something exists at that path is already covered, because the two tests of the marker (the
   cached-binary test before the unpack and the veto after it) use `if exist`, which is true for a file held open, a
   read-only file and a folder of that name. What is left is a write that fails with nothing at the path while the unpack
-  writes `uv.exe` and `uvx.exe` into the same folder, which needs a program that denies the creation of one file name
-  only; no row can produce that state on a Windows runner, so there is no red test to write first. **Why it waits**: a
-  guard line without a test is the kind of code this repository avoids, and the maintainer's coordinator decided on
-  2026-11-21 to merge PR #540 without it. **Cheapest shape when thawed**: after the marker line, `if not exist
+  writes `uv.exe` and `uvx.exe` into the same folder. Two ways to get there. (1) A program that denies the creation of one
+  file name only: no row can produce that on a Windows runner. (2) **The folder is gone** (CodeRabbit again, on PR #543):
+  `~uv_bin` is made before the download and the unpack's own `CreateDirectory` makes it again, so if something removes the
+  empty folder while the download runs (a cleanup tool, the user), the marker write fails, the unpack recreates the folder
+  and writes `uv.exe`, and an unpack that is then cut short, or that fails with its by-name delete failing too, leaves a
+  `uv.exe` nothing marks. A row CAN make this state: the zip is in `%TEMP%`, not in the folder, so the driver's stub `curl`
+  can write the zip and then remove `~uv_bin`. It would show the guard (a good archive must still end `acquire_failed`,
+  because the marker was never written), not the harm, which needs a second fault in the unpack. **Why it waits**: the
+  harm needs two faults at once and a guard line is code the repository carries for ever, and the maintainer's coordinator
+  decided on 2026-11-21 to merge PR #540 without it and to keep this entry as the home of the finding. **Cheapest shape when
+  thawed**: row first (the stub-curl scenario above, red against today's code), then, after the marker line, `if not exist
   "%HP_UV_BIN%\~unpack.incomplete" set "HP_UV_UNPACK_BAD=1"` and guard the unpack line with `if not defined
   HP_UV_UNPACK_BAD` (the two exit-code tests directly after it then read a stale code, which is harmless because the flag
   is already set; `uv_unpack_problems` in `tests/test_net_resilience.py` pins that line's shape, so it changes with it).

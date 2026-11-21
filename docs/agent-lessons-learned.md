@@ -378,11 +378,22 @@ only":
   each one's kind from its emit site (`call :emit_from_base64 "<file>" HP_NAME`: a `.py` target is Python, `.ps1` is PowerShell,
   `~condarc` is neither; an unknown file kind or a payload nothing emits fails, so a new kind is a decision and not a silent skip)
   and parses each Python payload, so a payload added tomorrow is covered the day it is added. `feature_version` is not a complete guard
-  on a newer host, which is why the test adds rules: a quote reused inside an f-string replacement field and a comment or
-  backslash in one (PEP 701, 3.12), `a[*b]` (PEP 646, 3.11) and `X | Y` in an annotation that runs when the def runs (a `TypeError`
-  on 3.9 unless `from __future__ import annotations`). A library call that an old interpreter lacks (`zip(strict=True)`, a
-  `tomllib` import with no fallback) is not grammar and is not judged. The f-string rules need a 3.12 or newer `tokenize`, so they
-  are skipped on an older host; the grammar parse itself runs everywhere.
+  on a newer host, which is why the test adds rules: the delimiter of an enclosing f-string, a backslash or a comment inside a
+  replacement field (PEP 701, 3.12), an unparenthesised `a[*b]` (PEP 646, 3.11) and `X | Y` in an annotation that runs when the
+  def runs (a `TypeError` on 3.9 unless `from __future__ import annotations`). A library call that an old interpreter lacks
+  (`zip(strict=True)`, a `tomllib` import with no fallback) is not grammar and is not judged. The f-string rules need a 3.12 or
+  newer `tokenize`, so they are skipped on an older host; the grammar parse itself runs everywhere.
+  **A guard of this kind is wrong in two directions, and only a real 3.9 shows which** (CodeRabbit on PR #543: four false alarms
+  and one gap in the first version of the rules, none of them reachable by a helper today). Variable annotations inside a def are
+  never evaluated (PEP 526), so `x: int | None = None` runs on 3.9, while a class body inside a def is evaluated and a def's own
+  signature always is. `f"{f'{x}'}"` and `f"""{ "ok" }"""` compile on 3.9 (a nested f-string is fine with another delimiter, and
+  one `"` does not end a triple-quoted string); `f"{f"{x}"}"` and a `"""` inside a `"""` string do not. A backslash is refused in
+  the expression part, which includes every string and nested f-string text in a field, but allowed in the literal text and the
+  format spec of an f-string that is not itself in a field. `d[(*a,)]` is a tuple display and compiles; `d[*a]`, `d[(1), *a]` and
+  `d[*a, (1)]` do not, so the test decides "parenthesised" from the tokens of the slice, not from its first or last character.
+  `CPYTHON_39` in the test is the table of these answers taken with CPython 3.9's own `compile()`; the guard must agree with
+  every row on every host, and a second test re-checks the table against a `python3.9` when one is on PATH (`uv python install
+  3.9` gives one locally), so a recorded answer cannot drift from the interpreter it claims to describe.
 
 ---
 
