@@ -9,6 +9,9 @@ cut to the System32 folders (REQ-003.1).
 Item 127 added the uv archive unpack (`:uv_acquire_done` cut) for the two rows `self.netres.uv.acquire` and `.unpackfail`: the unpack is
 raw .NET with the reason of a failure written to the setup log, because `Expand-Archive` failed in the real chain on Windows image
 20261116.315.1 and left no uv.exe.
+Item 128 added `self.netres.uv.partial` (REQ-009.24): the unpack's exit code is read, a failed unpack deletes the three uv files it
+left, and a bare `uv.exe` that exists is no longer the verdict, because `uv.exe` is the first archive entry and a held `uvx.exe`
+stops the unpack after it.
 What it can prove depends on those blocks staying what the script assumes. This file pins that, so a change that moves a
 label, adds a variable the driver does not set, drops `--retry 3` or reorders the attempts fails here with a message
 that names the script to update, and not after a two and a half hour run.
@@ -50,6 +53,10 @@ ROWS = {
     # Item 127: the uv archive that downloaded in full is unpacked, and a failed unpack names its reason.
     "self.netres.uv.acquire": "REQ-009.22",
     "self.netres.uv.unpackfail": "REQ-009.23",
+    # Item 128: an unpack that fails after uv.exe was written leaves no uv files behind and the run does not use them.
+    "self.netres.uv.partial": "REQ-009.24",
+    # Item 128 follow-up: a uv.exe that a failed unpack could not delete is not used, the next run unpacks again.
+    "self.netres.uv.survivor": "REQ-009.25",
 }
 STEP_NAME = "Self-test: network resilience of the downloads (real only)"
 
@@ -323,7 +330,7 @@ def uv_problems(lines):
 
 
 def uv_unpack_problems(lines):
-    """Item 127 (REQ-009.22, .23): the unpack of the downloaded archive writes its reason to the setup log, and a missing uv.exe is explained.
+    """Item 127 (REQ-009.22, .23) and Item 128 (REQ-009.24): the unpack of the downloaded archive writes its reason to the setup log, a missing uv.exe is explained, and a failed unpack never leaves a uv the run uses.
 
     The unpack is raw .NET (`ZipFile.OpenRead` and `ExtractToFile`), never `Expand-Archive`: on Windows runner image 20261116.315.1 the
     cmdlet failed in the chain pwsh -> cmd.exe -> powershell.exe with `Cannot find an overload for "ExtractToDirectory" and the
@@ -368,10 +375,62 @@ def uv_unpack_problems(lines):
     # An unreadable failure was the defect: the catch must not be a bare exit.
     if re.search(r"catch \{ exit 1 \}", line):
         found.append("uv unpack: the unpack line swallows the reason again (catch { exit 1 })")
+    # Item 128: nothing may sit between the unpack line and the two exit code tests (any command, a rem line included, would be a
+    # place to lose the code), the flag is cleared once before the unpack (an inherited value would decline every run), and the
+    # old verdict, a bare `if exist uv.exe (`, must not come back: uv.exe is the first file the archive writes.
+    tb = [l.strip() for l in block]
+    k = next(i for i, l in enumerate(tb) if l.startswith("powershell "))
+    if tb[k + 1:k + 3] != ['if errorlevel 1 set "HP_UV_UNPACK_BAD=1"', 'if not errorlevel 0 set "HP_UV_UNPACK_BAD=1"']:
+        found.append("uv unpack: the two exit code tests are not the two lines directly after the unpack line (REQ-009.24)")
+    if 'if exist "%HP_UV_BIN%\\uv.exe" (' in tb:
+        found.append("uv unpack: a bare `if exist uv.exe (` decides the acquisition again; a partly unpacked uv would be used (REQ-009.24, Item 128)")
+    whole = cut_block(lines, *BLOCKS["uv"])
+    tw = [l.strip() for l in whole] if whole else []
+    if tw.count('set "HP_UV_UNPACK_BAD="') != 1:
+        found.append("uv unpack: set \"HP_UV_UNPACK_BAD=\" occurs %d times in the uv block, expected one clear before the unpack" % tw.count('set "HP_UV_UNPACK_BAD="'))
+    elif tw.index('set "HP_UV_UNPACK_BAD="') > next((i for i, l in enumerate(tw) if l.startswith("powershell ")), -1):
+        found.append("uv unpack: the failure flag is cleared after the unpack line instead of before it")
+    if sum(1 for l in tw if l.endswith('set "HP_UV_UNPACK_BAD=1"')) != 3:
+        found.append("uv unpack: the failure flag must be set by exactly the two exit code tests and the marker test (REQ-009.24 and .25)")
+    # Item 128 follow-up (REQ-009.25): the marker is cleared (set to its absence) only by a successful unpack, so a deletion that is
+    # not guarded by the failure flag would erase the record of a failed unpack, and a clear of the done flag after the unpack would
+    # let a failed run look finished.
+    marker = "~unpack.incomplete"
+    unguarded = [l for l in tw if marker in l and re.match(r"^(if .* )?del ", l) and not l.startswith("if not defined HP_UV_UNPACK_BAD del ")]
+    if unguarded:
+        found.append("uv unpack: the marker is deleted without the test that the unpack succeeded (REQ-009.25): %s" % unguarded[0])
+    if sum(1 for l in tw if marker in l and re.search(r"\bdel\b", l)) != 1:
+        found.append("uv unpack: the marker must be deleted by exactly one line, the one after a successful unpack")
+    if tw.count('set "HP_UV_UNPACK_DONE="') != 1:
+        found.append("uv unpack: set \"HP_UV_UNPACK_DONE=\" occurs %d times in the uv block, expected one clear before the unpack" % tw.count('set "HP_UV_UNPACK_DONE="'))
+    elif tw.index('set "HP_UV_UNPACK_DONE="') > next((i for i, l in enumerate(tw) if l.startswith("powershell ")), -1):
+        found.append("uv unpack: the done flag is cleared after the unpack line instead of before it")
+    found += order_problems("uv marker", tw, [
+        # the cached binary is looked at only after the marker was
+        ("the test of the marker before the cached binary", r"^if exist \"%HP_UV_BIN%\\~unpack\.incomplete\" \($"),
+        ("the warning that an earlier unpack did not finish", r"uv: an earlier unpack did not finish"),
+        ("the jump to the download", r"^goto :uv_acquire_download$"),
+        ("the cached binary test", r"^if exist \"%HP_UV_BIN%\\uv\.exe\" \($"),
+    ])
     found += order_problems("uv unpack", block, [
+        # REQ-009.25: the marker is written before the unpack starts
+        ("the marker is written", r"^echo unpack started> \"%HP_UV_BIN%\\~unpack\.incomplete\"$"),
         ("the unpack", r"^powershell .*ZipFile\]::OpenRead"),
+        # Item 128 (REQ-009.24): the exit code of the unpack decides, and a failed unpack deletes the uv files it left before uv.exe is looked for.
+        ("the exit code test", r"^if errorlevel 1 set \"HP_UV_UNPACK_BAD=1\"$"),
+        ("the test of a negative exit code", r"^if not errorlevel 0 set \"HP_UV_UNPACK_BAD=1\"$"),
+        ("the done flag of a successful unpack", r"^if not defined HP_UV_UNPACK_BAD set \"HP_UV_UNPACK_DONE=1\"$"),
+        ("the removal of the marker after a successful unpack", r"^if not defined HP_UV_UNPACK_BAD del /f /q \"%HP_UV_BIN%\\~unpack\.incomplete\" >nul 2>&1$"),
         ("the archive is removed", r"^del \"%HP_UV_ZIP%\""),
-        ("the uv.exe test", r"^if exist \"%HP_UV_BIN%\\uv\.exe\" \($"),
+        ("the test of a marker that is still there", r"^if not defined HP_UV_UNPACK_DONE if exist \"%HP_UV_BIN%\\~unpack\.incomplete\" set \"HP_UV_UNPACK_BAD=1\"$"),
+        ("the failure branch", r"^if defined HP_UV_UNPACK_BAD \($"),
+        ("the deletion of uv.exe", r"^del /f /q \"%HP_UV_BIN%\\uv\.exe\""),
+        ("the deletion of uvx.exe", r"^del /f /q \"%HP_UV_BIN%\\uvx\.exe\""),
+        ("the deletion of uvw.exe", r"^del /f /q \"%HP_UV_BIN%\\uvw\.exe\""),
+        ("the reset of the verdict", r"^set \"HP_UV_OK=\"$"),
+        ("the uv.exe test", r"^if exist \"%HP_UV_BIN%\\uv\.exe\" set \"HP_UV_OK=1\"$"),
+        ("the veto of a failed unpack", r"^if defined HP_UV_UNPACK_BAD set \"HP_UV_OK=\"$"),
+        ("the verdict", r"^if defined HP_UV_OK \($"),
         ("the success line", r"uv: acquired at ~uv_bin"),
         ("the failure line", r"uv: acquisition failed; will use conda"),
         ("the listing heading", r"uv: ~uv_bin holds the files listed next"),
@@ -630,6 +689,115 @@ class SyntheticRulesCanFail(unittest.TestCase):
         self.assertNotEqual(lines, bare)
         problems = uv_unpack_problems(bare)
         self.assertTrue(any("Add-Type -AssemblyName" in p for p in problems), problems)
+
+    @staticmethod
+    def _only(lines, trimmed):
+        """The index of the one line equal to `trimmed`, so a mutation cannot edit another line."""
+        hits = [k for k, l in enumerate(lines) if l.strip() == trimmed]
+        assert len(hits) == 1, (trimmed, hits)
+        return hits[0]
+
+    def test_a_partly_unpacked_uv_that_is_used_again_is_reported(self):
+        # Item 128 (REQ-009.24): the first version decided by `if exist uv.exe (`. uv.exe is the first file the archive writes, so a
+        # uvx.exe that cannot be written stops the unpack with uv.exe in place, and the run used it. Each mutation puts one piece back.
+        lines = _lines()
+        old_verdict = list(lines)
+        old_verdict[self._only(lines, "if defined HP_UV_OK (")] = 'if exist "%HP_UV_BIN%\\uv.exe" ('
+        problems = uv_unpack_problems(old_verdict)
+        self.assertTrue(any("bare `if exist uv.exe (`" in p for p in problems), problems)
+        self.assertTrue(any("the verdict" in p for p in problems), problems)
+        no_veto = [l for l in lines if l.strip() != 'if defined HP_UV_UNPACK_BAD set "HP_UV_OK="']
+        self.assertNotEqual(lines, no_veto)
+        self.assertTrue(any("the veto of a failed unpack" in p for p in uv_unpack_problems(no_veto)), uv_unpack_problems(no_veto))
+
+    def test_an_unpack_whose_exit_code_is_not_read_is_reported(self):
+        lines = _lines()
+        for trimmed, piece in (('if errorlevel 1 set "HP_UV_UNPACK_BAD=1"', "the exit code test"),
+                               ('if not errorlevel 0 set "HP_UV_UNPACK_BAD=1"', "the test of a negative exit code")):
+            mutated = list(lines)
+            del mutated[self._only(lines, trimmed)]
+            problems = uv_unpack_problems(mutated)
+            self.assertTrue(any(piece in p for p in problems), (piece, problems))
+            self.assertTrue(any("exactly the two exit code tests" in p for p in problems), (piece, problems))
+
+    def test_a_line_between_the_unpack_and_its_exit_code_tests_is_reported(self):
+        # Any command there resets the exit code the tests read; a comment is not known to be safe, and the rule is nothing at all.
+        lines = _lines()
+        i = self._only(lines, 'if errorlevel 1 set "HP_UV_UNPACK_BAD=1"')
+        mutated = lines[:i] + ["rem a comment"] + lines[i:]
+        problems = uv_unpack_problems(mutated)
+        self.assertTrue(any("directly after the unpack line" in p for p in problems), problems)
+
+    def test_a_failure_flag_that_is_not_cleared_or_files_that_are_not_deleted_are_reported(self):
+        lines = _lines()
+        no_clear = [l for l in lines if l.strip() != 'set "HP_UV_UNPACK_BAD="']
+        self.assertNotEqual(lines, no_clear)
+        self.assertTrue(any("expected one clear" in p for p in uv_unpack_problems(no_clear)), uv_unpack_problems(no_clear))
+        for name in ("uv", "uvx", "uvw"):
+            # the cached-binary part above the unpack also deletes uv.exe, so only the last such line (the unpack tail) is taken out
+            hits = [i for i, l in enumerate(lines) if l.strip() == 'del /f /q "%HP_UV_BIN%\\' + name + '.exe" >nul 2>&1']
+            self.assertTrue(hits, name)
+            mutated = [l for i, l in enumerate(lines) if i != hits[-1]]
+            problems = uv_unpack_problems(mutated)
+            self.assertTrue(any(("the deletion of %s.exe" % name) in p for p in problems), (name, problems))
+
+    def test_a_survivor_that_is_used_again_is_reported(self):
+        # Item 128 follow-up (REQ-009.25): CodeRabbit's finding on PR #540. A uv.exe that a failed unpack could not delete (held open)
+        # was taken by the next run as the cached binary, because uv --version answers. The marker file is what stops that, and each
+        # mutation takes one piece of it away; each is anchored on a line that occurs once, so it cannot edit another place.
+        lines = _lines()
+        marker_test = 'if exist "%HP_UV_BIN%\\~unpack.incomplete" ('
+        cached_test = 'if exist "%HP_UV_BIN%\\uv.exe" ('
+        no_check = list(lines)
+        i = self._only(lines, marker_test)
+        j = next(k for k in range(i, len(lines)) if lines[k].strip() == ")")
+        del no_check[i:j + 1]
+        self.assertEqual(len(no_check), len(lines) - (j + 1 - i))
+        problems = uv_unpack_problems(no_check)
+        self.assertTrue(any("the test of the marker before the cached binary" in p for p in problems), problems)
+        # the check placed after the cached binary test is no check: the survivor would be taken first
+        late = [l for k, l in enumerate(lines) if not (i <= k <= j)]
+        d = self._only(late, ":uv_acquire_download")
+        self.assertGreater(d, self._only(late, cached_test))
+        late = late[:d] + lines[i:j + 1] + late[d:]
+        self.assertEqual(len(late), len(lines))
+        self.assertNotEqual(late, lines)
+        self.assertEqual(uv_unpack_problems(lines), [])
+        late_problems = uv_unpack_problems(late)
+        self.assertTrue(any(p.startswith("uv marker:") for p in late_problems), late_problems)
+
+    def test_a_marker_that_is_not_written_kept_or_vetoed_is_reported(self):
+        lines = _lines()
+        written = 'echo unpack started> "%HP_UV_BIN%\\~unpack.incomplete"'
+        no_write = [l for l in lines if l.strip() != written]
+        self.assertEqual(len(no_write), len(lines) - 1)
+        self.assertTrue(any("the marker is written" in p for p in uv_unpack_problems(no_write)), uv_unpack_problems(no_write))
+        remove = 'if not defined HP_UV_UNPACK_BAD del /f /q "%HP_UV_BIN%\\~unpack.incomplete" >nul 2>&1'
+        # a removal that does not look at the outcome erases the record of a failed unpack
+        always = list(lines)
+        always[self._only(lines, remove)] = '  del /f /q "%HP_UV_BIN%\\~unpack.incomplete" >nul 2>&1'
+        problems = uv_unpack_problems(always)
+        self.assertTrue(any("deleted without the test that the unpack succeeded" in p for p in problems), problems)
+        # a second deletion, for example in the failure branch, is the same defect
+        again = list(lines)
+        k = self._only(lines, 'del /f /q "%HP_UV_BIN%\\uvw.exe" >nul 2>&1')
+        again.insert(k + 1, 'del /f /q "%HP_UV_BIN%\\~unpack.incomplete" >nul 2>&1')
+        problems = uv_unpack_problems(again)
+        self.assertTrue(any("deleted without the test" in p for p in problems), problems)
+        self.assertTrue(any("exactly one line" in p for p in problems), problems)
+        no_remove = [l for l in lines if l.strip() != remove]
+        self.assertTrue(any("the removal of the marker after a successful unpack" in p for p in uv_unpack_problems(no_remove)), uv_unpack_problems(no_remove))
+        veto = 'if not defined HP_UV_UNPACK_DONE if exist "%HP_UV_BIN%\\~unpack.incomplete" set "HP_UV_UNPACK_BAD=1"'
+        no_veto = [l for l in lines if l.strip() != veto]
+        self.assertEqual(len(no_veto), len(lines) - 1)
+        problems = uv_unpack_problems(no_veto)
+        self.assertTrue(any("the test of a marker that is still there" in p for p in problems), problems)
+        self.assertTrue(any("exactly the two exit code tests and the marker test" in p for p in problems), problems)
+        done = 'if not defined HP_UV_UNPACK_BAD set "HP_UV_UNPACK_DONE=1"'
+        no_done = [l for l in lines if l.strip() != done]
+        self.assertTrue(any("the done flag of a successful unpack" in p for p in uv_unpack_problems(no_done)), uv_unpack_problems(no_done))
+        no_done_clear = [l for l in lines if l.strip() != 'set "HP_UV_UNPACK_DONE="']
+        self.assertTrue(any("expected one clear" in p for p in uv_unpack_problems(no_done_clear)), uv_unpack_problems(no_done_clear))
 
     def test_a_missing_uv_without_its_listing_is_reported(self):
         lines = [l for l in _lines() if l.strip() != 'dir /b "%HP_UV_BIN%" >> "%LOG%" 2>&1']
