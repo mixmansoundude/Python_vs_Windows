@@ -50,6 +50,8 @@ ROWS = {
     # Item 127: the uv archive that downloaded in full is unpacked, and a failed unpack names its reason.
     "self.netres.uv.acquire": "REQ-009.22",
     "self.netres.uv.unpackfail": "REQ-009.23",
+    # Item 128: an unpack that fails after uv.exe was written leaves no uv files behind and the run does not use them.
+    "self.netres.uv.partial": "REQ-009.24",
 }
 STEP_NAME = "Self-test: network resilience of the downloads (real only)"
 
