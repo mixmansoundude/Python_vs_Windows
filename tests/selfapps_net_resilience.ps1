@@ -27,6 +27,7 @@
 #   self.netres.shipped.tools                                           REQ-003.1 (Item 116: the downloads work with only what Windows ships on PATH)
 #   self.netres.uv.acquire / .unpackfail                                REQ-009.22, .23 (Item 127: the downloaded uv archive is unpacked into ~uv_bin, and a failed unpack says why)
 #   self.netres.uv.partial                                              REQ-009.24 (Item 128: an unpack that fails after uv.exe was written leaves no uv files behind)
+#   self.netres.uv.survivor                                             REQ-009.25 (Item 128: a uv.exe that a failed unpack could not delete is not used, the next run unpacks again)
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -71,6 +72,7 @@ function Write-AllRows {
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.uv.acquire'; req = 'REQ-009.22'; pass = $Pass; desc = 'uv: an archive that downloaded in full is unpacked, ~uv_bin holds uv.exe and the run uses it'; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.uv.unpackfail'; req = 'REQ-009.23'; pass = $Pass; desc = 'uv: when the archive cannot be unpacked the setup log says why and lists ~uv_bin, and the run goes on without uv'; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.netres.uv.partial'; req = 'REQ-009.24'; pass = $Pass; desc = 'uv: when the unpack fails after uv.exe was written the uv files it left are deleted, the run goes on without uv, and the next run unpacks in full'; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.netres.uv.survivor'; req = 'REQ-009.25'; pass = $Pass; desc = 'uv: a uv.exe that a failed unpack could not delete is not used by the next run, which unpacks again, and once an unpack succeeds the next run takes the cached uv.exe'; details = $Details })
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -907,7 +909,8 @@ function New-UvZipBytes {
 }
 
 # What a uv scenario left behind. Skip is the number of server requests of earlier runs in the same folder (a second run
-# in one folder counts only its own); each length is -1 for a file that does not exist.
+# in one folder counts only its own, requestsTotal is every request of the folder so far); each length is -1 for a file that does not
+# exist; uvCallsCount is how often the stub uv.exe was started (it records each start in ~uv_bin\uv.calls).
 function Get-UvAcquireOutcome {
     param([string]$Name, [string]$Dir, $Run, [int]$Skip = 0)
     $entries = @(Get-RequestEntries -Name $Name | Select-Object -Skip $Skip)
@@ -920,6 +923,7 @@ function Get-UvAcquireOutcome {
     $binNames = @()
     if (Test-Path -LiteralPath $binDir) { $binNames = @(Get-ChildItem -LiteralPath $binDir -Force | ForEach-Object { $_.Name }) }
     $curlP1 = (Get-RequestCount -Entries $entries -Role 'p1' -Kind 'curl')
+    $uvCallsCount = @((Read-Text -Path (Join-Path $binDir 'uv.calls')) -split "`r?`n" | Where-Object { $_ -ne '' }).Count
     return [ordered]@{
         scenario = $Name
         run = $Run
@@ -927,6 +931,8 @@ function Get-UvAcquireOutcome {
         log = (Read-Text -Path (Join-Path $Dir '~driver.log'))
         console = (Read-Text -Path (Join-Path $Dir '~driver_console.txt'))
         requests = $entries.Count
+        requestsTotal = ($Skip + $entries.Count)
+        uvCallsCount = $uvCallsCount
         curlP1 = $curlP1
         otherRequests = ($entries.Count - $curlP1)
         uvExePath = (Join-Path $binDir 'uv.exe')
@@ -985,7 +991,7 @@ function Invoke-UvAcquireAgain {
     $dir = $Previous.dir
     Remove-Item -LiteralPath (Join-Path $dir '~driver.log') -Force -ErrorAction SilentlyContinue
     $run = Invoke-Driver -Dir $dir -TimeoutSec 120
-    return (Get-UvAcquireOutcome -Name $Name -Dir $dir -Run $run -Skip $Previous.requests)
+    return (Get-UvAcquireOutcome -Name $Name -Dir $dir -Run $run -Skip $Previous.requestsTotal)
 }
 
 $stubLength = (Get-Item -LiteralPath $stubExe).Length
@@ -995,6 +1001,14 @@ $uvAcq = Invoke-UvAcquireScenario -Name 'uv_acq' -Body 'uvzip'
 $uvBad = Invoke-UvAcquireScenario -Name 'uv_bad' -Body 'uvjunk'
 $uvPart = Invoke-UvAcquireScenario -Name 'uv_part' -Body 'uvzip' -LockUvx $true
 $uvPartAgain = Invoke-UvAcquireAgain -Name 'uv_part' -Previous $uvPart
+# Item 128 (REQ-009.25): the same failed unpack, then a uv.exe in ~uv_bin that the failed run could not delete. That cannot be made to
+# happen by a lock (the unpack writes uv.exe itself, so nothing can hold it before the cleanup looks for it), so the scenario puts a
+# copy of the stub there between the runs. The next run must not start it (not even for uv --version), must unpack again, and a run
+# after that, with nothing wrong any more, must take the cached uv.exe the way an installed uv is taken.
+$uvSurv = Invoke-UvAcquireScenario -Name 'uv_surv' -Body 'uvzip' -LockUvx $true
+Copy-Item -LiteralPath $stubExe -Destination (Join-Path $uvSurv.dir '~uv_bin\uv.exe') -Force
+$uvSurvAgain = Invoke-UvAcquireAgain -Name 'uv_surv' -Previous $uvSurv
+$uvSurvControl = Invoke-UvAcquireAgain -Name 'uv_surv' -Previous $uvSurvAgain
 
 $acqExpected = 'UV=' + $uvAcq.uvExePath + ';REASON='
 $acqOk = ($uvAcq.result -eq $acqExpected) -and ($uvAcq.log -match 'uv: acquired at ~uv_bin\\uv\.exe') -and ($uvAcq.uvExeLength -eq $stubLength) -and (($uvAcq.uvBinNames -contains 'uvx.exe') -and ($uvAcq.uvBinNames -contains 'uvw.exe')) -and ($uvAcq.curlP1 -eq 1) -and ($uvAcq.otherRequests -eq 0) -and (-not $uvAcq.zipLeft) -and ($uvAcq.log -notmatch 'UNEXPECTED') -and ($uvAcq.log -notmatch 'acquisition failed') -and (-not $uvAcq.run.timedOut)
@@ -1036,6 +1050,30 @@ Write-NdjsonRow ([ordered]@{
         stubLength = $stubLength
         firstRun = (Get-Brief -S $uvPart)
         secondRun = (Get-Brief -S $uvPartAgain)
+    }
+})
+
+# Item 128 (README REQ-009.25), three runs in one folder. First: the unpack fails (uvx.exe held), as in uv.partial. Then a uv.exe is put
+# into ~uv_bin, standing for one that a failed deletion left. Second run, lock released: it must say that an earlier unpack did not
+# finish, must not start the survivor (the stub would record a call in uv.calls), must make its own request and unpack all three
+# files. Third run: nothing is wrong any more, so the unpacked uv.exe is taken as the cached binary (one start for the health
+# check, no request, no warning), which is what shows the second run's refusal is not permanent and the control is live.
+$survFirstOk = ($uvSurv.result -eq 'UV=;REASON=acquire_failed') -and ($uvSurv.uvExeLength -eq -1) -and ($uvSurv.curlP1 -eq 1) -and ($uvSurv.log -notmatch 'UNEXPECTED') -and (-not $uvSurv.run.timedOut)
+$survAgainOk = ($uvSurvAgain.result -eq ('UV=' + $uvSurvAgain.uvExePath + ';REASON=')) -and ($uvSurvAgain.log -match 'an earlier unpack did not finish') -and ($uvSurvAgain.log -notmatch 'cached binary found') -and ($uvSurvAgain.log -match 'uv: acquired at ~uv_bin\\uv\.exe') -and ($uvSurvAgain.log -notmatch 'unpack failed') -and ($uvSurvAgain.uvCallsCount -eq 0) -and ($uvSurvAgain.uvExeLength -eq $stubLength) -and ($uvSurvAgain.uvxExeLength -eq $stubLength) -and ($uvSurvAgain.uvwExeLength -eq $stubLength) -and ($uvSurvAgain.curlP1 -eq 1) -and ($uvSurvAgain.otherRequests -eq 0) -and ($uvSurvAgain.log -notmatch 'UNEXPECTED') -and (-not $uvSurvAgain.run.timedOut)
+$survControlOk = ($uvSurvControl.result -eq ('UV=' + $uvSurvControl.uvExePath + ';REASON=')) -and ($uvSurvControl.log -match 'uv: cached binary found at ~uv_bin\\uv\.exe') -and ($uvSurvControl.log -notmatch 'earlier unpack') -and ($uvSurvControl.requests -eq 0) -and ($uvSurvControl.uvCallsCount -eq 1) -and ($uvSurvControl.uvExeLength -eq $stubLength) -and ($uvSurvControl.log -notmatch 'UNEXPECTED') -and (-not $uvSurvControl.run.timedOut)
+Write-NdjsonRow ([ordered]@{
+    id = 'self.netres.uv.survivor'
+    req = 'REQ-009.25'
+    pass = [bool]($survFirstOk -and $survAgainOk -and $survControlOk)
+    desc = 'uv: a uv.exe that a failed unpack could not delete is not used by the next run, which unpacks again, and once an unpack succeeds the next run takes the cached uv.exe'
+    details = [ordered]@{
+        firstRunFailsTheUnpack = [bool]$survFirstOk
+        nextRunUnpacksAgain = [bool]$survAgainOk
+        runAfterTakesCachedUv = [bool]$survControlOk
+        stubLength = $stubLength
+        firstRun = (Get-Brief -S $uvSurv)
+        secondRun = (Get-Brief -S $uvSurvAgain)
+        thirdRun = (Get-Brief -S $uvSurvControl)
     }
 })
 

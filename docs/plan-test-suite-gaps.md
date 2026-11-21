@@ -95,7 +95,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-006 | 2 | 2 | 0 | 5 |
 | REQ-007 | 20 | 17 | 3 | 13 |
 | REQ-008 | 23 | 20 | 3 | 10 |
-| REQ-009 | 16 | 16 | 0 | 23 |
+| REQ-009 | 17 | 17 | 0 | 23 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
 | REQ-012 | 6 | 6 | 0 | 1 |
@@ -116,7 +116,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-258 of 270 numbered shalls are named by at least one row tag.
+259 of 271 numbered shalls are named by at least one row tag.
 
 Shalls no row names: REQ-002.15, REQ-007.12, REQ-007.17, REQ-007.20, REQ-008.5, REQ-008.6, REQ-008.12, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30.
 

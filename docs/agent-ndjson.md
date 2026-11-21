@@ -1651,7 +1651,7 @@ self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.minic
 self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
 self.netres.check.repeat, self.netres.swap.retry,
 self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools,
-self.netres.uv.acquire, self.netres.uv.unpackfail, self.netres.uv.partial
+self.netres.uv.acquire, self.netres.uv.unpackfail, self.netres.uv.partial, self.netres.uv.survivor
 ```
 
 Item 127 (README REQ-009.22 and .23) added two rows to the same script, with one more cut (the uv acquisition block, as for the Item 116
@@ -1666,6 +1666,14 @@ must report the reason line, log `UV_FALLBACK reason=acquire_failed`, set no uv 
 `uvx.exe` stays with the four bytes the scenario wrote); the second run in the same folder, lock released and the same archive,
 must unpack all three files in full with one more request, which shows the first failure came from the lock. `details.firstRun` and
 `details.secondRun` hold both runs.
+
+Item 128 follow-up (README REQ-009.25) added `uv.survivor`, three runs in one folder (`details.firstRun`, `.secondRun`, `.thirdRun`, and a
+flag for each of the three verdicts). The first run fails the unpack the way `uv.partial` does. Between the runs the script copies the stub
+into `~uv_bin\uv.exe`, standing for a `uv.exe` that a failed deletion left (a lock cannot make that happen: the unpack writes `uv.exe` itself,
+so nothing can hold it before the cleanup looks for it). The second run, lock released, must log that an earlier unpack did not finish, must
+not log `cached binary found`, must not have started the survivor (the stub records every start in `~uv_bin\uv.calls`, which must not exist),
+must make one request and leave all three files with the stub's length and an `acquired` line. The third run must take the unpacked `uv.exe`
+as the cached binary (the line, one start for `uv --version`, no request, no warning), so the refusal of the second run is not permanent.
 
 ## selfapps-venv-probe NDJSON rows (selfapps_venv_probe.ps1, real lane only, GATING)
 

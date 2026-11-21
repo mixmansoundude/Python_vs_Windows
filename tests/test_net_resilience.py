@@ -55,6 +55,8 @@ ROWS = {
     "self.netres.uv.unpackfail": "REQ-009.23",
     # Item 128: an unpack that fails after uv.exe was written leaves no uv files behind and the run does not use them.
     "self.netres.uv.partial": "REQ-009.24",
+    # Item 128 follow-up: a uv.exe that a failed unpack could not delete is not used, the next run unpacks again.
+    "self.netres.uv.survivor": "REQ-009.25",
 }
 STEP_NAME = "Self-test: network resilience of the downloads (real only)"
 
