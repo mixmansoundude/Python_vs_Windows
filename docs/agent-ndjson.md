@@ -1686,7 +1686,7 @@ self.netres.miniconda.retry, self.netres.miniconda.powershell, self.netres.minic
 self.netres.embed.retry, self.netres.embed.powershell, self.netres.embed.checksum, self.netres.embed.extractfail,
 self.netres.check.repeat, self.netres.swap.retry,
 self.netres.offline.uv, self.netres.offline.conda, self.netres.shipped.tools,
-self.netres.uv.acquire, self.netres.uv.unpackfail
+self.netres.uv.acquire, self.netres.uv.unpackfail, self.netres.uv.partial, self.netres.uv.survivor
 ```
 
 Item 127 (README REQ-009.22 and .23) added two rows to the same script, with one more cut (the uv acquisition block, as for the Item 116
@@ -1694,6 +1694,21 @@ rows, with a stub `uv.exe`-sized program zipped by the script into a local archi
 request, and `~uv_bin\uv.exe` exists afterwards with the run's `HP_UV_EXE` pointing at it, no fallback reason) and `uv.unpackfail` (the
 body is a file of the right size that is no archive: the setup log holds a `uv: unpack failed: <reason>` line, the failure lines and the
 listing of `~uv_bin`, `UV_FALLBACK_REASON` is `acquire_failed` and no `uv.exe` exists).
+
+Item 128 (README REQ-009.24) added `uv.partial` on the same cut: the good archive is served while `~uv_bin\uvx.exe` exists and is held open
+(read access, shared for reading only), so the unpack writes `uv.exe`, the first entry, and then cannot replace the second. The first run
+must report the reason line, log `UV_FALLBACK reason=acquire_failed`, set no uv path, leave no `uv.exe` and no `acquired` line (the held
+`uvx.exe` stays with the four bytes the scenario wrote); the second run in the same folder, lock released and the same archive,
+must unpack all three files in full with one more request, which shows the first failure came from the lock. `details.firstRun` and
+`details.secondRun` hold both runs.
+
+Item 128 follow-up (README REQ-009.25) added `uv.survivor`, three runs in one folder (`details.firstRun`, `.secondRun`, `.thirdRun`, and a
+flag for each of the three verdicts). The first run fails the unpack the way `uv.partial` does. Between the runs the script copies the stub
+into `~uv_bin\uv.exe`, standing for a `uv.exe` that a failed deletion left (a lock cannot make that happen: the unpack writes `uv.exe` itself,
+so nothing can hold it before the cleanup looks for it). The second run, lock released, must log that an earlier unpack did not finish, must
+not log `cached binary found`, must not have started the survivor (the stub records every start in `~uv_bin\uv.calls`, which must not exist),
+must make one request and leave all three files with the stub's length and an `acquired` line. The third run must take the unpacked `uv.exe`
+as the cached binary (the line, one start for `uv --version`, no request, no warning), so the refusal of the second run is not permanent.
 
 ## selfapps-venv-probe NDJSON rows (selfapps_venv_probe.ps1, real lane only, GATING)
 
