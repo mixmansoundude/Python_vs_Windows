@@ -53,6 +53,10 @@ self.entry.req011.crossdir
 self.entry.req011.sameDir
 self.entry.results
 self.entry.spaced-path
+self.entry.testmodule.guard
+self.entry.testmodule.library
+self.entry.testmodule.only
+self.entry.testmodule.script
 self.env.smoke.conda
 self.env.smoke.minicondafolder
 self.env.smoke.run

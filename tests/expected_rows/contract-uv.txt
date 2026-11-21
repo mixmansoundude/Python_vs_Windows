@@ -67,6 +67,10 @@ self.entry.req011.crossdir
 self.entry.req011.sameDir
 self.entry.results
 self.entry.spaced-path
+self.entry.testmodule.guard
+self.entry.testmodule.library
+self.entry.testmodule.only
+self.entry.testmodule.script
 self.env.smoke.conda
 self.env.smoke.minicondafolder
 self.env.smoke.run
@@ -89,6 +93,7 @@ self.nivisa.present.subfolder
 self.nivisa.signals.control
 self.nivisa.signals.noinput
 self.nivisa.signals.nonint
+self.optbuild.cap
 self.parse_warn.pytest
 self.parse_warn.table
 self.parse_warn.table.v6
