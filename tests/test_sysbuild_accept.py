@@ -16,7 +16,9 @@ questions, and judges the console twice: the sequence of the accepted build, and
 without running anything.
 
 What really happens is shown on Windows by that script. These rules read run_setup.bat, the script, batch-check.yml,
-docs/agent-ndjson.md and tests/test_req_shall_trace.py as text and run the script's own judging functions through a real pwsh on
+docs/agent-ndjson.md, tests/test_req_shall_trace.py, CLAUDE.md, the agent docs and the demo (they must say what the stand-in system
+Python does not verify, and the demo must show the offer the batch file prints) as text and run the script's own judging functions
+through a real pwsh on
 synthetic runs (a run that passes, and one run for each way to be wrong), so a reworded log line, a consent gate that moved behind
 the CI marker, a scenario that stops answering Y, a judge that stops judging, a floor that was lowered or a step that stops gating
 fails here with a sentence, before a Windows run is needed. Synthetic cases prove each rule can fail. The shared helpers are in
@@ -31,8 +33,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_support import (PWSH, after, case, drop, lines_of, live_bat, live_hash, mutate, norm, registry_ids,  # noqa: E402
-                           run_cases, step_block, swap, text_of)
+from judge_support import (PWSH, after, case, drop, label_section, lines_of, live_bat, live_hash, mutate, norm,  # noqa: E402
+                           registry_ids, run_cases, step_block, swap, text_of)
 
 REPO = Path(__file__).resolve().parent.parent
 BATCH = REPO / "run_setup.bat"
@@ -41,6 +43,11 @@ TOOL = REPO / "tools" / "exe_wording.py"
 WORKFLOW = REPO / ".github" / "workflows" / "batch-check.yml"
 REGISTRY = REPO / "docs" / "agent-ndjson.md"
 SHALL_TRACE = REPO / "tests" / "test_req_shall_trace.py"
+DEMO = REPO / "docs" / "demo-bootstrapper-output.md"
+CLAUDE_MD = REPO / "CLAUDE.md"
+INTERCONNECT = REPO / "docs" / "agent-interconnect.md"
+LESSONS = REPO / "docs" / "agent-lessons-learned.md"
+CLOSED_BACKLOG = REPO / "docs" / "agent-closed-backlog.md"
 SCRIPT_NAME = "selfapps_sysbuild_accept.ps1"
 
 ROW_REQS = {"self.sysbuild.accept": "REQ-007.17", "self.sysbuild.wording": "REQ-007.20"}
@@ -56,6 +63,9 @@ UPLOADS = (
     "tests/~selftest_sysbuild_accept/~wording_judge.err.txt",
 )
 JUDGES = ["Find-ConsoleLine", "Measure-ConsoleLines", "Get-AcceptProblems", "Get-IsolationProblems", "Get-WordingProblems"]
+# Two more functions of the script are judged in classes of their own and are not in JUDGES: the driver stops a whole class when one of the
+# functions it is asked for is missing, and the other judges are not to be reported red for a function a later change adds.
+EXTRA_FUNCTIONS = ("Get-CompletionProblems", "Reset-Folder")
 # about two thirds of the first real run (48 timestamped lines, 9 about the build, 7 naming the EXE, 2 exempt, run 43740185058 after the rewording)
 FLOORS = {"minTimestamped": 30, "minTriggered": 6, "minNamed": 4, "minExempt": 1}
 
@@ -65,6 +75,7 @@ EXE = "_selftest_sysbuild_accept.exe"
 LEAF = "~selftest_sysbuild_accept_venv"
 PROGRAM = "sysbuild-accept-app-line-7731"
 PUBLIC = "C:\\w\\~selftest_sysbuild_accept_public"
+VENV_PYTHON = "C:\\w\\" + LEAF + "\\Scripts\\python.exe"
 STEPS = (
     ("tried", "the system tier was tried", "[WARN] Attempting system Python fallback (degraded)...", True),
     ("consent", "the REQ-014 consent was accepted", "[INFO] REQ-014: System Python consent: user accepted.", True),
@@ -305,6 +316,54 @@ def script_problems(text):
         found.append("the wording judge is no longer tools\\exe_wording.py")
     if "& $basePython -I $toolPath console --file $consolePath" not in compact:
         found.append("the wording judge no longer reads the console of the run with exe_wording.py console --file")
+    # the functions that are judged in classes of their own (a missing one stops the class, so they are not in JUDGES)
+    for name in EXTRA_FUNCTIONS:
+        if not re.search(r"(?m)^function %s \{" % re.escape(name), t):
+            found.append("the function %s is missing" % name)
+    # the folders of the run are cleared by Reset-Folder, and a folder that cannot be cleared ends the run with a reported failure before
+    # anything is built (CodeRabbit, PR 537: the first version silenced the removal errors, and New-Item -Force does not empty a folder)
+    calls = ("$resetProblem = Reset-Folder -Path $venvDir", "Reset-Folder -Path $appDir -Create", "Reset-Folder -Path $publicDir -Create")
+    at = [compact.find(c) for c in calls]
+    for c, i in zip(calls, at):
+        if i < 0:
+            found.append("the folder of the run is no longer cleared by %s" % c)
+    stop = compact.find("if ($resetProblem) {")
+    if stop < 0:
+        found.append("a folder that could not be cleared no longer stops the run: if ($resetProblem) { is missing")
+    else:
+        if any(0 <= i > stop for i in at):
+            found.append("a folder of the run is cleared after the test of the clearing, so a failure of it is not seen")
+        body = compact[stop:].split("\n}", 1)[0]
+        for need in ("Write-AllRows -Pass $false", "exit 1"):
+            if need not in body:
+                found.append("a folder that could not be cleared no longer ends the run with a red row and exit 1: %s is missing" % need)
+        venv_at = compact.find("& $basePython -m venv $venvDir")
+        if 0 <= venv_at < stop:
+            found.append("the private interpreter is made before the folders were cleared")
+    if re.search(r"Remove-Item[^\n]*SilentlyContinue", compact):
+        found.append("a Remove-Item of the script silences its errors, so a folder that cannot be removed is used with its old content")
+    reset_body = compact.split("function Reset-Folder {", 1)[-1].split("\nfunction ", 1)[0]
+    if "Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop" not in reset_body:
+        found.append("Reset-Folder no longer removes the folder with -ErrorAction Stop")
+    # the launch file records PUBLIC with `set PUBLIC>file`: an `echo PUBLIC=%PUBLIC%` is cut at an ampersand of the folder name, which
+    # cmd.exe takes for a command separator, and a `set` prints the value as it is (nothing may sit between the name and the >)
+    if "'set PUBLIC>\"~accept_public.txt\"'" not in compact:
+        found.append("the launch file no longer records the PUBLIC the bootstrapper saw with set PUBLIC>\"~accept_public.txt\"")
+    if "echo PUBLIC=%PUBLIC%" in compact:
+        found.append("the launch file records the PUBLIC with echo, which cmd.exe cuts at an ampersand of the folder name")
+    # the interpreter is compared as a whole path and not by the name of its folder
+    if "-VenvPython $venvPython" not in compact.split("$acceptProblems = @(Get-AcceptProblems", 1)[-1].split("\n", 1)[0]:
+        found.append("the verdict no longer hands -VenvPython $venvPython to Get-AcceptProblems, so the interpreter is not compared as a whole path")
+    # the wording row is judged only for a run that went through the accepted build
+    wire = "$completionProblems = @(Get-CompletionProblems -Finished ([bool]$launch.Finished) -ConsoleText $console)"
+    merge = "$wordingProblems = @($completionProblems) + @($wordingProblems)"
+    verdict = compact.find("$pass = [bool](@($wordingProblems).Count -eq 0)")
+    if wire not in compact:
+        found.append("the wording row is no longer judged for a run that completed the accepted build: Get-CompletionProblems is not called")
+    if merge not in compact:
+        found.append("the problems of an incomplete run are no longer part of the row of self.sysbuild.wording")
+    elif 0 <= verdict < compact.find(merge):
+        found.append("the problems of an incomplete run are added to the row of self.sysbuild.wording after its verdict was taken")
     for var in ("acceptProblems", "wordingProblems"):
         if "$pass = [bool](@($%s).Count -eq 0)" % var not in compact:
             found.append("the row of %s is no longer judged by its list of problems" % var)
@@ -357,12 +416,148 @@ def shall_list_problems(text):
             for shall in GAP_SHALLS if re.search(r'^\s*"%s":' % re.escape(shall), text, re.M)]
 
 
+# --- the stand-in system Python and the demo: what the documents say about them (CodeRabbit, PR 537) ---------------------------------
+#
+# The row bootstraps with a virtual environment of the runner's python as the system Python. That is a stand-in, and a document that says
+# its layout "differs only in the path" from a python.org installation claims more than the row shows: a venv has no registry entries and
+# no py launcher and keeps prefixes of its own. So every place that describes the stand-in says what it does not verify, and none says that
+# the two differ only in the path. The demo shows the optimized-build offer the way the batch file prints it.
+
+OVERCLAIM = re.compile(r"differs?\s+(?:from\s+(?:\S+\s+){1,4})?only\s+in\s+(?:the|its)\s+path", re.IGNORECASE)
+NOT_VERIFIED = "does not verify"
+LIMIT_WORDS = ("folder layout", "registry", "py launcher")
+DEMO_SCENARIOS = {5: False, 35: True}  # scenario number: whether it also shows the answer no with its log line
+
+
+def read_text(path):
+    return norm(path.read_text(encoding="utf-8"))
+
+
+def collapse(text):
+    return " ".join(text.split())
+
+
+def line_with(text, needle):
+    """The one line that holds `needle` (collapsed), or None when no line or more than one line holds it."""
+    hits = [ln for ln in text.split("\n") if needle in ln]
+    return collapse(hits[0]) if len(hits) == 1 else None
+
+
+def bullet_of(text, marker):
+    """The list item that starts with `marker`, up to the next line that is not indented (collapsed), or None when the marker is not there
+    exactly once."""
+    if text.count(marker) != 1:
+        return None
+    body = text[text.index(marker):]
+    end = re.search(r"\n(?! )", body)
+    return collapse(body[:end.start()] if end else body)
+
+
+def slice_of(text, start, stop):
+    """The text from `start` up to `stop` (collapsed), or None when `start` is not there exactly once or `stop` does not follow it."""
+    if text.count(start) != 1:
+        return None
+    at = text.index(start)
+    end = text.find(stop, at + len(start))
+    return collapse(text[at:end]) if end >= 0 else None
+
+
+def script_header(text):
+    """The comment block at the top of the script (up to `param()`), without the comment marks."""
+    head = norm(text).split("\nparam()", 1)[0]
+    return "\n".join(re.sub(r"^\s*#+ ?", "", ln) for ln in head.split("\n"))
+
+
+def limits_paragraph(text):
+    """The paragraph of the script header that starts with `Limits, stated`, up to the blank comment line (collapsed), or None."""
+    lines = script_header(text).split("\n")
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("Limits, stated")), None)
+    if start is None:
+        return None
+    end = next((j for j in range(start + 1, len(lines)) if not lines[j].strip()), len(lines))
+    return collapse(" ".join(lines[start:end]))
+
+
+def stand_in_passages():
+    """Every place that describes the stand-in system Python: (name, its text or None when it was not found, the words it must hold)."""
+    script = read_text(SCRIPT)
+    return [
+        ("CLAUDE.md", line_with(read_text(CLAUDE_MD), "selfapps_sysbuild_accept.ps1 Item 123"), (NOT_VERIFIED,)),
+        ("docs/agent-interconnect.md", bullet_of(read_text(INTERCONNECT), "- **The system Python is a stand-in.**"), (NOT_VERIFIED,)),
+        ("docs/agent-lessons-learned.md", bullet_of(read_text(LESSONS), '- **A scenario that installs into "the system Python"'), (NOT_VERIFIED,)),
+        ("docs/agent-closed-backlog.md", bullet_of(read_text(CLOSED_BACKLOG), "- **Stated limits (also in the script's header and the registry entry).**"),
+         (NOT_VERIFIED,)),
+        ("docs/agent-ndjson.md", slice_of(read_text(REGISTRY), "Stated limits:", "Evidence"), (NOT_VERIFIED,)),
+        ("the Limits paragraph of the script header", limits_paragraph(script), (NOT_VERIFIED,) + LIMIT_WORDS),
+        ("the script header", script_header(script), ()),
+    ]
+
+
+def stand_in_problems(passages):
+    found = []
+    for name, text, needed in passages:
+        if text is None:
+            found.append("%s: the passage was not found (its first words were reworded or moved), so this pin would prove nothing" % name)
+            continue
+        claim = OVERCLAIM.search(text)
+        if claim:
+            found.append("%s: says the stand-in differs from a python.org installation only in its path (%r); a venv also has no registry entries "
+                         "and no py launcher, so say what the stand-in does not verify" % (name, claim.group(0)))
+        for word in needed:
+            if word not in text.lower():
+                found.append("%s: does not say %r" % (name, word))
+    return found
+
+
+def demo_section(demo, number):
+    """The text of `### Scenario N:` up to the next scenario heading, or None when the demo has no such scenario."""
+    head = re.search(r"(?m)^### Scenario %d:.*$" % number, demo)
+    if not head:
+        return None
+    nxt = re.search(r"(?m)^### Scenario %d:" % (number + 1), demo[head.end():])
+    return demo[head.start():head.end() + nxt.start()] if nxt else demo[head.start():]
+
+
+def optimized_build_offer(batch):
+    """What :offer_optimized_build prints before its question (the text of each `echo *** ` line) and the text of the log line of the answer
+    no. ([], "") when the label is not in the batch file."""
+    body = [ln.strip() for ln in live_bat(lines_of(batch))]
+    try:
+        section = label_section(body, ":offer_optimized_build")
+    except ValueError:
+        return [], ""
+    echoes = []
+    for ln in section:
+        if ln == 'set "HP_OPTBUILD_RAW="':
+            break
+        if ln.startswith("echo *** "):
+            echoes.append(ln[len("echo "):])
+    declined = ""
+    for ln in section:
+        hit = re.match(r'call :log "(\[INFO\] Optimized build: declined\..*)"$', ln)
+        if hit:
+            declined = hit.group(1)
+            break
+    return echoes, declined
+
+
+def demo_problems(section, number, echoes, declined):
+    """Scenario `number` of the demo must show every line the offer prints and, when `declined` is given, the log line of the answer no."""
+    if section is None:
+        return ["the demo has no Scenario %d, so the optimized-build offer is not compared with the batch file" % number]
+    if len(echoes) < 4:
+        return ["only %d echo line(s) of the optimized-build offer were read from the batch file, so the demo is not compared" % len(echoes)]
+    shown = {ln.strip() for ln in section.split("\n")}
+    return ["Scenario %d does not show the line %r of the optimized-build offer" % (number, line)
+            for line in list(echoes) + ([declined] if declined else []) if line not in shown]
+
+
 # --- the script's judging functions, run through a real pwsh ---------------------------------------------------------------------
 
 STAMP = "Sat 11/14/2026  9:05:03.10 "
 STATUS = '{"state":"degraded_env","exitCode":0,"pyFiles":1}'
 LINES = {key: STAMP + text for key, _, text, _ in STEPS}
-LINES["selected"] = STAMP + "[INFO] System fallback using C:\\w\\" + LEAF + "\\Scripts\\python.exe"
+LINES["selected"] = STAMP + "[INFO] System fallback using " + VENV_PYTHON
 READY = " Your standalone application is ready:"
 UNDER = "   dist\\" + EXE
 
@@ -425,6 +620,30 @@ def failing_json(n):
                        "problems": problems})
 
 
+LABELS = {key: label for key, label, _, _ in STEPS}
+COMPLETION_MARKERS = (("completion_no_build_line", LABELS["produced"]), ("completion_no_success_line", LABELS["success"]),
+                      ("completion_no_panel", "the post-flight panel"))
+
+
+def completion_args(console=None, **over):
+    args = dict(Finished=True, ConsoleText=text_of(GOOD_CONSOLE if console is None else console))
+    args.update(over)
+    return args
+
+
+def completion_cases():
+    """Get-CompletionProblems: the wording row is judged only for a run that went through the accepted build (CodeRabbit, PR 537)."""
+    cp = "Get-CompletionProblems"
+    return [
+        case("completion_good", cp, **completion_args()),
+        case("completion_unfinished", cp, **completion_args(Finished=False)),
+        case("completion_no_build_line", cp, **completion_args(drop(GOOD_CONSOLE, LINES["produced"]))),
+        case("completion_no_success_line", cp, **completion_args(drop(GOOD_CONSOLE, LINES["success"]))),
+        case("completion_no_panel", cp, **completion_args(drop(GOOD_CONSOLE, READY))),
+        case("completion_cut_after_the_start_of_the_build", cp, **completion_args(GOOD_CONSOLE[:GOOD_CONSOLE.index(LINES["building"]) + 1])),
+    ]
+
+
 def judge_cases():
     c = []
     ac, wd = "Get-AcceptProblems", "Get-WordingProblems"
@@ -448,6 +667,14 @@ def judge_cases():
     c.append(case("accept_out_of_order", ac, **accept_args(after(drop(GOOD_CONSOLE, LINES["tried"]), LINES["consent"], LINES["tried"]))))
     c.append(case("accept_not_the_private_interpreter", ac, **accept_args(swap(GOOD_CONSOLE, LINES["selected"],
                                                                                STAMP + "[INFO] System fallback using C:\\Python314\\python.exe"))))
+    # the interpreter is the private one by its whole path: the same folder name under another parent and a folder whose name only starts
+    # with it are other interpreters, and the case of the path does not matter on Windows (CodeRabbit, PR 537)
+    c.append(case("accept_same_leaf_other_parent", ac, **accept_args(swap(GOOD_CONSOLE, LINES["selected"],
+                                                                        STAMP + "[INFO] System fallback using C:\\other\\" + LEAF + "\\Scripts\\python.exe"))))
+    c.append(case("accept_backup_folder_of_the_leaf", ac, **accept_args(swap(GOOD_CONSOLE, LINES["selected"],
+                                                                           STAMP + "[INFO] System fallback using C:\\w\\" + LEAF + ".bak\\Scripts\\python.exe"))))
+    c.append(case("accept_interpreter_path_case_blind", ac, **accept_args(swap(GOOD_CONSOLE, LINES["selected"],
+                                                                             STAMP + "[INFO] System fallback using " + VENV_PYTHON.upper()))))
     for n, (_, text) in enumerate(NEVER):
         c.append(case("accept_never_%d" % n, ac, **accept_args(GOOD_CONSOLE + [STAMP + "[INFO] " + text])))
     c.append(case("accept_no_ready_line", ac, **accept_args(drop(GOOD_CONSOLE, READY))))
@@ -503,6 +730,8 @@ ONE_PROBLEM = {
     "accept_wrong_exit": "the run ended with exit code '1', expected 0",
     "accept_out_of_order": "the REQ-014 consent was accepted comes before the step that precedes it on the console",
     "accept_not_the_private_interpreter": "the system interpreter of the run is not the private one (the line does not name " + LEAF + ")",
+    "accept_same_leaf_other_parent": "the system interpreter of the run is",
+    "accept_backup_folder_of_the_leaf": "the system interpreter of the run is",
     "accept_never_0": "the console has 1 line(s) saying the build consent was declined",
     "accept_never_1": "the console has 1 line(s) saying the build was skipped as not consented",
     "accept_never_2": "the console has 1 line(s) saying the program was only checked through the interpreter",
@@ -536,7 +765,8 @@ ONE_PROBLEM.update(step_needles())
 # the cases with their own tests below: the three that give two problems (status empty, status not JSON, two violations), the one
 # that is cut at twenty (many violations), the clean ones, the ones that repeat a line without a problem and the six small helpers
 TWO_PROBLEMS = ("accept_status_empty", "accept_status_not_json", "wording_two_violations")
-CLEAN = ("accept_good", "accept_exit_and_success_lines_may_repeat", "wording_good", "isolation_good", "isolation_case_blind", "isolation_trailing_space")
+CLEAN = ("accept_good", "accept_exit_and_success_lines_may_repeat", "accept_interpreter_path_case_blind", "wording_good", "isolation_good",
+         "isolation_case_blind", "isolation_trailing_space")
 HELPERS = ("find_case_blind_substring", "find_missing", "find_from_skips_the_first", "measure_counts_lines", "measure_case_blind", "measure_none")
 
 
@@ -572,6 +802,17 @@ class JudgeOnSyntheticRuns(unittest.TestCase):
         for name, needle in sorted(ONE_PROBLEM.items()):
             with self.subTest(case=name):
                 self.only(name, needle)
+
+    def test_a_system_interpreter_that_is_not_the_private_one_names_both_paths(self):
+        """The line must name the private interpreter's own path: the same folder name under another parent, or a folder whose name only
+        starts with it, is another interpreter (CodeRabbit, PR 537)."""
+        for name, used in (("accept_same_leaf_other_parent", "C:\\other\\" + LEAF + "\\Scripts\\python.exe"),
+                           ("accept_backup_folder_of_the_leaf", "C:\\w\\" + LEAF + ".bak\\Scripts\\python.exe"),
+                           ("accept_not_the_private_interpreter", "C:\\Python314\\python.exe")):
+            with self.subTest(case=name):
+                self.only(name, "the system interpreter of the run is")
+                self.assertIn("'" + used + "'", self.r[name][0])
+                self.assertIn("'" + VENV_PYTHON + "'", self.r[name][0])
 
     def test_every_step_of_the_sequence_is_judged_for_a_missing_line_and_each_once_line_for_a_second_one(self):
         self.assertEqual(len(step_needles()), len(STEPS) + sum(1 for s in STEPS if s[3]))
@@ -650,6 +891,23 @@ class RealFiles(unittest.TestCase):
     def test_the_shalls_are_no_longer_listed_as_gaps(self):
         self.assertEqual(shall_list_problems(SHALL_TRACE.read_text(encoding="utf-8")), [])
 
+    def test_every_place_that_describes_the_stand_in_says_what_it_does_not_verify_and_none_claims_the_layouts_differ_only_in_the_path(self):
+        passages = stand_in_passages()
+        self.assertEqual(len(passages), 7, [p[0] for p in passages])
+        for entry in passages:
+            with self.subTest(passage=entry[0]):
+                self.assertEqual(stand_in_problems([entry]), [])
+
+    def test_the_demo_shows_the_optimized_build_offer_the_batch_file_prints(self):
+        echoes, declined = optimized_build_offer(self.batch)
+        self.assertGreaterEqual(len(echoes), 4, echoes)
+        self.assertTrue(declined.startswith("[INFO] Optimized build: declined."), declined)
+        demo = read_text(DEMO)
+        for number, answers_no in sorted(DEMO_SCENARIOS.items()):
+            with self.subTest(scenario=number):
+                self.assertEqual(demo_problems(demo_section(demo, number), number, echoes, declined if answers_no else ""), [])
+        self.assertIn("[Extrapolated Branch]", demo_section(demo, 35))
+
     def test_the_checks_are_not_vacuous_on_the_real_files(self):
         self.assertEqual(len(BATCH_LOG_TEXTS), 8, BATCH_LOG_TEXTS)
         # every case is accounted for: the helpers, the clean runs, the one-problem runs, the two-problem runs and the one cut at twenty
@@ -659,8 +917,8 @@ class RealFiles(unittest.TestCase):
         self.assertEqual(sorted(set(names) - accounted), [])
         self.assertEqual(sorted(accounted - set(names)), [])
         self.assertEqual(len(names), 6 + len(CLEAN) + len(ONE_PROBLEM) + 3 + 1)
-        self.assertEqual(len(ONE_PROBLEM), 50)
-        self.assertEqual(len(names), 66)
+        self.assertEqual(len(ONE_PROBLEM), 52)
+        self.assertEqual(len(names), 69)
 
     def test_every_judge_the_driver_is_asked_for_is_a_function_of_the_script(self):
         for name in JUDGES:
@@ -730,6 +988,17 @@ class BatchRulesCanFail(unittest.TestCase):
                      'if defined HP_CI_LANE (\n  set "HP_SYSCON_CHOICE=n"\n) else if defined HP_TEST_SYSCON_ANSWER (\n  set "HP_SYSCON_CHOICE=%HP_TEST_SYSCON_ANSWER%"\n')
         self.assertTrue(any("if defined HP_TEST_SYSCON_ANSWER (" in f for f in self.problems(bad)), self.problems(bad))
 
+    def test_a_gate_whose_set_line_takes_the_wrong_answer_is_reported_for_both_gates(self):
+        """The line after the test of the test answer must be the one that takes THAT answer: a gate whose next line is any `set ` line
+        passed the first version of the rule (CodeRabbit, PR 537)."""
+        for old, new in (('  set "HP_SYSBUILD_RAW=%HP_TEST_SYSBUILD_ANSWER%"\n', '  set "HP_SYSBUILD_RAW=n"\n'),
+                         ('  set "HP_SYSBUILD_RAW=%HP_TEST_SYSBUILD_ANSWER%"\n', '  set "HP_SYSBUILD_RAW=%HP_TEST_SYSCON_ANSWER%"\n'),
+                         ('  set "HP_SYSCON_CHOICE=%HP_TEST_SYSCON_ANSWER%"\n', '  set "HP_SYSCON_CHOICE=n"\n'),
+                         ('  set "HP_SYSCON_CHOICE=%HP_TEST_SYSCON_ANSWER%"\n', '  set "HP_SYSCON_CHOICE=%HP_TEST_SYSBUILD_ANSWER%"\n')):
+            with self.subTest(old=old, new=new):
+                found = self.problems(mutate(self.batch, old, new))
+                self.assertTrue(any("the next live line must be" in f for f in found), found)
+
     def test_an_accepted_build_consent_that_no_longer_returns_at_once_is_reported(self):
         bad = mutate(self.batch, '  call :log "[INFO] REQ-007: system-Python EXE build consent: accepted."\n  exit /b 0\n',
                      '  call :log "[INFO] REQ-007: system-Python EXE build consent: accepted."\n  echo.\n  exit /b 0\n')
@@ -767,6 +1036,86 @@ class BatchRulesCanFail(unittest.TestCase):
     def test_a_script_that_stops_looking_for_a_text_is_reported(self):
         bad = mutate(norm(self.script), "'[INFO] Entry smoke exit=0'", "'[INFO] Entry smoke finished'")
         self.assertTrue(any("[INFO] Entry smoke exit=0" in f for f in batch_problems(self.batch, bad)))
+
+
+class DocRulesCanFail(unittest.TestCase):
+    """The rules about what the documents and the demo say are shown to fail on synthetic passages and on a synthetic batch file."""
+
+    GOOD = "the stand-in does not verify the folder layout, the registry entries or the py launcher of a python.org installation."
+
+    def test_each_spelling_of_the_overclaim_is_one_problem(self):
+        for text in ("the layout differs from python.org's only in the path.",
+                     "a real system Python differs only in the path; the bootstrapper takes sys.executable",
+                     "not the python.org layout, which differs only in the path.",
+                     "it DIFFERS   only\n in the path",
+                     "the venv differs from the python.org layout only in its path"):
+            with self.subTest(text=text):
+                found = stand_in_problems([("doc", text, ())])
+                self.assertEqual(len(found), 1, found)
+                self.assertIn("only in its path", found[0])
+                self.assertTrue(found[0].startswith("doc: "), found)
+
+    def test_a_passage_without_the_words_it_must_hold_is_one_problem_per_word(self):
+        self.assertEqual(stand_in_problems([("doc", "the layout is another one.", (NOT_VERIFIED,))]), ["doc: does not say 'does not verify'"])
+        found = stand_in_problems([("header", "the stand-in does not verify the registry entries.", (NOT_VERIFIED,) + LIMIT_WORDS)])
+        self.assertEqual(found, ["header: does not say 'folder layout'", "header: does not say 'py launcher'"])
+        self.assertEqual(stand_in_problems([("header", self.GOOD, (NOT_VERIFIED,) + LIMIT_WORDS)]), [])
+        self.assertEqual(stand_in_problems([("header", self.GOOD.upper(), (NOT_VERIFIED,) + LIMIT_WORDS)]), [])
+
+    def test_a_passage_that_was_not_found_is_reported_and_not_passed(self):
+        found = stand_in_problems([("doc", None, (NOT_VERIFIED,))])
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("was not found", found[0])
+
+    def test_the_pieces_that_cut_a_passage_out_of_a_document_say_when_they_find_none(self):
+        self.assertIsNone(line_with("a\nb\n", "x"))
+        self.assertIsNone(line_with("x\nx\n", "x"))
+        self.assertEqual(line_with("a\n  b  c \n", "b"), "b c")
+        text = "- **Mark.** one\n  two\n- **Other.** three\n"
+        self.assertEqual(bullet_of(text, "- **Mark.**"), "- **Mark.** one two")
+        self.assertIsNone(bullet_of(text, "- **Nope.**"))
+        self.assertIsNone(bullet_of(text + text, "- **Mark.**"))
+        self.assertEqual(slice_of("pre Stated: x y. Evidence z", "Stated:", "Evidence"), "Stated: x y.")
+        self.assertIsNone(slice_of("pre Stated: x y.", "Stated:", "Evidence"))
+        self.assertIsNone(slice_of("none", "Stated:", "Evidence"))
+        head = "# ASCII only\n# first\n#\n# Limits, stated so that\n#   more words\n#\n# next paragraph registry\nparam()\n$x = 1\n"
+        self.assertEqual(limits_paragraph(head), "Limits, stated so that more words")
+        self.assertIsNone(limits_paragraph("# nothing\nparam()\n"))
+        self.assertNotIn("$x", script_header(head))
+
+    def test_a_demo_that_misses_a_line_of_the_offer_is_one_problem_naming_it(self):
+        echoes = ["*** one ***", "*** two ***", "*** three ***", "*** four ***"]
+        declined = "[INFO] Optimized build: declined. Nothing was built."
+        section = "### Scenario 9: x\n\n```\n" + "\n".join("  " + e for e in echoes) + "\n" + declined + "\n```\n"
+        self.assertEqual(demo_problems(section, 9, echoes, declined), [])
+        self.assertEqual(demo_problems(section, 9, echoes, ""), [])
+        for gone in echoes + [declined]:
+            with self.subTest(gone=gone):
+                found = demo_problems(section.replace(gone, "x"), 9, echoes, declined)
+                self.assertEqual(len(found), 1, found)
+                self.assertIn(gone, found[0])
+        found = demo_problems(section.replace(declined, "[INFO] Optimized build: declined."), 9, echoes, declined)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("Nothing was built.", found[0])
+        found = demo_problems(None, 9, echoes, declined)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("not compared", found[0])
+        found = demo_problems(section, 9, echoes[:3], declined)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("not compared", found[0])
+
+    def test_a_scenario_is_cut_at_the_next_scenario_heading(self):
+        demo = "### Scenario 4: a\nA\n### Scenario 5: b\nB\n### Scenario 6: c\nC\n"
+        self.assertEqual(demo_section(demo, 5), "### Scenario 5: b\nB\n")
+        self.assertEqual(demo_section(demo, 6), "### Scenario 6: c\nC\n")
+        self.assertIsNone(demo_section(demo, 7))
+
+    def test_the_offer_is_read_from_the_batch_file_as_the_echo_lines_before_the_question_and_the_log_line_of_the_answer_no(self):
+        batch = "\r\n".join([":offer_optimized_build", "echo.", "echo *** one ***", "echo *** two ***", "rem echo *** gone ***",
+                             'set "HP_OPTBUILD_RAW="', "echo *** after the question ***",
+                             'call :log "[INFO] Optimized build: declined. Nothing was built."', ":next", "echo *** other label ***", ""])
+        self.assertEqual(optimized_build_offer(batch), (["*** one ***", "*** two ***"], "[INFO] Optimized build: declined. Nothing was built."))
+        self.assertEqual(optimized_build_offer("echo hi\r\n"), ([], ""))
 
 
 class ScriptRulesCanFail(unittest.TestCase):
@@ -904,6 +1253,18 @@ class ScriptRulesCanFail(unittest.TestCase):
         bad = self.workflow.replace(block, block.replace("        shell: pwsh\n", "        shell: pwsh\n        continue-on-error: true\n", 1))
         self.assertTrue(any("continue-on-error" in f for f in workflow_problems(bad)))
 
+    def test_a_step_that_only_names_the_script_without_running_it_is_caught(self):
+        """The step is found by the script's name, so a comment or an echo that holds the name must not stand in for the line that runs it
+        (CodeRabbit, PR 537)."""
+        block = step_block(self.workflow, SCRIPT_NAME)
+        run_line = "          & tests\\" + SCRIPT_NAME
+        self.assertEqual(block.count(run_line), 1, "the step runs the script on one line")
+        for new in ("          # & tests\\" + SCRIPT_NAME, "          echo tests\\" + SCRIPT_NAME, "          Write-Host 'tests\\" + SCRIPT_NAME + "'"):
+            with self.subTest(line=new):
+                bad = self.workflow.replace(block, block.replace(run_line, new))
+                found = workflow_problems(bad)
+                self.assertTrue(any("no live line that runs" in f for f in found), found)
+
     def test_a_missing_step_or_upload_is_caught(self):
         self.assertEqual(workflow_problems("name: x\n"), ["no step runs tests\\" + SCRIPT_NAME])
         for pattern in UPLOADS:
@@ -920,6 +1281,148 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertTrue(shall_list_problems('    "REQ-007.17": "gap: x",\n'))
         self.assertTrue(shall_list_problems('    "REQ-007.20": "gap: x",\n'))
         self.assertEqual(shall_list_problems('    "REQ-007.170": "gap: x",\n'), [])
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ResetFolderBehavior(unittest.TestCase):
+    """Reset-Folder makes a folder of the run empty, or says why it could not (CodeRabbit, PR 537). The first version of the script removed
+    the folders with -ErrorAction SilentlyContinue and made them with New-Item -Force, which does not empty a folder, so a folder that could
+    not be removed was used with its old content and nothing said so. The function runs on real folders."""
+
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        cls.base = base
+        (base / "full_create" / "sub").mkdir(parents=True)
+        (base / "full_create" / "a.txt").write_text("a", encoding="ascii")
+        (base / "full_create" / "sub" / "b.txt").write_text("b", encoding="ascii")
+        (base / "full_plain").mkdir()
+        (base / "full_plain" / "c.txt").write_text("c", encoding="ascii")
+        (base / "a_file").write_text("not a folder", encoding="ascii")
+        cases = [
+            case("reset_missing_plain", "Reset-Folder", Path=str(base / "missing_plain")),
+            case("reset_missing_create", "Reset-Folder", Path=str(base / "missing_create"), Create=True),
+            case("reset_full_create", "Reset-Folder", Path=str(base / "full_create"), Create=True),
+            case("reset_full_plain", "Reset-Folder", Path=str(base / "full_plain")),
+            case("reset_under_a_file", "Reset-Folder", Path=str(base / "a_file" / "child"), Create=True),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            cls.r = run_cases(SCRIPT, ["Reset-Folder"], cases, d)
+
+    def run_mutated(self, old, new, **args):
+        text = norm(SCRIPT.read_text(encoding="utf-8"))
+        self.assertEqual(text.count(old), 1, "the synthetic case needs %r exactly once" % old)
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(d) / "mutated.ps1"
+            script.write_text(text.replace(old, new), encoding="utf-8")
+            return run_cases(script, ["Reset-Folder"], [case("mutated", "Reset-Folder", **args)], d)["mutated"]
+
+    def test_a_missing_folder_is_left_missing_or_made_and_a_full_one_is_removed_or_made_empty(self):
+        for name in ("reset_missing_plain", "reset_missing_create", "reset_full_create", "reset_full_plain"):
+            with self.subTest(case=name):
+                self.assertEqual(self.r[name], [""])
+        self.assertFalse((self.base / "missing_plain").exists())
+        self.assertTrue((self.base / "missing_create").is_dir())
+        self.assertTrue((self.base / "full_create").is_dir())
+        self.assertEqual(list((self.base / "full_create").iterdir()), [])
+        self.assertFalse((self.base / "full_plain").exists())
+
+    def test_a_folder_that_cannot_be_made_is_reported_with_its_path(self):
+        found = self.r["reset_under_a_file"]
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("could not be made", found[0])
+        self.assertIn("a_file", found[0])
+
+    def test_a_folder_that_cannot_be_removed_is_reported_and_so_is_one_that_is_still_there(self):
+        remove = "Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop"
+        with tempfile.TemporaryDirectory() as d:
+            victim = Path(d) / "victim"
+            victim.mkdir()
+            (victim / "x.txt").write_text("x", encoding="ascii")
+            found = self.run_mutated(remove, "throw 'locked by another program'", Path=str(victim))
+            self.assertEqual(len(found), 1, found)
+            self.assertIn("could not be removed", found[0])
+            self.assertIn("locked by another program", found[0])
+            self.assertIn(str(victim), found[0])
+            found = self.run_mutated(remove, "[void]0", Path=str(victim))
+            self.assertEqual(len(found), 1, found)
+            self.assertIn("is still there after it was removed", found[0])
+
+    def test_a_folder_that_does_not_exist_after_it_was_made_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            found = self.run_mutated("[void][System.IO.Directory]::CreateDirectory($Path)", "[void]0", Path=str(Path(d) / "made"), Create=True)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("does not exist after it was made", found[0])
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class CompletionJudge(unittest.TestCase):
+    """Get-CompletionProblems: the wording row is judged only for a run that went through the accepted build (CodeRabbit, PR 537)."""
+
+    FUNCTIONS = ["Measure-ConsoleLines", "Get-CompletionProblems"]
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as d:
+            cls.r = run_cases(SCRIPT, cls.FUNCTIONS, completion_cases(), d)
+
+    def test_a_console_of_the_accepted_build_has_no_problem(self):
+        self.assertEqual(self.r["completion_good"], [])
+
+    def test_a_bootstrapper_that_did_not_finish_is_reported(self):
+        found = self.r["completion_unfinished"]
+        self.assertEqual(len(found), 1, found)
+        self.assertTrue(found[0].startswith("console wording of the accepted build: "), found)
+        self.assertIn("the bootstrapper did not finish within the time limit", found[0])
+
+    def test_each_marker_of_a_completed_build_is_required_on_its_own(self):
+        for name, label in COMPLETION_MARKERS:
+            with self.subTest(case=name):
+                found = self.r[name]
+                self.assertEqual(len(found), 1, found)
+                self.assertIn("the console has no line for " + label, found[0])
+                self.assertIn("did not complete the accepted build", found[0])
+
+    def test_a_console_that_stops_after_the_start_of_the_build_gives_the_three_problems(self):
+        found = self.r["completion_cut_after_the_start_of_the_build"]
+        self.assertEqual(len(found), 3, found)
+
+    def test_a_judge_that_stops_checking_is_caught(self):
+        text = norm(SCRIPT.read_text(encoding="utf-8"))
+        for comparison, name, needle in (("$Finished -eq $false", "completion_unfinished", "did not finish within the time limit"),
+                                         ("$found -lt 1", "completion_no_build_line", "the console has no line for")):
+            with self.subTest(comparison=comparison):
+                self.assertTrue(any(needle in f for f in self.r[name]), (name, self.r[name]))
+                old = "if (" + comparison + ") {"
+                self.assertEqual(text.count(old), 1, "the synthetic case needs %r exactly once" % old)
+                with tempfile.TemporaryDirectory() as d:
+                    script = Path(d) / "mutated.ps1"
+                    script.write_text(text.replace(old, "if ($false) {"), encoding="utf-8")
+                    got = run_cases(script, self.FUNCTIONS, [cs for cs in completion_cases() if cs["name"] == name], d)
+                self.assertFalse(any(needle in f for f in got[name]), (name, got[name]))
+
+
+@unittest.skipUnless(sys.platform == "win32" and PWSH, "needs cmd.exe and pwsh")
+class LaunchFileRecordsPublic(unittest.TestCase):
+    """The launch file records the PUBLIC the bootstrapper saw with a line that cmd.exe cannot split (CodeRabbit, PR 537): in a folder
+    name that holds an ampersand, as in C:\\Build&QA, an `echo PUBLIC=%PUBLIC%` is cut at the ampersand and the judge then saw
+    PUBLIC=C:\\Build. This runs the script's own record line under cmd.exe on a PUBLIC like that and hands what it wrote to the judge."""
+
+    def test_the_recorded_public_is_the_whole_value_when_the_folder_name_holds_an_ampersand(self):
+        text = norm(SCRIPT.read_text(encoding="utf-8"))
+        records = re.findall(r"(?m)^\s*'([^'\n]*~accept_public\.txt[^'\n]*)',?\s*$", text)
+        self.assertEqual(len(records), 1, records)
+        wanted = "C:\\Build&QA\\~selftest_public"
+        with tempfile.TemporaryDirectory() as d:
+            launch = Path(d) / "launch.cmd"
+            launch.write_bytes(text_of(["@echo off", 'set "PUBLIC=%s"' % wanted, records[0]]).encode("ascii"))
+            subprocess.run("cmd.exe /d /c call launch.cmd", cwd=d, capture_output=True, text=True, timeout=60)
+            recorded = (Path(d) / "~accept_public.txt").read_text(encoding="ascii", errors="replace")
+            got = run_cases(SCRIPT, ["Get-IsolationProblems"],
+                            [case("recorded", "Get-IsolationProblems", PublicRecord=recorded, PublicWanted=wanted)], d)
+        self.assertEqual(got["recorded"], [], (recorded, got["recorded"]))
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")

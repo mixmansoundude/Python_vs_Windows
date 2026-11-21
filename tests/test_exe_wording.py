@@ -149,6 +149,26 @@ class MessageReader(unittest.TestCase):
         self.assertEqual(msgs(':a\necho Building > "f.txt"\n'), [])
         self.assertEqual(msgs(":a\n>> \"%LOG%\" echo Building it\n"), [])
 
+    def test_the_right_side_of_a_pipe_is_read_and_only_the_left_side_feeds_it(self):
+        # `a | b` sends the output of `a` into `b` and leaves what `b` prints on the console. The reader took the whole line as
+        # one statement and stopped at the pipe, so `type nul | echo Building it.` printed a message nobody judged (CodeRabbit,
+        # PR #537).
+        for line, want in (
+            ("type nul | echo Building it.", [("echo", "Building it.")]),
+            ("echo Building it. | echo Verifying it.", [("echo", "Verifying it.")]),
+            ('call :log "[INFO] Building it." | echo Verifying it.', [("echo", "Verifying it.")]),
+            ("(echo Building it.) | echo Verifying it.", [("echo", "Verifying it.")]),
+            ("if defined X type nul | echo Building it.", [("echo", "Building it.")]),
+            # Controls: what a pipe feeds is not printed, `||` chains two commands, and an escaped or quoted bar is text.
+            ("echo Building it. | findstr x", []),
+            ('echo "%V%"| findstr /l /c:"Building" >nul', []),
+            ("echo a || echo Building it.", [("echo", "a"), ("echo", "Building it.")]),
+            ("echo a ^| echo Building it.", [("echo", "a | echo Building it.")]),
+            ('echo "a | b" Building it.', [("echo", '"a | b" Building it.')]),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(msgs(":a\n" + line + "\n"), want)
+
     def test_every_command_of_a_group_that_a_redirect_or_a_pipe_follows_writes_to_it(self):
         for line in (
             "(echo Building the widget & echo done) > f.txt",
@@ -415,6 +435,16 @@ class Judging(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertFalse(ew.names_exe(text))
 
+    def test_a_variable_name_that_contains_a_tool_name_does_not_name_the_tool(self):
+        # `Build failed with code %NUITKA_RC%.` prints `Build failed with code 1.`: the user never sees the name of the variable, so
+        # the tool is not named (CodeRabbit, PR #537). The variable that holds the path of the EXE is allowed by name.
+        for text in ("%NUITKA_RC%", "Build failed with code %NUITKA_RC%.", "exit code %PYINSTALLER_RC%", "%STANDALONE%", "%HP_EXE%"):
+            with self.subTest(text=text):
+                self.assertFalse(ew.names_exe(text))
+        for text in ("Build failed with Nuitka code %NUITKA_RC%.", "reusing %HP_FAST_EXE_PATH%", "dist\\%ENVNAME%.exe"):
+            with self.subTest(text=text):
+                self.assertTrue(ew.names_exe(text))
+
     def test_diagnostics_and_hooks_are_not_shown_to_a_user(self):
         for text in ("[DEBUG] x", "[TRACE] x", "[INSTALL] x", "[TEST] x", "something HP_TEST_X is set", "HP_SKIP_ENTRY_SMOKE is set"):
             with self.subTest(text=text):
@@ -470,6 +500,25 @@ class TemplateMatching(unittest.TestCase):
     def test_the_other_variable_shapes_match_too(self):
         rx = ew._template_regex('[ERROR] You gave: "%~1" Usage: x %%I and %2 and %* end.')
         self.assertTrue(rx.match('[ERROR] You gave: "my app.py" Usage: x A and B and C D end.'))
+
+    def test_a_variable_that_is_empty_when_the_message_is_printed_leaves_no_double_space(self):
+        # `echo ... via %HP_ENV_MODE% interpreter.` prints one space less when the variable is empty, the console judge reads the
+        # line with its spaces collapsed, and the template wanted two (CodeRabbit, PR #537).
+        rx = ew._template_regex("[INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter.")
+        self.assertTrue(rx.match("[INFO] Running entry script smoke test via interpreter."))
+        self.assertTrue(rx.match("[INFO] Running entry script smoke test via venv interpreter."))
+        rx = ew._template_regex("%HP_X% Building it.")
+        self.assertTrue(rx.match("Building it."))
+        self.assertTrue(rx.match("now Building it."))
+        self.assertFalse(rx.match("now Building it"))
+        rx = ew._template_regex("Building it for %HP_Y%")
+        self.assertTrue(rx.match("Building it for"))
+        self.assertTrue(rx.match("Building it for you"))
+        self.assertFalse(rx.match("Building it"))
+        rx = ew._template_regex("Built %HP_A% and %HP_B% twice.")
+        self.assertTrue(rx.match("Built and twice."))
+        self.assertTrue(rx.match("Built a and b twice."))
+        self.assertFalse(rx.match("Built a and b once."))
 
     def test_literal_regex_characters_in_a_message_are_not_a_pattern(self):
         rx = ew._template_regex("[INFO] a.b (c) [d] *e* +f?")
@@ -618,6 +667,29 @@ class CheckCanFail(unittest.TestCase):
                 hidden, _ = with_lines('call :log "[INFO] %s is set: building nothing."' % variable)
                 self.assertEqual(check_text(hidden), [])
 
+    def test_a_variable_that_holds_a_tool_name_does_not_make_a_message_name_the_tool(self):
+        self._one_violation(['call :log "[WARN] Build failed with code %NUITKA_RC%."'], "[WARN] Build failed with code %NUITKA_RC%.")
+
+    def test_the_right_side_of_a_pipe_is_a_message_and_the_side_that_feeds_it_is_not(self):
+        self._one_violation(["type nul | echo Building the widget now."], "Building the widget now.")
+        clean, _ = with_lines("echo Building the widget | findstr x")
+        self.assertEqual(check_text(clean), [])
+
+    def test_a_direct_echo_or_prompt_with_a_log_tag_is_judged_because_only_the_log_routine_hides_a_tag(self):
+        # `echo [DEBUG] Building it.` prints the tag; only `call :log` keeps a tagged message off the console (CodeRabbit, PR #537).
+        for tag in ("[DEBUG]", "[TRACE]", "[INSTALL]", "[TEST]"):
+            with self.subTest(tag=tag):
+                text = "%s Building the widget now." % tag
+                prompt = "%s Build the widget now? [Y/N]" % tag
+                self._one_violation(["echo " + text], text)
+                self._one_violation(["set /p ANSWER=%s " % prompt], prompt)
+                self._one_violation(['choice /C YN /N /M "%s "' % prompt], prompt)
+                hidden, _ = with_lines('call :log "%s Building the widget now."' % tag)
+                self.assertEqual(check_text(hidden), [])
+        # The text of a test hook is not shown to a user, whichever way it is printed.
+        hook, _ = with_lines("echo HP_TEST_FORCE_BUILD is set: building nothing.")
+        self.assertEqual(check_text(hook), [])
+
     def test_visual_studio_build_tools_is_not_a_trigger_but_a_second_build_in_the_same_message_is(self):
         mutated, first = with_lines('call :log "[INFO] Install Visual Studio Build Tools and build it."')
         problems = check_text(mutated)
@@ -716,6 +788,40 @@ class ConsoleJudge(unittest.TestCase):
         self.assertEqual((problems, stats["exempt"]), ([], 1))
         problems, stats = ew.console_check(line.replace("interpreter.", "interpreter, twice.") + "\n", rules)
         self.assertEqual((len(problems), stats["violations"]), (1, 1))
+
+    def test_an_empty_variable_leaves_one_space_in_the_line_and_the_exempt_message_still_matches(self):
+        rules = ew.parse_rules("category: interpreter | the check runs through the interpreter\n"
+                               "interpreter | [INFO] Running entry script smoke test via %HP_ENV_MODE% interpreter.\n")
+        for value in ("venv", "conda", ""):
+            with self.subTest(value=value):
+                line = "Sat 11/14/2026  9:05:03.10 [INFO] Running entry script smoke test via %s interpreter." % value
+                problems, stats = ew.console_check(line + "\n", rules)
+                self.assertEqual((problems, stats["exempt"]), ([], 1))
+
+    def test_a_clock_time_inside_a_line_is_not_a_timestamp(self):
+        # The timestamp is the start of the line. The search found a clock time anywhere in it, so a line that only quoted one was
+        # counted as timestamped and judged (CodeRabbit, PR #537).
+        rules = ew.parse_rules("")
+        for line in ("Compiler finished at 12:00:00.00 Building the widget.",
+                     "Compiler finished at 2026-11-14 12:00:00.00 Building the widget.",
+                     "See 12:00:00,00 Verifying the widget."):
+            with self.subTest(line=line):
+                problems, stats = ew.console_check(line + "\n", rules)
+                self.assertEqual((problems, stats["timestamped"], stats["triggered"]), ([], 0, 0))
+
+    def test_every_form_of_the_real_timestamp_is_still_read_and_a_later_clock_time_stays_in_the_text(self):
+        rules = ew.parse_rules("")
+        for line in ("Sat 11/14/2026  9:05:03.10 [INFO] Building the widget.",
+                     "Sun 11/15/2026 17:26:39.44 [INFO] Building the widget.\r",
+                     "[2026-11-14 12:00:00.00] [WARN] Building the widget.",
+                     "2026-11-14  9:05:03.10 [INFO] Building the widget.",
+                     "14.11.2026 9:05:03,10 [INFO] Building the widget."):
+            with self.subTest(line=line):
+                problems, stats = ew.console_check(line + "\n", rules)
+                self.assertEqual((stats["timestamped"], stats["triggered"], len(problems)), (1, 1, 1))
+        problems, stats = ew.console_check("Sat 11/14/2026  9:05:03.10 [INFO] Building the widget at 12:00:00.00 now.\n", rules)
+        self.assertEqual((stats["timestamped"], len(problems)), (1, 1))
+        self.assertIn("[INFO] Building the widget at 12:00:00.00 now.", problems[0])
 
     def test_a_rule_file_problem_is_not_hidden_by_a_clean_run(self):
         with tempfile.TemporaryDirectory() as tmp:
