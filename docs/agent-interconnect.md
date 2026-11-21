@@ -278,7 +278,7 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
   17763 and that the download code works with only the System32 programs, which is what "using the curl and PowerShell that Windows ships" can be tested as.
 - **Item 127 adds two rows on the same uv cut (`self.netres.uv.acquire`, `.unpackfail`; README REQ-009.22 and .23), and the unpack line they judge is the one place in the file
   that is raw .NET on purpose.** The cut runs from `:pvw_uv_exe_skip` to `:uv_acquire_done`, so it covers the download, the `for %%S in ("%HP_UV_ZIP%")` size test, the unpack, the
-  `del` of the archive, the `if exist "%HP_UV_BIN%\uv.exe"` verdict and the fallback lines. The server serves a zip the script builds (a stub `uv.exe` and its two companions) or a
+  `del` of the archive, the verdict (`HP_UV_OK`, see the Item 128 paragraph below) and the fallback lines. The server serves a zip the script builds (a stub `uv.exe` and its two companions) or a
   file of the right size that is no archive. `acquire` requires `~uv_bin\uv.exe` with the zip's length, `uvx.exe` and `uvw.exe`, one curl request and the zip removed;
   `unpackfail` requires a non-empty `uv: unpack failed: <reason>` line, the failure and fallback lines, the `~uv_bin` listing and no `uv.exe`. The reason line is the command's own output
   (`>> "%LOG%" 2>&1`); it must never pass through `:log` (arbitrary text). The unpack is `Add-Type -AssemblyName System.IO.Compression.FileSystem`, `ZipFile.OpenRead` and
@@ -288,6 +288,17 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
   and the argument count: "3"` on .NET Framework (Windows image 20261116.315.1, `docs/agent-lessons-learned.md`, Item 127). `uv_unpack_problems` in `tests/test_net_resilience.py`
   pins all of it and reports `Expand-Archive` by name. The block still shares the Item 116 driver pieces (stub `uv.exe` folder, scratch `HP_SCRIPT_ROOT`, offline switch), so a
   change to the label `:uv_acquire_done` or to the `for %%S` line is a change to the script and the unit test together.
+- **Item 128 adds `self.netres.uv.partial` (README REQ-009.24): the unpack's exit code is the verdict, and a `uv.exe` that exists is not.** `uv.exe` is the first entry of the archive, so a `uvx.exe` or `uvw.exe`
+  that a scanner or another program holds open stops `ExtractToFile` after `uv.exe` was written. The line prints its reason and exits 1, but the batch used to take only the file test, so the run
+  used that `uv.exe` and a later run took it as the cached binary once `uv --version` answered; what silently went off was everything guarded by `if exist "%HP_UVX_EXE%"` (REQ-005.12 and
+  REQ-005.13). The block now clears `HP_UV_UNPACK_BAD` once before the unpack, sets it on the two lines directly after the unpack line (`if errorlevel 1` and `if not errorlevel 0`: the second one is for a
+  negative code, the Item 113 rule, and nothing may sit between the unpack and those lines, not even a `rem`), and on a failure deletes `uv.exe`, `uvx.exe` and `uvw.exe` (a file that stays because it is held
+  open is replaced by the next unpack) before `HP_UV_OK` is decided; `HP_UV_OK` is `uv.exe` exists and no failure was flagged, and the success branch tests `if defined HP_UV_OK`, never a bare `if exist`.
+  The row holds `~uv_bin\uvx.exe` open with `FileShare.Read` (the technique of `selfapps_pipreqs_output.ps1`), runs the block, and requires `UV=;REASON=acquire_failed`, the `unpack failed` line, no
+  `uv.exe` left and the held file untouched; it then runs the same driver again in the same folder with the lock released and requires the full unpack (all three files with the stub's length, one more
+  curl request), which shows the first failure came from the lock and that no marker of the failed run lingers. The block must stay free of new subroutine calls (the driver defines `:log`,
+  `:check_net_after_dl_fail` and `:uv_acquire_done` only); `uv_unpack_problems` pins the clear, the two flag lines, the adjacency, the deletions and the verdict, and its mutation cases put the old
+  `if exist` verdict back. **Not covered**: no `uv --version` check right after a successful unpack (a corrupt `uv.exe` that unpacks without an error is still accepted at this point).
 
 
 ---

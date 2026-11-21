@@ -8122,3 +8122,16 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
 - **Left.** A search of `run_setup.bat` and `tools/*.ps1` finds no other call of `Expand-Archive`, `Compress-Archive` or `Get-FileHash` (only comments). The core cmdlets the cmd-started lines still use
   (`Invoke-WebRequest`, `Test-Path`, `Get-Item`, `Get-Date`) were not affected: the three `.powershell` rows of `self.netres.*` run the real `Invoke-WebRequest` lines through the same chain and were green on the new image (run
   `44753214156`). That is evidence for those lines only, not a proof for every cmdlet. 257 of 269 shalls named.
+
+### Item 128 (filed 2026-11-21, PR #540; the uv unpack's exit code was ignored and a partly unpacked `~uv_bin` was accepted)
+
+- **Finding.** CodeRabbit on PR #536, valid and older than Item 127: after the unpack line the batch tested only `if exist "%HP_UV_BIN%\uv.exe"`. `uv.exe` is the first archive entry, so an unpack that stops on `uvx.exe` or `uvw.exe`
+  (a scanner or another program holds the file open) leaves a `uv.exe` that passes the test: the run uses it, a later run takes it as the cached binary once `uv --version` answers, and the discovery guarded by
+  `if exist "%HP_UVX_EXE%"` (REQ-005.12 and .13) is off without a line saying so.
+- **Red first.** README REQ-009.24 and the row `self.netres.uv.partial` (`tests/selfapps_net_resilience.ps1`, `real` lane) went in alone: the cut-out uv block runs against the local server with `~uv_bin\uvx.exe` held open and must decline
+  (`UV=;REASON=acquire_failed`, the `unpack failed` line, no `uv.exe`), then the same driver runs again with the lock released and must unpack in full. Red run: RED-RUN-ID.
+- **The fix.** `HP_UV_UNPACK_BAD` is cleared once before the unpack and set on the two lines directly after it (`if errorlevel 1`, `if not errorlevel 0` for a negative code); on a failure the block logs one warning and
+  deletes `uv.exe`, `uvx.exe` and `uvw.exe` (a held file stays and the next unpack replaces it); `HP_UV_OK` is `uv.exe` exists and no failure was flagged, and the success branch tests `if defined HP_UV_OK`.
+  `uv_unpack_problems` in `tests/test_net_resilience.py` pins the order and rejects a bare `if exist` verdict; four mutation cases put each part back.
+- **Lesson.** `docs/agent-lessons-learned.md`, "The file I need exists is not the step that makes it succeeded".
+- **Left.** No `uv --version` check right after a successful unpack: a `uv.exe` that unpacks without an error but cannot start is still accepted at that point. 258 of 270 shalls named.
