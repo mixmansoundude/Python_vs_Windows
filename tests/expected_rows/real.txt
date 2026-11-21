@@ -111,6 +111,10 @@ self.entry.req011.crossdir
 self.entry.req011.sameDir
 self.entry.results
 self.entry.spaced-path
+self.entry.testmodule.guard
+self.entry.testmodule.library
+self.entry.testmodule.only
+self.entry.testmodule.script
 self.entryarg.csv
 self.entryarg.directory
 self.entryarg.missing
@@ -200,6 +204,8 @@ self.netres.offline.conda
 self.netres.offline.uv
 self.netres.shipped.tools
 self.netres.swap.retry
+self.netres.uv.acquire
+self.netres.uv.unpackfail
 self.nivisa.pyvisa.installed
 self.nivisa.subfolder.accepted
 self.nivisa.subfolder.declined
