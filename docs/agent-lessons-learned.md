@@ -909,6 +909,22 @@ decoy Miniconda in the PROCESS `PUBLIC` and requires that its `conda.bat` was ne
 unfixed script (run `43685182910`, real lane) was red for the right reason: the decoy's `conda.bat` was called once (`python -V`),
 `publicSeen` was the decoy folder, no request line and no embed provider line. A scenario that must not see something the runner
 may hold proves it with a planted copy of that thing, not only by running where it happens to be absent.
+
+**A row that is green only while nothing before it has failed is not hermetic, however long it was green (Item 123, run
+`44708489835`, PR #537).** `self.sysbuild.accept` builds an EXE with a private virtual environment standing in for the system Python and
+passed on its first run (`43740185058`). The bootstrapper puts `%PUBLIC%\Documents\Miniconda3` (and its `condabin`, `Scripts` and
+`Library\bin`) first on `PATH` whether or not the folder exists, and the system tier takes the first python that `where python` finds. In
+`44708489835` the uv acquisition had failed in an earlier scenario of the same job (`~envsmoke`, the runner-image problem of Item 127), the
+bootstrapper had fallen back to conda and installed Miniconda into the runner's shared `C:\Users\Public`, and the system tier took that
+one: the interpreter line named `C:\Users\Public\Documents\Miniconda3\python.exe` and the row was red for that alone, with the product,
+the build and the EXE fine.
+**Rule: a scenario that assumes "no Miniconda" or "the first python on `PATH` is the one I made" runs with a `PUBLIC` of its own (an empty
+folder next to its work folder, removed and made again before the run), records the `PUBLIC` the bootstrapper saw in a file, and has a judge
+that requires that value to be that folder (case blind) and says what was seen and what was expected.** Writing the record and the judge
+first, without the `set` line (commit `66891f9`, run `44799268601`), showed the judge red for the right reason: the launch file recorded
+the runner's own Public folder and not the run's folder, and the interpreter line did not name the private venv. The same fix pattern, a
+record of what the bootstrapper saw, is what made `self.embed.version.isolated` possible (Item 120); copy it for the next scenario instead of
+trusting that the runner is clean.
 ---
 
 ## A conda call that talks to conda-forge needs one bounded retry, and a 502 on the sharded repodata path does not look like a conda error (Item 92)
@@ -1649,3 +1665,50 @@ two hosts, and the failure is loud, so the cheap check is to run the function on
 The same test showed a second trap of hand-built drivers: the generated batch file may hold a line twice (`set "NEED_VISA=1"` is in the
 head and in the stub of the subfolder question), so a mutation case edits the head line by its index and not by a text search
 (see the entry above on mutation anchors).
+
+## A wording ratchet over console text judges messages the way a person reads them, and its escape hatch needs a ceiling (Item 123)
+
+README REQ-007.20 asks that every message about the EXE build, its check run or its failure says EXE or names the tool. Of the 642 console
+messages of `run_setup.bat`, 130 talk about building, bundling, packaging or verifying; 61 already named the EXE or a tool, 36 are about
+something else and 33 did not (`Optimized build: declined.`, `the next run will rebuild.`, `Building with the fallback build system only.`),
+which no test had ever shown. What made the rule usable and hard to cheat:
+- **A message is what the console shows, not a line of the file.** A sentence wraps over several `echo` lines, so the unit is a run of
+  consecutive line-start `echo` lines of one label (the trigger word on one line and the EXE on the next is one clean message). A
+  `call :log "..."` text (also behind a `call :sub "[TAG] ..."`), a `set /p` or `choice /M` prompt, an inline `if ... echo` and each branch
+  of a one-line if/else are messages too. `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines never reach the console and are not judged.
+- **A word rule needs an escape hatch, and the hatch needs a ceiling.** Most messages that say "build" are about something else (usage,
+  the environment, the interpreter, the user's own program). `tests/exe_wording_exempt.txt` holds the exact normalized text of each, under a
+  category with a sentence that says why. An entry no message reads, one the message no longer needs, a duplicate and a category nobody
+  uses fail, and the count is capped in the test (34), so growing the list is a change to that number with a reason and never a quiet
+  addition. Without the list the rule flags 69 messages and with it 33, so the list is the larger part of the judgement.
+- **Reword by inserting or appending.** Tests pin prefixes and substrings of console text (`Optimized build: declined`,
+  `[REPAIR] rebuild complete after warnfix.`, `attempting a fallback build`); an edit that only adds words keeps them. Before editing, scan
+  `tests/`, the workflows and the docs for each old text, and read the end-anchored regexes by eye (a substring scan cannot see
+  `declined\.$`); after editing run the whole suite, because a scan misses what a test builds from parts.
+- **A judge of a real run needs floors, taken from a real run.** `self.sysbuild.wording` judges only the timestamped lines of the console
+  (the `echo` text of the same messages is the static rule's job) and fails a run that read fewer than 30 lines, 6 about the build, 4 naming
+  the EXE or 1 exempt: about two thirds of the first real run (48, 9, 7 after the rewording, 2). A console that stopped before the build
+  would otherwise pass for want of violations. Set the first floors low, read the first real run, tighten them in the next commit.
+- **A reader of cmd syntax has to apply cmd's rules, or its blind spots are the review findings** (PR #537, six findings and one hole, each real). The
+  first reader (1) took `package` only as a noun's neighbour and so never saw the verb (`Package your app now?`, `We could not package
+  your app`): the trigger now holds the verb form (`package` followed by `up` or a possessive, not after a determiner) and leaves the noun of
+  the dependency messages alone; (2) read each command of a line on its own, so `(echo a & echo Building it) > f.txt` was judged as two
+  console messages when cmd sends both to the file: a group that a redirect or a pipe follows is blanked first, while `||` is not a pipe and
+  a redirect that follows one command (`echo b > f.txt`) is that command's own; (3) ended an `echo` at any `)`, caret-escaped or not, so
+  `echo Note ^) Building it` lost its tail; (4) stopped reading a line at the first log call or prompt, so `call :log "..." & echo ...` hid its
+  echo; (5) took everything after `set /p NAME=` for the prompt when no quote followed, so `set /p A=Ready? & echo Building it` hid its echo
+  (and `set /p A=<file` was a prompt named `<`): `_prompt_span` ends an unquoted prompt at the first `&`, `|`, `<`, `>` or unmatched `)` that
+  no quote or caret protects; (6) took every `<`, `>` or `|` after a group, an echo or a log call for a redirect of standard output, so
+  `(echo a & echo Building it) 2>nul`, `echo Building it 2>nul` and `call :log "..." 2>> "%LOG%"`, which all print, were dropped, while
+  `echo Step2> f.txt` was read as printing `Step2`: the reader now models what cmd does with a redirect (which stream it names, the
+  order from left to right, a digit that starts a word is the handle, `>&2` copies a handle and chains nothing, a pipe ends the command);
+  (7) a hole found while rereading, not by a reviewer: the `else` branch of a one-line if/else was read only when the first branch was
+  an echo, so `if defined X (set A=1) else (echo Building it)` lost its echo (a command is now cut at the parenthesis that closes its
+  group and the tail is read like any other statement). **A reader that answers "does a redirect follow" has to say which stream and in
+  what order before it can be right: write the table of cases first (the red tests list about twenty shapes) and let the code follow it.**
+  Each fix has a mutation case in `tests/test_exe_wording.py` that fails without it. The first check of rule (2) only asked that two
+  words were absent that no line printed, so the group lines passed whatever the reader did: **assert the whole result (`== []`), not the
+  absence of a string the case can never produce**.
+- **A scenario that installs into "the system Python" must not install into the runner's.** The accept scenario makes a venv from the
+  runner's python, puts its `Scripts` folder first on `PATH`, fails the other tiers by decree and answers Y to both consent questions, so
+  PyInstaller lands in the venv; the layout differs from python.org's only in the path.
