@@ -1622,6 +1622,19 @@ jobs:
         run: |
           & tests\selfapps_repair_cap.ps1
 
+      # Item 110 (README REQ-018.36): the verification run of the optimized build (:offer_optimized_build) ends after 30 seconds and
+      # leaves nothing running. Its inline PowerShell waited 30 seconds, called Kill() on the process it started and then read both pipes
+      # without a limit; an optimized (Nuitka onefile) EXE is two processes, so a program that keeps printing held the line until it ended
+      # by itself, and the program below the stopped one was left running. The real line is cut out of run_setup.bat and run under cmd.exe
+      # against a stand-in .cmd file that starts a program printing a line a second for 100 seconds (a second scenario, a program that
+      # ends by itself, proves a normal run still reports its own exit code); the program's own ledger gives the seconds it ran and the
+      # process list gives what is left. contract-uv only, gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the optimized build's verification run ends at the cap (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_optbuild_cap.ps1
+
       # Item 111 (README REQ-003.3, REQ-015.7 and REQ-015.8): where the bootstrapper works, what it calls the files a person keeps and
       # what deleting its ~ files costs. One program in a folder whose own name starts with ~ (so a name taken from the folder would
       # carry the tilde), bootstrapped twice by default. The first run is read for the working files and the EXE (in the folder where
@@ -3000,6 +3013,9 @@ jobs:
             tests/~selftest_repaircap/~cap_ledger.jsonl
             tests/~selftest_repaircap/~setup.log
             tests/~selftest_repaircap/~bootstrap.status.json
+            tests/~optbuild_cap_evidence.txt
+            tests/~selftest_optbuildcap/*/~driver*
+            tests/~selftest_optbuildcap/*/~optcap_ledger.txt
             tests/~tilde_files_evidence.txt
             tests/~selftest_tilde_root/~tilde_work/~tl_console2.log
             tests/~selftest_tilde_root/~tilde_work/~setup.log
