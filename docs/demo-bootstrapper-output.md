@@ -2867,14 +2867,15 @@ print('colorama via importlib ok:', _mod.__name__)
 [WARN] EXE smokerun: exited 1 (non-zero)
 
 *** The check run of your program failed, exit code 1. ***
-*** It may only be missing a package that the EXE build could not see. ***
-*** To find out, the repair starts your program again to read its error, and again after each rebuild. ***
-*** That is up to four more starts, and up to eight if a library file has to be added too. ***
+*** Its error says a package is missing from the EXE, and the build may be able to add it. ***
+*** To try, the repair rebuilds the EXE and starts your program again after each rebuild to check it. ***
+*** That is up to three more starts, and up to seven if a library file has to be added too. ***
 *** Each start repeats whatever your program does, so say no if running it twice could cause harm. ***
   Start your program again to try the repair? [Y/N, defaults to N after 30s]
-[INFO] Repair loop: accepted. Your program will be started again to look for a missing package.
+[INFO] Repair loop: accepted. Your program will be started again to check each rebuilt EXE.
 [REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama --collect-submodules=colorama; rebuilding EXE (iter 1/3).
 [INFO] PyInstaller produced dist\<env>.exe
+[WARN] Verifying the built standalone EXE (PyInstaller) now: it is force-stopped after about 30 seconds even if running perfectly, so do not start real work in it yet or any unsaved work will be lost.
 [INFO] EXE smokerun: testing dist\<env>.exe
 [INFO] EXE smokerun: exited 0 (ok)
 [INFO] Entry smoke exit=0
@@ -2968,6 +2969,21 @@ failed check run stays the only start of the program, and the usual hint for add
 A non-interactive run prints the five heading lines and then only `[INFO] Repair loop: not asked in a non-interactive run, so
 your program is not started again and nothing is rebuilt.`; with `HP_PVW_KNOWN_IDEMPOTENT` set (the user's own word that the
 program is safe to run more than once) no question is asked and the repair goes ahead.
+
+**When the error names no package the build can add (Item 97 follow-up (a), source excerpt, `[Extrapolated Branch]`):** the loop reads
+the error the check run already printed (`~run.err.txt` and `~run.out.txt`), so it needs no start of the program to know what failed.
+A program that exits with a code of its own, a `ModuleNotFoundError` for a package that is not installed (a typo), an `ImportError:
+cannot import name` or no output at all gets no question, no further start and no rebuild; the one line below is all the loop adds
+before the usual failure hint, and `starts = 1` holds for the whole run:
+
+```
+[WARN] EXE smokerun: exited 3 (non-zero)
+[INFO] Repair loop: the error of the check run names no installed package, so your program is not started again and nothing is rebuilt.
+```
+
+The heading and the question appear only for an error that names an installed package, as above, and the starts that follow are one to
+check each rebuild. After a DLL repair the EXE is rebuilt again, so its second call of the loop cannot read the old error and starts
+the program once as before.
 
 ### Scenario 36: Full walkthrough -- `HP_PVW_KNOWN_IDEMPOTENT`, with the actual input and output files
 

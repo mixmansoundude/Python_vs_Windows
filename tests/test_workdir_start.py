@@ -145,7 +145,7 @@ def script_problems(text):
     for needle, why in wants:
         if needle not in text:
             found.append(why)
-    for site, minimum in (("verify", 2), ("fastpath", 1), ("interpreter", 1), ("repair", 3), ("optbuild", 2)):
+    for site, minimum in (("verify", 2), ("fastpath", 1), ("interpreter", 1), ("repair", 2), ("optbuild", 2)):
         if not re.search(r"Get-WorkdirProblems -Site '%s'[^\n]*-MinStarts %d\b" % (site, minimum), text):
             found.append("%s: the row no longer requires at least %d recorded start(s)" % (site, minimum))
     for pattern, _needle in PROOFS:
@@ -517,9 +517,9 @@ class EachRuleCanFail(unittest.TestCase):
         self.assertTrue(any("Nuitka" in f for f in script_problems(text)))
 
     def test_a_row_that_stops_requiring_its_starts_is_caught(self):
-        text = self.script.replace("-Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 3",
+        text = self.script.replace("-Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 2",
                                    "-Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 1")
-        self.assertTrue(any("repair: the row no longer requires at least 3" in f for f in script_problems(text)), script_problems(text))
+        self.assertTrue(any("repair: the row no longer requires at least 2" in f for f in script_problems(text)), script_problems(text))
 
     def test_a_precondition_that_is_dropped_is_caught(self):
         text = self.script.replace("Optimized build succeeded and verified", "Optimized build")

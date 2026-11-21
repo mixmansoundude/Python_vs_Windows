@@ -4165,6 +4165,34 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **README wording proposed** in the PR body for the README owner: REQ-018.2 names the repair run, REQ-018.9 lists the fifth
   elective offer, REQ-018.35 names `HP_PVW_KNOWN_IDEMPOTENT`.
 
+### Item 97 follow-up (a) (closed 2026-11-21, PR #542; follow-up listed in CLAUDE.md since the first pass of 2026-11-06)
+
+- **The problem.** After the first pass the loop still started `dist\<env>.exe` once only to read an error that the check run had
+  already written to `~run.out.txt` and `~run.err.txt`, and asked its question before it knew whether the error named anything the
+  build could add. A program that failed for its own reasons (an exit code of its own, a typo in an import, an `ImportError: cannot
+  import name`) was asked about a repair that could not happen and, on a yes, started once for nothing. README REQ-018.1 allows
+  one automatic start per invocation and every further one needs consent that names the risk, so each start that learns nothing
+  new is a start the user should not be asked to allow.
+- **The change.** `:hidden_import_recover` joins the two files into `dist\~exe_out.txt`, runs the loop's own scanner over them
+  (`~hidden_import_scan.py`, strict: `ModuleNotFoundError` and installed in the build interpreter) and deletes the evidence file. No
+  files, or no installed package named: one `[INFO] Repair loop: the error of the check run names no installed package ...` line and
+  an exit before the question, any start and any rebuild. A package: the question (its heading now says up to three more starts,
+  seven with a library file, and no longer says the program is started to read its error), and a yes goes straight to
+  `:hidden_import_found`, the rebuild, so the invocation's starts are the check run plus one to check each rebuild. The second call
+  of a build (after a DLL repair, `HP_HID_REREAD` set by its caller) reads nothing, because the EXE was rebuilt since the check run.
+  The announcement of the throwaway check moved into the loop (`HP_HID_WARNED`) because the first start is no longer at the top.
+  Rules and the places that must change together: `docs/agent-interconnect.md`, "The pre-read (Item 97 follow-up (a))".
+- **A defect found on the way.** `HP_DLL_REPAIRED` was not cleared before the second-pass gate in `:run_exe_smokerun`. The build-time
+  DLL pass can set it, and when no rebuild happened above the gate the old value stood for a repair this call never made, so the
+  second call of the loop ran and started the program once for nothing. It is cleared on the line before the gate now
+  (`tests/test_repair_preread.py` pins the line).
+- **Rows** (`tests/selfapps_repair_consent.ps1`, `real` lane, gating): `self.repair.noread.plain` (a program that exits with 3 and
+  names no module, the test answer yes: exactly one start, no question, no accepted line, no rebuild, the no-package log line) and
+  `self.repair.noread.starts` (the accepted run of the older rows: starts equal 1 plus rebuilds). `tests/selfapps_workdir.ps1`'s
+  repair row needs two starts now, not three.
+- **README wording proposed** in the PR body for the README owner: the mechanism note of REQ-007.13 says the loop starts the
+  program to read its error; it reads the check run's error instead.
+
 ### Item 100 (closed 2026-11-06, PR #520; an Item 35 slice, the "wider" Pages-publish gap CodeRabbit raised on PR #471)
 
 - **The problem.** `publish_diag` ("Publish diagnostics to Pages") starts under `if: always()`, but its step "Prep site directories"

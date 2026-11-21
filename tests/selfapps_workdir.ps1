@@ -23,9 +23,10 @@
 #   interpreter  PyInstaller and Nuitka forced to fail (HP_TEST_FORCE_PYINSTALLER_FAIL, HP_TEST_FORCE_NUITKA_FAIL): no EXE exists,
 #                so the interpreter runs the program. Row: self.workdir.interpreter
 #   repair       a program that reads workdir_data.txt first and then imports an installed package by a computed name, so the
-#                first run fails with ModuleNotFoundError. The repair loop (consent given through HP_TEST_REPAIR_ANSWER=Y) starts
-#                the EXE to read the error and again after the rebuild; each of those starts must see the data file. Before the fix
-#                the loop's first start ran from dist\, failed on the missing data file and the repair never happened.
+#                first run fails with ModuleNotFoundError. The repair loop (consent given through HP_TEST_REPAIR_ANSWER=Y) reads
+#                that error from the files the check run left (Item 97 follow-up (a), so it starts nothing to learn it) and starts
+#                the rebuilt EXE once; that start and the check run must both see the data file. Before the fix the loop's first
+#                start ran from dist\, failed on the missing data file and the repair never happened.
 #                Row: self.workdir.repair
 #   optbuild     PVW_BUILDER=both with a stub nuitka.py next to app.py that "builds" by copying the EXE PyInstaller built: the
 #                optimized build is verified by one more start, which must be in the entry folder. Row: self.workdir.optbuild
@@ -410,7 +411,7 @@ $proofs = @(
     (Get-ProofGap -Text $rSetup -Pattern '\[REPAIR\]\[HIDDEN_IMPORT\] Adding --hidden-import=colorama' -Sentence 'the repair loop never added --hidden-import=colorama, so the rebuilt EXE was never started'),
     $(if ($kindsR.frozen -lt 3) { "only $($kindsR.frozen) start(s) of the EXE were recorded, expected the check run, the loop's own run and the run after the rebuild" } else { '' })
 )
-$problems = @(Get-WorkdirProblems -Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 3 -Proofs $proofs)
+$problems = @(Get-WorkdirProblems -Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 2 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
 Write-NdjsonRow ([ordered]@{
     id = 'self.workdir.repair'; req = 'REQ-003.6'; pass = [bool]($problems.Count -eq 0)
