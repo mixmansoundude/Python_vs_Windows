@@ -276,6 +276,18 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
   gate. `tests/test_net_resilience.py` pins the order of those lines and which labels and variables the three new blocks reach (`CONDA_MAIN` and `CONDA_ALT` come from the folder block,
   which runs first in the same driver). REQ-003.1 is the weakest of the three: the bootstrapper has no version check of its own, so the row shows the runner's build at or above
   17763 and that the download code works with only the System32 programs, which is what "using the curl and PowerShell that Windows ships" can be tested as.
+- **Item 127 adds two rows on the same uv cut (`self.netres.uv.acquire`, `.unpackfail`; README REQ-009.22 and .23), and the unpack line they judge is the one place in the file
+  that is raw .NET on purpose.** The cut runs from `:pvw_uv_exe_skip` to `:uv_acquire_done`, so it covers the download, the `for %%S in ("%HP_UV_ZIP%")` size test, the unpack, the
+  `del` of the archive, the `if exist "%HP_UV_BIN%\uv.exe"` verdict and the fallback lines. The server serves a zip the script builds (a stub `uv.exe` and its two companions) or a
+  file of the right size that is no archive. `acquire` requires `~uv_bin\uv.exe` with the zip's length, `uvx.exe` and `uvw.exe`, one curl request and the zip removed;
+  `unpackfail` requires a non-empty `uv: unpack failed: <reason>` line, the failure and fallback lines, the `~uv_bin` listing and no `uv.exe`. The reason line is the command's own output
+  (`>> "%LOG%" 2>&1`); it must never pass through `:log` (arbitrary text). The unpack is `Add-Type -AssemblyName System.IO.Compression.FileSystem`, `ZipFile.OpenRead` and
+  `ZipFileExtensions.ExtractToFile` with each entry under its bare `Name` (a crafted entry name cannot leave `~uv_bin`), the archive and folder read from `$env:HP_UV_ZIP` and
+  `$env:HP_UV_BIN`, and no percent sign but `%LOG%` in the line. **Do not go back to `Expand-Archive`**: from the pwsh to `cmd.exe` to `powershell.exe` chain (every test and every
+  lane step) the 5.1 inherits PowerShell 7's `PSModulePath` and loads its `Microsoft.PowerShell.Archive` 1.2.7, which throws `Cannot find an overload for "ExtractToDirectory"
+  and the argument count: "3"` on .NET Framework (Windows image 20261116.315.1, `docs/agent-lessons-learned.md`, Item 127). `uv_unpack_problems` in `tests/test_net_resilience.py`
+  pins all of it and reports `Expand-Archive` by name. The block still shares the Item 116 driver pieces (stub `uv.exe` folder, scratch `HP_SCRIPT_ROOT`, offline switch), so a
+  change to the label `:uv_acquire_done` or to the `for %%S` line is a change to the script and the unit test together.
 
 
 ---
@@ -1602,6 +1614,14 @@ calls must make the same once-per-bootstrap decision (compare `HP_RTI_OFFERED`, 
 `tests/test_picker_gate.py` (`PickerAsksOnce`) pins the clear, the set and the read.
 The list itself is built by one pipeline (`dir /b /a-d *.py`, then `findstr /v /b /c:"~"`, then `findstr /v /b /l /c:"._"`, then `sort`) whose two filters must
 stay equal to what `find_entry.py` skips (README REQ-002.13); `PickerMenuFilter` pins both stages and `self.entry.picker.metafile` shows a `._` copy is not listed (Item 108).
+**A test module is skipped by `find_entry.py`'s rules 3 and 4 only, never by the picker (Item 125, README REQ-002.27 and .28).** `is_test_module` in `tools/find_entry.py` takes a
+file named `test_X.py` or `X_test.py` (any letter case) whose AST imports `unittest` or `pytest` (an import inside a function counts, a word in a string or comment does not, an unparseable file is not
+one); `main()` removes those files from the pool of the guard rule and the alphabetical fallback and puts them back only when nothing else is left, so a folder of nothing but test modules
+still runs one. The preferred names, a sole `.py` file and a named first argument are decided before that point and do not change; the picker still lists every `*.py` (a user may
+mean the test file), and the exit code 3 of the fallback is unchanged, so `calc.py` (no guard) next to `test_calc.py` is `calc.py` with the picker offered, not a silent pick. The name alone is not
+enough on purpose: a lab script called `test_scope.py` that drives an instrument is a program, and the audience (VISA users) writes those (`self.entry.testmodule.script`). The helper is Python 3.9
+grammar and has 87 characters of payload margin; `self.entry.testmodule.guard`/`.library` are the rows that were red on the short lanes before the fix.
+**`_parse` reads with `utf-8-sig`, not `utf-8`** (CodeRabbit, PR #536): a BOM stays in a text-mode string as U+FEFF and `ast.parse` refuses it, so a BOM-prefixed file was "unparseable", which hid its guard from rule 3 as well (a defect older than Item 125) and made a BOM test module look like a program. `errors="ignore"` stays, because parsing the raw bytes would drop the tolerance for a stray cp1252 byte (`test_bytes_that_are_not_utf8_are_still_read`). Pins: `test_a_byte_order_mark_does_not_hide_a_test_module` and `_a_guard` in `tests/test_find_entry.py`.
 
 ### Honest ambiguous-exit messaging (REQ-027, P2)
 

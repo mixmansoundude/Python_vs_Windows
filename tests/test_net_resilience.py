@@ -6,6 +6,9 @@ check), wraps each in a small driver and runs it with cmd.exe against a local HT
 Item 116 added three more cuts (the uv acquisition, the Miniconda folder decision and `:select_conda_bat`) for the rows that
 show an installed uv or Miniconda used as it is in offline mode (REQ-013.12), and one more run of the get-pip.py block with PATH
 cut to the System32 folders (REQ-003.1).
+Item 127 added the uv archive unpack (`:uv_acquire_done` cut) for the two rows `self.netres.uv.acquire` and `.unpackfail`: the unpack is
+raw .NET with the reason of a failure written to the setup log, because `Expand-Archive` failed in the real chain on Windows image
+20261116.315.1 and left no uv.exe.
 What it can prove depends on those blocks staying what the script assumes. This file pins that, so a change that moves a
 label, adds a variable the driver does not set, drops `--retry 3` or reorders the attempts fails here with a message
 that names the script to update, and not after a two and a half hour run.
@@ -44,6 +47,9 @@ ROWS = {
     "self.netres.offline.uv": "REQ-013.12",
     "self.netres.offline.conda": "REQ-013.12",
     "self.netres.shipped.tools": "REQ-003.1",
+    # Item 127: the uv archive that downloaded in full is unpacked, and a failed unpack names its reason.
+    "self.netres.uv.acquire": "REQ-009.22",
+    "self.netres.uv.unpackfail": "REQ-009.23",
 }
 STEP_NAME = "Self-test: network resilience of the downloads (real only)"
 
@@ -62,6 +68,8 @@ BLOCKS = {
 # The uv download is inline in the main flow (not a subroutine) and uses curl only; its half of REQ-013.1 and REQ-013.9 is pinned
 # here as text, because the script's Miniconda block shows the same order with real requests and uv's URL cannot be redirected.
 UV_BLOCK = (":uv_acquire_download", 'for %%S in ("%HP_UV_ZIP%") do (')
+# Item 127: from that same `for` line to the end of the acquisition, the unpack and the verdict on ~uv_bin\uv.exe.
+UV_UNPACK = ('for %%S in ("%HP_UV_ZIP%") do (', ":uv_acquire_done")
 
 # Labels a block may reach outside itself. The script's driver defines each one.
 EXTERNAL_LABELS = {
@@ -105,6 +113,11 @@ LOG_TEXTS = (
     ("Offline mode: skipping Miniconda download", "Offline mode: skipping Miniconda download"),
     ("Offline mode: skipping uv download", "Offline mode: skipping uv download"),
     ("uv: cached binary found at ~uv_bin\\\\uv\\.exe", "uv: cached binary found at ~uv_bin"),
+    # Item 127: the two outcomes of the unpack, as the setup log words them.
+    ("uv: acquired at ~uv_bin\\\\uv\\.exe", "uv: acquired at ~uv_bin"),
+    ("uv: acquisition failed; will use conda", "uv: acquisition failed; will use conda"),
+    ("UV_FALLBACK reason=acquire_failed", "UV_FALLBACK reason=acquire_failed"),
+    ("uv: ~uv_bin holds the files listed next", "uv: ~uv_bin holds the files listed next"),
     ("Trying fallback get-pip.py URL", "Trying fallback get-pip.py URL"),
     ("get-pip.py download succeeded from fallback URL", "get-pip.py download succeeded from fallback URL"),
     ("Trying fallback Miniconda URL", "Trying fallback Miniconda URL"),
@@ -309,6 +322,66 @@ def uv_problems(lines):
     return found
 
 
+def uv_unpack_problems(lines):
+    """Item 127 (REQ-009.22, .23): the unpack of the downloaded archive writes its reason to the setup log, and a missing uv.exe is explained.
+
+    The unpack is raw .NET (`ZipFile.OpenRead` and `ExtractToFile`), never `Expand-Archive`: on Windows runner image 20261116.315.1 the
+    cmdlet failed in the chain pwsh -> cmd.exe -> powershell.exe with `Cannot find an overload for "ExtractToDirectory" and the
+    argument count: "3"`, a 3-argument overload that only .NET Core has, so no uv.exe resulted (29 of 29 acquisitions, Item 127).
+    """
+    block = cut_block(lines, UV_UNPACK[0], UV_UNPACK[1])
+    if block is None:
+        return ["the uv unpack block cannot be cut (%s ... %s)" % UV_UNPACK]
+    found = []
+    trimmed = [l.strip() for l in lines]
+    for edge in UV_UNPACK:
+        if trimmed.count(edge) != 1:
+            found.append("uv unpack: the line %r occurs %d times, this test needs exactly one" % (edge, trimmed.count(edge)))
+    unpack = [l.strip() for l in block if l.strip().startswith("powershell ")]
+    if len(unpack) != 1:
+        return found + ["uv unpack: expected exactly one PowerShell line in the unpack block, found %d" % len(unpack)]
+    line = unpack[0]
+    # The archive module's cmdlet is what failed on the new image; the unpack stays raw .NET, which the embedded Python tier already runs in the same chain.
+    if "Expand-Archive" in line or "Microsoft.PowerShell.Archive" in line:
+        found.append("uv unpack: the unpack line uses Expand-Archive again (it failed on Windows image 20261116.315.1, Item 127); keep the .NET ZipFile route")
+    for needle in ("Add-Type -AssemblyName System.IO.Compression.FileSystem", "[System.IO.Compression.ZipFile]::OpenRead(", "[System.IO.Compression.ZipFileExtensions]::ExtractToFile("):
+        if needle not in line:
+            found.append("uv unpack: the unpack line no longer holds %r" % needle)
+    # Entries are written under their bare file name, so a crafted entry name cannot leave ~uv_bin.
+    if "$e.FullName" in line or "ExtractToDirectory" in line:
+        found.append("uv unpack: the unpack line writes entries under their full name or extracts a whole folder; entries must go under their bare Name")
+    if "$e.Name" not in line:
+        found.append("uv unpack: the unpack line no longer places entries by their bare Name")
+    # The paths reach PowerShell as environment variables, never pasted in: a folder name with an apostrophe would end a single-quoted literal.
+    if "$env:HP_UV_ZIP" not in line or "$env:HP_UV_BIN" not in line:
+        found.append("uv unpack: the unpack line no longer reads the archive and ~uv_bin from $env:HP_UV_ZIP and $env:HP_UV_BIN")
+    # The reason of a failure reaches the setup log: the command's own output is appended to it, and the command prints the reason.
+    if "uv: unpack failed: " not in line or "Exception.Message" not in line:
+        found.append("uv unpack: the unpack line no longer prints why it failed (the line that README REQ-009.23 and self.netres.uv.unpackfail read)")
+    if not line.endswith('>> "%LOG%" 2>&1'):
+        found.append('uv unpack: the unpack line no longer appends its output to the setup log')
+    # No double quote inside the -Command text (cmd's quote toggle) and no percent sign at all but the log path's: two quotes around the command, two around the log path.
+    if line.count('"') != 4:
+        found.append("uv unpack: the unpack line holds %d double quotes, 4 are expected (a quote inside -Command breaks cmd's parsing)" % line.count('"'))
+    if line.replace("%LOG%", "").count("%"):
+        found.append("uv unpack: a percent sign other than the log path's sits in the unpack line (use $env:NAME, cmd pairs percent signs across the whole line)")
+    # An unreadable failure was the defect: the catch must not be a bare exit.
+    if re.search(r"catch \{ exit 1 \}", line):
+        found.append("uv unpack: the unpack line swallows the reason again (catch { exit 1 })")
+    found += order_problems("uv unpack", block, [
+        ("the unpack", r"^powershell .*ZipFile\]::OpenRead"),
+        ("the archive is removed", r"^del \"%HP_UV_ZIP%\""),
+        ("the uv.exe test", r"^if exist \"%HP_UV_BIN%\\uv\.exe\" \($"),
+        ("the success line", r"uv: acquired at ~uv_bin"),
+        ("the failure line", r"uv: acquisition failed; will use conda"),
+        ("the listing heading", r"uv: ~uv_bin holds the files listed next"),
+        ("the listing", r"^dir /b \"%HP_UV_BIN%\" >> \"%LOG%\" 2>&1$"),
+        ("the fallback reason", r"^set \"UV_FALLBACK_REASON=acquire_failed\"$"),
+        ("the fallback line", r"UV_FALLBACK reason=acquire_failed"),
+    ])
+    return found
+
+
 def log_problems(bat_text):
     """Each text the script looks for in a driver log is written by a live call :log line of the batch."""
     found = []
@@ -390,6 +463,9 @@ class BatchSide(unittest.TestCase):
 
     def test_uv_download_keeps_its_order(self):
         self.assertEqual(uv_problems(_lines()), [])
+
+    def test_uv_unpack_says_why_it_failed_and_explains_a_missing_uv(self):
+        self.assertEqual(uv_unpack_problems(_lines()), [])
 
     def test_the_script_looks_for_text_the_batch_writes(self):
         self.assertEqual(log_problems("\n".join(_lines())), [])
@@ -491,6 +567,75 @@ class SyntheticRulesCanFail(unittest.TestCase):
         with_ps = lines[:i] + ["powershell -NoProfile -Command \"Invoke-WebRequest -Uri 'x'\""] + lines[i:]
         self.assertTrue(any("PowerShell download" in p for p in uv_problems(with_ps)))
         self.assertTrue(uv_problems([l for l in lines if l.strip() != ":uv_acquire_download"]))
+
+    @staticmethod
+    def _unpack_index(lines):
+        """The one PowerShell line of the uv unpack block, found by its anchor (the ZipFile route), so a mutation cannot edit another line."""
+        hits = [k for k, l in enumerate(lines) if "ZipFile]::OpenRead($env:HP_UV_ZIP)" in l]
+        assert len(hits) == 1, hits
+        return hits[0]
+
+    def test_an_unpack_that_swallows_its_reason_is_reported(self):
+        # Item 127: the first version of the line ended in catch { exit 1 }, which is why the log could not say why uv.exe was missing.
+        lines = _lines()
+        i = self._unpack_index(lines)
+        mutated = list(lines)
+        mutated[i] = lines[i].replace("Write-Output ('uv: unpack failed: ' + $_.Exception.Message); exit 1", "exit 1")
+        self.assertNotEqual(lines, mutated)
+        problems = uv_unpack_problems(mutated)
+        self.assertTrue(any("no longer prints why it failed" in p for p in problems), problems)
+        self.assertTrue(any("swallows the reason" in p for p in problems), problems)
+
+    def test_an_unpack_with_its_output_dropped_or_a_stray_quote_is_reported(self):
+        lines = _lines()
+        i = self._unpack_index(lines)
+        dropped = list(lines)
+        dropped[i] = lines[i].replace(' >> "%LOG%" 2>&1', "")
+        self.assertTrue(any("appends its output" in p for p in uv_unpack_problems(dropped)), uv_unpack_problems(dropped))
+        quoted = list(lines)
+        quoted[i] = lines[i].replace("'uv: unpack failed: '", '"uv: unpack failed: "')
+        self.assertTrue(any("double quotes" in p for p in uv_unpack_problems(quoted)), uv_unpack_problems(quoted))
+
+    def test_the_archive_cmdlet_is_reported(self):
+        # Item 127: Expand-Archive failed on image 20261116.315.1 with an ExtractToDirectory overload error; its first version of the line is the control.
+        lines = _lines()
+        i = self._unpack_index(lines)
+        old = list(lines)
+        old[i] = ("powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { Expand-Archive -LiteralPath $env:HP_UV_ZIP -DestinationPath $env:HP_UV_BIN -Force -ErrorAction Stop } "
+                  "catch { Write-Output ('uv: unpack failed: ' + $_.Exception.Message); exit 1 }\" >> \"%LOG%\" 2>&1")
+        problems = uv_unpack_problems(old)
+        self.assertTrue(any("uses Expand-Archive again" in p for p in problems), problems)
+        self.assertTrue(any("no longer holds" in p for p in problems), problems)
+
+    def test_an_unpack_that_pastes_a_path_or_places_entries_by_full_name_is_reported(self):
+        lines = _lines()
+        i = self._unpack_index(lines)
+        pasted = list(lines)
+        pasted[i] = lines[i].replace("$env:HP_UV_ZIP", "'%HP_UV_ZIP%'")
+        problems = uv_unpack_problems(pasted)
+        self.assertTrue(any("percent sign" in p for p in problems), problems)
+        self.assertTrue(any("$env:HP_UV_ZIP" in p for p in problems), problems)
+        full = list(lines)
+        full[i] = lines[i].replace("$e.Name)", "$e.FullName)")
+        problems = uv_unpack_problems(full)
+        self.assertTrue(any("full name" in p for p in problems), problems)
+        self.assertTrue(any("bare Name" in p for p in problems), problems)
+
+    def test_an_unpack_without_the_assembly_load_is_reported(self):
+        # On Windows PowerShell 5.1 [System.IO.Compression.ZipFile] needs the assembly loaded first; the type does not resolve without Add-Type.
+        lines = _lines()
+        i = self._unpack_index(lines)
+        bare = list(lines)
+        bare[i] = lines[i].replace("Add-Type -AssemblyName System.IO.Compression.FileSystem; ", "")
+        self.assertNotEqual(lines, bare)
+        problems = uv_unpack_problems(bare)
+        self.assertTrue(any("Add-Type -AssemblyName" in p for p in problems), problems)
+
+    def test_a_missing_uv_without_its_listing_is_reported(self):
+        lines = [l for l in _lines() if l.strip() != 'dir /b "%HP_UV_BIN%" >> "%LOG%" 2>&1']
+        self.assertTrue(any("the listing" in p for p in uv_unpack_problems(lines)), uv_unpack_problems(lines))
+        no_reason = [l.replace('call :log "[WARN] UV_FALLBACK reason=acquire_failed"', 'rem gone') for l in _lines()]
+        self.assertTrue(any("fallback line" in p for p in uv_unpack_problems(no_reason)), uv_unpack_problems(no_reason))
 
     def test_a_reworded_log_line_is_reported(self):
         text = "\n".join(_lines()).replace("swap move failed; interpreter may be missing", "swap did not work")
