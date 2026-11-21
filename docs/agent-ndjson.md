@@ -1114,7 +1114,12 @@ imports the installed `colorama` by a runtime name, so the first EXE run fails w
 is rebuilt and the ledger holds exactly one line, which also needs the Item 96 fix, because the failure hint used to
 start the failed EXE a third time) and `.accepted` (the test answers yes: the log says accepted BEFORE the loop's
 announcement and before the first `--hidden-import`, the EXE is rebuilt, verified after recovery, and every start is
-accounted for by `announced + rebuilds`). Details carry the facts read (counts, positions in the setup log, the starts
+accounted for by `announced + rebuilds`). Follow-up (a) of Item 97 adds two rows (README REQ-018.1 and REQ-018.2): the loop
+started the program once only to read an error the check run had already printed into `~run.err.txt`, a start that README
+REQ-018.1 does not allow without consent. `.noread.starts` reads the accepted run again and requires the ledger to hold
+the check run plus one start per rebuild, not one more; `.noread.plain` bootstraps a program that writes its ledger line
+and exits with 3 (no module named in its error, the test answers yes) and requires exactly one start, no question shown,
+no rebuild, no `accepted` line and a log line saying the check run names no installed package. Details carry the facts read (counts, positions in the setup log, the starts
 that came from `dist\`) and, only when something is wrong, `problems` and a log excerpt; the console, log and result file
 of each gate scenario are in `tests/~repair_consent_evidence.txt`. Each bootstrap has a 15 minute limit and each gate
 scenario three minutes. Skips on non-Windows.
@@ -1129,6 +1134,8 @@ self.repair.gate.idempotent
 self.repair.gate.once
 self.repair.consent.declined
 self.repair.consent.accepted
+self.repair.noread.plain
+self.repair.noread.starts
 ```
 
 ## selfapps-workdir NDJSON rows (selfapps_workdir.ps1, conda-full lane only, gating)
