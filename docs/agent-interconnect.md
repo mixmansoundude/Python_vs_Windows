@@ -292,13 +292,23 @@ gating) cuts those five blocks out by exact trimmed lines (`Get-BatBlock -StartL
   that a scanner or another program holds open stops `ExtractToFile` after `uv.exe` was written. The line prints its reason and exits 1, but the batch used to take only the file test, so the run
   used that `uv.exe` and a later run took it as the cached binary once `uv --version` answered; what silently went off was everything guarded by `if exist "%HP_UVX_EXE%"` (REQ-005.12 and
   REQ-005.13). The block now clears `HP_UV_UNPACK_BAD` once before the unpack, sets it on the two lines directly after the unpack line (`if errorlevel 1` and `if not errorlevel 0`: the second one is for a
-  negative code, the Item 113 rule, and nothing may sit between the unpack and those lines, not even a `rem`), and on a failure deletes `uv.exe`, `uvx.exe` and `uvw.exe` (a file that stays because it is held
-  open is replaced by the next unpack) before `HP_UV_OK` is decided; `HP_UV_OK` is `uv.exe` exists and no failure was flagged, and the success branch tests `if defined HP_UV_OK`, never a bare `if exist`.
+  negative code, the Item 113 rule, and nothing may sit between the unpack and those lines, not even a `rem`), and on a failure deletes `uv.exe`, `uvx.exe` and `uvw.exe` before `HP_UV_OK` is decided (a file that stays because it is held
+  open is dealt with by the marker below); `HP_UV_OK` is `uv.exe` exists and no failure was flagged, and the success branch tests `if defined HP_UV_OK`, never a bare `if exist`.
   The row holds `~uv_bin\uvx.exe` open with `FileShare.Read` (the technique of `selfapps_pipreqs_output.ps1`), runs the block, and requires `UV=;REASON=acquire_failed`, the `unpack failed` line, no
   `uv.exe` left and the held file untouched; it then runs the same driver again in the same folder with the lock released and requires the full unpack (all three files with the stub's length, one more
-  curl request), which shows the first failure came from the lock and that no marker of the failed run lingers. The block must stay free of new subroutine calls (the driver defines `:log`,
+  curl request), which shows the first failure came from the lock. The block must stay free of new subroutine calls (the driver defines `:log`,
   `:check_net_after_dl_fail` and `:uv_acquire_done` only); `uv_unpack_problems` pins the clear, the two flag lines, the adjacency, the deletions and the verdict, and its mutation cases put the old
   `if exist` verdict back. **Not covered**: no `uv --version` check right after a successful unpack (a corrupt `uv.exe` that unpacks without an error is still accepted at this point).
+- **Item 128 follow-up, `self.netres.uv.survivor` (README REQ-009.25): a deletion can fail, so the file test cannot be the only memory of a failed unpack** (CodeRabbit, PR #540). A `uv.exe` that the cleanup of a
+  failed unpack could not delete (another program holds it open) is found by the next run's cached-binary test, and `uv --version` answers, so it was taken as the cached uv. The block therefore writes the file
+  `~uv_bin\~unpack.incomplete` right before the unpack line and removes it only on the line after the two exit code tests (`if not defined HP_UV_UNPACK_BAD`, with `HP_UV_UNPACK_DONE` set beside it); the failure
+  branch never removes it. The cached-binary branch tests the marker FIRST (a warning that says an earlier unpack did not finish, then `goto :uv_acquire_download`), and after the unpack stage a marker that is still
+  there with no successful unpack this run (the download failed, the archive was too small, or an earlier run was cut short) sets `HP_UV_UNPACK_BAD` too, so a survivor is deleted or at least not used and the
+  verdict stays `acquire_failed`. A marker whose own deletion failed after a good unpack is not a veto (`HP_UV_UNPACK_DONE`). The row cannot plant the survivor with a lock (the unpack writes `uv.exe` itself),
+  so it runs the failed unpack of the `partial` row, copies the stub program over `~uv_bin\uv.exe` and runs the block again: the second run must unpack in full without ever starting the planted file (the stub
+  records each start in `uv.calls`), a third run must then take the cached binary (the control: the marker is gone, one start, no request). `uv_unpack_problems` pins the marker's write, its single guarded
+  removal, the clear of `HP_UV_UNPACK_DONE` before the unpack, the veto line and that the marker test comes before the cached-binary test; its mutation cases delete the test, put it after the cached-binary test
+  and remove the guard. The driver gets no new subroutine call.
 
 
 ---

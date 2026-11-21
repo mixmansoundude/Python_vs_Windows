@@ -885,6 +885,12 @@ if "%HP_TEST_FORCE_UV_FAIL%"=="1" (
   call :log "[WARN] UV_FALLBACK reason=test_forced_fail"
   goto :uv_acquire_done
 )
+rem REQ-009.25 (Item 128): a marker file in ~uv_bin is written before an unpack starts and removed only after one succeeds. While it
+rem is there, a uv.exe in the folder may be a partly unpacked file whose deletion failed, so it is not taken as the cached binary.
+if exist "%HP_UV_BIN%\~unpack.incomplete" (
+  call :log "[WARN] uv: an earlier unpack did not finish, so the uv files in ~uv_bin are not used as they are and the archive is unpacked again."
+  goto :uv_acquire_download
+)
 if exist "%HP_UV_BIN%\uv.exe" (
   if defined HP_TEST_CORRUPT_UV (
     call :log "[WARN] HP_TEST_CORRUPT_UV: simulating corrupt uv binary; clearing cache."
@@ -935,22 +941,29 @@ if not exist "%HP_UV_ZIP%" if not "%HP_OFFLINE_MODE%"=="1" (
 rem REQ-009.24 (Item 128): the exit code of the unpack is what decides, because uv.exe is the first file the archive writes and is
 rem already in place when a later one (uvx.exe, uvw.exe) cannot be written. Cleared here, set only by a failed unpack below.
 set "HP_UV_UNPACK_BAD="
+set "HP_UV_UNPACK_DONE="
 if exist "%HP_UV_ZIP%" (
   for %%S in ("%HP_UV_ZIP%") do (
     if %%~zS GEQ %HP_UV_MIN_BYTES% (
+      rem REQ-009.25: the marker goes in before the unpack and comes out only after an unpack that succeeded, so it also stays when the run is cut short.
+      echo unpack started> "%HP_UV_BIN%\~unpack.incomplete"
       rem Nothing may sit between the unpack line and the two tests below: any command resets the exit code they read. A negative code
       rem is what Windows gives a program that cannot start or crashes, and if errorlevel 1 does not see it, hence the second test.
       powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Add-Type -AssemblyName System.IO.Compression.FileSystem; [void][System.IO.Directory]::CreateDirectory($env:HP_UV_BIN); $z = [System.IO.Compression.ZipFile]::OpenRead($env:HP_UV_ZIP); try { foreach ($e in $z.Entries) { if ($e.Name) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, [System.IO.Path]::Combine($env:HP_UV_BIN, $e.Name), $true) } } } finally { $z.Dispose() } } catch { Write-Output ('uv: unpack failed: ' + $_.Exception.Message); exit 1 }" >> "%LOG%" 2>&1
       if errorlevel 1 set "HP_UV_UNPACK_BAD=1"
       if not errorlevel 0 set "HP_UV_UNPACK_BAD=1"
+      if not defined HP_UV_UNPACK_BAD set "HP_UV_UNPACK_DONE=1"
+      if not defined HP_UV_UNPACK_BAD del /f /q "%HP_UV_BIN%\~unpack.incomplete" >nul 2>&1
     ) else (
       call :log "[WARN] uv: zip too small (%%~zS bytes); skipping extract."
     )
   )
   del "%HP_UV_ZIP%" >nul 2>&1
 )
+rem REQ-009.25: when this run unpacked nothing, a marker that is still there is an earlier unpack that did not end in success.
+if not defined HP_UV_UNPACK_DONE if exist "%HP_UV_BIN%\~unpack.incomplete" set "HP_UV_UNPACK_BAD=1"
 if defined HP_UV_UNPACK_BAD (
-  call :log "[WARN] uv: the unpack failed, so the uv files it left in ~uv_bin are deleted."
+  call :log "[WARN] uv: the unpack did not end in success, so the uv files left in ~uv_bin are deleted."
   del /f /q "%HP_UV_BIN%\uv.exe" >nul 2>&1
   del /f /q "%HP_UV_BIN%\uvx.exe" >nul 2>&1
   del /f /q "%HP_UV_BIN%\uvw.exe" >nul 2>&1
