@@ -1117,6 +1117,20 @@ pins both, the absence of `Expand-Archive` and entries written under their bare 
 
 ---
 
+## "The file I need exists" is not "the step that makes it succeeded": read the exit code, and clean up what a failed step left (Item 128)
+
+The uv unpack line wrote `uv.exe` first, then `uvx.exe` and `uvw.exe` (archive order). The batch decided with `if exist "%HP_UV_BIN%\uv.exe"` and ignored the
+exit code, so an unpack that failed on the second entry (a scanner or another program holding `uvx.exe` open) left a `uv.exe` that was accepted: this run used it, and a later run took it as the
+cached binary, with the discovery guarded by `if exist "%HP_UVX_EXE%"` (REQ-005.12 and .13) silently off (CodeRabbit, PR #536). **Rules:** (1) when a step writes several files, the exit
+code of the step is the verdict and the first file is not; set a flag on the two lines directly after the launch (`if errorlevel 1` and `if not errorlevel 0`, because `if errorlevel 1` is
+false for a negative code) and decide with `if defined`, never a bare `if exist` in a block that the flag has to veto. (2) A failed step deletes what it left behind, by name, so that neither this run nor a
+later run reads a partial result as a finished one; a file that cannot be deleted (it is held open) stays, so the failed step also leaves a marker file that only a successful step removes, and every reader of the result tests the marker first (a held `uv.exe` was otherwise taken as the cached binary by the next run, because `uv --version` answers; REQ-009.25). (3) A test needs a way to make the
+step fail AFTER the first file was written: a held-open later file (`[System.IO.File]::Open(path, 'Open', 'Read', 'Read')`, writes fail, reads do not) does it deterministically on
+Windows, and a second run of the same folder with the lock released is its own control (the full unpack must work, so the first failure was the lock and no state of the failed run lingers). A
+bad archive that fails on entry one cannot show this, because nothing was written yet (`self.netres.uv.unpackfail` is that case). `tests/test_net_resilience.py` (`uv_unpack_problems`) pins the order.
+
+---
+
 ## Clearing an environment variable for a child process: do not trust `SetEnvironmentVariable($name, $null)`; ask the child what it sees
 
 A test that must start the bootstrapper with no `HP_*`/`PVW_*`/`NOINPUT` variable (`tests/selfapps_noflag_default.ps1`,
