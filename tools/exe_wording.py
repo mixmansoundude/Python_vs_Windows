@@ -48,9 +48,13 @@ TRIGGER = re.compile(
 PLAIN = re.compile(r"\bEXE\b|\.exe\b|executable|PyInstaller|Nuitka|standalone", re.IGNORECASE)
 # A variable whose value is the path of the EXE names it as well (the user sees dist\<name>.exe).
 PLAIN_VARS = ("HP_FAST_EXE_PATH",)
+# The name of a variable is not a word the user reads: `%NUITKA_RC%` prints a number, not Nuitka (CodeRabbit, PR #537). Only the
+# variables in PLAIN_VARS are known to print a text that names the EXE.
+_VARREF = re.compile(r"%[^%\s]+%")
 # Phrases that hold a trigger word without being about the build.
 STRIP = re.compile(r"Visual Studio Build Tools", re.IGNORECASE)
-# Not shown to a user on the default path: tagged diagnostics and the text of test and super-user hooks.
+# Not shown to a user on the default path: tagged diagnostics and the text of test and super-user hooks. The tag is dropped by the log
+# routine only (`call :log`); the same text in a direct echo or a prompt is printed.
 HIDDEN_TAG = re.compile(r"^\[(?:DEBUG|TRACE|INSTALL|TEST)\]")
 HOOK = re.compile(r"HP_TEST_|HP_SKIP_")
 
@@ -73,7 +77,14 @@ _IF = re.compile(
 )
 _FOR = re.compile(r"^for\s+.*?\bdo\s+", re.IGNORECASE)
 _ELSE = re.compile(r"^[\s)]*else\b", re.IGNORECASE)
-_TIME = re.compile(r"\b\d{1,2}:\d{2}:\d{2}[.,]\d{2}\]?\s+(.*)$")
+# The timestamp `:log` puts in front of a message is the START of the line: the date (with the weekday word some locales add) and the
+# clock time with its hundredths, or both inside brackets. A clock time anywhere else in a line is text, so a line that only quotes
+# one is not a log line (CodeRabbit, PR #537).
+_DATE = r"\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4}"
+_CLOCK = r"\d{1,2}:\d{2}:\d{2}[.,]\d{2}"
+_TIME = re.compile(
+    r"^\s*(?:\[" + _DATE + r"[ T]+" + _CLOCK + r"\]|(?:[^\s\d]{1,12}\s+)?" + _DATE + r"\s+" + _CLOCK + r")\s+(.*)$"
+)
 _PLACEHOLDER = re.compile(r"%%~?[A-Za-z][A-Za-z0-9]*|%~[A-Za-z$:]*[0-9]|%[0-9]\b|%\*|%[^%\s]+%")
 # One redirect of a command: a pipe (not `||`), or `<`, `>` or `>>` with what it reads or writes, a file name (`target`) or `&n` for a
 # handle (`dup`). The optional digit in front is the handle the redirect is about (`2>` is standard error; none means 0 for `<` and 1
@@ -264,8 +275,12 @@ def _prompt_span(line, start, quoted_form):
 
 
 def _statements(line):
-    """Split a line at the unquoted, unescaped `&`, `&&` and `||` that chain commands. The `&` of `>&2` or `<&3` is part of the
-    redirect, which copies a handle, and chains nothing."""
+    """Split a line at the unquoted, unescaped `&`, `&&` and `||` that chain commands, and after a single `|`. The `&` of `>&2` or
+    `<&3` is part of the redirect, which copies a handle, and chains nothing.
+
+    A pipe ends the command on its left, whose output goes into the pipe (that statement keeps the `|`, which is how _split_redirects
+    knows), and starts the command on its right, which prints on the console: `type nul | echo Building it.` shows the echo
+    (CodeRabbit, PR #537)."""
     out = []
     quoted = False
     start = 0
@@ -280,9 +295,13 @@ def _statements(line):
                 i += 2 if line[i + 1 : i + 2] == "&" else 1
                 start = i
                 continue
-            if ch == "|" and line[i + 1 : i + 2] == "|":
-                out.append(line[start:i])
-                i += 2
+            if ch == "|":
+                if line[i + 1 : i + 2] == "|":
+                    out.append(line[start:i])
+                    i += 2
+                else:
+                    i += 1
+                    out.append(line[start:i])
                 start = i
                 continue
         i += 1
@@ -419,9 +438,15 @@ def messages(bat_text):
     return [tuple(item) for item in out]
 
 
-def console_visible(text):
-    """False for messages a user does not see on the default path."""
-    return not (HIDDEN_TAG.match(text) or HOOK.search(text))
+def console_visible(text, kind="log"):
+    """False for messages a user does not see on the default path.
+
+    The text of a test or super-user hook is never shown, whichever way it is printed. A diagnostic tag ([DEBUG], [TRACE], [INSTALL],
+    [TEST]) is kept off the console by the log routine only, so a message of kind `log` that starts with one is hidden and the same
+    text in a direct echo or a prompt (kind `echo` or `prompt`) is printed and judged (CodeRabbit, PR #537)."""
+    if HOOK.search(text):
+        return False
+    return not (kind == "log" and HIDDEN_TAG.match(text))
 
 
 def is_about_build(text):
@@ -430,10 +455,13 @@ def is_about_build(text):
 
 
 def names_exe(text):
-    """The message names the artifact or the tool in plain words."""
-    if PLAIN.search(text):
+    """The message names the artifact or the tool in plain words.
+
+    Only what the user reads counts: the name of a variable is not a word (`%NUITKA_RC%` prints a number), so each `%NAME%` is taken
+    out before the words are looked for, except the variables in PLAIN_VARS, which print the name of the EXE itself."""
+    if any("%" + var + "%" in text for var in PLAIN_VARS):
         return True
-    return any("%" + var + "%" in text for var in PLAIN_VARS)
+    return PLAIN.search(_VARREF.sub(" ", text)) is not None
 
 
 class Rules(object):
@@ -487,7 +515,7 @@ def classify(bat_text, rules):
     exempt = rules.exempt_texts()
     rows = []
     for n, label, kind, text in messages(bat_text):
-        if not console_visible(text):
+        if not console_visible(text, kind):
             continue
         if not is_about_build(text):
             status = "quiet"
@@ -530,16 +558,30 @@ def check(bat_text, rules):
     return problems
 
 
+class _Template(object):
+    """An exempt message whose variables are filled in at run time, as a matcher for one console line.
+
+    The console judge reads a line with its spaces collapsed, and a variable that is empty when the message is printed takes a space
+    with it (`via %HP_ENV_MODE% interpreter.` prints `via interpreter.` when the mode is empty, one space where the template has two),
+    so the template cannot ask for the spaces around its variables. The text between the variables is matched without any whitespace,
+    in order, and so is the line (CodeRabbit, PR #537)."""
+
+    def __init__(self, parts):
+        self._rx = re.compile("^" + ".*?".join(re.escape(re.sub(r"\s+", "", part)) for part in parts) + "$")
+
+    def match(self, text):
+        return self._rx.match(re.sub(r"\s+", "", text))
+
+
 def _template_regex(text):
-    """A regex for a message whose variables are filled in at run time."""
+    """A matcher for a message whose variables are filled in at run time (see _Template)."""
     parts = []
     pos = 0
     for m in _PLACEHOLDER.finditer(text):
-        parts.append(re.escape(text[pos:m.start()]))
-        parts.append(".*?")
+        parts.append(text[pos:m.start()])
         pos = m.end()
-    parts.append(re.escape(text[pos:]))
-    return re.compile("^" + "".join(parts) + "$")
+    parts.append(text[pos:])
+    return _Template(parts)
 
 
 def console_check(console_text, rules):
@@ -549,7 +591,7 @@ def console_check(console_text, rules):
     problems = []
     for raw in console_text.replace("\r\n", "\n").split("\n"):
         stats["lines"] += 1
-        m = _TIME.search(raw)
+        m = _TIME.match(raw)
         if not m:
             continue
         stats["timestamped"] += 1

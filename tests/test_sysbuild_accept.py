@@ -165,15 +165,20 @@ def batch_problems(batch, script_text):
             found.append("the script no longer looks for the text '%s'" % literal)
 
     # the two gates: the test answer is tested before the CI marker, or the CI marker declines the build the row asks for
-    for answer, marker, choice in (("if defined HP_TEST_SYSBUILD_ANSWER (", ") else if defined HP_CI_LANE (", 'if /I "%HP_SYSBUILD_CHOICE%"=="Y" ('),
-                                   ("if defined HP_TEST_SYSCON_ANSWER (", ") else if defined HP_CI_LANE (", 'if /I "%HP_SYSCON_CHOICE:~0,1%"=="y" (')):
+    # The line under the test of the test answer is the one that takes THAT answer (a gate whose next line was any `set ` line passed
+    # the first version of this rule: CodeRabbit, PR 537), and the CI marker is tested right after it.
+    for answer, assignment, marker, choice in (
+            ("if defined HP_TEST_SYSBUILD_ANSWER (", 'set "HP_SYSBUILD_RAW=%HP_TEST_SYSBUILD_ANSWER%"', ") else if defined HP_CI_LANE (",
+             'if /I "%HP_SYSBUILD_CHOICE%"=="Y" ('),
+            ("if defined HP_TEST_SYSCON_ANSWER (", 'set "HP_SYSCON_CHOICE=%HP_TEST_SYSCON_ANSWER%"', ") else if defined HP_CI_LANE (",
+             'if /I "%HP_SYSCON_CHOICE:~0,1%"=="y" (')):
         at = [i for i, ln in enumerate(live) if ln == answer]
         if len(at) != 1:
             found.append("the line %s must exist exactly once, found %d" % (answer, len(at)))
             continue
         nxt = live[at[0] + 1:at[0] + 3]
-        if len(nxt) < 2 or not nxt[0].startswith("set ") or nxt[1] != marker:
-            found.append("after %s the gate must set the answer and then test the CI marker (%s); found %r" % (answer, marker, nxt))
+        if len(nxt) < 2 or nxt[0] != assignment or nxt[1] != marker:
+            found.append("after %s the next live line must be %s, then the CI marker test (%s); found %r" % (answer, assignment, marker, nxt))
         if count(choice) != 1:
             found.append("the line %s must exist exactly once, found %d" % (choice, count(choice)))
         else:
@@ -257,21 +262,17 @@ def script_problems(text):
     if "$publicDir = $appDir + '_public'" not in compact:
         found.append("the folder of the run's own PUBLIC is no longer named from the folder of the program")
     set_public = compact.find("('set \"PUBLIC=' + $publicDir + '\"')")
-    record = compact.find("'>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%'")
+    record = compact.find("'set PUBLIC>\"~accept_public.txt\"'")
     start_batch = compact.find("('call run_setup.bat > '")
     if set_public < 0:
         found.append("the run no longer gives the bootstrapper a PUBLIC of its own, so a Miniconda left in the runner's shared Public folder "
                      "could become the system Python of the run")
     if record < 0:
-        found.append("the launch file no longer records the PUBLIC the bootstrapper saw")
+        found.append("the launch file no longer records the PUBLIC the bootstrapper saw with set PUBLIC>\"~accept_public.txt\"")
     if set_public >= 0 and record >= 0 and set_public > record:
         found.append("the PUBLIC is recorded before it is set, so the record would show the runner's")
     if record >= 0 and start_batch >= 0 and record > start_batch:
         found.append("the PUBLIC is recorded after the bootstrapper started")
-    for need in ("if (Test-Path -LiteralPath $publicDir) { Remove-Item -LiteralPath $publicDir -Recurse -Force -ErrorAction SilentlyContinue }",
-                 "New-Item -ItemType Directory -Force -Path $publicDir | Out-Null"):
-        if need not in compact:
-            found.append("the folder of the run's own PUBLIC is no longer made empty: %s is missing" % need)
     # the numbers end at a digit boundary: -LimitMs 9000000 is a different limit and must not pass as 900000
     for pattern, shown in ((r"-LimitMs 900000(?!\d)", "-LimitMs 900000"), (r"-LimitMs 60000(?!\d)", "-LimitMs 60000")):
         if not re.search(pattern, compact):
@@ -292,7 +293,7 @@ def script_problems(text):
     else:
         args = compact.split(call, 1)[1].split("\n", 1)[0]
         for need in ("-Finished ([bool]$launch.Finished)", "-ExitText $exitText", "-ConsoleText $console", "-StatusText $statusTxt", "-RunOutText $runOut",
-                     "-VenvLeaf $venvName", "-ExeName $exeName", "-ProgramLine $programLine", "-ExeExists ([bool]$exeExists)",
+                     "-VenvPython $venvPython", "-ExeName $exeName", "-ProgramLine $programLine", "-ExeExists ([bool]$exeExists)",
                      "-DirectFinished ([bool]$direct.Finished)", "-DirectExitText ([string]$direct.ExitCode)", "-DirectOutText $directOut"):
             if need not in args:
                 found.append("the verdict no longer hands %s to Get-AcceptProblems" % need)
@@ -347,8 +348,6 @@ def script_problems(text):
         found.append("Reset-Folder no longer removes the folder with -ErrorAction Stop")
     # the launch file records PUBLIC with `set PUBLIC>file`: an `echo PUBLIC=%PUBLIC%` is cut at an ampersand of the folder name, which
     # cmd.exe takes for a command separator, and a `set` prints the value as it is (nothing may sit between the name and the >)
-    if "'set PUBLIC>\"~accept_public.txt\"'" not in compact:
-        found.append("the launch file no longer records the PUBLIC the bootstrapper saw with set PUBLIC>\"~accept_public.txt\"")
     if "echo PUBLIC=%PUBLIC%" in compact:
         found.append("the launch file records the PUBLIC with echo, which cmd.exe cuts at an ampersand of the folder name")
     # the interpreter is compared as a whole path and not by the name of its folder
@@ -398,6 +397,10 @@ def workflow_problems(text):
         found.append("the step does not use shell: pwsh")
     if "continue-on-error" in block:
         found.append("the step has continue-on-error, so it cannot hold a pull request")
+    # the step is found by the script's name, so the name alone proves nothing: a line that calls the script must be live (CodeRabbit, PR 537)
+    calls = [ln.strip() for ln in block.split("\n") if ln.strip() and not ln.strip().startswith("#")]
+    if not any(re.match(r"&\s+(?:\.\\)?tests\\" + re.escape(SCRIPT_NAME) + r"(?![\w.\-])", ln) for ln in calls):
+        found.append("the step has no live line that runs tests\\%s (a comment or an echo that names it does not run it)" % SCRIPT_NAME)
     flat = norm(text)
     for pattern in UPLOADS:
         if pattern not in flat:
@@ -588,7 +591,7 @@ GOOD_CONSOLE = [
 
 def accept_args(console=None, **over):
     args = dict(Finished=True, ExitText="0\r\n", ConsoleText=text_of(GOOD_CONSOLE if console is None else console), StatusText=STATUS,
-                RunOutText=PROGRAM + "\r\n", VenvLeaf=LEAF, ExeName=EXE, ProgramLine=PROGRAM, ExeExists=True, DirectFinished=True,
+                RunOutText=PROGRAM + "\r\n", VenvPython=VENV_PYTHON, ExeName=EXE, ProgramLine=PROGRAM, ExeExists=True, DirectFinished=True,
                 DirectExitText="0", DirectOutText=PROGRAM + "\r\n")
     args.update(over)
     return args
@@ -729,7 +732,7 @@ ONE_PROBLEM = {
     "accept_unfinished": "the bootstrapper did not finish within the time limit",
     "accept_wrong_exit": "the run ended with exit code '1', expected 0",
     "accept_out_of_order": "the REQ-014 consent was accepted comes before the step that precedes it on the console",
-    "accept_not_the_private_interpreter": "the system interpreter of the run is not the private one (the line does not name " + LEAF + ")",
+    "accept_not_the_private_interpreter": "the system interpreter of the run is 'C:\\Python314\\python.exe', not the private one '" + VENV_PYTHON + "'",
     "accept_same_leaf_other_parent": "the system interpreter of the run is",
     "accept_backup_folder_of_the_leaf": "the system interpreter of the run is",
     "accept_never_0": "the console has 1 line(s) saying the build consent was declined",
@@ -1163,7 +1166,7 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertTrue(any("cleared after" in f for f in self.problems(late)), self.problems(late))
 
     def test_a_run_that_stops_recording_its_public_or_judging_it_is_caught(self):
-        bad = mutate(self.script, "    '>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%',\n", "")
+        bad = mutate(self.script, "    'set PUBLIC>\"~accept_public.txt\"',\n", "")
         self.assertTrue(any("no longer records the PUBLIC the bootstrapper saw" in f for f in self.problems(bad)), self.problems(bad))
         bad = mutate(self.script, "-PublicRecord $publicRecord -PublicWanted $publicDir)", "-PublicRecord '' -PublicWanted $publicDir)")
         self.assertTrue(any("no longer judged by Get-IsolationProblems" in f for f in self.problems(bad)), self.problems(bad))
@@ -1174,18 +1177,73 @@ class ScriptRulesCanFail(unittest.TestCase):
 
     def test_a_run_that_does_not_get_a_public_of_its_own_is_caught(self):
         set_line = "    ('set \"PUBLIC=' + $publicDir + '\"'),\n"
-        record_line = "    '>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%',\n"
+        record_line = "    'set PUBLIC>\"~accept_public.txt\"',\n"
         self.assertEqual(self.script.count(set_line), 1)
         bad = mutate(self.script, set_line, "")
         self.assertTrue(any("no longer gives the bootstrapper a PUBLIC of its own" in f for f in self.problems(bad)), self.problems(bad))
         late = mutate(self.script, set_line + record_line, record_line + set_line)
         self.assertTrue(any("recorded before it is set" in f for f in self.problems(late)), self.problems(late))
-        bad = mutate(self.script, "New-Item -ItemType Directory -Force -Path $publicDir | Out-Null\n", "")
+        # the folder is made empty by Reset-Folder; a run that stops clearing it, or makes it without emptying it, is caught
+        clear = "if (-not $resetProblem) { $resetProblem = Reset-Folder -Path $publicDir -Create }\n"
+        bad = mutate(self.script, clear, "")
         found = self.problems(bad)
-        self.assertTrue(any("no longer made empty" in f and "New-Item" in f for f in found), found)
-        bad = mutate(self.script, "if (Test-Path -LiteralPath $publicDir) { Remove-Item -LiteralPath $publicDir -Recurse -Force -ErrorAction SilentlyContinue }\n", "")
+        self.assertTrue(any("no longer cleared by Reset-Folder -Path $publicDir -Create" in f for f in found), found)
+        bad = mutate(self.script, clear, "New-Item -ItemType Directory -Force -Path $publicDir | Out-Null\n")
         found = self.problems(bad)
-        self.assertTrue(any("no longer made empty" in f and "Remove-Item" in f for f in found), found)
+        self.assertTrue(any("no longer cleared by Reset-Folder -Path $publicDir -Create" in f for f in found), found)
+
+    def test_a_launch_file_that_records_the_public_with_echo_is_caught(self):
+        """An echo of PUBLIC=%PUBLIC% is cut at an ampersand of the folder name, which cmd.exe takes for a command separator (CodeRabbit,
+        PR 537); set PUBLIC> prints the value as it is."""
+        bad = mutate(self.script, "    'set PUBLIC>\"~accept_public.txt\"',\n", "    '>\"~accept_public.txt\" echo PUBLIC=%PUBLIC%',\n")
+        found = self.problems(bad)
+        self.assertTrue(any("records the PUBLIC with echo" in f for f in found), found)
+        self.assertTrue(any("no longer records the PUBLIC the bootstrapper saw with set PUBLIC>" in f for f in found), found)
+
+    def test_folders_that_are_no_longer_cleared_or_whose_failure_is_not_seen_are_caught(self):
+        """CodeRabbit, PR 537: the first version removed the folders with -ErrorAction SilentlyContinue and made them with New-Item -Force,
+        which does not empty a folder; a folder that cannot be cleared must end the run with a red row before anything is built."""
+        for call in ("$resetProblem = Reset-Folder -Path $venvDir\n",
+                     "if (-not $resetProblem) { $resetProblem = Reset-Folder -Path $appDir -Create }\n",
+                     "if (-not $resetProblem) { $resetProblem = Reset-Folder -Path $publicDir -Create }\n"):
+            with self.subTest(call=call):
+                found = self.problems(mutate(self.script, call, ""))
+                self.assertTrue(any("is no longer cleared by" in f for f in found), found)
+        found = self.problems(mutate(self.script, "if ($resetProblem) {\n", "if ($resetProblemX) {\n"))
+        self.assertTrue(any("no longer stops the run: if ($resetProblem) { is missing" in f for f in found), found)
+        found = self.problems(mutate(self.script, "    exit 1\n}\n\n$venvOut = @(& $basePython -m venv $venvDir 2>&1)", "}\n\n$venvOut = @(& $basePython -m venv $venvDir 2>&1)"))
+        self.assertTrue(any("no longer ends the run with a red row and exit 1: exit 1 is missing" in f for f in found), found)
+        found = self.problems(mutate(self.script, "Write-AllRows -Pass $false -Desc 'system-Python EXE build accepted: a folder left by an earlier run could not be cleared'",
+                                     "Write-Host 'system-Python EXE build accepted: a folder left by an earlier run could not be cleared'"))
+        self.assertTrue(any("no longer ends the run with a red row and exit 1: Write-AllRows -Pass $false is missing" in f for f in found), found)
+        # the clearing after the private interpreter was made would remove it again
+        moved = mutate(self.script, "$venvOut = @(& $basePython -m venv $venvDir 2>&1)\n", "")
+        moved = mutate(moved, "$resetProblem = Reset-Folder -Path $venvDir\n",
+                       "$venvOut = @(& $basePython -m venv $venvDir 2>&1)\n$resetProblem = Reset-Folder -Path $venvDir\n")
+        self.assertTrue(any("made before the folders were cleared" in f for f in self.problems(moved)), self.problems(moved))
+        # a removal that silences its errors is the defect itself
+        quiet = mutate(self.script, "Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop", "Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue")
+        found = self.problems(quiet)
+        self.assertTrue(any("silences its errors" in f for f in found), found)
+        self.assertTrue(any("Reset-Folder no longer removes the folder with -ErrorAction Stop" in f for f in found), found)
+
+    def test_a_verdict_that_stops_handing_the_whole_interpreter_path_to_the_judge_is_caught(self):
+        """The interpreter is compared as a whole path, so the verdict must hand the judge the path and not the name of its folder."""
+        bad = mutate(self.script, "-VenvPython $venvPython -ExeName $exeName", "-VenvPython $venvName -ExeName $exeName")
+        self.assertTrue(any("-VenvPython $venvPython" in f for f in self.problems(bad)), self.problems(bad))
+
+    def test_a_wording_row_that_is_not_judged_for_a_completed_build_is_caught(self):
+        """CodeRabbit, PR 537: a console cut off before the end of the build has fewer lines to judge and every line can follow the rule."""
+        wire = "$completionProblems = @(Get-CompletionProblems -Finished ([bool]$launch.Finished) -ConsoleText $console)\n"
+        merge = "$wordingProblems = @($completionProblems) + @($wordingProblems)\n"
+        found = self.problems(mutate(self.script, wire, ""))
+        self.assertTrue(any("Get-CompletionProblems is not called" in f for f in found), found)
+        found = self.problems(mutate(self.script, merge, ""))
+        self.assertTrue(any("no longer part of the row of self.sysbuild.wording" in f for f in found), found)
+        late = mutate(self.script, merge, "")
+        late = mutate(late, "$pass = [bool](@($wordingProblems).Count -eq 0)\n", "$pass = [bool](@($wordingProblems).Count -eq 0)\n" + merge)
+        found = self.problems(late)
+        self.assertTrue(any("added to the row of self.sysbuild.wording after its verdict was taken" in f for f in found), found)
 
     def test_open_standard_input_and_a_missing_kill_or_limit_are_caught(self):
         bad = mutate(self.script, "('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul')", "('call run_setup.bat > ' + $consoleName + ' 2>&1')")
@@ -1472,8 +1530,7 @@ class JudgesCanFail(unittest.TestCase):
     def test_the_comparisons_around_the_sequence_each_matter(self):
         for comparison, name, needle in (
             ("$exit -ne '0'", "accept_wrong_exit", "the run ended with exit code"),
-            ("($fallbackAt -ge 0) -and ($lines[$fallbackAt].IndexOf($VenvLeaf, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)",
-             "accept_not_the_private_interpreter", "is not the private one"),
+            ("$used -ine $VenvPython.Trim()", "accept_not_the_private_interpreter", "not the private one"),
             ("$n -gt 0", "accept_never_0", "saying the build consent was declined"),
             ("$readyAt -lt 0", "accept_no_ready_line", "no post-flight panel line"),
             ("$next -ine $want", "accept_other_exe_under_the_ready_line", "the line under the ready line of the panel is"),

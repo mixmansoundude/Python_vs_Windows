@@ -1730,4 +1730,5 @@ which no test had ever shown. What made the rule usable and hard to cheat:
   absence of a string the case can never produce**.
 - **A scenario that installs into "the system Python" must not install into the runner's.** The accept scenario makes a venv from the
   runner's python, puts its `Scripts` folder first on `PATH`, fails the other tiers by decree and answers Y to both consent questions, so
-  PyInstaller lands in the venv; the layout differs from python.org's only in the path.
+  PyInstaller lands in the venv. It does not verify what is specific to a python.org installation (its folder layout, its registry entries
+  and the `py` launcher): the row shows only that the bootstrapper takes the first python it finds, builds with it and runs the EXE.

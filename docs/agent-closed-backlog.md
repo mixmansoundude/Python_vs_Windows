@@ -4725,8 +4725,10 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   the private venv), then the `set` line and the folder. `tests/test_sysbuild_accept.py` pins the naming, the order and the judge, with one
   red case for each comparison. The other cause of the same run's reds, uv missing after a full download on the new runner image, is Item
   127 (lane 3, PR #536).
-- **Stated limits (also in the script's header and the registry entry).** The interpreter is a venv of the runner's python and not the
-  python.org layout, which differs only in the path. The messages of a failing build (the Nuitka fallback, the repair loops) are held to
+- **Stated limits (also in the script's header and the registry entry).** The interpreter is a venv of the runner's python, so the row does
+  not verify what is specific to a python.org installation: its folder layout, its registry entries and the `py` launcher. It does show
+  that the bootstrapper takes the first interpreter on `PATH` as the system Python, builds with it and runs the EXE. The messages of a
+  failing build (the Nuitka fallback, the repair loops) are held to
   the rule by the static ratchet and by the rows that reach them, not by this run. Only the timestamped lines of the real run are judged at
   run time; the `echo` text of the same messages is held by the static ratchet. Nothing of the script ran under cmd.exe before the first
   Windows run above.

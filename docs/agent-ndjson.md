@@ -341,7 +341,8 @@ elective offers after the build decline without waiting, every `HP_`/`PVW_`/`NOI
 closed, and `PUBLIC` pointed at an empty folder of its own (`~selftest_sysbuild_accept_public`, made fresh before the run: the bootstrapper
 puts the Miniconda folder under `PUBLIC` first on `PATH` whether or not it exists, so a Miniconda that an earlier scenario of the job left in
 the runner's shared Public folder would be taken for the system Python, run `44708489835`); a watchdog (15 minutes, process tree) ends a hung
-run. `.accept` first requires that the `PUBLIC` the launch file recorded (`~accept_public.txt`, details `publicRecord` and `publicWanted`) is
+run, and a folder of an earlier run that cannot be cleared ends the run with a red row before anything is built. `.accept` first requires
+that the `PUBLIC` the launch file recorded (`~accept_public.txt`, written with `set PUBLIC>`, details `publicRecord` and `publicWanted`) is
 that folder (case blind), then reads the console: the system tier was tried, the REQ-014 consent
 was accepted, the interpreter is the private one, the provider line says System Python, the REQ-007 build consent was accepted, the build
 started, PyInstaller produced `dist\<exe>`, the check run went through the packaged EXE, exited 0 and reported success, each once and in
@@ -351,12 +352,15 @@ application is ready:`, `~run.out.txt` holds the program's line, the status file
 exit code 0, and the EXE started on its own exits 0 and prints the line. `.wording` hands the same console to `python tools/exe_wording.py
 console --file` and takes its one JSON line: every timestamped line that talks about building, bundling, packaging or verifying names the
 artifact or the tool (EXE, executable, standalone, PyInstaller, Nuitka) or matches an entry of `tests/exe_wording_exempt.txt`, and the judge
-read enough of the run (at least 20 log lines, 3 about the build, 2 that name the EXE, 1 exempt line) that a console that never reached the
-build cannot pass. The static half is `tests/test_exe_wording.py`: `tools/exe_wording.py check` finds every console message of
+read enough of the run (at least 30 log lines, 6 about the build, 4 that name the EXE, 1 exempt line) that a console that never reached the
+build cannot pass, and the console must be that of a completed build (the bootstrapper finished within its limit, and the console holds
+`PyInstaller produced dist\<exe>`, `Run Status: SUCCESS (Exit Code: 0)` and `Your standalone application is ready:`), because a console cut
+off before them has fewer lines to judge. The static half is `tests/test_exe_wording.py`: `tools/exe_wording.py check` finds every console message of
 `run_setup.bat` (consecutive `echo` lines of one label, `call :log`, the prompts) and fails for one that talks about building or verifying
 and names neither, unless `tests/exe_wording_exempt.txt` lists it with a category; a stale or unneeded entry fails too, and the list is capped.
 Rules about the batch and script sides, run through a real `pwsh` on synthetic runs, are `tests/test_sysbuild_accept.py`. Stated limits: the
-interpreter is a venv of the runner's python and not the python.org installer's layout, and the messages of a failing build (the Nuitka
+interpreter is a venv of the runner's python, so the row does not verify what is specific to a python.org installation (its folder layout,
+its registry entries and the `py` launcher), and the messages of a failing build (the Nuitka
 fallback, the repair loops) are held to the wording rule by the static test and by the rows that reach them, not by this run. Evidence
 (`tests/~sysbuild_accept_evidence.txt`, the run's console log, `~setup.log`, `~bootstrap.status.json` and the judge's error output) is in the
 `test-logs` artifact.

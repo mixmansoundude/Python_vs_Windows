@@ -735,23 +735,32 @@ the tool in plain words, so a reader can tell it is about the optional one-file 
   read the marker first would take the scenario's Y for a no.
 - **The system Python is a stand-in.** A venv made from the runner's python is first on `PATH` and the other tiers fail by decree
   (`HP_OFFLINE_MODE=1`, `HP_TEST_FORCE_CONDA_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`), so PyInstaller is installed into the venv and never into
-  the runner's own interpreter; the layout differs from python.org's only in the path. `tests/selfapps_sysbuild.ps1` holds the rows of the
-  other answers (decline, the Nuitka wording, the CI marker).
+  the runner's own interpreter. The row shows that the bootstrapper takes the first python it finds as the system Python (the console line
+  `System fallback using` must hold the venv's whole path, not just the name of its folder), builds with it and runs the EXE; it does not
+  verify what is specific to a python.org installation (its folder layout, its registry entries and the `py` launcher). `tests/selfapps_sysbuild.ps1`
+  holds the rows of the other answers (decline, the Nuitka wording, the CI marker).
 - **The run has a `PUBLIC` of its own.** `run_setup.bat` builds `MC=%PUBLIC%\Documents\Miniconda3` and puts that folder, its `condabin`,
   `Scripts` and `Library\bin` first on `PATH` before any provider is tried, whether or not the folder exists, and the system tier takes the
   first python that `where python` finds. A Miniconda that an earlier scenario of the same job left in the runner's shared Public folder (a
   uv acquisition that failed and fell back to conda installs one there) is therefore found first and taken for the system Python: run
   `44708489835` printed `C:\Users\Public\Documents\Miniconda3\python.exe` as the interpreter and the row was red for that alone. The
-  launch file sets `PUBLIC` to an empty folder next to the program folder (`~selftest_sysbuild_accept_public`, removed and made again before
-  every run), records the value the bootstrapper saw in `~accept_public.txt`, and `Get-IsolationProblems` requires it to be that folder, case
-  blind, before the console is read (the rule `tests/selfapps_embed_version.ps1` follows since Item 120). `tests/test_sysbuild_accept.py`
-  pins the folder's name, the `set` line, the order (set, record, call of the bootstrapper), the folder made empty and the judge's call, and
-  runs the judge on a recorded runner `PUBLIC`, the parent folder, a missing record and an empty value. A new scenario that starts the
+  launch file sets `PUBLIC` to an empty folder next to the program folder (`~selftest_sysbuild_accept_public`, cleared by `Reset-Folder` before
+  every run: a folder of an earlier run that cannot be removed ends the run with a red row and exit 1 before anything is built, because
+  `Remove-Item -ErrorAction SilentlyContinue` plus `New-Item -Force` would have used it with its old content), records the value the
+  bootstrapper saw in `~accept_public.txt` with `set PUBLIC>` (an `echo PUBLIC=%PUBLIC%` is cut at an ampersand of the folder name, which
+  cmd.exe takes for a command separator, and `set` prints the value as it is; nothing may sit between the name and the `>`), and
+  `Get-IsolationProblems` requires it to be that folder, case blind, before the console is read (the rule `tests/selfapps_embed_version.ps1`
+  follows since Item 120). `tests/test_sysbuild_accept.py` pins the folder's name, the `set` line, the order (set, record, call of the
+  bootstrapper), the clearing and the judge's call, runs `Reset-Folder` against a real folder, and runs the judge on a recorded runner
+  `PUBLIC`, the parent folder, a missing record and an empty value. A new scenario that starts the
   bootstrapper and depends on what the machine has installed (a Miniconda, uv, a python on `PATH`) takes the same three steps: its own
   `PUBLIC`, a record of what the bootstrapper saw, a judge that requires it.
 - **Floors.** `self.sysbuild.wording` needs at least 30 timestamped lines, 6 about the build, 4 that name the EXE and 1 exempt (about two
   thirds of the first real run: 48, 9, 7 after the rewording, and 2), so a console that stopped before the build cannot pass. A change to
-  the real console that moves those numbers is a change to the floors in the script and to `FLOORS` of the unit test together.
+  the real console that moves those numbers is a change to the floors in the script and to `FLOORS` of the unit test together. The row
+  also needs the console to be that of a completed build (`Get-CompletionProblems`: the bootstrapper finished within its limit, and the
+  console holds `PyInstaller produced dist\<exe>`, `Run Status: SUCCESS (Exit Code: 0)` and `Your standalone application is ready:`): a
+  console cut off before them has fewer lines to judge and every line it did print can follow the rule.
 
 ---
 

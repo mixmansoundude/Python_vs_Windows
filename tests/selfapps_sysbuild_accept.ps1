@@ -12,8 +12,8 @@
 # One real bootstrap, two rows.
 #   The run. A private virtual environment, made from the runner's python in a folder of its own, plays the system Python: its Scripts
 #   folder is put first on PATH, so `where python` in the bootstrapper finds it, and PyInstaller is installed into it and not into the
-#   runner's global interpreter (a real system Python differs only in the path; the bootstrapper takes sys.executable of whatever
-#   python it finds first). The program is one stdlib-only file in a folder named ~selftest_sysbuild_accept, so the EXE is
+#   runner's global interpreter (the bootstrapper takes sys.executable of whatever python it finds first; the limits below say what a
+#   venv does not show). The program is one stdlib-only file in a folder named ~selftest_sysbuild_accept, so the EXE is
 #   _selftest_sysbuild_accept.exe (the folder name goes through the same -replace as in the batch file, Item 111). The run starts
 #   with every HP_, PVW_ and NOINPUT variable of the runner cleared and then sets only: HP_OFFLINE_MODE (no uv, no Miniconda download,
 #   no embedded Python download), HP_TEST_FORCE_CONDA_FAIL and HP_TEST_FORCE_VENV_FAIL (the other tiers fail by decree),
@@ -25,8 +25,11 @@
 #   a Miniconda that an earlier scenario of the job left in the runner's shared Public folder would be taken for the system Python (run
 #   44708489835: the interpreter line named C:\Users\Public\Documents\Miniconda3\python.exe and the row was red for that alone). The
 #   launch file therefore sets PUBLIC to an empty folder next to the program folder (~selftest_sysbuild_accept_public, made fresh before
-#   the run), records the value the bootstrapper saw (~accept_public.txt) and self.sysbuild.accept requires it to be that folder
-#   (Get-IsolationProblems), the way tests/selfapps_embed_version.ps1 does it since Item 120.
+#   the run), records the value the bootstrapper saw with set PUBLIC> (~accept_public.txt; an echo of it is cut at an ampersand of the
+#   folder name, which cmd.exe takes for a command separator) and self.sysbuild.accept requires it to be that folder
+#   (Get-IsolationProblems), the way tests/selfapps_embed_version.ps1 does it since Item 120. The folders of an earlier run are cleared
+#   by Reset-Folder before anything is built, and one that cannot be cleared ends the run with a reported failure, because it would
+#   otherwise be used with its old content.
 #   self.sysbuild.accept (REQ-007.17). The console of the run must show, in this order: the system tier was tried, the REQ-014
 #   consent was accepted, the interpreter the run used is the private one, the provider line says System Python, the REQ-007 build
 #   consent was accepted, the build started, PyInstaller produced dist\<exe>, the check run went through the packaged EXE, exited 0
@@ -37,13 +40,16 @@
 #   self.sysbuild.wording (REQ-007.20). The same console, line by line, through tools/exe_wording.py `console`: every timestamped
 #   line that talks about building, bundling, packaging or verifying names the artifact or the tool (EXE, executable, standalone,
 #   PyInstaller, Nuitka) or matches an entry of tests/exe_wording_exempt.txt. The row also requires that the judge ran and read
-#   enough of the run (lines, lines about the build, lines that name the EXE, at least one exempt line), so it cannot pass on a
-#   console that never reached the build. tests/test_exe_wording.py holds every message of run_setup.bat to the same rule without
-#   running anything; this row is the part that sees what is built at run time.
+#   enough of the run (lines, lines about the build, lines that name the EXE, at least one exempt line), and that the run completed the
+#   accepted build (Get-CompletionProblems: the line of the build, the success line of its check run and the post-flight panel), so it
+#   cannot pass on a console that never reached the build or stops before its closing messages. tests/test_exe_wording.py holds every
+#   message of run_setup.bat to the same rule without running anything; this row is the part that sees what is built at run time.
 #
-# Limits, stated so that nobody reads more into the rows than they show: the interpreter is a venv of the runner's python, not the
-# python.org installer's layout; the messages of a failing build (the Nuitka fallback, the repair loops) are held to the rule by the
-# static test and by the rows that reach them (selfapps_pyinstaller_fail.ps1, selfapps_hidden_import.ps1), not by this run.
+# Limits, stated so that nobody reads more into the rows than they show: the interpreter is a venv of the runner's python and not a
+# python.org installation, so the row does not verify what is specific to one (its folder layout, its registry entries and the py
+# launcher), only that the bootstrapper takes the first python it finds, builds with it and runs the EXE; the messages of a failing
+# build (the Nuitka fallback, the repair loops) are held to the rule by the static test and by the rows that reach them
+# (selfapps_pyinstaller_fail.ps1, selfapps_hidden_import.ps1), not by this run.
 #
 # derived requirement: ids and tags stay literal at each Write-NdjsonRow call site (tools/check_ndjson_registry.py and the
 # requirement-trace tests scan text, not PowerShell), and the judging functions take plain values and return a list of problems
@@ -168,6 +174,24 @@ function Get-ClearLines {
     return @($names | ForEach-Object { 'set "' + $_ + '="' })
 }
 
+# Makes a folder of the run gone or, with Create, empty, and says why when it could not: the text it returns is empty when it worked. The
+# first version removed the folders with -ErrorAction SilentlyContinue and made them with New-Item -Force, which does not empty a folder,
+# so a folder that another program held open was used with its old content and the run showed nothing of it (CodeRabbit, PR 537).
+function Reset-Folder {
+    param([string]$Path, [switch]$Create)
+    if (Test-Path -LiteralPath $Path) {
+        try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop }
+        catch { return "the folder ${Path} could not be removed: $([string]$_.Exception.Message)" }
+        if (Test-Path -LiteralPath $Path) { return "the folder ${Path} is still there after it was removed" }
+    }
+    if ($Create) {
+        try { [void][System.IO.Directory]::CreateDirectory($Path) }
+        catch { return "the folder ${Path} could not be made: $([string]$_.Exception.Message)" }
+        if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return "the folder ${Path} does not exist after it was made" }
+    }
+    return ''
+}
+
 # ---------------------------------------------------------------------------------------------------------------------
 # judging: plain values in, a list of problems out (nothing when the run shows what the row must show)
 # ---------------------------------------------------------------------------------------------------------------------
@@ -193,7 +217,7 @@ function Measure-ConsoleLines {
 # REQ-007.17: the run of the accepted build. ConsoleText is what the bootstrapper printed, StatusText its ~bootstrap.status.json,
 # RunOutText the stdout the check run of the EXE left in ~run.out.txt, DirectOutText what the EXE printed when started on its own.
 function Get-AcceptProblems {
-    param([bool]$Finished, [string]$ExitText, [string]$ConsoleText, [string]$StatusText, [string]$RunOutText, [string]$VenvLeaf,
+    param([bool]$Finished, [string]$ExitText, [string]$ConsoleText, [string]$StatusText, [string]$RunOutText, [string]$VenvPython,
           [string]$ExeName, [string]$ProgramLine, [bool]$ExeExists, [bool]$DirectFinished, [string]$DirectExitText, [string]$DirectOutText)
     $out = New-Object System.Collections.ArrayList
     $tag = 'system-Python EXE build accepted'
@@ -229,10 +253,17 @@ function Get-AcceptProblems {
         $at = Find-ConsoleLine -Lines $lines -Fragment $fragment -From 0
         if ($at -le $prev) { [void]$out.Add("${tag}: ${label} comes before the step that precedes it on the console") } else { $prev = $at }
     }
-    # the interpreter the run took as the system Python must be the private one, or the run did not go where the row says
-    $fallbackAt = Find-ConsoleLine -Lines $lines -Fragment '[INFO] System fallback using ' -From 0
-    if (($fallbackAt -ge 0) -and ($lines[$fallbackAt].IndexOf($VenvLeaf, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
-        [void]$out.Add("${tag}: the system interpreter of the run is not the private one (the line does not name ${VenvLeaf})")
+    # the interpreter the run took as the system Python must be the private one, or the run did not go where the row says. It is compared
+    # as a whole path: the same folder name under another parent, or a folder whose name only starts with it, is another interpreter
+    # (CodeRabbit, PR 537), and the case of a path does not matter on Windows.
+    $fallbackLead = '[INFO] System fallback using '
+    $fallbackAt = Find-ConsoleLine -Lines $lines -Fragment $fallbackLead -From 0
+    if ($fallbackAt -ge 0) {
+        $fallbackLine = $lines[$fallbackAt]
+        $used = $fallbackLine.Substring($fallbackLine.IndexOf($fallbackLead, [System.StringComparison]::OrdinalIgnoreCase) + $fallbackLead.Length).Trim()
+        if ($used -ine $VenvPython.Trim()) {
+            [void]$out.Add("${tag}: the system interpreter of the run is '${used}', not the private one '$($VenvPython.Trim())'")
+        }
     }
     # none of the lines of the declined path
     $never = @(
@@ -350,6 +381,32 @@ function Get-WordingProblems {
     return $out.ToArray()
 }
 
+# REQ-007.20: the wording row says something only about a run that went through the accepted build. A bootstrapper that stopped early, or a
+# console that is cut off before the success line of the check run or the post-flight panel, has fewer lines to judge, and every line it
+# did print can follow the rule, so the row would pass for a run that never showed what it is about (CodeRabbit, PR 537). The three lines
+# are the ones that mark the end of the build, of its check run and of the run as a whole.
+function Get-CompletionProblems {
+    param([bool]$Finished, [string]$ConsoleText)
+    $out = New-Object System.Collections.ArrayList
+    $tag = 'console wording of the accepted build'
+    $lines = @(($ConsoleText -replace "`r", '') -split "`n")
+    if ($Finished -eq $false) {
+        [void]$out.Add("${tag}: the bootstrapper did not finish within the time limit, so the console is cut off and its wording was judged only in part")
+    }
+    $required = @(
+        @('PyInstaller produced the EXE', '[INFO] PyInstaller produced dist\'),
+        @('the check run reported success', '[STATUS] Run Status: SUCCESS (Exit Code: 0)'),
+        @('the post-flight panel', 'Your standalone application is ready:')
+    )
+    foreach ($item in $required) {
+        $found = Measure-ConsoleLines -Lines $lines -Fragment ([string]$item[1])
+        if ($found -lt 1) {
+            [void]$out.Add("${tag}: the console has no line for $([string]$item[0]) (expected '$([string]$item[1])'), so the run did not complete the accepted build and the messages of its check run were not judged")
+        }
+    }
+    return $out.ToArray()
+}
+
 # ---------------------------------------------------------------------------------------------------------------------
 # the private interpreter, the folder of the program and the run
 # ---------------------------------------------------------------------------------------------------------------------
@@ -389,7 +446,18 @@ if ((-not $basePython) -or (-not (Test-Path -LiteralPath $basePython))) {
     exit 1
 }
 
-if (Test-Path -LiteralPath $venvDir) { Remove-Item -LiteralPath $venvDir -Recurse -Force -ErrorAction SilentlyContinue }
+# The folders of an earlier run (the private interpreter, the program folder with its logs and EXE, the run's own PUBLIC) are cleared
+# before anything is built, and a folder that cannot be cleared stops the run with a reported failure: it would otherwise be used with
+# its old content, and the rows could be judged on files this run did not write.
+$resetProblem = Reset-Folder -Path $venvDir
+if (-not $resetProblem) { $resetProblem = Reset-Folder -Path $appDir -Create }
+if (-not $resetProblem) { $resetProblem = Reset-Folder -Path $publicDir -Create }
+if ($resetProblem) {
+    Add-Evidence -Title 'a folder of the run could not be cleared' -Text $resetProblem
+    Write-AllRows -Pass $false -Desc 'system-Python EXE build accepted: a folder left by an earlier run could not be cleared' -Details ([ordered]@{ error = 'folder reset failed'; reason = $resetProblem })
+    exit 1
+}
+
 $venvOut = @(& $basePython -m venv $venvDir 2>&1)
 $venvRc = $LASTEXITCODE
 $venvPython = Join-Path $venvDir 'Scripts\python.exe'
@@ -399,15 +467,14 @@ if (($venvRc -ne 0) -or (-not (Test-Path -LiteralPath $venvPython))) {
     exit 1
 }
 
-if (Test-Path -LiteralPath $appDir) { Remove-Item -LiteralPath $appDir -Recurse -Force -ErrorAction SilentlyContinue }
-New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-if (Test-Path -LiteralPath $publicDir) { Remove-Item -LiteralPath $publicDir -Recurse -Force -ErrorAction SilentlyContinue }
-New-Item -ItemType Directory -Force -Path $publicDir | Out-Null
 Copy-Item -LiteralPath $batchPath -Destination (Join-Path $appDir 'run_setup.bat') -Force
 Write-CrLf -Path (Join-Path $appDir 'app.py') -Lines @('print("' + $programLine + '")')
 
 $ciLaneValue = 'selftest'
 if ($env:HP_CI_LANE -and ($env:HP_CI_LANE -match '^[A-Za-z0-9_.-]+$')) { $ciLaneValue = $env:HP_CI_LANE }
+# The PUBLIC the bootstrapper sees is recorded with set, which prints the value as it is: an echo of it is cut at an ampersand of the
+# folder name, which cmd.exe takes for a command separator, and the judge would then be handed a part of the folder (CodeRabbit, PR 537).
+# Nothing may sit between the name and the >, or cmd looks for a variable that ends in a space.
 $launchLines = New-Object System.Collections.ArrayList
 [void]$launchLines.Add('@echo off')
 foreach ($l in (Get-ClearLines)) { [void]$launchLines.Add($l) }
@@ -420,7 +487,7 @@ foreach ($l in @(
     'set "HP_TEST_SYSBUILD_ANSWER=Y"',
     ('set "HP_CI_LANE=' + $ciLaneValue + '"'),
     ('set "PUBLIC=' + $publicDir + '"'),
-    '>"~accept_public.txt" echo PUBLIC=%PUBLIC%',
+    'set PUBLIC>"~accept_public.txt"',
     ('call run_setup.bat > ' + $consoleName + ' 2>&1 < nul'),
     '>"~accept_exit.txt" echo %ERRORLEVEL%',
     'exit /b 0'
@@ -450,7 +517,7 @@ if (Test-Path -LiteralPath (Join-Path $appDir 'dist')) {
 }
 
 $acceptProblems = @(Get-AcceptProblems -Finished ([bool]$launch.Finished) -ExitText $exitText -ConsoleText $console -StatusText $statusTxt -RunOutText $runOut `
-    -VenvLeaf $venvName -ExeName $exeName -ProgramLine $programLine -ExeExists ([bool]$exeExists) -DirectFinished ([bool]$direct.Finished) `
+    -VenvPython $venvPython -ExeName $exeName -ProgramLine $programLine -ExeExists ([bool]$exeExists) -DirectFinished ([bool]$direct.Finished) `
     -DirectExitText ([string]$direct.ExitCode) -DirectOutText $directOut)
 $isolationProblems = @(Get-IsolationProblems -PublicRecord $publicRecord -PublicWanted $publicDir)
 $acceptProblems = @($isolationProblems) + @($acceptProblems)
@@ -478,6 +545,8 @@ if (-not (Test-Path -LiteralPath $toolPath)) {
 }
 $wordingProblems = @(Get-WordingProblems -JudgeRan ([bool]$judgeRan) -JudgeError $judgeError -JudgeExit ([int]$judgeExit) -JsonText $judgeJson `
     -MinTimestamped $minTimestamped -MinTriggered $minTriggered -MinNamed $minNamed -MinExempt $minExempt)
+$completionProblems = @(Get-CompletionProblems -Finished ([bool]$launch.Finished) -ConsoleText $console)
+$wordingProblems = @($completionProblems) + @($wordingProblems)
 
 Add-Evidence -Title ('the run (' + $launch.Seconds + ' s, launch exit ' + $launch.ExitCode + ', run exit ' + $exitText.Trim() + ')') `
     -Text ("--- status`n" + $statusTxt + "`n--- dist`n" + $distListing + "`n--- console`n" + $console) -MaxLines 230

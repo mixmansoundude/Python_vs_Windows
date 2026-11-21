@@ -2903,8 +2903,9 @@ Declining (same provider-agnostic building blocks as Scenario 32's own ending, s
 *** Your app is ready. ***
 *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+*** It is a second standalone EXE, built with Nuitka, and it replaces your current EXE only if it builds and runs. ***
 *** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
-[INFO] Optimized build: declined.
+[INFO] Optimized build: declined. No optimized EXE was built and your current EXE is unchanged.
 
 ============================================================
  SETUP COMPLETE
