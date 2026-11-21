@@ -1995,8 +1995,9 @@ output the program produces (the main verification run, REQ-018.6, is the one th
 it started and reads what it printed; no row ever ran a program that keeps printing through it, and a PyInstaller onefile EXE is
 two processes (the bootloader and the program it starts), so a stop of the first can leave the second holding the pipes. One
 default bootstrap with `HP_TEST_REPAIR_ANSWER=Y` (the loop asks first, Item 97): requirements.txt `colorama`, and an `app.py` that
-imports colorama by a runtime string (PyInstaller does not bundle it), so the EXE verification run and the loop's first run fail
-with `ModuleNotFoundError`, the loop rebuilds with `--hidden-import=colorama`, and the run after the rebuild prints a line a second
+imports colorama by a runtime string (PyInstaller does not bundle it), so the EXE verification run fails with
+`ModuleNotFoundError`, the loop reads that error from the files the check run left (it starts the program no extra time to learn it, Item 97
+follow-up a), rebuilds with `--hidden-import=colorama`, and the run after the rebuild prints a line a second
 for 100 seconds. Every start appends JSON lines to a ledger at an absolute path (`start`, `imported`, one `tick` a second, `done`).
 `self.repair.cap` passes only when the setup log has the `[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama` line and a
 `[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap` line after it, one start of the frozen EXE got past the import,

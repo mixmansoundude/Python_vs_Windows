@@ -148,6 +148,11 @@ def script_problems(text):
     for site, minimum in (("verify", 2), ("fastpath", 1), ("interpreter", 1), ("repair", 2), ("optbuild", 2)):
         if not re.search(r"Get-WorkdirProblems -Site '%s'[^\n]*-MinStarts %d\b" % (site, minimum), text):
             found.append("%s: the row no longer requires at least %d recorded start(s)" % (site, minimum))
+    # the repair loop reads the check run's saved error (Item 97 follow-up a), so the EXE starts twice here, not three times
+    if "$kindsR.frozen -lt 2" not in text:
+        found.append("repair: the row no longer requires the two EXE starts of the check run and the run after the rebuild")
+    if "$kindsR.frozen -lt 3" in text:
+        found.append("repair: the row still requires three EXE starts, the loop's own start to read the error is gone (Item 97 follow-up a)")
     for pattern, _needle in PROOFS:
         if pattern not in text:
             found.append("the script no longer looks for %r in the log, so a precondition went missing" % pattern)

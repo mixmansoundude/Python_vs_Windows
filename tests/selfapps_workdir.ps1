@@ -409,7 +409,7 @@ $kindsR = Get-StartKinds $rLedger
 $proofs = @(
     (Get-ProofGap -Text $rSetup -Pattern 'Repair loop: accepted' -Sentence 'the repair loop was not accepted, so it never started the program'),
     (Get-ProofGap -Text $rSetup -Pattern '\[REPAIR\]\[HIDDEN_IMPORT\] Adding --hidden-import=colorama' -Sentence 'the repair loop never added --hidden-import=colorama, so the rebuilt EXE was never started'),
-    $(if ($kindsR.frozen -lt 3) { "only $($kindsR.frozen) start(s) of the EXE were recorded, expected the check run, the loop's own run and the run after the rebuild" } else { '' })
+    $(if ($kindsR.frozen -lt 2) { "only $($kindsR.frozen) start(s) of the EXE were recorded, expected the check run and the run after the rebuild (the loop reads the check run's error, so it starts the program no extra time to learn it)" } else { '' })
 )
 $problems = @(Get-WorkdirProblems -Site 'repair' -Finished ([bool]$rRun.Finished) -Ledger $rLedger -MinStarts 2 -Proofs $proofs)
 if ($problems.Count -gt 0) { $allPass = $false }
