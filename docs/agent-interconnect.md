@@ -1983,9 +1983,10 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
   the read waited until the program ended by itself (`self.repair.cap` on its first run, run `43532440009`: all 100 printed lines,
   100.1 s on the program's own clock, the loop's -1 and the TIMED OUT line only after that). The PowerShell text lives inside one
   `-Command "..."` of a `for /f` line, so it holds no `"`, `%`, `^`, `!`, `<`, `>` or `&` (a unit test names the character). The same
-  Kill-only shape is still in `:offer_optimized_build`'s verification line and in `tools/exe_smokerun.ps1` (see "Active Backlog"
-  Item 110 in CLAUDE.md); no row asks either one to end a program that keeps printing, and the smoke runner's orphan may be wanted
-  for the window question of the last-chance offer, so neither was changed here. `tests/selfapps_repair_cap.ps1` (`self.repair.cap`,
+  Kill-only shape was in `:offer_optimized_build`'s verification line too; Item 110 slice (a) gave that line the same text (see the next
+  paragraph). It is still in `tools/exe_smokerun.ps1` (see "Active Backlog" Item 110 in CLAUDE.md, slice (b)); no row asks it to end a
+  program that keeps printing, and the smoke runner's orphan may be wanted for the window question of the last-chance offer, so it was
+  not changed. `tests/selfapps_repair_cap.ps1` (`self.repair.cap`,
   contract-uv lane, gating) measures the program's own clock through a ledger at an absolute path (its first line to its last must span
   10 to 45 seconds and it must never reach `done`) and lists the processes still running from `dist` after the bootstrap returns;
   `tests/test_repair_cap.py` pins the line's pieces and their order (reads started before the wait, `WaitForExit(30000)`, the
@@ -1993,6 +1994,30 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
   the test for 0), and on a POSIX host with pwsh runs the line's own text against stand-in programs with the waits shortened (a program
   whose child holds the pipes, one that only starts, one that exits by itself, a stand-in taskkill that records its arguments, and the
   first version of the line as the control that must show the defect). Any change to that one line is a change to the shall's only code.
+- **The optimized build's verification run has the same line (Item 110 slice (a), README REQ-018.36 says "for how long at most").**
+  `:offer_optimized_build` starts the new Nuitka onefile EXE (`%HP_OPTBUILD_EXE%`, absolute path, working folder the program folder) for
+  up to 30 seconds. Its inline line had the repair loop's first version: `$p.Kill()` after `WaitForExit(30000)` and then `$so.Result|Out-Null`
+  and `$se.Result|Out-Null`, unbounded, so a program that keeps printing was waited for until it ended by itself while the log had
+  promised 30 seconds. It now carries the repair line's stop text exactly (`taskkill /F /T /PID`, waited for at most 5 seconds, `Kill()` as
+  the fallback, both reads `Wait(5000)`) and still prints the exit code, or -1, last. **The two lines share one stop text, so a change to the
+  stop is a change to both and to both unit tests**: `tests/test_repair_cap.py` selects the repair line with `in_the_repair_line` in its
+  mutation cases because several anchors now occur twice, and `tests/test_optbuild_cap.py` pins the optimized build's line (the block is cut
+  by `set "HP_OPTBUILD_VERIFY_EXIT=-1"` and `if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (`, both once) and runs the same PowerShell text through
+  pwsh against stand-in bootloaders with the first version as the control. `tests/selfapps_optbuild_cap.ps1` (`self.optbuild.cap`,
+  contract-uv lane, gating) does not build with Nuitka (minutes, and the build itself is not the claim): it cuts that real block out of
+  `run_setup.bat`, wraps it in a driver run under cmd.exe with closed standard input, and lets `%HP_OPTBUILD_EXE%` be a stand-in
+  `dist\optcap_stand_in.cmd` that starts a holder program (the process-tree shape of a onefile EXE: the thing you start waits for the
+  program below it, and the program below it holds the pipes). Scenario `cap` (the holder prints a flushed line a second for 100 seconds)
+  reads a ledger at an absolute path (its first line to its last must span 15 to 50 seconds and it must never reach `done`), the driver's
+  own clock and the exit code (-1), and requires that nothing of the holder runs from `dist` after the driver returns (read through CIM
+  before a leftover is stopped). Scenario `exit` (a program that ends by itself) must give 0 with `done` and no kill, so the cap cannot pass
+  by killing everything. The judging function `Get-OptCapProblems` takes plain values and is run through real `pwsh` in strict mode.
+  **Where the contract stops (CodeRabbit, PR #539):** a program that ends by itself inside the 30 seconds is judged by its own exit code and
+  nothing is ended. `taskkill /T` needs the started process alive to find what is below it, and a process the program left running on purpose
+  (a launcher that starts the real program and exits) is not the bootstrapper's to end, so README REQ-018.36 is worded for the run that does
+  not finish and the line does not look for survivors after a natural exit. The two `Wait(5000)` reads still bound the line then, so a
+  survivor holding the pipes costs at most ten seconds and not the survivor's lifetime (`test_a_program_that_ends_by_itself_and_leaves_a_pipe_holder_running_gives_its_exit_code_and_ends_nothing`,
+  which the first version of the line fails at 10.5 seconds). The `exit` scenario of `self.optbuild.cap` stays a program with nothing left running.
 
 ### Cascade signal reliability
 

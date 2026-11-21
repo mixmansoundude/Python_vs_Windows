@@ -4001,10 +4001,18 @@ if not exist "dist\%HP_OPTBUILD_TMP%" (
   call :log "[WARN] Optimized build finished but did not produce output; your app is still ready to use as-is."
   goto :optbuild_cleanup
 )
-rem Verify the new build actually runs before touching the already-working original. Same
-rem 30s-cap / Kill()-on-timeout pattern as :run_exe_smokerun -- this is a genuine internal
-rem verification run (not the user's own session), so the same allowed-to-kill reasoning
-rem applies (see HP_FAILFAST_PROBE_MS's header comment on the two classes of run in this file).
+rem Verify the new build actually runs before touching the already-working original. This is a
+rem genuine internal verification run, not the user's own session, so it may be ended at its cap
+rem of 30 seconds, see HP_FAILFAST_PROBE_MS's header comment on the two classes of run in this file.
+rem Item 110, README REQ-018.36: the end is taskkill /F /T on the process this line started, then
+rem Kill() as the fallback, and each output pipe is waited for at most 5 seconds. A onefile EXE is
+rem two processes and Kill() ends only the one that was started; the program below it keeps the
+rem pipes open, so an unbounded read held this line for as long as the program ran, and the program
+rem was left running. The same line stands in :hidden_import_loop, tests/test_optbuild_cap.py
+rem checks both against the same text. A program that ends by itself inside the 30 seconds is
+rem judged by its own exit code and nothing is ended: the tree stop needs the started process
+rem alive, and a process the program left running on purpose is not this build's to end. The two
+rem pipe waits still give up after 5 seconds each, so the line returns even then.
 rem derived requirement: HP_APP_ARGS is read via $env:HP_APP_ARGS (PowerShell's own inherited-
 rem environment access), never substituted by cmd.exe's %VAR% expansion into this -Command
 rem string -- HP_APP_ARGS already contains literal embedded double-quotes per token (see its
@@ -4020,7 +4028,7 @@ rem file, like every other start of the program, so a program that opens a file 
 rem path sees the same files here as in the primary verification. The working folder is no longer
 rem dist, so the EXE is named by its absolute path in an environment variable.
 set "HP_OPTBUILD_EXE=%CD%\dist\%HP_OPTBUILD_TMP%"
-for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_OPTBUILD_EXE;if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$p.Kill()}catch{}};$so.Result|Out-Null;$se.Result|Out-Null;if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$si=New-Object System.Diagnostics.ProcessStartInfo;$si.FileName=$env:HP_OPTBUILD_EXE;if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);$so=$p.StandardOutput.ReadToEndAsync();$se=$p.StandardError.ReadToEndAsync();$done=$p.WaitForExit(30000);if(-not $done){try{$k=New-Object System.Diagnostics.ProcessStartInfo;$k.FileName=$env:SystemRoot+'\System32\taskkill.exe';$k.Arguments='/F /T /PID '+$p.Id;$k.UseShellExecute=$false;$k.CreateNoWindow=$true;$k.RedirectStandardOutput=$true;$k.RedirectStandardError=$true;[void][System.Diagnostics.Process]::Start($k).WaitForExit(5000)}catch{};try{$p.Kill()}catch{}};try{[void]$so.Wait(5000);[void]$se.Wait(5000)}catch{};if($done){$p.ExitCode}else{-1}"`) do set "HP_OPTBUILD_VERIFY_EXIT=%%X"
 set "HP_OPTBUILD_EXE="
 if not defined HP_OPTBUILD_VERIFY_EXIT set "HP_OPTBUILD_VERIFY_EXIT=-1"
 if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (
