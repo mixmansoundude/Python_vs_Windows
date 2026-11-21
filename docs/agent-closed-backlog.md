@@ -4498,7 +4498,7 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   fallback when taskkill cannot be started, each read bounded by `Task.Wait(5000)`, the exit code or -1 still the last line printed.
   `tests/test_repair_cap.py` gained the pins and `TheLineRunThroughPwsh` (stand-in programs under pwsh on a POSIX host, the first version of
   the line as the control that shows the defect). Left alone and filed as Item 110: the same Kill-only shape in `:offer_optimized_build`'s
-  verification line and in `tools/exe_smokerun.ps1`.
+  verification line and in `tools/exe_smokerun.ps1`. (Slice (a), the optimized build's line, is closed, see "Item 110 slice (a)" below.)
 - **How it is kept honest.** `tests/test_dep_merge_edges.py` and `tests/test_repair_cap.py` pin each script (literal row ids and tags, the
   environment of every run, closed standard input, the process-tree kill and the time limits, its own exit codes), the texts the rows look
   for (each is written by a live line of `run_setup.bat` or by the real `tools/dep_merge.py` run on the scenario inputs), the repair loop's
@@ -4510,6 +4510,32 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   unambiguous reading (a header with no record, because the write-back was off in the run that met it).
 - **Evidence.** The reading of the five rows on their first run is in the squash commit message (a docs-only push after the run would cost
   a second full run). The five ids join the contract-uv list in `tests/expected_rows/` once they have appeared in green runs (lane 1 owns it).
+
+### Item 110 slice (a) (2026-11-20, PR #539; the optimized build's verification line, the first of the two launches Item 106 left alone)
+
+- **The gap.** `:offer_optimized_build` starts the new Nuitka EXE for up to 30 seconds (README REQ-018.36 says the log tells for how long at most) with the repair
+  loop's first version of the line: `$p.Kill()` after `WaitForExit(30000)` and then `$so.Result|Out-Null;$se.Result|Out-Null`, unbounded. A onefile EXE is two
+  processes, so `Kill()` ends the bootloader only and the read waits until the program below it ends by itself. No row asked it to end a program that keeps printing.
+- **What shipped (red test first).** `tests/selfapps_optbuild_cap.ps1` (row `self.optbuild.cap`, tag `REQ-018.36`, contract-uv lane, gating from its first run) cuts
+  the real block (`set "HP_OPTBUILD_VERIFY_EXIT=-1"` up to `if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (`) out of `run_setup.bat` and runs it under cmd.exe with closed standard
+  input against a stand-in EXE, a `.cmd` that starts a holder program (the process-tree shape of a onefile EXE). Scenario `cap`: the holder prints a flushed line a second for 100
+  seconds, the ledger (absolute path) must span 15 to 50 seconds without `done`, the driver must return the exit code -1 inside 75 seconds and nothing of the holder may still run
+  from `dist` (read through CIM before a leftover is stopped). Scenario `exit`: a program that ends by itself gives 0 with `done`, so the cap cannot pass by killing everything.
+  `tests/test_optbuild_cap.py` pins the script, the cut block, the line's text and its place, and runs the line's own PowerShell through pwsh on a POSIX host against stand-in
+  bootloaders with the first version of the line as the control that must show the defect. The red test went up alone (head `8a7a6db`, run `44708958163`); the fix is a separate
+  commit: the line now carries the repair line's stop text (`taskkill /F /T /PID`, waited for at most 5 seconds, `Kill()` as the fallback, both reads `Wait(5000)`, exit code or
+  -1 printed last).
+- **The red run, read before the fix was pushed (run `44708958163`, head `8a7a6db`).** `self.optbuild.cap` was red in contract-uv for the right reason: scenario `cap` finished with
+  the stand-in reaching its last line (100 ticks, 99.3 seconds on its own clock, driver 101 seconds, exit -1 printed, nothing left running) and three problems that name the cap,
+  the program's clock and the driver's clock; scenario `exit` (the control) was clean (0, `done`, 2.0 seconds). `self.pytest.unit` was red on every lane for the two
+  `tests/test_optbuild_cap.py::RealFiles` tests that read the real batch file (the two more that fail on a Linux host run the real line through pwsh against shell-script stand-ins and are skipped on a Windows runner). Every other red row of
+  that run was one cause that is not this change: on the Windows image `20261116.315.1` (provisioner `20261111.635`, OS build 26100.33828) the uv zip downloads (14.84 MB) and
+  `~uv_bin\uv.exe` is still missing afterwards, so uv acquisition logs `uv: acquisition failed` and the run uses conda; lanes that landed on the older image
+  `20261103.298.1` (the `uv` lane of that run, OS build 26100.33674) acquired uv 120 times. The two other branches CI started the same morning (`44708489835`, `44708165167`)
+  show the same rows red on whichever lanes got the new image (`real` in both), so the held gate is an image rollout and not a change of any of the three branches. The smoke runner's silent window program may be wanted open for the last-chance offer's window question
+  (Item 82 slice 2, `~smokerun_killed.txt`), so ending its whole tree is a decision first. That is slice (b), still Item 110 in CLAUDE.md.
+- **For the README owner.** REQ-018.36 only says the log names the limit. A shall that the run ends at that limit and that nothing the run started keeps running would state what
+  the row proves; the proposal is in the PR body.
 
 ### Item 111 (shipped 2026-11-14; the next batch of `gap:` entries of `tests/test_req_shall_trace.py`, after Item 106)
 

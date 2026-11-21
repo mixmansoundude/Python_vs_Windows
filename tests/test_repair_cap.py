@@ -844,6 +844,17 @@ class BatchRulesCanFail(unittest.TestCase):
     def setUp(self):
         self.batch = BATCH.read_text(encoding="utf-8", errors="replace")
 
+    @staticmethod
+    def in_the_repair_line(batch, old, new):
+        """`mutate` inside the one line that starts the repair loop's program (the line that names HP_HIR_EXE). Since Item 110 the
+        optimized build's verification line holds the same stop text, so a mutation of the whole file would meet it twice and the case
+        would refuse to run; and a mutation that reached that line instead would prove nothing about this one."""
+        lines = batch.split("\n")
+        at = [i for i, ln in enumerate(lines) if "$env:HP_HIR_EXE" in ln and "WaitForExit(30000)" in ln]
+        assert len(at) == 1, "expected one line that starts the repair loop's program, found %d" % len(at)
+        lines[at[0]] = mutate(lines[at[0]], old, new)
+        return "\n".join(lines)
+
     def test_a_label_that_is_missing_or_duplicated_is_reported(self):
         gone = mutate(self.batch, "\n:hidden_import_loop\n", "\n:hidden_import_loopx\n")
         self.assertTrue(any("appears 0 time(s)" in f for f in loop_problems(gone)))
@@ -852,33 +863,33 @@ class BatchRulesCanFail(unittest.TestCase):
         self.assertIsNone(cut_block("a\n:one\nb\n", ":one", ":two"))
 
     def test_a_cap_that_is_not_30_seconds_is_caught(self):
-        bad = mutate(self.batch, WAIT_AND_STOP, WAIT_AND_STOP.replace("30000", "300000"))
+        bad = self.in_the_repair_line(self.batch, WAIT_AND_STOP, WAIT_AND_STOP.replace("30000", "300000"))
         self.assertTrue(any("WaitForExit(30000)" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_a_stop_that_ends_only_the_process_and_not_its_tree_is_caught(self):
         # without /T taskkill ends the bootloader only, which is the defect of the first version of the line
-        bad = mutate(self.batch, TREE_ARGS, "$k.Arguments='/F /PID '+$p.Id")
+        bad = self.in_the_repair_line(self.batch, TREE_ARGS, "$k.Arguments='/F /PID '+$p.Id")
         self.assertTrue(any("whole process tree" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_a_taskkill_that_is_never_started_is_caught(self):
-        bad = mutate(self.batch, TREE_KILL, "[void]$k")
+        bad = self.in_the_repair_line(self.batch, TREE_KILL, "[void]$k")
         self.assertTrue(any("whole process tree" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_a_taskkill_that_is_not_the_one_in_system32_is_caught(self):
-        bad = mutate(self.batch, TREE_EXE, "$k.FileName='taskkill.exe'")
+        bad = self.in_the_repair_line(self.batch, TREE_EXE, "$k.FileName='taskkill.exe'")
         self.assertTrue(any("whole process tree" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_a_stop_that_is_removed_altogether_is_caught(self):
-        bad = mutate(self.batch, TREE_KILL, "[void]$k")
-        bad = mutate(bad, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
+        bad = self.in_the_repair_line(self.batch, TREE_KILL, "[void]$k")
+        bad = self.in_the_repair_line(bad, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
         found = loop_problems(bad)
         self.assertTrue(any("whole process tree" in f for f in found) and any("fallback" in f for f in found), found)
 
     def test_a_fallback_kill_that_is_removed_or_runs_first_is_caught(self):
-        gone = mutate(self.batch, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
+        gone = self.in_the_repair_line(self.batch, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
         self.assertTrue(any("fallback" in f for f in loop_problems(gone)), loop_problems(gone))
-        first = mutate(self.batch, WAIT_AND_STOP, WAIT_AND_STOP.replace("try{$k=", "try{$p.Kill()}catch{};try{$k="))
-        first = mutate(first, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
+        first = self.in_the_repair_line(self.batch, WAIT_AND_STOP, WAIT_AND_STOP.replace("try{$k=", "try{$p.Kill()}catch{};try{$k="))
+        first = self.in_the_repair_line(first, FALLBACK_AT_THE_END_OF_THE_STOP, WITHOUT_THE_FALLBACK)
         self.assertTrue(any("fallback" in f for f in loop_problems(first)), loop_problems(first))
 
     def test_a_read_that_waits_without_a_limit_is_caught(self):
@@ -891,8 +902,8 @@ class BatchRulesCanFail(unittest.TestCase):
 
     def test_a_read_that_comes_before_the_stop_is_caught(self):
         reads = "$t='';try{" + BOUNDED_SO + ";" + BOUNDED_SE + "}catch{};"
-        bad = mutate(self.batch, "};" + reads + "$t|Set-Content", "};$t|Set-Content")
-        bad = mutate(bad, WAIT_AND_STOP, reads + WAIT_AND_STOP)
+        bad = self.in_the_repair_line(self.batch, "};" + reads + "$t|Set-Content", "};$t|Set-Content")
+        bad = self.in_the_repair_line(bad, WAIT_AND_STOP, reads + WAIT_AND_STOP)
         self.assertTrue(any("before the process is stopped" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_reads_that_start_after_the_wait_are_caught(self):

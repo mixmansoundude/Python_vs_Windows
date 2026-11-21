@@ -1372,8 +1372,13 @@ most 5 seconds, `Kill()` as the fallback when taskkill cannot be started) and re
 not finish, stays the last line it prints (`for /f` keeps the last line). A test of a line like this needs a stand-in whose CHILD holds the
 pipes, and the first version of the line kept as the control that must show the defect, or a green result proves nothing
 (`tests/test_repair_cap.py`, `TheLineRunThroughPwsh`: the stand-in `taskkill` is a file whose name holds the backslashes the line spells,
-found through `$env:SystemRoot`, which records its arguments). The same Kill-only shape is left in `:offer_optimized_build` and
-`tools/exe_smokerun.ps1` (CLAUDE.md Item 110).
+found through `$env:SystemRoot`, which records its arguments). The optimized build's verification line had the same Kill-only shape and
+got the same text (Item 110 slice (a), `self.optbuild.cap`, `tests/test_optbuild_cap.py`); two lines now share one stop text, so a change to
+it is a change to both and to both unit tests. Two details from writing that test: a PowerShell `[System.Diagnostics.Process]::Start(...)
+.WaitForExit(5000)` statement prints its `True`/`False` result as a stdout line unless it is cast to `[void]`, which breaks a unit test
+that expects the exit code to be the whole output (harmless to `for /f`, which keeps the last line); and a mutation case that edits "the
+repair line" by an anchor must select that line (`in_the_repair_line` in `tests/test_repair_cap.py`), because the same text now occurs in
+two places and an exactly-once anchor stops being unique. `tools/exe_smokerun.ps1` still has the shape (CLAUDE.md Item 110 slice (b)).
 
 **Why the fail-fast probe default is 10000ms, not 5000ms**: a PyInstaller *onefile* EXE must first
 extract its bundled runtime and boot an embedded interpreter before ANY user code (or its failure)
