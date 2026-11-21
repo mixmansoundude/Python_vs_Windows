@@ -1866,16 +1866,37 @@ reminder, `adviceLines`) to name `pyproject.toml` and neither to name `requireme
 requires exactly one report per module (console and row), not at least one. Expected red on the commit that
 adds the pyproject scenario and green once the advice names the active source.
 
+Two more rows of the same script (Item 124, README REQ-018.13) show the halves of "what the scan does not report".
+`self.runtime.scan.skipped` bootstraps one program that prints THREE tracebacks to stderr and exits 0: a package
+nobody installed (`xlsxwriter`), a standard library module Windows does not have (`fcntl`) and a module file next to
+the script (`rtmsibling.py`, which the frozen EXE cannot import because the folder is not on its path); the names are
+joined at run time. The pure judge `Get-ScanSkipProblems` requires the precondition (all three `ModuleNotFoundError`
+lines in `~run.err.txt`), the console `[WARN]` line for `xlsxwriter` exactly once and for nothing else, the closing
+reminder to list only `xlsxwriter` and the `self.runtime.module_missing` rows to name only it (`problems`,
+`namedModules`, `listedModules`, `rowModules`). Naming `xlsxwriter` is also what proves the scan ran, so a scan
+that was switched off cannot pass. `self.runtime.scan.fastpath` bootstraps the same folder a second time with
+`HP_TEST_FORCE_INTERACTIVE_PROBE=1`, which makes the cached-EXE fast path launch the EXE through the probe, so the
+program's traceback reaches the console live (the plain fast path redirects it to files). `Get-FastPathScanProblems`
+requires the precondition (exactly one `Launching your program now via the cached standalone EXE` line, no
+`discarding cached EXE and rebuilding`, the `xlsxwriter` traceback on the console after the launch line) and then no
+`[WARN]` that names a module, no closing reminder and no row: no interpreter exists yet on that path
+(`HP_PY` is cleared at the top of the file), so `:scan_runtime_missing_module` returns at once.
+`tests/test_scan_skip_rows.py` runs both judges through a real pwsh on consoles built from the batch file's own
+echo lines, one red case per comparison. Both rows skip with `skip=true, reason=non-windows-host` off Windows.
+
 ```
 self.runtime.modnotfound
 self.runtime.modnotfound.pyproject
+self.runtime.scan.skipped
+self.runtime.scan.fastpath
 ```
 
 ## selfapps-runtime-install NDJSON rows (selfapps_runtime_install.ps1, real lane only, GATING)
 
 CLAUDE.md Item 65 slice 2 regression test, README REQ-018 (Item 91 changed the last two rows and split the wording check out into a fifth). The same fixture as
 above, bootstrapped four times with `HP_TEST_RTM_ANSWER` set (the last two get a second bootstrap of the same folder
-with the EXE folder deleted and the answer N). `self.runtime.install.accept` (answer Y) requires the first run's report, the
+with the EXE folder deleted and the answer N); a fifth bootstrap with a program of its own is `self.runtime.install.submodules`
+(Item 124), described after the others. `self.runtime.install.accept` (answer Y) requires the first run's report, the
 echoed prompt, `Runtime install: installed xlsxwriter`, `xlsxwriter` importable from `.uv_env`, a
 `xlsxwriter` line in `requirements.txt`, `[REPAIR] rebuild complete after runtime install`, a second
 `Entry smoke exit=` line, a clean check run (`~run.err.txt` without `No module named`, `~run.out.txt` with
@@ -1904,7 +1925,20 @@ setup log has `Runtime install: added xlsxwriter to requirements.txt.`; each run
 `self.runtime.install.risk` (the risk half of README REQ-018.2, tagged with the goal only; the REQ-018.2 consent rows are `self.repair.*`, Item 97; Item 94a) is a second verdict over the accept and decline consoles: the prompt block
 (from `Your program asked for packages that are not installed:` to the `Runtime install: accepted|declined` line) exists in both and
 says `running it twice could cause harm`, because a yes also starts the program once more to check; the block text is in `details`.
-All six skip with `skip=true, reason=non-windows-host` off Windows. Expected red for `pyproject` and `pep723` on the commit that adds
+`self.runtime.install.submodules` (Item 124, README REQ-018.19) is a fifth bootstrap with its own program and a control build: a
+program that loads `pytz` and `pytz.reference` by names it joins at run time (so no static scan or earlier build sees either), answered
+yes. The runtime scan reports only a TOP-LEVEL name that is not installed (`tools/runtime_module_scan.py`), so a submodule that is
+missing from the rebuilt EXE of an installed package is invisible to it and the install row says `verified` either way; the only
+evidence is the check run itself. The row requires the first run's report of `pytz`, the install and the rebuild lines, the package in
+the program's own environment, the install row `verified` with status `ok`, and a check run that prints `loaded pytz`, `loaded
+pytz.reference` and `submodule app done` with no `No module named` on its error output. The second half is a control: the script builds
+the same program once by hand with `--hidden-import=pytz` alone (the first half of what `:rti_rebuild` passes) into `~control\`, and
+that EXE must load `pytz`, must NOT load `pytz.reference` and must report it missing. With PyInstaller 6.22.3 and
+pyinstaller-hooks-contrib 2026.10 the control does lack the submodule and a rebuild with `--collect-submodules=pytz` has it, so the row can
+fail only when the second flag is dropped; if a later PyInstaller starts bringing the submodule with the first flag alone, the control row
+goes red with the sentence that says so, and the fixture needs another package (the scenario proves its own premise instead of passing
+vacuously). `tests/test_submodule_row.py` runs the judge (`Get-SubmoduleProblems`) through a real pwsh, one red case per comparison.
+All seven skip with `skip=true, reason=non-windows-host` off Windows. Expected red for `pyproject` and `pep723` on the commit that adds
 this wording (the offer edits no file for these sources) and green once `:runtime_install_offer` always edits
 `requirements.txt`; `risk` is red on the commit that adds it (the prompt says only that the program runs again) and green once the
 prompt names the risk.
@@ -1916,6 +1950,7 @@ self.runtime.install.pyproject
 self.runtime.install.pep723
 self.runtime.install.wording
 self.runtime.install.risk
+self.runtime.install.submodules
 ```
 
 ## selfapps-runtime-install-edges NDJSON rows (selfapps_runtime_install_edges.ps1, contract-uv lane only, GATING)
@@ -2061,6 +2096,39 @@ and runs the judging function and the line's own text through real `pwsh` agains
 self.optbuild.cap
 ```
 
+## selfapps-launch-cap NDJSON rows (selfapps_launch_cap.ps1, contract-uv lane only, GATING)
+
+Item 124, README REQ-018.6: the verification run of a new build is force-stopped only if the program has printed nothing 30 seconds after
+it started, and any output, a prompt that waits for input included, keeps it going for as long as it needs. `tests/test_exe_smokerun.py`
+proves both halves on the smoke runner alone (`tools/exe_smokerun.ps1`) with the wait cut to a fraction of a second through a test-only
+override; no row ran the wait production uses (30000 ms, the batch file never sets the override), an EXE the bootstrapper built and the
+console the user reads. Two default bootstraps of one-file programs, each in its own folder `tests/~selftest_launchcap_<name>` (only the
+pipreqs scan, the autopep723 discovery and the NI-VISA step are off), started with a redirected standard input that the script keeps. A
+PyInstaller onefile EXE is two processes and the runner's `Kill()` ends the bootloader only (Active Backlog Item 110 in CLAUDE.md), so
+the length of the whole bootstrap says nothing about when the stop happened: the runner prints `[INFO] Process ID <n>.` right after it
+starts the EXE, and the script opens that process by id as soon as the line appears and takes the stop from the process's own start and
+end time (a polled fallback when the times cannot be read; the row says which one, `lifetimeSource`).
+- `self.launch.cap.silent`: a program that prints nothing for 75 seconds. Passes when the program wrote its first ledger line from the
+  frozen EXE, the console has the Process ID line, the process lived from 28 to 45 seconds, the console says `Entry smoke exit=-1` and
+  the `[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap` line. Whether the program below the bootloader ends is recorded
+  (`programSurvivedStop`) and not judged: no shall names it.
+- `self.launch.cap.output`: a program that prints `Launch cap name? ` with `input()` and waits. The script writes the answer to the
+  bootstrap's standard input 46 seconds after the program's first ledger line, so the program has waited past the cap by its own clock.
+  Passes when the prompt reached the console within the first 30 seconds, the program was answered at least 44 seconds after it started,
+  the reply line is on the console, the EXE the runner started lived at least 44 seconds (it was not stopped at the cap), the console says
+  `Entry smoke exit=0` and `Run Status: SUCCESS`, and carries no TIMED OUT line.
+Each row also needs the precondition that makes it mean something (the bootstrap finished inside its 15 minute limit, the EXE started the
+program, the answer was written). The judging lives in functions that take plain values (`Get-SilentCapProblems`,
+`Get-OutputCapProblems`, `Get-LaunchCapLogFacts`, `Get-LaunchCapLedgerFacts`, `Get-LaunchCapProcessId`); `tests/test_launch_cap.py` runs
+them through real `pwsh` on synthetic runs that must be red for each comparison, builds the consoles from the real `call :log` lines of
+`run_setup.bat` and the real `Write-Host` line of the smoke runner, runs the two programs on a POSIX host, and pins the step and its
+uploads. The rows skip with `skip=true` off Windows.
+
+```
+self.launch.cap.silent
+self.launch.cap.output
+```
+
 ## selfapps-tilde-files NDJSON rows (selfapps_tilde_files.ps1, contract-uv lane only, GATING)
 
 Item 111, README REQ-003.3, REQ-015.7 and REQ-015.8: where the bootstrapper works, what it calls the files a person keeps and what
@@ -2126,7 +2194,8 @@ that read the console in spite of the signal would accept and say so. `self.nivi
 `self.nivisa.signals.nonint` (`HP_NONINTERACTIVE` alone) pass when the block declines (`NEED_VISA` stays 2, the log line
 `[VISA] skipped (subfolder_only)`) and the console was read zero times; `self.nivisa.signals.control` (no signal) passes when the
 console was read exactly once, with `/T 30 /D N`, and the stub's yes was honored. The control is what stops the two signal rows from
-passing because the block never asked in any case. `tests/test_visa_signals.py` pins the cut (labels once and in order, only variables
+passing because the block never asked in any case; it is also the row of README REQ-008.12 (the question waits 30 seconds and
+defaults to No), so its tag reads `REQ-008.12, REQ-008.14` (Item 124). `tests/test_visa_signals.py` pins the cut (labels once and in order, only variables
 the driver sets or clears) and runs the judging functions through real `pwsh` on synthetic runs. The rows skip with `skip=true` off
 Windows.
 
@@ -2195,9 +2264,29 @@ conda environment lists a package it installed; `pyvisa-py` is another package).
 add the package. `tests/test_visa_present.py` runs its two judging functions (`Get-PyvisaLine`, `Get-PyvisaFreezeProblems`) through real
 `pwsh` on synthetic lists.
 
+Item 124 (README REQ-008.5 and REQ-008.6) added two rows for the scan itself, each one more real bootstrap run before `accepted`, with
+`HP_SKIP_NIVISA=1` (the run stops at `[VISA] skipped (disabled)` before any install step, so a wrong scan can never start a driver
+install) and with `HP_SKIP_ENTRY_SMOKE=1` and `HP_SKIP_EXE_SMOKERUN=1` (the program is not started). `self.nivisa.scan.skips` bootstraps a
+folder with a program that has no import, a `requirements.txt`, one `import visa` three folders down (`archive\2019\bench\old_tool.py`)
+and one `import pyvisa` or `import visa` in each of `~scratch.py`, `~old\tool.py` and `.hidden\tool.py`. It passes when the setup log
+names the deep file and no other (the scanner prints a `~` as an underscore because a path is echoed unquoted, so a taken `~scratch.py`
+reads `_scratch.py` and the row names the file as planted), every fixture file is still in the folder after the run, and the console
+shows the batch file's own conclusion `Detected pyvisa/visa import only in a subfolder` once and neither of the other two, with
+`[VISA] skipped (disabled)` once. `self.nivisa.scan.lookalike` bootstraps a folder with `import pyvista`, `import vision`, `import
+pyviscoelastic` and `from pyvista import Plotter` (one file next to `run_setup.bat`, one in a subfolder) and passes when the setup log
+names no file, the console says `No pyvisa/visa imports detected.` once, no import was detected line, and `[VISA] skipped
+(not_required)` once; it also needs the deep file of the first row to have been found, because a scan that never ran would pass it. The
+judging functions (`Get-ScanSkipsProblems`, `Get-ScanLookalikeProblems`, with `Get-VisaFoundFiles` and `Get-VisaLineCount`) take plain
+values; `tests/test_visa_scan.py` runs them through real `pwsh` in strict mode on synthetic runs (one problem sentence for each
+comparison), builds the two fixture folders from the script's own text and runs the real `tools/detect_visa.py` on them, also with one rule
+broken at a time (a scanner that takes a `~` file, a `~` folder, a dot folder, no subfolder at all, only one level, or any name that
+begins like the package), which a judge must report with the file named. Evidence: `~pyvisa_sub_scanskips.log`,
+`~pyvisa_sub_lookalike.log` and the two `~setup.log` files in the `test-logs` artifact. The rows skip with `skip=true` off Windows.
+
 ```
 self.nivisa.subfolder.declined, self.nivisa.subfolder.accepted, self.nivisa.topfolder.noprompt, self.nivisa.subfolder.timeout
 self.nivisa.pyvisa.installed
+self.nivisa.scan.skips, self.nivisa.scan.lookalike
 ```
 
 ## Runtime missing-module row (run_setup.bat, written only when HP_NDJSON is defined)
@@ -2258,7 +2347,11 @@ answered `C` through `HP_TEST_LASTCHANCE_ANSWER`), then on conda stays silent un
 (`HP_SMOKERUN_KILL_MS=6000`); the answer comes from `HP_TEST_WINDOWOK_ANSWER`, the automated-run guards, or a real
 `set /p` (`HP_TEST_FORCE_INTERACTIVE_WINDOWOK`). `self.lastchance.window_yes` (answer Y: the question is shown once,
 log `Last chance: you said the window opened and worked`, second offer row `window_confirmed` with `passType`
-`user_confirmed`, provider `conda`, `exitCode` `-1`); `self.lastchance.window_enter` (a bare Enter at the real prompt:
+`user_confirmed`, provider `conda`, `exitCode` `-1`; Item 124, README REQ-018.30: the console must show the three question
+lines exactly, each once and in this order, `*** Your program printed nothing, so the check stopped it after about 30 seconds. ***`,
+`*** A program with a window prints nothing in this console, so that alone does not mean it failed. ***` and
+`*** Did it open and work? [y/N] ***`, judged by `Get-WindowQuestionProblems`; details `questionText`, `questionProblems`);
+`self.lastchance.window_enter` (a bare Enter at the real prompt:
 `window_declined`, no pass type); `self.lastchance.window_auto` (no override in an automated run: the question text is
 echoed, `window_automated`, no pass type, no wait); `self.lastchance.window_selfexit` (the conda-tier program exits by
 itself with `-1`, the same code a force-stop produces, after the uv tier left a stale `~smokerun_killed.txt`: the

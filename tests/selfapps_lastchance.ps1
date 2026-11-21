@@ -32,7 +32,10 @@
 #   self.lastchance.cascade_again the program fails on conda too: the prompt is not shown a second time
 #   self.lastchance.window_yes    Item 82 slice 2: on the conda tier reached through the cascade, a silent program the
 #                                 smoke runner really force-stopped raises the question "Did it open and work?";
-#                                 an explicit yes is recorded as pass type user_confirmed
+#                                 an explicit yes is recorded as pass type user_confirmed. Item 124 (README REQ-018.30): the
+#                                 console text of the question is judged line by line, and its first line says the check
+#                                 stopped the program after about 30 seconds (the stop itself is measured by
+#                                 self.launch.cap.silent, which runs with the default wait and no override)
 #   self.lastchance.window_enter  the same question read from a real set /p, a bare Enter means no and records nothing
 #   self.lastchance.window_auto   no override in an automated run: the question is shown, resolves to no, nothing recorded
 #   self.lastchance.window_selfexit a program that exits by itself with -1 on the conda tier (the same exit code as a
@@ -88,6 +91,41 @@ function Get-ChoiceC {
     $n = $Block.IndexOf('[N]', [System.StringComparison]::Ordinal)
     if ($c -lt 0 -or $n -le $c) { return '' }
     return $Block.Substring($c, $n - $c)
+}
+
+# The question of the window offer as the user sees it (README REQ-018.28 and REQ-018.30), judged on the console text of one real
+# run: the statement that the check stopped the program after about 30 seconds, the reminder that a window prints nothing in this
+# console, and the question itself, each on a line of its own, each exactly once and in that order. The text is exact on purpose: a
+# reworded statement turns the row red, so the shall and the wording are looked at together (tests/test_window_confirm.py compares
+# these three lines with the echo lines of :lc_window and runs this function on synthetic consoles).
+function Get-WindowQuestionProblems {
+    param([string]$ConsoleText)
+    $problems = New-Object System.Collections.ArrayList
+    $expected = @(
+        '*** Your program printed nothing, so the check stopped it after about 30 seconds. ***',
+        '*** A program with a window prints nothing in this console, so that alone does not mean it failed. ***',
+        '*** Did it open and work? [y/N] ***'
+    )
+    $consoleLines = @(($ConsoleText -split "`r?`n") | ForEach-Object { $_.TrimEnd() })
+    $positions = New-Object System.Collections.ArrayList
+    foreach ($want in $expected) {
+        $found = New-Object System.Collections.ArrayList
+        for ($i = 0; $i -lt $consoleLines.Count; $i++) {
+            if ($consoleLines[$i] -ceq $want) { [void]$found.Add($i) }
+        }
+        if ($found.Count -ne 1) {
+            [void]$problems.Add("the console holds the line `"$want`" $($found.Count) time(s), expected 1")
+            [void]$positions.Add(-1)
+        } else {
+            [void]$positions.Add([int]$found[0])
+        }
+    }
+    if ($problems.Count -eq 0) {
+        if (-not (($positions[0] -lt $positions[1]) -and ($positions[1] -lt $positions[2]))) {
+            [void]$problems.Add('the three lines of the question are not in the order statement, reminder, question')
+        }
+    }
+    return $problems.ToArray()
 }
 
 $group = [Environment]::GetEnvironmentVariable('LASTCHANCE_GROUP')
@@ -562,17 +600,20 @@ if ($runUv) {
                   ($wy.LastProvider -eq 'conda') -and ($wy.LastExit -eq '-1') -and ($wy.State -eq 'cascade')
     # Item 66: only an explicit yes on the cascade-reached conda tier is remembered, tagged user_confirmed.
     $wyRemembered = ($wy.StateFile -match '"provider":"conda"') -and ($wy.StateFile -match '"passType":"user_confirmed"')
-    $wyPass = $wyPrecond -and $wyAsked -and $wyLogged -and $wyRecorded -and $wyRemembered -and (-not $wy.StaleLeft)
+    $wyQuestion = @(Get-WindowQuestionProblems -ConsoleText $wy.Console)
+    $wyPass = $wyPrecond -and $wyAsked -and $wyLogged -and $wyRecorded -and $wyRemembered -and (-not $wy.StaleLeft) -and ($wyQuestion.Count -eq 0)
     if (-not $wyPass) { $allPass = $false }
     Write-NdjsonRow ([ordered]@{
         id      = 'self.lastchance.window_yes'
-        req     = 'REQ-018.28, REQ-018.29'
+        req     = 'REQ-018.28, REQ-018.29, REQ-018.30'
         pass    = $wyPass
-        desc    = 'on the conda tier a silent program the runner force-stopped raises the question and an explicit yes records user_confirmed'
+        desc    = 'on the conda tier a silent program the runner force-stopped raises the question, which says the check stopped it after about 30 seconds, and an explicit yes records user_confirmed'
         details = [ordered]@{
             exitCode     = $wy.RunExit
             precondition = $wyPrecond
             asked        = $wyAsked
+            questionText = ($wyQuestion.Count -eq 0)
+            questionProblems = @($wyQuestion)
             logged       = $wyLogged
             recorded     = $wyRecorded
             remembered   = $wyRemembered

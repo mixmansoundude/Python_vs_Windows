@@ -31,8 +31,24 @@
 # pyvisa in requirements.txt, so the row shows that the answer does not change which packages are installed; it does not show that
 # the import alone would add the package. tests/test_visa_present.py runs the two judging functions below on synthetic lists.
 #
+# Item 124 (README REQ-008.5 and REQ-008.6): what the scan reads and what it does not take for an import. Two more real bootstraps,
+# each with HP_SKIP_NIVISA=1 (a wrong scan must never start a real driver install) and with the program itself not started
+# (HP_SKIP_ENTRY_SMOKE, HP_SKIP_EXE_SMOKERUN), and a requirements.txt like the scenarios above. The scanner writes one setup-log line
+# per matching file (at most three) and the batch file says what it concluded in an [INFO] line of the console, so both are read.
+#   scanskips : one real import three folders down (archive\2019\bench\old_tool.py) next to three files the scan must leave
+#               alone: a FILE whose name starts with ~ (~scratch.py, next to run_setup.bat, so taking it would end in a top folder
+#               match), a FOLDER that starts with ~ (~old) and a FOLDER that starts with a dot (.hidden). The setup log must name
+#               the deep file and nothing else, and the console must say the import sits only in a subfolder.
+#   lookalike : a file next to run_setup.bat and a file in a subfolder whose imports only begin with the letters of pyvisa or visa
+#               (pyvista, vision, pyviscoelastic). The setup log must name no file and the console must say no import was detected.
+#               The lookalike row would also pass for a scan that never ran, so it requires the scan of the first scenario to have
+#               named its file (a scan that works, on the same machine, in the same lane).
+# The judges (Get-ScanSkipsProblems, Get-ScanLookalikeProblems) take plain values and return a list of problems; tests/test_visa_scan.py
+# runs them through a real pwsh on synthetic runs, one red case for each comparison, and runs the real tools/detect_visa.py on the
+# same fixture files.
+#
 # Emits: self.nivisa.subfolder.declined, self.nivisa.subfolder.accepted, self.nivisa.topfolder.noprompt,
-#        self.nivisa.subfolder.timeout, self.nivisa.pyvisa.installed
+#        self.nivisa.subfolder.timeout, self.nivisa.pyvisa.installed, self.nivisa.scan.skips, self.nivisa.scan.lookalike
 #
 # Lanes: real and conda-full (gating), wired in batch-check.yml next to the existing pyvisa step.
 param()
@@ -60,6 +76,8 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.topfolder.noprompt'; req = 'REQ-008'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.subfolder.timeout';  req = 'REQ-008'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.pyvisa.installed'; req = 'REQ-008.15'; pass = $true; desc = 'NI-VISA subfolder prompt skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.scan.skips'; req = 'REQ-008.5'; pass = $true; desc = 'NI-VISA scan rows skipped on non-Windows host'; details = $skipDetails })
+    Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.scan.lookalike'; req = 'REQ-008.6'; pass = $true; desc = 'NI-VISA scan rows skipped on non-Windows host'; details = $skipDetails })
     exit 0
 }
 
@@ -83,7 +101,7 @@ function Invoke-VisaScenario {
         if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
         Set-Content -LiteralPath $target -Value $Files[$rel] -Encoding Ascii
     }
-    $names = @('HP_TEST_VISA_ANSWER', 'HP_TEST_FORCE_INTERACTIVE_VISA', 'HP_SKIP_NIVISA', 'HP_SKIP_PIPREQS', 'HP_VISA_DECISION')
+    $names = @('HP_TEST_VISA_ANSWER', 'HP_TEST_FORCE_INTERACTIVE_VISA', 'HP_SKIP_NIVISA', 'HP_SKIP_PIPREQS', 'HP_VISA_DECISION', 'HP_SKIP_ENTRY_SMOKE', 'HP_SKIP_EXE_SMOKERUN')
     $saved = @{}
     foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
     foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $null) }
@@ -159,6 +177,113 @@ function Get-PyvisaFreezeProblems {
     return $out.ToArray()
 }
 
+# ---- Item 124 judges (README REQ-008.5 and REQ-008.6). Each takes plain values and returns a list of problems and uses nothing but its
+# parameters, so tests/test_visa_scan.py can run it alone in strict mode on synthetic runs.
+
+# The files the scanner named in the setup log, in order, each as "<path> (<top folder|subfolder>)". The scanner writes one line per
+# matching file to stderr, at most three, and the batch file appends that stderr to ~setup.log.
+function Get-VisaFoundFiles {
+    param([string]$SetupText)
+    $out = New-Object System.Collections.ArrayList
+    foreach ($raw in ($SetupText -split "`r?`n")) {
+        $l = $raw.TrimEnd()
+        if ($l -match '\[VISA\] pyvisa/visa import found in: (.+) \((top folder|subfolder)\)$') { [void]$out.Add($Matches[1] + ' (' + $Matches[2] + ')') }
+    }
+    return $out.ToArray()
+}
+
+# How many lines of a console or a log are exactly this text, after the date and time the batch file puts in front of every line it logs
+# (or with nothing in front of it): the text is the whole line or follows a space.
+function Get-VisaLineCount {
+    param([string]$Text, [string]$Line)
+    $n = 0
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $l = $raw.TrimEnd()
+        if (-not $l.EndsWith($Line, [System.StringComparison]::Ordinal)) { continue }
+        if (($l.Length -eq $Line.Length) -or ($l.Substring($l.Length - $Line.Length - 1, 1) -eq ' ')) { $n++ }
+    }
+    return $n
+}
+
+# REQ-008.5. WantFile is the one import the scan has to find (three folders down), NotFiles are the files and folders it has to skip,
+# MissingFiles are the files of the fixture that are no longer in the folder after the run. The three [INFO] lines are the batch file's
+# own conclusions after the scan: only in a subfolder (2), next to run_setup.bat (1), nothing (0). The scanner prints every character
+# outside letters, digits and . _ - space \ as an underscore (a path is echoed unquoted), so a ~scratch.py that was taken is in the
+# setup log as _scratch.py: the judge looks for that printed form and names the file as it was planted.
+function Get-ScanSkipsProblems {
+    param([string]$SetupText, [string]$ConsoleText, [string]$WantFile, [string[]]$NotFiles, [string[]]$MissingFiles)
+    $problems = New-Object System.Collections.ArrayList
+    foreach ($m in $MissingFiles) {
+        [void]$problems.Add("precondition: the folder of the run no longer holds $m, so the scan had nothing to read or to skip")
+    }
+    $found = @(Get-VisaFoundFiles -SetupText $SetupText)
+    $wantLine = $WantFile + ' (subfolder)'
+    if (-not ($found -ccontains $wantLine)) {
+        [void]$problems.Add("the scan did not name $wantLine, so it did not read a subfolder three levels down")
+    }
+    foreach ($f in $found) {
+        if ($f -ceq $wantLine) { continue }
+        $known = $false
+        foreach ($n in $NotFiles) {
+            $printed = [regex]::Replace($n, '[^A-Za-z0-9._\- \\]', '_')
+            if ($f.StartsWith($printed + ' (', [System.StringComparison]::Ordinal)) {
+                $known = $true
+                [void]$problems.Add("the scan took $n for an import, and a file whose name starts with ~ and a folder whose name starts with ~ or a dot are skipped")
+            }
+        }
+        if (-not $known) { [void]$problems.Add("the scan named a file nobody planted as a match: $f") }
+    }
+    $only = '[INFO] Detected pyvisa/visa import only in a subfolder; the NI-VISA install needs your OK.'
+    $top = '[INFO] Detected pyvisa/visa import; NI-VISA install may be required.'
+    $none = '[INFO] No pyvisa/visa imports detected.'
+    $nOnly = Get-VisaLineCount -Text $ConsoleText -Line $only
+    if ($nOnly -ne 1) {
+        [void]$problems.Add("the console shows the line '$only' $nOnly time(s), expected 1")
+    }
+    if ((Get-VisaLineCount -Text $ConsoleText -Line $top) -gt 0) {
+        [void]$problems.Add("the console says an import sits next to run_setup.bat, so a skipped file was taken for an import: '$top'")
+    }
+    if ((Get-VisaLineCount -Text $ConsoleText -Line $none) -gt 0) {
+        [void]$problems.Add("the console says no import was detected although $WantFile holds one: '$none'")
+    }
+    $nDisabled = Get-VisaLineCount -Text $ConsoleText -Line '[VISA] skipped (disabled)'
+    if ($nDisabled -ne 1) {
+        [void]$problems.Add("precondition: the console shows '[VISA] skipped (disabled)' $nDisabled time(s), expected 1, so the run did not stop at the install step as asked")
+    }
+    return $problems.ToArray()
+}
+
+# REQ-008.6. ScanShownWorking is true when the scan of the scanskips run named its file; without it this row would also pass for a scan
+# that never ran.
+function Get-ScanLookalikeProblems {
+    param([string]$SetupText, [string]$ConsoleText, [string[]]$MissingFiles, [bool]$ScanShownWorking)
+    $problems = New-Object System.Collections.ArrayList
+    foreach ($m in $MissingFiles) {
+        [void]$problems.Add("precondition: the folder of the run no longer holds $m, so the scan had nothing to read")
+    }
+    if (-not $ScanShownWorking) {
+        [void]$problems.Add('precondition: the scan of self.nivisa.scan.skips did not name its file, so this row would pass for a scan that did not run')
+    }
+    foreach ($f in @(Get-VisaFoundFiles -SetupText $SetupText)) {
+        [void]$problems.Add("the scan took $f for an import of pyvisa or visa, and a module whose name only begins with those letters is not one")
+    }
+    $none = '[INFO] No pyvisa/visa imports detected.'
+    $nNone = Get-VisaLineCount -Text $ConsoleText -Line $none
+    if ($nNone -ne 1) {
+        [void]$problems.Add("the console shows the line '$none' $nNone time(s), expected 1")
+    }
+    foreach ($text in @('[INFO] Detected pyvisa/visa import; NI-VISA install may be required.', '[INFO] Detected pyvisa/visa import only in a subfolder; the NI-VISA install needs your OK.')) {
+        if ((Get-VisaLineCount -Text $ConsoleText -Line $text) -gt 0) {
+            [void]$problems.Add("the console says an import was detected: '$text'")
+        }
+    }
+    $nReq = Get-VisaLineCount -Text $ConsoleText -Line '[VISA] skipped (not_required)'
+    if ($nReq -ne 1) {
+        [void]$problems.Add("the console shows '[VISA] skipped (not_required)' $nReq time(s), expected 1")
+    }
+    return $problems.ToArray()
+}
+
 $mainPlain = "print('pyvisa-subfolder-main-ran')"
 $archived = "import visa`r`nprint('archived program')"
 $subFiles = @{ 'main.py' = $mainPlain; 'archive\old_tool.py' = $archived; 'requirements.txt' = 'pyvisa' }
@@ -215,6 +340,51 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ exit = $o.Exit; foundLine = $oFound; timedPromptShown = $oTimedPrompt; skippedSubfolderOnly = $oSkipped; noInstallStep = $oNoInstall }
 })
 
+# ---- scan: what the scan skips (REQ-008.5) and what it does not take for an import (REQ-008.6) ---------------------------------------
+# Two bootstraps with HP_SKIP_NIVISA=1 and without starting the program, before the accepted run (which may really install the driver).
+$scanEnv = @{ HP_SKIP_NIVISA = '1'; HP_SKIP_ENTRY_SMOKE = '1'; HP_SKIP_EXE_SMOKERUN = '1' }
+$deepFile = 'archive\2019\bench\old_tool.py'
+$skipPaths = @('~scratch.py', '~old\tool.py', '.hidden\tool.py')
+$scanFiles = @{
+    'main.py'          = $mainPlain
+    'requirements.txt' = 'pyvisa'
+    $deepFile          = $archived
+    '~scratch.py'      = "import pyvisa`r`nprint('skipped file')"
+    '~old\tool.py'     = "import pyvisa`r`nprint('skipped folder')"
+    '.hidden\tool.py'  = "import visa`r`nprint('skipped dot folder')"
+}
+$lookFiles = @{
+    'main.py'          = $mainPlain
+    'requirements.txt' = 'pyvisa'
+    'lookalikes.py'    = "import pyvista`r`nimport vision`r`nimport pyviscoelastic`r`nfrom pyvista import Plotter`r`nprint('lookalikes')"
+    'plots\view.py'    = "import pyvista as pv`r`nprint('plots')"
+}
+
+$sk = Invoke-VisaScenario -Name 'scanskips' -Files $scanFiles -EnvSet $scanEnv
+$skMissing = @(foreach ($rel in $scanFiles.Keys) { if (-not (Test-Path -LiteralPath (Join-Path $sk.Work $rel))) { $rel } })
+$skProblems = @(Get-ScanSkipsProblems -SetupText $sk.Setup -ConsoleText $sk.Console -WantFile $deepFile -NotFiles $skipPaths -MissingFiles $skMissing)
+$scanPass = [bool](@($skProblems).Count -eq 0)
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.nivisa.scan.skips'
+    req     = 'REQ-008.5'
+    pass    = $scanPass
+    desc    = 'The NI-VISA scan reads a subfolder three levels down and skips a file and a folder whose names start with ~ and a folder whose name starts with a dot'
+    details = [ordered]@{ exit = $sk.Exit; foundFiles = @(Get-VisaFoundFiles -SetupText $sk.Setup); problems = @($skProblems) }
+})
+
+$lk = Invoke-VisaScenario -Name 'lookalike' -Files $lookFiles -EnvSet $scanEnv
+$lkMissing = @(foreach ($rel in $lookFiles.Keys) { if (-not (Test-Path -LiteralPath (Join-Path $lk.Work $rel))) { $rel } })
+$scanWorked = [bool](@(Get-VisaFoundFiles -SetupText $sk.Setup) -ccontains ($deepFile + ' (subfolder)'))
+$lkProblems = @(Get-ScanLookalikeProblems -SetupText $lk.Setup -ConsoleText $lk.Console -MissingFiles $lkMissing -ScanShownWorking $scanWorked)
+$lookPass = [bool](@($lkProblems).Count -eq 0)
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.nivisa.scan.lookalike'
+    req     = 'REQ-008.6'
+    pass    = $lookPass
+    desc    = 'An import of pyvista, vision or pyviscoelastic is not taken for an import of pyvisa or visa'
+    details = [ordered]@{ exit = $lk.Exit; foundFiles = @(Get-VisaFoundFiles -SetupText $lk.Setup); scanShownWorking = $scanWorked; problems = @($lkProblems) }
+})
+
 # ---- accepted: the answer override says yes ---------------------------------------------------------
 $a = Invoke-VisaScenario -Name 'accepted' -Files $subFiles -EnvSet @{ HP_TEST_VISA_ANSWER = 'Y' }
 $aFound = $a.Setup -match $foundSub
@@ -245,5 +415,6 @@ Write-NdjsonRow ([ordered]@{
     details = [ordered]@{ declinedLine = (Get-PyvisaLine -FreezeText $dFreeze); acceptedLine = (Get-PyvisaLine -FreezeText $aFreeze); problems = @($pyProblems) }
 })
 
+if (-not ($scanPass -and $lookPass)) { exit 1 }
 if (-not ($dPass -and $aPass -and $tPass -and $oPass -and $pyPass)) { exit 1 }
 exit 0

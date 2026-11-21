@@ -33,8 +33,14 @@ PWSH = shutil.which("pwsh")
 HARD_TIMEOUT = 120  # seconds, for pwsh start-up on a busy runner
 
 ROW_IDS = ("self.nivisa.signals.noinput", "self.nivisa.signals.nonint", "self.nivisa.signals.control")
-ROW_REQ = "REQ-008.14"
-GAP_SHALL = "REQ-008.14"
+# The tag of each row. The control also names REQ-008.12, the length of the wait (Item 124): its recorded choice line, /T 30 and /D N,
+# is where the real block says so.
+ROW_REQ = {
+    "self.nivisa.signals.noinput": "REQ-008.14",
+    "self.nivisa.signals.nonint": "REQ-008.14",
+    "self.nivisa.signals.control": "REQ-008.12, REQ-008.14",
+}
+GAP_SHALLS = ("REQ-008.12", "REQ-008.14")
 
 GATE_START = ":visa_subfolder_gate"
 GATE_END = ":dll_bundle_recover"
@@ -234,8 +240,9 @@ def script_problems(text):
         found.append("each row id must be a literal at exactly two Write-NdjsonRow call sites (the shared one and its own), found %r" % ids)
     if sorted(p[0] for p in pairs) != sorted(list(ROW_IDS) * 2):
         found.append("every row id must be followed by its literal req tag, found %r" % pairs)
-    if any(p[1] != ROW_REQ for p in pairs):
-        found.append("every row must carry the literal req tag %r, found %r" % (ROW_REQ, [p[1] for p in pairs]))
+    for row_id, tag in pairs:
+        if tag != ROW_REQ.get(row_id):
+            found.append("%s must carry the literal req tag %r, found %r" % (row_id, ROW_REQ.get(row_id), tag))
     for scenario in ("Name = 'noinput'; Signal = 'set \"NOINPUT=1\"'; ExpectRead = $false",
                      "Name = 'nonint'; Signal = 'set \"HP_NONINTERACTIVE=1\"'; ExpectRead = $false",
                      "Name = 'control'; Signal = ''; ExpectRead = $true"):
@@ -339,10 +346,9 @@ def registry_problems(text):
 
 
 def shall_list_problems(text):
-    """The shall the rows trace is no longer listed as a gap (the shall-level ratchet only warns about a stale entry)."""
-    if re.search(r'^\s*"%s":' % re.escape(GAP_SHALL), text, re.M):
-        return ["%s is still listed in UNTRACED_SHALLS although a row is tagged with it" % GAP_SHALL]
-    return []
+    """The shalls the rows trace are no longer listed as a gap (the shall-level ratchet only warns about a stale entry)."""
+    return ["%s is still listed in UNTRACED_SHALLS although a row is tagged with it" % shall
+            for shall in GAP_SHALLS if re.search(r'^\s*"%s":' % re.escape(shall), text, re.M)]
 
 
 # --- the script's judging functions, run through a real pwsh ------------------------------------------------------------------
@@ -710,6 +716,15 @@ class ScriptRulesCanFail(unittest.TestCase):
         bad = mutate(self.script, "id = 'self.nivisa.signals.nonint'; req = 'REQ-008.14'; pass = $pass", "id = 'self.nivisa.signals.nonint'; req = 'REQ-008'; pass = $pass")
         self.assertTrue(any("req tag" in f for f in self.problems(bad)))
 
+    def test_a_control_that_stops_naming_the_wait_of_30_seconds_is_caught(self):
+        # the shall of the wait is traced by this one row, so dropping it from the tag leaves REQ-008.12 with no row at all
+        bad = mutate(self.script, "id = 'self.nivisa.signals.control'; req = 'REQ-008.12, REQ-008.14'; pass = $pass", "id = 'self.nivisa.signals.control'; req = 'REQ-008.14'; pass = $pass")
+        found = self.problems(bad)
+        self.assertTrue(any("self.nivisa.signals.control must carry" in f and "REQ-008.12" in f for f in found), found)
+        # and the skip row, which writes all three ids from one helper, is held to the same tags
+        bad = mutate(self.script, "id = 'self.nivisa.signals.control'; req = 'REQ-008.12, REQ-008.14'; pass = $Pass", "id = 'self.nivisa.signals.control'; req = 'REQ-008.14'; pass = $Pass")
+        self.assertTrue(any("self.nivisa.signals.control must carry" in f for f in self.problems(bad)))
+
     def test_a_scenario_that_changes_its_signal_or_stops_being_the_control_is_caught(self):
         bad = mutate(self.script, "Signal = 'set \"NOINPUT=1\"'", "Signal = 'set \"NOINPUT=\"'")
         self.assertTrue(any("scenario list" in f for f in self.problems(bad)))
@@ -784,6 +799,9 @@ class ScriptRulesCanFail(unittest.TestCase):
     def test_a_shall_that_is_still_listed_as_a_gap_is_caught(self):
         self.assertTrue(shall_list_problems('    "REQ-008.14": "gap: x",\n'))
         self.assertEqual(shall_list_problems('    "REQ-008.140": "gap: x",\n'), [])
+        # the inspection entry of the wait (Item 124) is a stale entry as well
+        self.assertTrue(shall_list_problems('    "REQ-008.12": "inspection: run_setup.bat :: set HP_VISA_T=30",\n'))
+        self.assertEqual(shall_list_problems('    "REQ-008.120": "inspection: x",\n'), [])
 
 
 @unittest.skipUnless(PWSH, "pwsh not available")

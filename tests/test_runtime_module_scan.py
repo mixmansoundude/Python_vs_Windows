@@ -279,8 +279,9 @@ class BatchCallSites(unittest.TestCase):
     def test_the_rebuild_passes_both_flags_for_each_installed_module(self):
         # README REQ-018.19: --hidden-import and --collect-submodules for each installed module. The program loads the
         # package by a computed name, so self.runtime.install.accept shows the first flag by behavior (the check run is
-        # clean only if the EXE holds the package); nothing runs the second flag, so its way onto the PyInstaller command
-        # line is pinned here as text (CodeRabbit, PR 517).
+        # clean only if the EXE holds the package). Item 124: self.runtime.install.submodules shows the second flag by
+        # behavior too (a package submodule nothing imports is in the rebuilt EXE, and absent from a control build made with
+        # --hidden-import alone); the command line is still pinned here as text, the cheap local check (CodeRabbit, PR 517).
         i = re.search(r"(?m)^:rti_rebuild", self.bat).start()
         body = self.bat[i:self.bat.index("\n:rti_row", i)]
         add = body[body.index(":rti_add_hidden"):]

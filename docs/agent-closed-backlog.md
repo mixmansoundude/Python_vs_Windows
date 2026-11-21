@@ -4746,6 +4746,106 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
 - **Evidence.** The reading of the rows on the fix run is in the squash commit message. `self.sysbuild.accept` and `self.sysbuild.wording`
   join `tests/expected_rows/` once they have appeared in two green runs (lane 1 owns it).
 
+### Item 124 (shipped 2026-11-21; REQ-018.6, .13, .19 and .30 and REQ-008.5, .6 and .12 as rows, the unit-only shalls the Item 123 entry listed as left)
+
+- **The problem.** Seven shalls were proved only by tests that run a helper alone, cut a block out of `run_setup.bat` or read its text, and by no row
+  that runs the bootstrapper the way a person does and reads what the user sees (the seven `unit:` and `inspection:` entries of
+  `tests/test_req_shall_trace.py`). REQ-018.6 (the verification run is force-stopped only when it has printed nothing 30 seconds after it
+  started; any output, a prompt that waits for input included, keeps it going): `tests/test_exe_smokerun.py` shows both halves on the smoke
+  runner alone with the wait cut to a fraction of a second by a test-only override, and nothing ran the wait production uses (30000 ms; the
+  batch file never sets the override) on an EXE the bootstrapper built. REQ-018.13 (a standard library module and a module next to the script
+  are not reported as missing, and the cached-EXE fast path skips the check): `tests/test_runtime_module_scan.py` ran the helper on synthetic
+  text. REQ-008.5 and .6 (the NI-VISA scan skips `~` files and `~` and dot folders, reads every subfolder, and does not take `pyvista` or
+  `vision` for `visa`): `tests/test_detect_visa.py` ran `tools/detect_visa.py` on folders. REQ-008.12 (the question waits at most 30 seconds)
+  was an `inspection:` entry because `self.nivisa.subfolder.timeout` shortens the wait to 2 seconds, although `self.nivisa.signals.control`
+  already reads the `choice /T 30 /D N` line of the real block and was tagged for REQ-008.14 only. REQ-018.19 (a yes under REQ-018.14 rebuilds
+  the EXE with `--hidden-import` and `--collect-submodules` for each installed module): `self.runtime.install.accept` installs a package whose
+  check run is clean with the first flag alone, so a rebuild that dropped the second flag would have passed it. REQ-018.30 (the window question
+  says the check stops the program after 30 seconds): the `self.lastchance.window_*` rows matched only `Did it open and work`, and the
+  wording was a static pin.
+- **What shipped (test only, no product text changed; Windows rows first run green or red for a real defect, see Evidence).**
+  - *REQ-018.6, `tests/selfapps_launch_cap.ps1`, rows `self.launch.cap.silent` and `self.launch.cap.output` (contract-uv, gating from the
+    first run).* Two default bootstraps of one-file programs with the production 30 second wait, each in its own folder. A PyInstaller onefile
+    EXE is two processes and the runner's `Kill()` ends the bootloader only (Item 110), so the length of the bootstrap says nothing about when
+    the stop happened. The script therefore takes the process id from the runner's own `[INFO] Process ID <n>.` line, opens that process as
+    soon as the line appears and reads the stop from the process's own start and end time (a polled fallback when the times cannot be read;
+    the row says which source it used, `lifetimeSource`). `silent`: a program that prints nothing for 75 seconds must have written its first
+    ledger line from the frozen EXE, and the process must have lived 28 to 45 seconds, with `Entry smoke exit=-1` and the TIMED OUT status
+    line on the console. `output`: a program that prints `Launch cap name? ` through `input()` and waits; the script writes the answer to the
+    bootstrap's standard input 46 seconds after the program's first ledger line, so the program has waited past the cap by its own clock;
+    the prompt must have reached the console within 30 seconds, the EXE must have lived at least 44 seconds, and the console must say
+    `Entry smoke exit=0` and `Run Status: SUCCESS` with no TIMED OUT line. Whether the program below the bootloader ends after the stop is
+    recorded (`programSurvivedStop`) and not judged, because no shall names it (Item 110 is the work that would).
+  - *REQ-018.13, two rows in `tests/selfapps_runtime_modnotfound.ps1` (real lane).* `self.runtime.scan.skipped` bootstraps one program that
+    prints three tracebacks to stderr and exits 0: a package nobody installed (`xlsxwriter`), a standard library module Windows does not have
+    (`fcntl`) and a module file next to the script (`rtmsibling.py`, which the frozen EXE cannot import because the folder is not on its path);
+    every name is joined at run time. Passing needs all three `ModuleNotFoundError` lines in `~run.err.txt` (the premise), the console `[WARN]`
+    line for `xlsxwriter` exactly once and for nothing else, the closing reminder to list only `xlsxwriter`, and the
+    `self.runtime.module_missing` rows to name only it; naming `xlsxwriter` is also what proves the scan ran. `self.runtime.scan.fastpath`
+    bootstraps the same folder again with `HP_TEST_FORCE_INTERACTIVE_PROBE=1`, which makes the cached-EXE fast path launch the EXE through
+    the probe, so the program's traceback reaches the console live (the plain fast path redirects it to files); the premise is exactly one
+    `Launching your program now via the cached standalone EXE` line, no rebuild and the `xlsxwriter` traceback on the console after it, and
+    then no `[WARN]` that names a module, no reminder and no row (no interpreter exists yet on that path).
+  - *REQ-008.5 and .6, two rows in `tests/selfapps_pyvisa_subfolder.ps1` (real and conda-full lanes).* `self.nivisa.scan.skips` and
+    `self.nivisa.scan.lookalike` bootstrap real folders with `HP_SKIP_NIVISA=1` (the run stops at `[VISA] skipped (disabled)` before any
+    install step, so a wrong scan can never start a driver install) and with the program not started. `skips`: one `import visa` three folders
+    down is the only match; one `import pyvisa` or `import visa` in each of `~scratch.py`, `~old\tool.py` and `.hidden\tool.py` is not, the
+    setup log names the deep file and no other (the scanner prints a `~` as an underscore, so a taken `~scratch.py` reads `_scratch.py`),
+    every fixture file is still in the folder afterwards, and the console shows `Detected pyvisa/visa import only in a subfolder` once.
+    `lookalike`: `import pyvista`, `import vision`, `import pyviscoelastic` and `from pyvista import Plotter`, one file next to
+    `run_setup.bat` and one in a subfolder, are not matches (`No pyvisa/visa imports detected.` once, `[VISA] skipped (not_required)` once, no
+    file named); it also needs the deep file of the first row to have been found, so a scan that never ran cannot pass it.
+  - *REQ-008.12, no new row.* `self.nivisa.signals.control` now carries the tag `REQ-008.12, REQ-008.14`: with no signal the real block reads
+    the console exactly once with `/T 30 /D N` and honors the stub's yes.
+  - *REQ-018.30, `Get-WindowQuestionProblems` in `tests/selfapps_lastchance.ps1`, judged in `self.lastchance.window_yes`.* The console must hold
+    the three lines of the question each exactly once and in order: `*** Your program printed nothing, so the check stopped it after about 30
+    seconds. ***`, `*** A program with a window prints nothing in this console, so that alone does not mean it failed. ***` and `*** Did it
+    open and work? [y/N] ***`. A reworded statement turns the row red, so the shall and the wording are looked at together;
+    `tests/test_window_confirm.py` compares the three lines with the echo lines of `:lc_window` and runs the judge on synthetic consoles. The
+    stop itself is measured by `self.launch.cap.silent`, which runs with the default wait and no override.
+  - *REQ-018.19, `self.runtime.install.submodules` in `tests/selfapps_runtime_install.ps1` (real lane).* A program that loads `pytz` and
+    `pytz.reference` by names it joins at run time (so neither a static scan nor an earlier build sees either), answered yes. The runtime scan
+    reports only a top-level name that is not installed, so a submodule missing from the rebuilt EXE of an installed package is invisible to it
+    and the install row says `verified` either way; the check run is the only evidence. The row requires the first run's report of `pytz`, the
+    install and rebuild lines, the package in the program's own environment, the install row `verified` with status `ok`, and a check run
+    that prints `loaded pytz`, `loaded pytz.reference` and `submodule app done` with no `No module named` on its error output. The second half
+    is a control: the script builds the same program once by hand with `--hidden-import=pytz` alone (the first half of what `:rti_rebuild`
+    passes) into `~control\`, and that EXE must load `pytz`, must NOT load `pytz.reference` and must report it missing. So the row can fail
+    only when `--collect-submodules` is dropped, and if a later PyInstaller starts bringing the submodule with the first flag alone, the
+    control row goes red with the sentence that says so and the fixture needs another package: the scenario proves its own premise instead of
+    passing vacuously. (Measured locally against PyInstaller 6.22.3 and pyinstaller-hooks-contrib 2026.10: the control lacks the submodule, a
+    build with `--collect-submodules=pytz` has it.)
+- **How it is kept honest.** Each script keeps its judging in functions that take plain values and return a list of problems (`Get-SilentCapProblems`,
+  `Get-OutputCapProblems`, `Get-LaunchCapLogFacts`, `Get-LaunchCapLedgerFacts`, `Get-LaunchCapProcessId`, `Get-ScanSkipProblems`,
+  `Get-FastPathScanProblems`, `Get-ScanSkipsProblems`, `Get-ScanLookalikeProblems`, `Get-VisaFoundFiles`, `Get-VisaLineCount`,
+  `Get-SubmoduleProblems`, `Get-WindowQuestionProblems`), and the new unit tests run them through real `pwsh` in strict mode on synthetic runs
+  with one red case for each comparison and the consoles built from the real `call :log` and echo lines of the batch file:
+  `tests/test_launch_cap.py` (100 tests: the judges, the two programs run on a POSIX host, the step and its uploads, literal row ids and tags),
+  `tests/test_scan_skip_rows.py` (48), `tests/test_visa_scan.py` (45 tests and 83 subtests: it builds the two fixture folders from the
+  script's own text, runs the real `tools/detect_visa.py` on them, and runs it with one rule broken at a time, which a judge must report
+  with the file named), `tests/test_submodule_row.py` (46), plus additions to `tests/test_window_confirm.py`, `tests/test_visa_signals.py` and
+  `tests/test_runtime_module_scan.py`. The seven `unit:` and `inspection:` entries are gone from `UNTRACED_SHALLS`; what stays there is REQ-002.15,
+  REQ-007.12 and REQ-016.8.
+- **Stated limits (also in the scripts' headers and the registry entries).** `self.launch.cap.*` measure the runner's stop of the EXE the bootstrapper
+  started; the program below a onefile bootloader may outlive the stop and the rows record that without judging it. The NI-VISA scan rows run
+  with the install switched off, so they prove what the scan finds and not what the install does with it (the `accepted`, `declined` and
+  `topfolder` rows already do that). `self.runtime.scan.fastpath` forces the interactive probe, which is how a person's double-click reaches
+  the cached EXE with a console; the redirected fast path of CI shows nothing of the program's stderr. The submodule control depends on the
+  PyInstaller release (above).
+- **For the README owner (lane 3 owns README.md; the proposed wording is in the PR body).** The Tests note of REQ-008 can name
+  `self.nivisa.scan.skips` and `self.nivisa.scan.lookalike` next to `tests/test_detect_visa.py` for REQ-008.5 and REQ-008.6, and
+  `self.nivisa.signals.control` for REQ-008.12. The REQ-018 notes can name `self.launch.cap.silent` and `.output` (REQ-018.6),
+  `self.runtime.scan.skipped` and `.fastpath` (REQ-018.13), `self.runtime.install.submodules` (REQ-018.19) and the exact question text
+  judged in `self.lastchance.window_yes` (REQ-018.30).
+- **Left.** REQ-007.12 stays a `unit:` entry (the double gate on the curated packages is shown by `tests/test_collect_submodules.py`, not by
+  looking into a built EXE), REQ-016.8 stays `inspection:` (every CI lane carries the CI marker, so no row reaches a `pause`) and REQ-002.15
+  stays `unit:` (the picker's wait is shortened to 2 seconds in the rows that run it). Item 110 (the smoke runner and the optimized build's
+  verification line stop the process they started and not the program below it) is the work that would turn the `programSurvivedStop` that
+  `self.launch.cap.silent` records into a judged value, and it needs a README shall to name first.
+- **Evidence.** Filled in after the first Windows run. The new row ids (`self.launch.cap.silent`, `self.launch.cap.output`,
+  `self.runtime.scan.skipped`, `self.runtime.scan.fastpath`, `self.nivisa.scan.skips`, `self.nivisa.scan.lookalike`,
+  `self.runtime.install.submodules`) join `tests/expected_rows/` after two green runs (lane 1 owns it).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python

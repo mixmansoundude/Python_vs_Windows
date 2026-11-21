@@ -31,6 +31,17 @@
 # covers, and the log says "verified" when its output no longer names the module; the other half of the shall (the log
 # says the module is still named) is the row self.runtime.install.stillmissing in selfapps_runtime_install_edges.ps1.
 #
+#
+# Item 124 (README REQ-018.19): self.runtime.install.submodules is a fifth bootstrap, of a program that loads pytz and
+# pytz.reference by names built at run time. pytz never imports pytz.reference, so PyInstaller brings that module into an
+# EXE only when the rebuild passes --collect-submodules=pytz; --hidden-import=pytz alone leaves it out (PyInstaller 6.22.3
+# with pyinstaller-hooks-contrib 2026.10: the second import fails with No module named 'pytz.reference'). The runtime scan
+# cannot see that failure: it reports top-level names that are not installed and pytz is installed by then, so the install
+# row says verified either way. The row therefore reads the check run's own output, and a control build of the same program
+# with only --hidden-import=pytz, made with the environment the bootstrapper built, must lack the second line: without the
+# control, a hook or a PyInstaller release that collected pytz.reference by itself would let the row pass for a rebuild
+# that had dropped the flag.
+#
 # Lane: real only (uv provider; the install and the environment check use .uv_env).
 param()
 $ErrorActionPreference = 'Continue'
@@ -107,6 +118,13 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         desc    = 'the prompt tells the user that running the program twice could cause harm (skipped on non-Windows)'
         details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
     })
+    Write-NdjsonRow ([ordered]@{
+        id      = 'self.runtime.install.submodules'
+        req     = 'REQ-018.19'
+        pass    = $true
+        desc    = 'after a yes the rebuilt EXE holds the installed package and a submodule that only --collect-submodules brings (skipped on non-Windows)'
+        details = [ordered]@{ skip = $true; reason = 'non-windows-host' }
+    })
     exit 0
 }
 
@@ -144,18 +162,42 @@ if __name__ == "__main__":
     print("runtime app ok")
 '@
 
+# The program of the submodule row (README REQ-018.19). Both names are built at run time, so neither pipreqs nor PyInstaller sees an
+# import and the program needs the consented install and the rebuild's flags. pytz never imports pytz.reference, which is what makes
+# the second flag visible. A failed import goes to stderr and the program carries on and exits 0, like the program above.
+$submoduleAppCode = @'
+import importlib
+import traceback
+
+
+def load(name):
+    try:
+        importlib.import_module(name)
+        print("loaded " + name)
+    except ImportError:
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    package = "".join(("pyt", "z"))
+    load(package)
+    load(package + "." + "".join(("refer", "ence")))
+    print("submodule app done")
+'@
+
 # The header the PEP 723 scenario starts with: the dependency source is the header alone (one package, six).
 $pep723Header = "# /// script`n# dependencies = [`n#     `"six`",`n# ]`n# ///`n"
 
 # Runs one bootstrap of the fixture with the given answer and returns everything the rows need.
 function Invoke-InstallScenario {
-    param([string]$Name, [string]$Answer, [switch]$Pyproject, [switch]$Pep723)
+    param([string]$Name, [string]$Answer, [switch]$Pyproject, [switch]$Pep723, [string]$AppSource = '', [string]$Module = 'xlsxwriter')
     $workDir = Join-Path $here ('~selftest_runtime_install_' + $Name)
     if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
     New-Item -ItemType Directory -Force -Path $workDir | Out-Null
     Copy-Item -Path $batchPath -Destination $workDir -Force
     $appText = $appCode
-    if ($Pep723) { $appText = $pep723Header + $appCode }
+    if ($AppSource) { $appText = $AppSource }
+    if ($Pep723) { $appText = $pep723Header + $appText }
     Set-Content -Path (Join-Path $workDir 'app.py') -Value $appText -Encoding ASCII
     $pyprojText = ''
     if ($Pyproject) {
@@ -193,7 +235,7 @@ function Invoke-InstallScenario {
 
     $envHasModule = $false
     if (Test-Path $pyPath) {
-        & $pyPath -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('xlsxwriter') else 1)" 2>$null
+        & $pyPath -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('$Module') else 1)" 2>$null
         $envHasModule = ($LASTEXITCODE -eq 0)
     }
 
@@ -313,6 +355,80 @@ function Get-LogExcerpt {
         }
     }
     return ,$keep
+}
+
+# A program's output for a red row: printable ASCII only, line ends shown as " | ", cut short.
+function Get-OutputExcerpt {
+    param([string]$Text, [int]$Max = 300)
+    if (-not $Text) { return '' }
+    $kept = New-Object System.Collections.ArrayList
+    foreach ($l in ($Text -split "`r?`n")) { if ($l.Trim()) { [void]$kept.Add($l.Trim()) } }
+    $flat = ($kept.ToArray() -join ' | ') -replace '[^\x20-\x7E]', '?'
+    if ($flat.Length -gt $Max) { $flat = $flat.Substring(0, $Max) }
+    return $flat
+}
+
+# The control of the submodule row (README REQ-018.19): the same program built with the command line of :rti_rebuild minus
+# --collect-submodules, by the PyInstaller of the environment the bootstrapper just built, and started once. Its output says
+# whether --hidden-import alone brings the submodule; the row means something only while it does not.
+function Invoke-ControlBuild {
+    param([string]$WorkDir, [string]$Module)
+    $py       = Join-Path $WorkDir '.uv_env\Scripts\python.exe'
+    $root     = Join-Path $WorkDir '~control'
+    $buildLog = Join-Path $WorkDir '~control_build.log'
+    $outPath  = Join-Path $WorkDir '~control_out.txt'
+    $errPath  = Join-Path $WorkDir '~control_err.txt'
+    foreach ($old in @($root, $buildLog, $outPath, $errPath)) {
+        if (Test-Path -LiteralPath $old) { Remove-Item -Recurse -Force -LiteralPath $old }
+    }
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $exe = Join-Path $root 'dist\control.exe'
+    $buildExit = -1
+    if (Test-Path -LiteralPath $py) {
+        & $py -m PyInstaller -y --onefile --clean --log-level WARN "--hidden-import=$Module" --distpath (Join-Path $root 'dist') --workpath (Join-Path $root 'work') --specpath $root --name control (Join-Path $WorkDir 'app.py') > $buildLog 2>&1
+        $buildExit = $LASTEXITCODE
+    }
+    $built = ($buildExit -eq 0) -and (Test-Path -LiteralPath $exe)
+    $runExit = -1
+    if ($built) {
+        & $exe > $outPath 2> $errPath
+        $runExit = $LASTEXITCODE
+    }
+    $out = ''
+    $err = ''
+    if (Test-Path -LiteralPath $outPath) { $out = [System.IO.File]::ReadAllText($outPath) }
+    if (Test-Path -LiteralPath $errPath) { $err = [System.IO.File]::ReadAllText($errPath) }
+    [pscustomobject]@{ Built = $built; BuildExit = $buildExit; RunExit = $runExit; Out = $out; Err = $err }
+}
+
+# What is wrong with the submodule scenario; nothing when the program was reported missing, installed, rebuilt and verified, the check
+# run loaded the package AND the submodule nothing imports, and the control EXE (built with --hidden-import alone) loaded the package
+# and reported the submodule as missing. It reads plain values only, so a unit test can run it on synthetic runs; each comparison is
+# its own if, so every wrong run is named by its own words.
+function Get-SubmoduleProblems {
+    param([int]$BootstrapExit, [bool]$FirstRunNamedModule, [bool]$Installed, [bool]$EnvHasModule, [bool]$Rebuilt,
+          [string]$RowState, [string]$StatusState, [string]$CheckOut, [string]$CheckErr,
+          [bool]$ControlBuilt, [string]$ControlOut, [string]$ControlErr)
+    $out = New-Object System.Collections.ArrayList
+    if ($BootstrapExit -ne 0) { [void]$out.Add("the bootstrap ended with exit code $BootstrapExit, expected 0") }
+    if (-not $FirstRunNamedModule) { [void]$out.Add('the first run never reported pytz as missing, so the scenario did not start from the symptom') }
+    if (-not $Installed) { [void]$out.Add('the log does not say that pytz was installed after the yes') }
+    if (-not $EnvHasModule) { [void]$out.Add("pytz is not in the program's own environment after the yes") }
+    if (-not $Rebuilt) { [void]$out.Add('the log does not say that the EXE was rebuilt after the install') }
+    if ($RowState -ne 'verified') { [void]$out.Add("the install row says state $RowState, expected verified") }
+    if ($StatusState -ne 'ok') { [void]$out.Add("the bootstrap status says state $StatusState, expected ok") }
+    if ($CheckOut -notmatch '(?m)^loaded pytz\s*$') { [void]$out.Add('the check run did not load pytz, so the rebuilt EXE does not hold the package') }
+    if ($CheckOut -notmatch '(?m)^loaded pytz\.reference\s*$') { [void]$out.Add('the check run did not load pytz.reference, so the rebuilt EXE lacks a submodule nothing imports and the rebuild did not pass --collect-submodules') }
+    if ($CheckErr -match 'No module named') { [void]$out.Add('the check run printed No module named on its error output') }
+    if ($CheckOut -notmatch '(?m)^submodule app done\s*$') { [void]$out.Add('the check run never printed its last line, so the program did not run to its end') }
+    if (-not $ControlBuilt) {
+        [void]$out.Add('the control build with --hidden-import alone did not produce an EXE')
+    } else {
+        if ($ControlOut -notmatch '(?m)^loaded pytz\s*$') { [void]$out.Add('the control EXE did not load pytz, so --hidden-import alone did not bring the package and the control proves nothing') }
+        if ($ControlOut -match '(?m)^loaded pytz\.reference\s*$') { [void]$out.Add('the control EXE, built with --hidden-import alone, already holds pytz.reference, so this program no longer shows what --collect-submodules adds') }
+        if ($ControlErr -notmatch "No module named 'pytz\.reference'") { [void]$out.Add('the control EXE did not report pytz.reference as missing') }
+    }
+    return $out.ToArray()
 }
 
 # ---- accept: a yes installs, adds to requirements.txt, rebuilds with --hidden-import, checks ----
@@ -544,5 +660,38 @@ Write-NdjsonRow ([ordered]@{
     }
 })
 
-if (-not ($aPass -and $dPass -and $pPass -and $ePass -and $wPass -and $rPass)) { exit 1 }
+# ---- submodules (README REQ-018.19): the rebuild after a yes also passes --collect-submodules ----
+# After a yes the rebuilt EXE must hold the package AND pytz.reference, which nothing imports. The scan cannot tell (pytz is installed by
+# then, so the state is verified either way), so the row reads the check run's own output. The control, built from the same environment
+# with --hidden-import alone, must lack the submodule: otherwise the row would pass without the second flag.
+$s = Invoke-InstallScenario -Name 'submodules' -Answer 'Y' -AppSource $submoduleAppCode -Module 'pytz'
+$ctl = Invoke-ControlBuild -WorkDir $s.WorkDir -Module 'pytz'
+$sFirstRun  = $s.SetupText -match 'Your program needed the module pytz'
+$sInstalled = $s.SetupText -match 'Runtime install: installed pytz'
+$sRebuilt   = $s.SetupText -match '\[REPAIR\] rebuild complete after runtime install'
+$sArgs = @{
+    BootstrapExit = [int]$s.RunExit; FirstRunNamedModule = [bool]$sFirstRun; Installed = [bool]$sInstalled
+    EnvHasModule = [bool]$s.EnvHasModule; Rebuilt = [bool]$sRebuilt; RowState = [string]$s.InstallState; StatusState = [string]$s.StatusState
+    CheckOut = [string]$s.OutText; CheckErr = [string]$s.ErrText
+    ControlBuilt = [bool]$ctl.Built; ControlOut = [string]$ctl.Out; ControlErr = [string]$ctl.Err
+}
+$sProblems = @(Get-SubmoduleProblems @sArgs)
+$sPass = ($sProblems.Count -eq 0)
+$sDetails = [ordered]@{
+    exitCode = $s.RunExit; firstRunNamedModule = $sFirstRun; installed = $sInstalled; envHasModule = $s.EnvHasModule
+    rebuilt = $sRebuilt; rowState = $s.InstallState; statusState = $s.StatusState
+    checkOut = (Get-OutputExcerpt $s.OutText); checkErr = (Get-OutputExcerpt $s.ErrText)
+    controlBuilt = $ctl.Built; controlBuildExit = $ctl.BuildExit; controlRunExit = $ctl.RunExit
+    controlOut = (Get-OutputExcerpt $ctl.Out); controlErr = (Get-OutputExcerpt $ctl.Err)
+}
+if (-not $sPass) { $sDetails['problems'] = @($sProblems); $sDetails['log'] = (Get-LogExcerpt $s.SetupText) }
+Write-NdjsonRow ([ordered]@{
+    id      = 'self.runtime.install.submodules'
+    req     = 'REQ-018.19'
+    pass    = $sPass
+    desc    = 'after a yes the rebuilt EXE holds the installed package and a submodule that only --collect-submodules brings, and a build with --hidden-import alone does not'
+    details = $sDetails
+})
+
+if (-not ($aPass -and $dPass -and $pPass -and $ePass -and $wPass -and $rPass -and $sPass)) { exit 1 }
 exit 0

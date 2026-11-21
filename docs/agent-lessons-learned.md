@@ -1732,3 +1732,53 @@ which no test had ever shown. What made the rule usable and hard to cheat:
   runner's python, puts its `Scripts` folder first on `PATH`, fails the other tiers by decree and answers Y to both consent questions, so
   PyInstaller lands in the venv. It does not verify what is specific to a python.org installation (its folder layout, its registry entries
   and the `py` launcher): the row shows only that the bootstrapper takes the first python it finds, builds with it and runs the EXE.
+
+## A time limit in the product is measured on the clock of the process it limits, and a test of "any output keeps it going" must hold the input open (Item 124, REQ-018.6)
+
+README REQ-018.6 says the verification run of a new build is force-stopped only if the program printed nothing 30 seconds after it started.
+The runner's own unit tests cut the wait to a fraction of a second; no row ran the wait production uses on an EXE the bootstrapper built.
+What the two rows (`self.launch.cap.silent`, `.output`) had to get right:
+- **The length of the bootstrap is not the stop.** A PyInstaller onefile EXE is two processes. The runner's `Kill()` ends the bootloader and
+  its poll loop waits for both pipes to end with no bound of its own, so the bootstrap lasts until the program below the bootloader ends
+  (75 seconds for the silent program, not 30). The runner prints `[INFO] Process ID <n>.` right after `Start()`; the script opens that
+  process by id as soon as the line is on the console and reads its own start and exit time. The row records, and does not judge, whether
+  the program below it outlived the stop (CLAUDE.md Item 110).
+- **A silent standard input needs a process, not a redirect.** A file redirect is at its end and answers `input()` at once, so the program
+  never waits and the row proves nothing about the cap. The script starts `cmd.exe` with `System.Diagnostics.Process`, keeps the redirected
+  `StandardInput` and writes the answer 46 seconds after the program's own first ledger line (so the wait is by the program's clock, not the
+  script's) and the judge requires the answer to have come at least 44 seconds after the start. A scenario that closes the input at once
+  (`< nul`) is for the silent program only.
+- **Do not assert how many problems a judge returns.** A judge written as `if ... elseif` silences a comparison that cannot apply (no answer, so
+  no answer delay; no process id, so no lifetime), and the first test of the all-wrong case expected ten and got eight. The test now names each
+  problem by its own words. A "can fail" case for a judge is one synthetic run per comparison; assert that the problem sentence names the number.
+- **A mutation case needs behavior to change.** `$id = 0` followed by `if (-not [int]::TryParse(...)) { return 0 }` is the same function with
+  or without the guard, so no input can show a mutation of it (TryParse leaves 0 behind on failure). The guard was removed from the script, and the
+  case now mutates the parse itself into a cast, which throws on a number that does not fit an int and so ends the driver with an error.
+- **A test must not print the container it searched.** `assertIn(rid, ids)` printed the whole registry set when an id was missing, which is
+  several thousand characters of noise; assert `rid in ids` with a message that names the id and the file.
+
+## A flag whose effect the check cannot see needs a fixture that discriminates and a control built without the flag (Item 124, REQ-018.19)
+
+README REQ-018.19 says the rebuild after a consented install passes `--hidden-import` and `--collect-submodules` for each installed
+module. `self.runtime.install.accept` showed the first flag by behavior (its check run is clean only if the EXE holds the package) and the
+second was only a text pin: no program of any row needed it. What it took to show it (`self.runtime.install.submodules`, `tests/test_submodule_row.py`):
+- **Probe the premise with the real tool before writing the row.** A venv with PyInstaller 6.22.3 and pyinstaller-hooks-contrib 2026.10 built
+  the same program twice on Linux. `--hidden-import=pytz` alone leaves `pytz.reference` out of the EXE (`ModuleNotFoundError: No module named
+  'pytz.reference'` at run time), `--collect-submodules=pytz` has it. `xlsxwriter`, the package of the older rows, imports everything it
+  has from its `__init__`, so no submodule of it can show the flag. The first guess of a fixture is a guess until a build says so.
+- **The scan is blind to it, so the program's own output is the evidence.** `tools/runtime_module_scan.py` reports a TOP-LEVEL name that is
+  not installed; a submodule missing from the EXE of an installed package reads as `verified`. The program prints `loaded <name>` for each
+  name it loads (both names joined at run time, so neither pipreqs nor PyInstaller sees an import) and a last line, and the row reads
+  `~run.out.txt` and `~run.err.txt`, which hold the CHECK run's output after the nested verification.
+- **A control is the premise, not a garnish.** The script builds the same program by hand with the rebuild's command line minus the flag under
+  test (`--hidden-import=pytz` alone, in `~control\`) and requires that EXE to load the package, lack the submodule and report it missing.
+  Without it the row passes whenever the submodule happens to be in the EXE for another reason, and a later PyInstaller or contrib hook that
+  starts bringing it with the first flag alone would leave a row that proves nothing and stays green. With it that day is a red row with
+  the sentence "already holds pytz.reference", and the repair is another package, not a relaxed row. Pin that the control stays the rebuild
+  minus the flag (`:rti_add_hidden` holds exactly the two flags, the control line has no `collect`).
+- **A regex that finds a name inside a longer name judges the wrong thing.** `loaded pytz` is the start of `loaded pytz.reference`; the test
+  is `(?m)^loaded pytz\s*$` and a mutation case loosens it and must see the run that holds only the submodule pass.
+- **An isolating case may be unrealistic.** A control that holds the submodule and still reports it missing never happens, but it is the one
+  run that violates only the "already holds" comparison, which is what the mutation case needs. The realistic run (two problems) is asserted
+  as well. The control's own build writes files next to the program (`~control_build.log`, `~control_out.txt`, `~control_err.txt`), so they
+  are named, in both slash spellings, in the workflow's upload list like the other scenario files.
