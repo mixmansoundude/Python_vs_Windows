@@ -4190,6 +4190,13 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   names no module, the test answer yes: exactly one start, no question, no accepted line, no rebuild, the no-package log line) and
   `self.repair.noread.starts` (the accepted run of the older rows: starts equal 1 plus rebuilds). `tests/selfapps_workdir.ps1`'s
   repair row needs two starts now, not three.
+- **Evidence.** Red first (run `44893863939`, head `88c8860`): only the two new rows red, every other lane zero red, the gate "0 missing".
+  Fix run `44917930968` (head `5c2107f`): both new rows green on `real`, and the one red row was `self.workdir.repair` on conda-full, whose
+  frozen-start proof still required three EXE starts while its ledger minimum had already moved to two; fixed with a unit pin
+  (`tests/test_workdir_start.py`) in `6adf808`. Green run `44944966964` (head `6adf808`): all eight lanes zero red, the gate "0 missing"
+  in both stages, `self.repair.noread.plain` 1 start and `.starts` 2 starts (1 + 1 rebuild) on `real`, `self.workdir.repair` 2 starts,
+  `self.repair.consent.accepted` 2 starts and `.declined` 1, `self.repair.cap` 2 starts, and the `self.launch.count.*` and
+  `self.hint.*` rows unchanged. The two new ids are listed in `tests/expected_rows/real.txt` from runs `44917930968` and `44944966964`.
 - **README wording proposed** in the PR body for the README owner: the mechanism note of REQ-007.13 says the loop starts the
   program to read its error; it reads the check run's error instead.
 
