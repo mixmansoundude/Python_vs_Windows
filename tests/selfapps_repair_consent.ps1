@@ -35,6 +35,14 @@
 # answer is yes): the program must be started exactly once, no question may be shown, nothing may be rebuilt, and the log
 # says why. noread.starts reads the accepted run: the starts are the check run plus one per rebuild, not one more.
 #
+# Item 129 (found by CodeRabbit on the follow-up (a) PR): the arguments the user gave on the command line (README REQ-026,
+# `run_setup.bat app.py --input "data file.csv"`) reach the check run and the optimized build's verification run, and the log
+# says they are forwarded "at every launch", but the loop's own start line gave the rebuilt EXE none. A program that parses a
+# required argument before it imports the package the loop adds got through the check run, was repaired, and then failed its
+# check with a usage error, so a repair that worked was reported as one that did not. args bootstraps such a program with the
+# answer yes: its ledger line records argv, it exits 2 without exactly those arguments, and every start (the check run and the
+# start after the rebuild) must have received them and the repaired EXE must be verified.
+#
 # Tags. Row tags are literals at each call site (the requirement-trace tests read text). The two run rows and the gate rows
 # carry the README shalls this behavior is, REQ-018.1 and REQ-018.2; the known-idempotent row carries REQ-005.13 (the flag is
 # the user's declaration that the script is safe to run more than once). The README does not yet list the repair question
@@ -44,11 +52,11 @@
 # requirement-trace tests scan text, not PowerShell). The skip loop below uses a map on purpose; the real emissions are literal.
 #
 # Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Ten driver runs (seconds each, the control
-# run may wait for the 30 second default of choice) and three default bootstraps.
+# run may wait for the 30 second default of choice) and four default bootstraps.
 # Emits: self.repair.gate.noinput, self.repair.gate.nonint, self.repair.gate.cilane, self.repair.gate.control,
 #        self.repair.gate.answers, self.repair.gate.idempotent, self.repair.gate.once,
 #        self.repair.consent.declined, self.repair.consent.accepted,
-#        self.repair.noread.plain, self.repair.noread.starts
+#        self.repair.noread.plain, self.repair.noread.starts, self.repair.args
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -71,13 +79,14 @@ $allIds = @(
     'self.repair.gate.noinput', 'self.repair.gate.nonint', 'self.repair.gate.cilane', 'self.repair.gate.control',
     'self.repair.gate.answers', 'self.repair.gate.idempotent', 'self.repair.gate.once',
     'self.repair.consent.declined', 'self.repair.consent.accepted',
-    'self.repair.noread.plain', 'self.repair.noread.starts'
+    'self.repair.noread.plain', 'self.repair.noread.starts', 'self.repair.args'
 )
 $reqOf = @{
     'self.repair.gate.noinput' = 'REQ-018.2'; 'self.repair.gate.nonint' = 'REQ-018.2'; 'self.repair.gate.cilane' = 'REQ-018.2'
     'self.repair.gate.control' = 'REQ-018.2'; 'self.repair.gate.answers' = 'REQ-018.2'; 'self.repair.gate.idempotent' = 'REQ-005.13'
     'self.repair.gate.once' = 'REQ-018.2'; 'self.repair.consent.declined' = 'REQ-018.1, REQ-018.2'; 'self.repair.consent.accepted' = 'REQ-018.2'
     'self.repair.noread.plain' = 'REQ-018.1, REQ-018.2'; 'self.repair.noread.starts' = 'REQ-018.1, REQ-018.2'
+    'self.repair.args' = 'REQ-026.1, REQ-018.2'
 }
 function Write-AllRows {
     param([bool]$Pass, [string]$Desc, [hashtable]$Details)
@@ -436,6 +445,28 @@ sys.stderr.write("plain failure: this program exits with 3 on purpose\n")
 sys.exit(3)
 '@
 
+# The program of args (Item 129): the same ledger line first, with the arguments it was started with, then a usage error
+# unless it got exactly the arguments the bootstrap was given, then the runtime-named import of colorama that the repair loop
+# has to add. The quoted argument keeps its space on purpose (README REQ-026.1: one argument stays one argument).
+$argsCode = @'
+import importlib
+import json
+import os
+import sys
+
+with open(os.environ["REPAIR_LEDGER"], "a") as f:
+    f.write(json.dumps({"scenario": "args", "frozen": bool(getattr(sys, "frozen", False)), "argv": sys.argv[1:]}) + "\n")
+
+if sys.argv[1:] != ["--input", "data file.csv"]:
+    sys.stderr.write("usage: app.py --input FILE\n")
+    sys.exit(2)
+
+mod = importlib.import_module('colorama')
+print("repair-ok", mod.__name__)
+'@
+$argsWanted = @('--input', 'data file.csv')
+$argsCallText = 'app.py --input "data file.csv"'
+
 # What the loop logs when the check run's error names no installed package. tests/test_repair_consent.py pins the text to run_setup.bat.
 $noReadPattern = 'Repair loop: .*names no installed package'
 
@@ -457,7 +488,7 @@ function Read-Ledger {
 # file clears the two variables that would change the answer itself, with cmd's own set, which is reliable where removing a
 # variable from this process is not (gap T12).
 function Invoke-RepairScenario {
-    param([string]$Scenario, [string]$Answer, [string]$Code = $appCode)
+    param([string]$Scenario, [string]$Answer, [string]$Code = $appCode, [string]$CallText = '')
     $res = [ordered]@{ Scenario = $Scenario; Finished = $false; ExitCode = -1; Seconds = 0; Dir = ''; Setup = ''; Console = ''; Ledger = @(); Error = '' }
     try {
         $dir = Join-Path $here ('~selftest_repair_' + $Scenario)
@@ -470,7 +501,9 @@ function Invoke-RepairScenario {
         $consoleName = '~repair_' + $Scenario + '.log'
         $launch = @('@echo off', 'set "HP_PVW_KNOWN_IDEMPOTENT="', 'set "HP_TEST_REPAIR_ANSWER="')
         if ($Answer) { $launch += ('set "HP_TEST_REPAIR_ANSWER=' + $Answer + '"') }
-        $launch += @("call run_setup.bat > $consoleName 2>&1 < nul", 'exit /b %ERRORLEVEL%')
+        $callLine = "call run_setup.bat > $consoleName 2>&1 < nul"
+        if ($CallText) { $callLine = "call run_setup.bat $CallText > $consoleName 2>&1 < nul" }
+        $launch += @($callLine, 'exit /b %ERRORLEVEL%')
         Write-CrLf -Path (Join-Path $dir '~repair_launch.cmd') -Lines $launch
         $vars = [ordered]@{ HP_SKIP_PIPREQS = '1'; REPAIR_LEDGER = (Join-Path $dir '~repair_ledger.jsonl') }
         if (-not [Environment]::GetEnvironmentVariable('HP_CI_LANE')) { $vars['HP_CI_LANE'] = 'test' }
@@ -569,6 +602,32 @@ function Get-StartCountProblems {
     return $out.ToArray()
 }
 
+# args: the arguments the user gave reach every start of the program, so the repair can end in a passing check. Each ledger
+# line carries the argv the program saw; a start with other arguments, or the repaired EXE failing its check, is the defect.
+function Get-ArgsProblems {
+    param($Run, $Facts, [string[]]$Wanted)
+    $out = New-Object System.Collections.ArrayList
+    if (-not $Run.Finished) { [void]$out.Add('args: the bootstrap did not finish within the time limit'); return $out.ToArray() }
+    $ledger = @($Run.Ledger)
+    $starts = $ledger.Count
+    $want = [string]::Join([string][char]31, $Wanted)
+    if (-not $Facts.failedRun) { [void]$out.Add('args: the EXE verification run did not fail, so the repair loop was never reached') }
+    if ($Facts.rebuilds -lt 1) { [void]$out.Add('args: no hidden-import repair happened, so no start after a rebuild was made') }
+    if ($starts -lt 2) { [void]$out.Add("args: the program was started ${starts} time(s); expected the check run and one start after the rebuild") }
+    $n = 0
+    foreach ($entry in $ledger) {
+        $n++
+        $prop = $entry.PSObject.Properties['argv']
+        if ($null -eq $prop) { [void]$out.Add("args: start ${n} wrote no argv, so what it was given is unknown"); continue }
+        $seen = @($prop.Value)
+        if ([string]::Join([string][char]31, [string[]]$seen) -ne $want) {
+            [void]$out.Add("args: start ${n} was given [" + ($seen -join ' | ') + "] instead of [" + ($Wanted -join ' | ') + "]")
+        }
+    }
+    if (-not $Facts.verified) { [void]$out.Add('args: the repaired EXE was not verified, so the repair did not end in a passing check') }
+    return $out.ToArray()
+}
+
 function Get-RunDetails {
     param($Run, $Facts, [string[]]$Problems)
     $details = [ordered]@{
@@ -630,6 +689,20 @@ Write-NdjsonRow ([ordered]@{
     id = 'self.repair.noread.plain'; req = 'REQ-018.1, REQ-018.2'; pass = [bool]($plainProblems.Count -eq 0)
     desc = 'REQ-018.1 and REQ-018.2: when the check run fails with an error that names no installed package, the repair loop reads that error from the check run, asks nothing, rebuilds nothing, starts the program no second time and the log says why'
     details = (Get-RunDetails -Run $plain -Facts $plainFacts -Problems $plainProblems)
+})
+
+# ---------------------------------------------------------------- args: the arguments the user gave reach every start of the loop
+$argsRun = Invoke-RepairScenario -Scenario 'args' -Answer 'Y' -Code $argsCode -CallText $argsCallText
+$argsFacts = Get-RunFacts $argsRun
+$argsProblems = @(Get-ArgsProblems -Run $argsRun -Facts $argsFacts -Wanted $argsWanted)
+Add-Evidence -Title ('run args (' + $argsRun.Seconds + ' s, starts ' + @($argsRun.Ledger).Count + ')') -Text ((Get-Excerpt -Text $argsRun.Setup -Pattern 'Verifying the built standalone EXE|EXE smokerun|Entry smoke|Repair loop|REQ-026|\[REPAIR\]|\[HINT\]|\[ERROR\]|\[STATUS\]' -Max 60) -join "`n")
+if ($argsProblems.Count -gt 0) { $allPass = $false }
+$argsDetails = Get-RunDetails -Run $argsRun -Facts $argsFacts -Problems $argsProblems
+$argsDetails['argvPerStart'] = @(@($argsRun.Ledger) | ForEach-Object { if ($_.PSObject.Properties['argv']) { (@($_.argv) -join ' | ') } else { '<none>' } })
+Write-NdjsonRow ([ordered]@{
+    id = 'self.repair.args'; req = 'REQ-026.1, REQ-018.2'; pass = [bool]($argsProblems.Count -eq 0)
+    desc = 'REQ-026 and REQ-018.2: the launch arguments the user gave reach every start the repair loop makes, so a program that needs them gets as far as the package the loop adds, and the repaired EXE passes its check'
+    details = $argsDetails
 })
 
 if (-not $allPass) { exit 1 }
