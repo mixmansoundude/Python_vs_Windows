@@ -60,6 +60,7 @@ ROWS = (
     ("self.repair.consent.accepted", "REQ-018.2"),
     ("self.repair.noread.plain", "REQ-018.1, REQ-018.2"),
     ("self.repair.noread.starts", "REQ-018.1, REQ-018.2"),
+    ("self.repair.args", "REQ-026.1, REQ-018.2"),
 )
 SCENARIOS = ("noinput", "nonint", "cilane", "control", "answer_yes", "answer_no", "answer_beats_signal",
              "idempotent", "once_yes", "once_no")
@@ -385,6 +386,23 @@ def script_problems(text):
         found.append("the program no longer imports an installed package by a runtime name")
     if "$starts -ne 1" not in text:
         found.append("the declined scenario does not require exactly one start")
+    # Item 129: the args scenario hands the bootstrapper arguments, the program records and checks them before its import
+    if "Invoke-RepairScenario -Scenario 'args' -Answer 'Y' -Code $argsCode -CallText $argsCallText" not in text:
+        found.append("the args scenario is missing, or does not answer yes with the argument program and the call text")
+    if "$argsCallText = 'app.py --input \"data file.csv\"'" not in text:
+        found.append("the args scenario no longer gives the bootstrapper the entry file and an argument that holds a space")
+    if "$argsWanted = @('--input', 'data file.csv')" not in text:
+        found.append("the args judge no longer wants the two arguments, the second with its space kept as one")
+    args_program = text.split("$argsCode = @'", 1)[-1].split("'@", 1)[0]
+    args_ledger = args_program.find('os.environ["REPAIR_LEDGER"]')
+    args_usage = args_program.find("sys.exit(2)")
+    args_import = args_program.find("importlib.import_module('colorama')")
+    if '"argv": sys.argv[1:]' not in args_program or not 0 <= args_ledger < args_usage < args_import:
+        found.append("the argument program does not record its argv, then exit 2 without exactly the arguments, then import colorama")
+    if 'call run_setup.bat $CallText > $consoleName 2>&1 < nul' not in text:
+        found.append("the bootstrap launch with a call text does not close standard input (< nul)")
+    if "function Get-ArgsProblems" not in text or "Get-ArgsProblems -Run $argsRun" not in text:
+        found.append("the args row is not judged by Get-ArgsProblems on the run")
     if not live_lines or live_lines[-1] != "exit 0":
         found.append("the script does not end with exit 0 (last line: %r)" % (live_lines[-1] if live_lines else ""))
     if "if (-not $allPass) { exit 1 }" not in live_lines:

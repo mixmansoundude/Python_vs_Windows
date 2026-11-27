@@ -126,7 +126,9 @@ WAIT_AND_STOP = "$done=$p.WaitForExit(30000);if(-not $done){try{$k=New-Object"
 # the end of the stop: the taskkill attempt, then the fallback kill, then the start of the read of the output
 FALLBACK_AT_THE_END_OF_THE_STOP = "}catch{};try{$p.Kill()}catch{}};$t=''"
 WITHOUT_THE_FALLBACK = "}catch{}};$t=''"
-HIR_START = "$si.FileName=$env:HP_HIR_EXE;$si.UseShellExecute=$false;$si.RedirectStandardOutput=$true;$si.RedirectStandardError=$true;$p=[System.Diagnostics.Process]::Start($si);"
+# Item 129: the user's launch arguments (README REQ-026) are handed to the process before it is started, as the optimized build's line does
+APP_ARGS = "if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};"
+START_THE_PROCESS = "$p=[System.Diagnostics.Process]::Start($si);"
 
 
 # --- the batch file: what the script assumes about the loop ------------------------------------------------------------------
@@ -175,6 +177,12 @@ def run_line_problems(run):
         found.append("the output of the run is no longer read through the two asynchronous reads that the cap relies on")
     if "$env:HP_HIR_EXE" not in text or "'dist\\~exe_out.txt'" not in text:
         found.append("the run no longer starts the EXE named by HP_HIR_EXE and no longer writes dist\\~exe_out.txt")
+    arguments = text.find(APP_ARGS)
+    if arguments < 0:
+        found.append("the line does not give the program the launch arguments of HP_APP_ARGS ($si.Arguments=$env:HP_APP_ARGS), so the start "
+                     "after a repair rebuild runs the program without them although the log says they are forwarded at every launch (README REQ-026)")
+    elif not 0 <= text.find("$si.FileName=$env:HP_HIR_EXE;") < arguments < text.find(START_THE_PROCESS):
+        found.append("the launch arguments of HP_APP_ARGS are not set between the file name and the start of the process, so they reach nothing")
     held = "".join(sorted(set(CMD_CHARACTERS) & set(text)))
     if held:
         found.append("the PowerShell text of the start line holds the cmd character(s) %s, which cmd reads before PowerShell does" % held)
@@ -707,6 +715,8 @@ wait
 """
 ONLY_A_PARENT = "#!/bin/sh\necho started\nexec sleep 30\n"
 EXITS_BY_ITSELF = "#!/bin/sh\necho hello\nexit 3\n"
+# prints each argument it was started with on a line of its own and exits with how many it got
+PRINTS_ITS_ARGUMENTS = '#!/bin/sh\nfor a in "$@"; do echo "arg=$a"; done\nexit $#\n'
 
 # What taskkill /F /T /PID <id> does on Windows, and what it was asked: ends the process and every process below it.
 STAND_IN_TASKKILL = r"""#!/usr/bin/env python3
@@ -745,7 +755,7 @@ def read_pid(path):
         return None
 
 
-def run_loop_text(text, program, tmp, stand_in=False, wait_ms=500):
+def run_loop_text(text, program, tmp, stand_in=False, wait_ms=500, app_args=None):
     """Run the PowerShell text of the loop's start line under pwsh with each wait shortened to wait_ms (the real ones are 30000 and
     5000), the program set to `program` (a shell script) and the output file moved into tmp. With stand_in the host gets a taskkill
     where $env:SystemRoot\\System32\\taskkill.exe is looked for, and without it that file does not exist, so starting taskkill fails
@@ -758,8 +768,11 @@ def run_loop_text(text, program, tmp, stand_in=False, wait_ms=500):
     out = tmp / "exe_out.txt"
     env = dict(os.environ)
     env.pop("SystemRoot", None)
+    env.pop("HP_APP_ARGS", None)
     env.update(HP_HIR_EXE=str(exe), PARENT_PID_FILE=str(tmp / "parent.pid"), CHILD_PID_FILE=str(tmp / "child.pid"),
                TASKKILL_LOG=str(tmp / "taskkill.log"))
+    if app_args is not None:
+        env["HP_APP_ARGS"] = app_args  # a pre-quoted string, as run_setup.bat builds it from %2 to %9
     if stand_in:
         root = tmp / "root"  # the file name holds the backslashes, as the line spells the path
         tool = Path(str(root) + "\\System32\\taskkill.exe")
@@ -799,6 +812,23 @@ class TheLineRunThroughPwsh(unittest.TestCase):
         got = run_loop_text(self.text, EXITS_BY_ITSELF, self.tmp)
         self.assertEqual(got["lines"], ["3"], got)
         self.assertEqual(got["output"].split(), ["hello"], got)
+
+    def test_the_arguments_of_the_user_reach_the_program_in_order_and_a_space_stays_inside_one(self):
+        # Item 129: the start after a repair rebuild is a start of the user's program like the others (README REQ-026.1)
+        got = run_loop_text(self.text, PRINTS_ITS_ARGUMENTS, self.tmp, app_args='--input "data file.csv"')
+        self.assertEqual(got["lines"], ["2"], got)
+        self.assertEqual(got["output"].strip().splitlines(), ["arg=--input", "arg=data file.csv"], got)
+
+    def test_a_run_without_launch_arguments_starts_the_program_without_any(self):
+        got = run_loop_text(self.text, PRINTS_ITS_ARGUMENTS, self.tmp)
+        self.assertEqual(got["lines"], ["0"], got)
+        self.assertEqual(got["output"].split(), [], got)  # an empty capture is a bare newline
+
+    def test_the_stand_in_shows_what_a_line_without_the_clause_does_with_the_arguments(self):
+        # the control: the first version of the line has no clause, so the same program gets none (the defect this item fixes)
+        got = run_loop_text(FIRST_VERSION_OF_THE_LINE, PRINTS_ITS_ARGUMENTS, self.tmp, app_args='--input "data file.csv"')
+        self.assertEqual(got["lines"], ["0"], got)
+        self.assertEqual(got["output"].split(), [], got)  # an empty capture is a bare newline
 
     def test_a_program_that_only_starts_is_ended_at_the_cap_and_gives_minus_one(self):
         got = run_loop_text(self.text, ONLY_A_PARENT, self.tmp)
@@ -907,8 +937,34 @@ class BatchRulesCanFail(unittest.TestCase):
         self.assertTrue(any("before the process is stopped" in f for f in loop_problems(bad)), loop_problems(bad))
 
     def test_reads_that_start_after_the_wait_are_caught(self):
-        bad = mutate(self.batch, HIR_START + START_READS + "$done=$p.WaitForExit(30000);", HIR_START + "$done=$p.WaitForExit(30000);" + START_READS)
+        bad = self.in_the_repair_line(self.batch, START_THE_PROCESS + START_READS + "$done=$p.WaitForExit(30000);",
+                                      START_THE_PROCESS + "$done=$p.WaitForExit(30000);" + START_READS)
         self.assertTrue(any("before the 30 second wait" in f for f in loop_problems(bad)), loop_problems(bad))
+
+    def with_the_arguments(self):
+        """The real file with the clause of Item 129 in the loop's start line: the file itself once the fix is in, and the fixed line
+        before it, so the three cases below run the same way before and after and show that this clause is all the pin asks for."""
+        text = self.batch
+        lines = text.split("\n")
+        at = [i for i, ln in enumerate(lines) if "$env:HP_HIR_EXE" in ln and "WaitForExit(30000)" in ln]
+        assert len(at) == 1
+        if APP_ARGS in lines[at[0]]:
+            return text
+        return self.in_the_repair_line(text, "$si.FileName=$env:HP_HIR_EXE;", "$si.FileName=$env:HP_HIR_EXE;" + APP_ARGS)
+
+    def test_the_line_with_the_clause_has_no_problem(self):
+        self.assertEqual(loop_problems(self.with_the_arguments()), [])
+
+    def test_a_start_line_that_gives_the_program_no_arguments_is_caught(self):
+        bad = self.in_the_repair_line(self.with_the_arguments(), APP_ARGS, "")
+        self.assertTrue(any("HP_APP_ARGS" in f and "without them" in f for f in loop_problems(bad)), loop_problems(bad))
+        wrong_name = self.in_the_repair_line(self.with_the_arguments(), APP_ARGS, APP_ARGS.replace("HP_APP_ARGS", "HP_APP_ARG"))
+        self.assertTrue(any("HP_APP_ARGS" in f for f in loop_problems(wrong_name)), loop_problems(wrong_name))
+
+    def test_arguments_that_are_set_after_the_process_was_started_are_caught(self):
+        late = self.in_the_repair_line(self.with_the_arguments(), APP_ARGS, "")
+        late = self.in_the_repair_line(late, START_THE_PROCESS, START_THE_PROCESS + APP_ARGS)
+        self.assertTrue(any("between the file name and the start" in f for f in loop_problems(late)), loop_problems(late))
 
     def test_a_character_cmd_reads_in_the_powershell_text_is_caught(self):
         for ch in CMD_CHARACTERS:
