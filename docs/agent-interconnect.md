@@ -2026,11 +2026,12 @@ which is filled from text that a run already printed:
 ## The `--hidden-import` repair loop asks before it starts the program again (`:hidden_import_consent`, Item 97)
 
 **Touch `:hidden_import_recover`'s first lines, `:hidden_import_consent`, `HP_HIC_ANSWER`, `HP_TEST_REPAIR_ANSWER`, or any script
-that makes the repair loop run, must understand this.** After a failed EXE check run the loop starts `dist\<env>.exe` to read
-its error and again after each repair rebuild (up to three rebuilds in a call, and `:run_exe_smokerun` can call the loop a
-second time after a DLL repair), so up to eight more starts. README REQ-018.1 allows one automatic start and REQ-018.2 any
-other only with the user's explicit consent in a prompt that names the risk. The loop therefore asks ONE question before its
-first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in the loop changed):
+that makes the repair loop run, must understand this.** After a failed EXE check run the loop starts `dist\<env>.exe` once after
+each repair rebuild (up to three rebuilds in a call, and `:run_exe_smokerun` can call the loop a second time after a DLL repair,
+which starts once more to read the error of the rebuilt EXE), so up to three more starts, up to seven with the second call. Before
+Item 97 follow-up (a) the first call also started the program once only to read its error (up to eight). README REQ-018.1 allows
+one automatic start and REQ-018.2 any other only with the user's explicit consent in a prompt that names the risk. The loop
+therefore asks ONE question before its first extra start (maintainer decision 2026-10-31, "first pass"):
 - **Where**: `call :hidden_import_consent` followed by `if not defined HP_HIC_ALLOWED exit /b 0`, directly after the Nuitka
   skip (a Nuitka EXE never reaches the question) and before the first start. The block itself sits between
   `:warn_user_code_launch` and `:run_exe_smokerun`, NOT inside the span `tests/harness.ps1` reads between
@@ -2058,8 +2059,34 @@ first extra start (maintainer decision 2026-10-31, "first pass"; nothing else in
   ledger (declined: exactly one start, no rebuild; accepted: the consent line comes before the loop's announcement).
   `tests/test_repair_consent.py` pins the block, the call site and the wiring; `tests/test_rerun_prompts.py` holds the
   question to the risk-sentence rule of the other prompts.
-- **Left for later** (CLAUDE.md, "Item 97 follow-ups"): reading `~run.err.txt` first, "do not ask again for N runs", the
-  known-idempotent skip on the other four offers, and the maintainer's up-front consent question.
+- **The pre-read (Item 97 follow-up (a)): the first call learns the error from the files the check run left, so it needs no
+  start to ask or to find the package.** `:hidden_import_recover` joins `~run.out.txt` and `~run.err.txt` (ASCII, written by
+  `tools/exe_smokerun.ps1` at the app root) into `dist\~exe_out.txt`, runs the loop's own scanner (`~hidden_import_scan.py`, strict:
+  `ModuleNotFoundError` and installed in the build interpreter; no tried list yet) over it and deletes the evidence file. No
+  output file, or an error that names no installed package: one `[INFO] Repair loop: the error of the check run names no
+  installed package, so your program is not started again and the EXE is not rebuilt.` line and `exit /b 0` BEFORE the question, any
+  start or any rebuild, so a failure that cannot be repaired never asks. A package: `HP_NEXT_HIDDEN` holds it, the question is
+  asked, and a yes jumps to `:hidden_import_found` (the rebuild step, which also serves the loop's own scan), so the invocation's
+  starts are the check run plus one to check each rebuild (`starts = 1 + rebuilds`; rows `self.repair.noread.plain` and
+  `.starts`). Rules a change must keep (`tests/test_repair_preread.py` pins each, with mutation cases):
+  - **The second call must not read.** After a DLL repair the EXE was rebuilt, so `~run.err.txt` describes an EXE that no longer
+    exists. The caller sets `HP_HID_REREAD=1` around that one call (set, call, clear, all three live lines, nothing else sets
+    it) and the block's second line, `if defined HP_HID_REREAD goto :hidden_import_ask`, keeps the old shape there: ask, then
+    start once to read the current error.
+  - **`HP_DLL_REPAIRED` is cleared on the line before the second-pass gate.** The pass in `:run_entry_smoke` before this
+    verification run can set it, and when no rebuild happened above the gate the old value stood for a repair this call never
+    made, so the second call ran and started the program for nothing (found while building the pre-read).
+  - **The announcement of the throwaway check moved into the loop** (`if not defined HP_HID_WARNED call :warn_user_code_launch
+    hidden_import`, then `set "HP_HID_WARNED=1"`): the first start of a call is no longer at the top, a call that holds a package
+    from the pre-read rebuilds first, and the announcement must stand right in front of a start, once per call
+    (`self.launch.count.*` counts `starts <= announced + rebuilds`). `HP_HID_WARNED` is cleared before the loop and at the end
+    of the call.
+  - **The question's heading says what the user agrees to now** (up to three more starts, seven with a library file), and
+    keeps the word `again` and the risk sentence within six lines so `tests/test_rerun_prompts.py` still counts it.
+  - Not read on purpose: output of the program's later runs. The pre-read is only ever the check run's own text, the one run the
+    README allows without consent.
+- **Left for later** (CLAUDE.md, "Item 97 follow-ups"): "do not ask again for N runs", the known-idempotent skip on the other
+  four offers, and the maintainer's up-front consent question.
 - **The cap on each of the loop's runs (Item 106, README REQ-018.7)**: the loop's start line (`:hidden_import_loop`, the inline
   PowerShell after `set "HP_HIR_EXE=..."`) starts both pipe reads, waits 30 seconds, ends the process TREE with `taskkill /F /T /PID`
   (started from `%SystemRoot%\System32`, waited for at most 5 seconds; `$p.Kill()` stays as the fallback when taskkill cannot be

@@ -58,6 +58,8 @@ ROWS = (
     ("self.repair.gate.once", "REQ-018.2"),
     ("self.repair.consent.declined", "REQ-018.1, REQ-018.2"),
     ("self.repair.consent.accepted", "REQ-018.2"),
+    ("self.repair.noread.plain", "REQ-018.1, REQ-018.2"),
+    ("self.repair.noread.starts", "REQ-018.1, REQ-018.2"),
 )
 SCENARIOS = ("noinput", "nonint", "cilane", "control", "answer_yes", "answer_no", "answer_beats_signal",
              "idempotent", "once_yes", "once_no")
@@ -359,6 +361,17 @@ def script_problems(text):
         found.append("the declined scenario is missing or gives an answer")
     if "Invoke-RepairScenario -Scenario 'accepted' -Answer 'Y'" not in text:
         found.append("the accepted scenario is missing or does not answer yes")
+    if "Invoke-RepairScenario -Scenario 'plain' -Answer 'Y' -Code $plainCode" not in text:
+        found.append("the plain scenario is missing, or does not answer yes with the plain program")
+    plain_program = text.split("$plainCode = @'", 1)[-1].split("'@", 1)[0]
+    plain_ledger = plain_program.find('os.environ["REPAIR_LEDGER"]')
+    plain_exit = plain_program.find("sys.exit(3)")
+    if plain_ledger < 0 or plain_exit < 0 or plain_ledger > plain_exit:
+        found.append("the plain program does not write its ledger line before it exits with 3")
+    if "import_module" in plain_program:
+        found.append("the plain program imports a module by a runtime name, so its error would name a package")
+    if "$starts -gt 1" not in text or "$starts -ne $expected" not in text:
+        found.append("the noread rows do not count the starts against the check run and the rebuilds")
     for var in ("HP_PVW_KNOWN_IDEMPOTENT", "HP_TEST_REPAIR_ANSWER"):
         if "'set \"%s=\"'" % var not in text.split("function Invoke-RepairScenario", 1)[-1]:
             found.append("the bootstrap launch file does not clear %s" % var)
@@ -647,6 +660,14 @@ class ScriptRulesCanFail(unittest.TestCase):
         ledger_open = 'with open(os.environ["REPAIR_LEDGER"], "a")'
         text = mutate(self.script, ledger_open, "X_LEDGER", 1) + "\n" + ledger_open
         self.assertTrue(any("ledger line before" in f for f in script_problems(text)))
+
+    def test_a_plain_program_that_names_a_module_or_logs_late_is_caught(self):
+        text = mutate(self.script, 'sys.stderr.write("plain failure: this program exits with 3 on purpose\\n")', 'importlib.import_module("colorama")')
+        self.assertTrue(any("plain program imports" in f for f in script_problems(text)), script_problems(text))
+        text = mutate(self.script, "Invoke-RepairScenario -Scenario 'plain' -Answer 'Y' -Code $plainCode", "Invoke-RepairScenario -Scenario 'plain' -Answer 'Y'")
+        self.assertTrue(any("plain scenario" in f for f in script_problems(text)))
+        text = mutate(self.script, "$starts -ne $expected", "$starts -lt $expected")
+        self.assertTrue(any("noread rows" in f for f in script_problems(text)))
 
     def test_a_script_without_its_exit_codes_is_caught(self):
         no_one = mutate(self.script, "if (-not $allPass) { exit 1 }", "")

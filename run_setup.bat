@@ -5437,10 +5437,37 @@ if defined HP_NUITKA_FALLBACK_USED (
   call :log "[INFO][HIDDEN_IMPORT] Skipping --hidden-import auto-recovery: dist\%ENVNAME%.exe was built via the fallback build system (Nuitka), which uses a different missing-import mechanism than PyInstaller's --hidden-import flag."
   exit /b 0
 )
+rem CLAUDE.md Item 97 follow-up (a), README REQ-018.1 and REQ-018.2: the failed check run has already printed its error, to
+rem ~run.out.txt and ~run.err.txt, so the first call of a build reads it there and starts the program no extra time to learn
+rem what it says. The scan is the loop's own (~hidden_import_scan.py, strict: ModuleNotFoundError and installed in the build
+rem interpreter) over both files joined in dist\~exe_out.txt, which is deleted again right after. When the error names no
+rem installed package there is nothing to repair, so the call logs why and returns before any question, any start and any
+rem rebuild; when it names one, HP_NEXT_HIDDEN holds it and the loop goes straight to its rebuild, so the starts are the check
+rem run, which is the invocation's one start, plus one to check each rebuild. The second call of a build (after a DLL repair,
+rem HP_HID_REREAD set by its caller) has no fresh error to read, because the EXE was rebuilt since the check run, so it keeps
+rem the old shape and starts once to read it. Output files that are not there read as naming no package: nothing was printed
+rem to read, and the program is never started only to find out.
+set "HP_NEXT_HIDDEN="
+if defined HP_HID_REREAD goto :hidden_import_ask
+if exist "dist\~exe_out.txt" del "dist\~exe_out.txt" >nul 2>&1
+if exist "~run.out.txt" type "~run.out.txt" >> "dist\~exe_out.txt"
+if exist "~run.err.txt" type "~run.err.txt" >> "dist\~exe_out.txt"
+if not exist "dist\~exe_out.txt" goto :hidden_import_noread
+call :emit_from_base64 "~hidden_import_scan.py" HP_HIDDEN_IMPORT_SCAN
+"%HP_PY%" ~hidden_import_scan.py "dist\~exe_out.txt" > "~next_hidden.txt" 2>> "%LOG%"
+if exist "~hidden_import_scan.py" del "~hidden_import_scan.py" >nul 2>&1
+for /f "usebackq delims=" %%M in ("~next_hidden.txt") do set "HP_NEXT_HIDDEN=%%M"
+if exist "~next_hidden.txt" del "~next_hidden.txt" >nul 2>&1
+if exist "dist\~exe_out.txt" del "dist\~exe_out.txt" >nul 2>&1
+if defined HP_NEXT_HIDDEN goto :hidden_import_ask
+:hidden_import_noread
+call :log "[INFO] Repair loop: the error of the check run names no installed package, so your program is not started again and the EXE is not rebuilt."
+exit /b 0
 rem CLAUDE.md Item 97 (README REQ-018.1 and REQ-018.2): every start of the program below repeats whatever the program does,
 rem and the README allows one automatic start per invocation, so the user is asked before the first extra start. A yes, or
 rem HP_PVW_KNOWN_IDEMPOTENT, sets HP_HIC_ALLOWED; a no, a timeout and a non-interactive run leave it empty, and then nothing
 rem is started and nothing is rebuilt. HP_HIDDEN_REPAIRED was cleared at the top, so a no cannot be read as a repair.
+:hidden_import_ask
 call :hidden_import_consent
 if not defined HP_HIC_ALLOWED exit /b 0
 rem CLAUDE.md Item 28: pair --collect-submodules=X with each --hidden-import=X this loop adds.
@@ -5468,8 +5495,14 @@ rem preserve a user pre-existing spec across recovery rebuilds (the main-build s
 rem flag was already consumed before run_exe_smokerun ran).
 set "HP_HID_SPEC_PRE="
 if exist "%ENVNAME%.spec" set "HP_HID_SPEC_PRE=1"
-call :warn_user_code_launch hidden_import
+rem The announcement of the throwaway check stands right in front of the first start of this call, so it moves into the loop
+rem and is made once (HP_HID_WARNED): the first start is no longer at the top, a call that has a package from the pre-read
+rem rebuilds first.
+set "HP_HID_WARNED="
+if defined HP_NEXT_HIDDEN goto :hidden_import_found
 :hidden_import_loop
+if not defined HP_HID_WARNED call :warn_user_code_launch hidden_import
+set "HP_HID_WARNED=1"
 rem run the EXE with a 30s cap and capture combined output for the scan. A cap is
 rem essential here: once recovery fixes a missing import the app may proceed into a
 rem long-running phase (server/GUI), and an uncapped run would hang the bootstrapper.
@@ -5499,6 +5532,7 @@ set "HP_NEXT_HIDDEN="
 for /f "usebackq delims=" %%M in ("~next_hidden.txt") do set "HP_NEXT_HIDDEN=%%M"
 if exist "~next_hidden.txt" del "~next_hidden.txt" >nul 2>&1
 if not defined HP_NEXT_HIDDEN goto :hidden_import_recover_done
+:hidden_import_found
 set /a HP_HIDDEN_ITER+=1
 set "HP_HIDDEN_REPAIRED=1"
 set "HP_PYI_HIDDEN_IMPORTS=%HP_PYI_HIDDEN_IMPORTS% --hidden-import=%HP_NEXT_HIDDEN%"
@@ -5547,6 +5581,7 @@ set "HP_HIDDEN_ITER="
 set "HP_HIDDEN_TRIED="
 set "HP_NEXT_HIDDEN="
 set "HP_HID_SPEC_PRE="
+set "HP_HID_WARNED="
 rem CLAUDE.md Item 29: HP_PYI_HIDDEN_IMPORTS/HP_PYI_HID_COLLECT are deliberately NOT reset
 rem here either (see this subroutine's own entry comment) -- a later :dll_bundle_recover call
 rem in the SAME fresh build attempt needs to read whatever this call accumulated, to thread
@@ -5592,8 +5627,10 @@ exit /b 0
 :hidden_import_consent
 rem CLAUDE.md Item 97 (README REQ-018.1 and REQ-018.2, maintainer decision 2026-10-31, first pass): ask ONCE
 rem per bootstrap before :hidden_import_recover starts the program again. After a failed check run the loop starts
-rem dist\%ENVNAME%.exe to read its error and once more after each repair rebuild, at most four starts in a call, and the
-rem loop can be called a second time after a DLL repair. The README allows one automatic start per invocation and any other
+rem dist\%ENVNAME%.exe once after each repair rebuild, at most three starts in a call, and the loop can be called a second
+rem time after a DLL repair, which starts once more to read the error of the rebuilt EXE. The question is only asked when the
+rem error of the check run names an installed package, which the loop read from the files the check run left, so no start was
+rem needed to learn that. The README allows one automatic start per invocation and any other
 rem only with the user's explicit consent in a prompt that names the risk. A yes sets HP_HIC_ALLOWED and the caller goes on.
 rem A no, an answer that cannot be read, no answer within 30 seconds and a non-interactive run (HP_CI_LANE, NOINPUT or
 rem HP_NONINTERACTIVE, README REQ-018.9) leave it empty and the caller returns, so nothing starts and nothing is rebuilt.
@@ -5608,9 +5645,9 @@ if defined HP_PVW_KNOWN_IDEMPOTENT goto :hic_idempotent
 if defined HP_HIC_ANSWER goto :hic_remembered
 echo.
 echo *** The check run of your program failed, exit code %HP_EXE_EXIT%. ***
-echo *** It may only be missing a package that the EXE build could not see. ***
-echo *** To find out, the repair starts your program again to read its error, and again after each rebuild. ***
-echo *** That is up to four more starts, and up to eight if a library file has to be added too. ***
+echo *** Its error says a package is missing from the EXE, and the build may be able to add it. ***
+echo *** To try, the repair rebuilds the EXE and starts your program again after each rebuild to check it. ***
+echo *** That is up to three more starts, and up to seven if a library file has to be added too. ***
 echo *** Each start repeats whatever your program does, so say no if running it twice could cause harm. ***
 set "HP_HIC_CHOICE="
 if defined HP_TEST_REPAIR_ANSWER goto :hic_gate_override
@@ -5640,7 +5677,7 @@ call :log "[INFO] Repair loop: declined. Your program was not started again and 
 set "HP_HIC_ANSWER=N"
 exit /b 0
 :hic_accepted
-call :log "[INFO] Repair loop: accepted. Your program will be started again to look for a missing package."
+call :log "[INFO] Repair loop: accepted. Your program will be started again to check each rebuilt EXE."
 set "HP_HIC_ANSWER=Y"
 set "HP_HIC_ALLOWED=1"
 exit /b 0
@@ -5763,6 +5800,10 @@ rem rebuild already made the smoke run pass; it is gated on HP_HIDDEN_REPAIRED (
 rem HP_EXE_EXIT -- if the call above did NOT actually rebuild anything, the log has not grown
 rem since the FIRST :dll_bundle_recover call already scanned it, so there is nothing new to find,
 rem and the gate skips the pointless re-scan in the common case instead of always paying for one.
+rem Item 97 follow-up (a): HP_DLL_REPAIRED is cleared first. The pass in :run_entry_smoke, before this verification run, can
+rem have set it, and when no rebuild happened above this gate is skipped, so the old value stood for a repair that this call
+rem never made and the second pass below started the program again for nothing.
+set "HP_DLL_REPAIRED="
 if not "%HP_EXE_EXIT%"=="-1" if defined HP_HIDDEN_REPAIRED call :dll_bundle_recover
 rem Only worth a fresh verification pass if this call actually bundled something -- the
 rem common case (nothing new detected) must not pay for an extra EXE launch/wait.
@@ -5777,8 +5818,12 @@ if defined HP_DLL_REPAIRED (
   rem speculatively here. No -1 guard needed here: HP_DLL_REPAIRED can only be defined if
   rem the :dll_bundle_recover call just above actually ran, which itself required HP_EXE_EXIT
   rem to already be non--1, see the guard on that call -- and dll_bundle_recover never
-  rem touches HP_EXE_EXIT, so that fact still holds at this point.
+  rem touches HP_EXE_EXIT, so that fact still holds at this point. The EXE was rebuilt since the
+  rem check run, so its error in ~run.err.txt is out of date: HP_HID_REREAD makes the call start
+  rem the EXE once to read the current one instead of reading the files.
+  set "HP_HID_REREAD=1"
   call :hidden_import_recover
+  set "HP_HID_REREAD="
 )
 if "%HP_EXE_EXIT%"=="0" goto :smokerun_ok
 rem REQ-016: record that the packaged EXE could not be verified so the post-flight

@@ -512,7 +512,7 @@ ACCEPTED_LOG = {
     "cascade": "[INFO] REQ-009: cascade consent: accepted.",
     "visa": "[INFO] NI-VISA install for a subfolder-only import: accepted.",
     "install": "[INFO] Runtime install: accepted.",
-    "repair": "[INFO] Repair loop: accepted. Your program will be started again to look for a missing package.",
+    "repair": "[INFO] Repair loop: accepted. Your program will be started again to check each rebuilt EXE.",
 }
 DECLINED_LOG = {
     "cascade": "[INFO] REQ-009: cascade consent: declined.",
@@ -813,7 +813,7 @@ class BatchRulesCanFail(unittest.TestCase):
             ("[INFO] REQ-009: cascade consent: accepted.", "[INFO] REQ-009: cascade consent: yes.", "cascade"),
             ('[VISA] skipped (subfolder_only)', '[VISA] skipped (subfolder)', "visa"),
             ("[INFO] Runtime install: declined. Nothing was changed.", "[INFO] Runtime install: declined.", "install"),
-            ("[INFO] Repair loop: accepted. Your program will be started again to look for a missing package.", "[INFO] Repair loop: yes.", "repair"),
+            ("[INFO] Repair loop: accepted. Your program will be started again to check each rebuilt EXE.", "[INFO] Repair loop: yes.", "repair"),
         ):
             with self.subTest(new=new):
                 found = self.problems(mutate(self.batch, old, new))
