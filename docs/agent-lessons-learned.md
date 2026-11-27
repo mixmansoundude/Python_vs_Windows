@@ -400,6 +400,17 @@ only":
   `CPYTHON_39` in the test is the table of these answers taken with CPython 3.9's own `compile()`; the guard must agree with
   every row on every host, and a second test re-checks the table against a `python3.9` when one is on PATH (`uv python install
   3.9` gives one locally), so a recorded answer cannot drift from the interpreter it claims to describe.
+  **Three more facts from a third review round, each checked on a real 3.9.** A single-quoted f-string is ONE string token to 3.9, so an
+  unescaped line break anywhere in it, a replacement field included, is a `SyntaxError` (3.12 and newer accept it in a field); a backslash-newline
+  continuation in the literal part or the format spec is legal, so the rule reads the whole span of the string for a newline with an even number of
+  backslashes in front and does not count rows between tokens (a format-spec token can span rows). Format specs may nest two deep (`f"{x:{y}}"`);
+  the third level is `f-string: expressions nested too deeply`, and the fourth is refused by every parser, so only the third needs a rule. `X | Y` is a type
+  union only in a type position: the arguments of `Literal[...]` and the metadata of `Annotated[...]` are values (integer OR, runs on 3.9), while the first
+  argument of `Annotated`, a union around a `Literal` and a union inside another generic still fail when the def runs; the rule goes by the name `Literal` or `Annotated` and
+  cannot see an alias. What 3.9 does when the source RUNS is not a `compile()` answer, so `RUNS_ON_39` is a second table beside `CPYTHON_39`. When a mutation of a rule
+  `ast.parse` stops at the grammar: `return`, `break` or `await` in the wrong place parse and are refused by the compiler, so the guard also compiles the parsed tree
+  (`compile(tree, ...)`, version independent). When a mutation of a rule
+  cannot be caught by any input on any host, the code is dead: remove it (the nested-field exclusion of the depth rule was) instead of keeping a test that only looks like it covers it.
 
 ---
 

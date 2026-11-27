@@ -9,10 +9,11 @@ inventory test uses), finds out from the emit site which of them are Python, and
 payload is covered the day it is added.
 
 `feature_version` is not a complete guard, which is why there are extra rules. On a 3.12 or newer host it still
-accepts: a quote reused inside an f-string replacement field (PEP 701), `a[*b]` (PEP 646), and `X | Y` in an
-annotation that is evaluated when the def runs. Each of those is a SyntaxError or a TypeError on 3.9, so each
-gets a rule below. Grammar only: a library call that is missing on an old interpreter (`zip(strict=True)`, a
-`tomllib` import without a fallback) is a different question and is not judged here.
+accepts: a quote, a backslash, a comment or a line break inside an f-string replacement field (PEP 701), format
+specs nested three deep, `a[*b]` (PEP 646), and `X | Y` in an annotation that is evaluated when the def runs. Each of
+those is a SyntaxError or a TypeError on 3.9, so each gets a rule below. `ast.parse` also stops at the grammar, so the tree is compiled too: a `return`, `break` or `await` in the wrong place is a
+SyntaxError from the compiler on every version. Grammar only otherwise: a library call that is missing on an old interpreter
+(`zip(strict=True)`, a `tomllib` import without a fallback) is a different question and is not judged here.
 
 The checks are pure functions of source text, and the synthetic cases at the end prove each one can fail.
 """
@@ -115,6 +116,38 @@ def _annotation_nodes(tree: ast.AST) -> List[ast.expr]:
     return nodes
 
 
+def _name_of(node: ast.expr) -> str:
+    """The last name of `Literal` or `typing.Literal`; "" for anything else (an alias such as `L` cannot be told)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _union_sites(node: ast.AST) -> List[ast.BinOp]:
+    """The `X | Y` nodes of an annotation that sit in a type position.
+
+    The arguments of Literal[...] and the metadata of Annotated[...] (every argument after the first) are values, so a
+    `1 | 2` there is an integer OR that 3.9 evaluates without trouble; the first argument of Annotated is a type.
+    """
+    found: List[ast.BinOp] = []
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        found.append(node)
+    if isinstance(node, ast.Subscript):
+        generic = _name_of(node.value)
+        if generic == "Literal":
+            return found + _union_sites(node.value)
+        if generic == "Annotated":
+            items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            for kept in [node.value] + items[:1]:
+                found += _union_sites(kept)
+            return found
+    for child in ast.iter_child_nodes(node):
+        found += _union_sites(child)
+    return found
+
+
 def _lazy_annotations(tree: ast.Module) -> bool:
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module == "__future__":
@@ -147,7 +180,8 @@ def _fstring_problems(source: bytes) -> List[str]:
     fine when its delimiter is another one. A backslash in the expression part, which includes every string and nested f-string
     text inside a field; the literal text and the format spec of an f-string that is not itself inside a field may hold one.
     The backslash of a line continuation between two tokens of the expression is in no token, so the text between tokens is
-    read as well. A comment.
+    read as well. A comment. A line break: 3.9 reads a single-quoted f-string as one string token, so a newline that no
+    backslash escapes cannot be anywhere in it, a field included, and 3.12 lets a field span rows.
 
     Before 3.12 the tokenizer returns an f-string as one STRING token and ast.parse already refuses the source, so this
     only has something to look at on a newer host; the rule is the same either way.
@@ -163,7 +197,7 @@ def _fstring_problems(source: bytes) -> List[str]:
     except (tokenize.TokenError, SyntaxError, IndentationError):
         return []
     lines = io.StringIO(source.decode("utf-8-sig", errors="replace")).readlines()  # newline "\n" only, like the tokenizer
-    stack: List[list] = []  # one [delimiter, brace depth] per f-string being read, the innermost last
+    stack: List[list] = []  # one [delimiter, brace depth, start position] per f-string being read, the innermost last
     for index, tok in enumerate(tokens):
         prev = tokens[index - 1] if index else None
         # the text between two tokens inside a replacement field; literal text and a format spec are tokens of their own
@@ -176,11 +210,13 @@ def _fstring_problems(source: bytes) -> List[str]:
         if tok.type == start:
             if any(f[0] in tok.string for f in fields):
                 out.append("line %d: the f-string's own quote reused inside a replacement field" % line)
-            stack.append([_quote_of(tok.string), 0])
+            stack.append([_quote_of(tok.string), 0, tok.start])
             continue
         if tok.type == end:
             if stack:
-                stack.pop()
+                closed = stack.pop()
+                if len(closed[0]) == 1 and _RAW_NEWLINE.search(_between(lines, closed[2], tok.end).replace("\r\n", "\n")):
+                    out.append("line %d: a line break inside a replacement field of a single-quoted f-string" % closed[2][0])
             continue
         if stack and tok.type == tokenize.OP and tok.string in ("{", "}"):
             stack[-1][1] = stack[-1][1] + 1 if tok.string == "{" else max(stack[-1][1] - 1, 0)
@@ -196,6 +232,9 @@ def _fstring_problems(source: bytes) -> List[str]:
             out.append("line %d: a comment inside a replacement field" % line)
     return out
 
+
+# a newline that no backslash escapes: an even number of backslashes, none included, stands in front of it
+_RAW_NEWLINE = re.compile(r"(?<!\\)(?:\\\\)*\n")
 
 _NOT_CODE = {tokenize.NEWLINE, tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT, tokenize.ENDMARKER}
 
@@ -219,6 +258,19 @@ def _is_parenthesised(segment: str) -> bool:
     return False
 
 
+def _spec_depth(field: ast.FormattedValue) -> int:
+    """How many replacement fields deep this one goes through format specs: `{x}` is 1, `{x:{y}}` is 2, `{x:{y:{z}}}` is 3."""
+    inside = field.format_spec.values if isinstance(field.format_spec, ast.JoinedStr) else []
+    return 1 + max([_spec_depth(v) for v in inside if isinstance(v, ast.FormattedValue)] or [0])
+
+
+def _too_deep_specs(tree: ast.AST) -> List[ast.FormattedValue]:
+    """The fields whose format specs nest three deep. 3.9 allows two (`f"{x:{y}}"`) and says `expressions nested too deeply`
+    for the third; an f-string written inside a field is a string of its own to 3.9, so it starts again at one. A fourth level
+    never reaches this rule: every parser from 3.9 on refuses it itself, which `grammar_problems` reports as one finding."""
+    return [n for n in ast.walk(tree) if isinstance(n, ast.FormattedValue) and _spec_depth(n) > 2]
+
+
 def grammar_problems(source: bytes) -> List[str]:
     """Everything that stops this source from running on Python 3.9, as a list of one-line findings."""
     try:
@@ -226,6 +278,11 @@ def grammar_problems(source: bytes) -> List[str]:
     except (SyntaxError, ValueError) as exc:
         return ["does not parse as Python %d.%d: %s" % (OLDEST + (exc,))]
     out: List[str] = []
+    try:
+        # ast.parse stops at the grammar; `return`, `break` or `await` in the wrong place is refused by the compiler, on every version
+        compile(tree, "<helper>", "exec", dont_inherit=True)
+    except (SyntaxError, ValueError, RecursionError) as exc:
+        out.append("does not compile: %s" % exc)
     text = source.decode("utf-8-sig", errors="replace")
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript):
@@ -237,9 +294,10 @@ def grammar_problems(source: bytes) -> List[str]:
                     out.append("line %d: a starred subscript (PEP 646, 3.11)" % node.lineno)
     if not _lazy_annotations(tree):
         for ann in _annotation_nodes(tree):
-            for sub in ast.walk(ann):
-                if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.BitOr):
-                    out.append("line %d: X | Y in an annotation that is evaluated when the def runs (3.10)" % sub.lineno)
+            for union in _union_sites(ann):
+                out.append("line %d: X | Y in an annotation that is evaluated when the def runs (3.10)" % union.lineno)
+    for field in _too_deep_specs(tree):
+        out.append("line %d: format specs nested three deep in an f-string; 3.9 says expressions nested too deeply" % field.lineno)
     out += _fstring_problems(source)
     return out
 
@@ -344,6 +402,46 @@ class SyntheticCases(unittest.TestCase):
     def test_a_bit_or_outside_an_annotation_is_fine(self) -> None:
         self.assertEqual(self._problems("flags = 1 | 2\n"), [])
 
+    # Literal arguments and Annotated metadata are values, not types: 3.9 evaluates `1 | 2` there as an ordinary integer OR
+    def test_a_bit_or_in_literal_arguments_passes(self) -> None:
+        self.assertEqual(self._problems("from typing import Literal\n\n\ndef g(x: Literal[1 | 2]) -> None: ...\n"), [])
+
+    def test_a_bit_or_in_literal_arguments_through_a_module_name_passes(self) -> None:
+        self.assertEqual(self._problems("import typing as t\n\n\ndef g(x: t.Literal[1 | 2, 4]) -> None: ...\n"), [])
+
+    def test_a_bit_or_in_annotated_metadata_passes(self) -> None:
+        code = "from typing import Annotated\n\n\ndef f(x: Annotated[int, 1 | 2, 4 | 8]) -> None: ...\n"
+        self.assertEqual(self._problems(code), [])
+
+    def test_a_union_in_the_first_argument_of_annotated_is_named(self) -> None:
+        problems = self._problems("from typing import Annotated\n\n\ndef f(x: Annotated[int | None, 1 | 2]) -> None: ...\n")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("X | Y in an annotation", problems[0])
+
+    def test_a_union_around_a_literal_is_named_and_the_literal_inside_it_is_not(self) -> None:
+        code = "from typing import Literal\n\n\ndef g(x: list[Literal[1 | 2] | None]) -> None: ...\n"
+        problems = self._problems(code)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("X | Y in an annotation", problems[0])
+
+    def test_a_return_outside_a_function_is_named(self) -> None:
+        # ast.parse accepts it; the compiler refuses it, on every version, so the helper would never start
+        problems = self._problems("x = 1\nreturn x\n")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("does not compile", problems[0])
+
+    def test_a_break_outside_a_loop_is_named(self) -> None:
+        self.assertEqual(len(self._problems("break\n")), 1)
+
+    def test_an_await_outside_a_function_is_named(self) -> None:
+        self.assertEqual(len(self._problems("await x\n")), 1)
+
+    def test_a_return_inside_a_function_compiles(self) -> None:
+        self.assertEqual(self._problems("def f():\n    return 1\n\nf()\n"), [])
+
+    def test_a_union_inside_a_subscript_of_another_generic_is_named(self) -> None:
+        self.assertEqual(len(self._problems("def f(x: list[int | None]) -> None: ...\n")), 1)
+
     @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
     def test_the_same_quote_inside_an_fstring_is_named(self) -> None:
         problems = self._problems("d = {'a': 1}\nprint(f\"{d[\"a\"]}\")\n")
@@ -412,6 +510,63 @@ class SyntheticCases(unittest.TestCase):
     def test_a_comment_inside_a_replacement_field_is_named(self) -> None:
         problems = self._problems("x = 1\nprint(f\"{x # note\n}\")\n")
         self.assertTrue(any("comment inside a replacement field" in p for p in problems), problems)
+
+    # 3.9 reads a single-quoted f-string as one string token first, and a plain newline cannot be in it; 3.12 lets a field span rows
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_newline_in_a_field_of_a_single_quoted_fstring_is_named(self) -> None:
+        problems = self._problems('print(f"{1 +\n2}")\n')
+        self.assertTrue(any("line break inside a replacement field" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_newline_inside_parentheses_in_a_single_quoted_field_is_named(self) -> None:
+        problems = self._problems('print(f"{(1 +\n2)}")\n')
+        self.assertTrue(any("line break inside a replacement field" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_newline_before_the_closing_brace_of_a_single_quoted_field_is_named(self) -> None:
+        problems = self._problems('print(f"{1\n}")\n')
+        self.assertTrue(any("line break inside a replacement field" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_triple_quoted_string_with_a_newline_in_a_single_quoted_field_is_named(self) -> None:
+        problems = self._problems("print(f\"{'''a\nb'''}\")\n")
+        self.assertTrue(any("line break inside a replacement field" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_newline_in_a_single_quoted_fstring_nested_in_a_triple_quoted_field_is_named(self) -> None:
+        problems = self._problems('print(f"""{f"{1 +\n2}"}""")\n')
+        self.assertTrue(any("line break inside a replacement field" in p for p in problems), problems)
+
+    def test_a_newline_in_a_field_of_a_triple_quoted_fstring_passes(self) -> None:
+        self.assertEqual(self._problems('print(f"""{1 +\n2}""")\n'), [])
+
+    def test_a_newline_in_a_triple_quoted_fstring_nested_in_a_triple_quoted_field_passes(self) -> None:
+        self.assertEqual(self._problems("print(f\"\"\"{f'''{1 +\n2}'''}\"\"\")\n"), [])
+
+    def test_two_single_quoted_fstrings_on_two_rows_pass(self) -> None:
+        self.assertEqual(self._problems('x = 1\nprint(f"{x}")\nprint(f"{x:>4}" + f"{x!r}")\n'), [])
+
+    def test_a_format_spec_nested_three_deep_is_named(self) -> None:
+        problems = self._problems('print(f"{1:{1:{1}}}")\n')
+        self.assertTrue(any("nested too deeply" in p for p in problems), problems)
+
+    def test_a_format_spec_nested_three_deep_through_a_conversion_is_named(self) -> None:
+        problems = self._problems('print(f"{1:{1!r:{1}}}")\n')
+        self.assertTrue(any("nested too deeply" in p for p in problems), problems)
+
+    def test_a_format_spec_nested_four_deep_is_refused_by_the_parser_and_named_once(self) -> None:
+        problems = [p for p in self._problems('print(f"{1:{1:{1:{1}}}}")\n') if "nested too deeply" in p]
+        self.assertEqual(len(problems), 1, problems)
+
+    def test_a_format_spec_nested_two_deep_passes(self) -> None:
+        self.assertEqual(self._problems('x = 1\ny = 2\nprint(f"{x:{y}} {x!r:{y}}")\n'), [])
+
+    def test_a_dict_with_a_colon_in_a_field_is_not_a_nested_spec(self) -> None:
+        self.assertEqual(self._problems('print(f"{ {1: {1: 2}}[1] }")\n'), [])
+
+    def test_a_nested_fstring_in_a_spec_counts_its_own_depth_only(self) -> None:
+        # the inner f-string is a string of its own to 3.9, parsed from level zero
+        self.assertEqual(self._problems("x = 1\ny = 2\nprint(f\"{x:{f'{y:{x}}'}}\")\n"), [])
 
     def test_an_ordinary_fstring_passes(self) -> None:
         self.assertEqual(self._problems("x = 1\nprint(f\"{x} and {x!r:>4}\" + f'{x}')\n"), [])
@@ -496,7 +651,10 @@ class SyntheticCases(unittest.TestCase):
 # What a real CPython 3.9 says about each source (compile(), recorded with 3.9 itself): True = it compiles. The guard has to
 # agree on every host, so a rule that rejects what 3.9 accepts (a false alarm that blocks a good helper) and a rule that
 # accepts what 3.9 refuses (the Item 126 gap) are both red here. Item 126 review: CodeRabbit found four false alarms and one
-# gap in the first version of the rules, and then a second gap (a line continuation inside a field, which tokenize does not show).
+# gap in the first version of the rules, then a second gap (a line continuation inside a field, which tokenize does not show), then
+# three more in the third round (a raw line break inside a single-quoted f-string, format specs nested three deep, and the values
+# inside Literal[...] and Annotated[...] metadata, which are not type unions). RUNS_ON_39 below holds the answers that are not
+# compile() answers.
 CPYTHON_39 = [
     ("local annotation", "def f():\n    x: int | None = None\n    return x\nf()\n", True),
     ("nested f-string, other quote", "x = 1\nprint(f\"{f'{x}'}\")\n", True),
@@ -523,6 +681,28 @@ CPYTHON_39 = [
     ("starred subscript", "d = {}\nitems = [1]\nprint(d[*items])\n", False),
     ("starred after a parenthesised item", "d = {}\nitems = [1]\nprint(d[(1), *items])\n", False),
     ("starred before a parenthesised item", "d = {}\nitems = [1]\nprint(d[*items, (1)])\n", False),
+    ("newline in a single-quoted field", 'print(f"{1 +\n2}")\n', False),
+    ("newline in parentheses in a single-quoted field", 'print(f"{(1 +\n2)}")\n', False),
+    ("newline before the closing brace of a single-quoted field", 'print(f"{1\n}")\n', False),
+    ("triple-quoted string with a newline in a single-quoted field", "print(f\"{'''a\nb'''}\")\n", False),
+    ("newline in a single-quoted f-string in a triple-quoted field", 'print(f"""{f"{1 +\n2}"}""")\n', False),
+    ("newline in a triple-quoted f-string in a triple-quoted field", "print(f\"\"\"{f'''{1 +\n2}'''}\"\"\")\n", True),
+    ("format spec nested two deep", 'x = 1\ny = 2\nprint(f"{x:{y}} {x!r:{y}}")\n', True),
+    ("format spec nested three deep", 'print(f"{1:{1:{1}}}")\n', False),
+    ("format spec nested three deep through a conversion", 'print(f"{1:{1!r:{1}}}")\n', False),
+    ("dict with a colon in a field", 'print(f"{ {1: {1: 2}}[1] }")\n', True),
+    ("nested f-string in a format spec", "x = 1\ny = 2\nprint(f\"{x:{f'{y:{x}}'}}\")\n", True),
+]
+
+# What a real CPython 3.9 does when it RUNS each source (an annotation is evaluated when the def runs, so these are not
+# compile() answers): True = it runs. `X | Y` is a type union only in a type position; the arguments of Literal[...] and the
+# metadata of Annotated[...] are values, so `1 | 2` there is an integer OR.
+RUNS_ON_39 = [
+    ("Literal arguments", "from typing import Literal\n\n\ndef g(x: Literal[1 | 2]) -> None: ...\n\n\ng(1)\n", True),
+    ("Annotated metadata", "from typing import Annotated\n\n\ndef f(x: Annotated[int, 1 | 2]) -> None: ...\n\n\nf(1)\n", True),
+    ("union in the first argument of Annotated", "from typing import Annotated\n\n\ndef f(x: Annotated[int | None, 1]) -> None: ...\n", False),
+    ("union around a Literal", "from typing import Literal\n\n\ndef g(x: list[Literal[1 | 2] | None]) -> None: ...\n", False),
+    ("plain union", "def f(x: int | None) -> None: ...\n", False),
 ]
 
 
@@ -535,6 +715,26 @@ def _cpython_39() -> "str | None":
 
 
 class AgreesWithCPython39(unittest.TestCase):
+    def test_the_guard_agrees_with_what_3_9_runs(self) -> None:
+        for name, source, runs in RUNS_ON_39:
+            with self.subTest(case=name):
+                problems = grammar_problems(source.encode("utf-8"))
+                if runs:
+                    self.assertEqual(problems, [], "3.9 runs this, the guard must not refuse it")
+                else:
+                    self.assertTrue(problems, "3.9 fails on this, the guard must name it")
+
+    @unittest.skipUnless(_cpython_39(), "no python3.9 on PATH; the recorded answers were taken with one")
+    def test_the_recorded_runs_are_what_cpython_3_9_says(self) -> None:
+        interpreter = _cpython_39()
+        for name, source, runs in RUNS_ON_39:
+            with self.subTest(case=name):
+                done = subprocess.run(
+                    [interpreter, "-I", "-c", "import sys; exec(compile(sys.stdin.read(), 's', 'exec'), {})"],
+                    input=source, text=True, capture_output=True, timeout=60,
+                )
+                self.assertEqual(done.returncode == 0, runs, done.stderr)
+
     def test_the_guard_agrees_with_the_recorded_answers(self) -> None:
         for name, source, compiles in CPYTHON_39:
             with self.subTest(case=name):
