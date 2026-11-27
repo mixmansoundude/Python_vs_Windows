@@ -1650,12 +1650,26 @@ at all), same contract.
 `<`/`>`/`|`/`&`. The one new log line this feature adds is content-free ("extra launch argument(s)
 detected").
 
-`:hidden_import_recover`'s own EXE re-run and the CI-only `HP_CI_SKIP_ENV=1` path deliberately do
-NOT receive `HP_APP_ARGS` (a diagnostic re-run of an already-verified build; test infra with no
+The CI-only `HP_CI_SKIP_ENV=1` path deliberately does NOT receive `HP_APP_ARGS` (test infra with no
 interactive terminal to benefit). `:offer_optimized_build`'s internal build-verify launch DOES need
 it (it launches a brand-new, never-before-executed Nuitka binary) -- but reads `$env:HP_APP_ARGS`
 directly in PowerShell rather than cmd.exe-substituting `%HP_APP_ARGS%` into `-Command` text, since
 the value contains literal embedded double-quotes per token that would corrupt naive substitution.
+**`:hidden_import_recover`'s EXE start gets them too since Item 129** (it was listed here as a
+deliberate omission, "a diagnostic re-run of an already-verified build", which is wrong: the loop runs
+after a FAILED check run, and its start after a rebuild is the run that decides whether the repair
+worked). The loop's one start line (`:hidden_import_loop`, after `set "HP_HIR_EXE=..."`) carries the same clause as the
+optimized build's line, `if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};` directly after
+`$si.FileName=...;`, so the loop's every start, the one after the last rebuild included, runs with the
+command line of the check run. Without it a program that needs its arguments (`--input "data file.csv"`)
+failed after the rebuild for the missing argument and the repaired EXE was reported as not verified.
+`tests/selfapps_repair_consent.ps1` scenario `args` (`self.repair.args`, README REQ-026.1 and REQ-018.2)
+runs the real bootstrap with `app.py --input "data file.csv"` and a program that exits 2 unless argv is
+exactly those two arguments, records argv at every start (a ledger at an absolute path), and needs each
+start to have seen them and the repaired EXE to pass; `tests/test_repair_cap.py` pins the clause in the
+line and runs the line's text through `pwsh` against a stand-in that prints its argv (with the arguments,
+without, and the first version of the line as the control that drops them). The two lines share one
+stop text AND one argument clause: a change to either is a change to both lines and both unit tests.
 
 ### First-argument check (Item 67): runs before the fast path, hands `:determine_entry` a normalized name
 
@@ -2101,8 +2115,9 @@ which is filled from text that a run already printed:
   `~run.out.txt` and `~run.err.txt`. The loop's entry run is deliberately NOT used when nothing was rebuilt. It used to run
   from `dist\` (Item 38), where a program that reads a file relative to its working directory was blamed for a file that
   exists at the app root; Item 101 moved the loop's starts to the app root, so that reason is gone. What keeps the
-  verification run's capture as the evidence is that the loop's start passes no program arguments, so a program that needs
-  them could fail there for another reason.
+  verification run's capture as the evidence was that the loop's start passed no program arguments, so a program that needs
+  them could fail there for another reason; Item 129 removed that reason too (the loop's starts carry `HP_APP_ARGS`, see
+  "Argv passthrough"). The evidence rule itself is unchanged: switching it is a behavior change of its own and no row asks for it.
 - **Stale files**: `:run_exe_smokerun` deletes an older `~exe_out.txt` before the launch and `:hidden_import_recover_done`
   deletes it before deciding, because the subroutine can run twice per build.
 - **Known limit**: the second `:hidden_import_recover` call (after a DLL repair) starts its iteration count at 0, so when only

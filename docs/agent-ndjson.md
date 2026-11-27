@@ -1158,7 +1158,11 @@ started the program once only to read an error the check run had already printed
 REQ-018.1 does not allow without consent. `.noread.starts` reads the accepted run again and requires the ledger to hold
 the check run plus one start per rebuild, not one more; `.noread.plain` bootstraps a program that writes its ledger line
 and exits with 3 (no module named in its error, the test answers yes) and requires exactly one start, no question shown,
-no rebuild, no `accepted` line and a log line saying the check run names no installed package. Details carry the facts read (counts, positions in the setup log, the starts
+no rebuild, no `accepted` line and a log line saying the check run names no installed package. Item 129 adds `.args` (README
+REQ-026.1 and REQ-018.2): `run_setup.bat app.py --input "data file.csv"` bootstraps a program that records its argv in the
+ledger, exits 2 unless it got exactly those two arguments, and then imports `colorama` by a runtime name; the test answers
+yes, and every start (the check run and the start after each rebuild) must have received both arguments, the second with its
+space kept as one, and the repaired EXE must be verified (`details.argvPerStart` lists what each start saw). Details carry the facts read (counts, positions in the setup log, the starts
 that came from `dist\`) and, only when something is wrong, `problems` and a log excerpt; the console, log and result file
 of each gate scenario are in `tests/~repair_consent_evidence.txt`. Each bootstrap has a 15 minute limit and each gate
 scenario three minutes. Skips on non-Windows.
@@ -1175,6 +1179,7 @@ self.repair.consent.declined
 self.repair.consent.accepted
 self.repair.noread.plain
 self.repair.noread.starts
+self.repair.args
 ```
 
 ## selfapps-workdir NDJSON rows (selfapps_workdir.ps1, conda-full lane only, gating)

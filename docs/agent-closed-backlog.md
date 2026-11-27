@@ -6238,7 +6238,8 @@ Items completed and shipped:
   decision**: the two internal, bounded repair/optimization verification loops
   (`:hidden_import_recover`'s own re-run, `:offer_optimized_build`'s internal verify launch) do
   NOT receive `HP_APP_ARGS` -- both are diagnostic checks against an already-confirmed-working
-  build, not the user's primary run. The `HP_CI_SKIP_ENV=1` CI-only test path
+  build, not the user's primary run. (Later corrected: the optimized build's launch got the arguments in the same
+  item, and the repair loop's start got them in Item 129, because the loop runs after a FAILED check run.) The `HP_CI_SKIP_ENV=1` CI-only test path
   (`:ci_skip_entry`'s system-Python launch) was also left out -- test infrastructure, not one of
   the plan's four named real launch sites, and CI has no interactive terminal to benefit from it
   anyway. See `docs/agent-interconnect.md`'s new "Argv passthrough escape hatch (REQ-026, P1)"
@@ -8413,3 +8414,24 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   again, which must unpack in full without ever starting the planted file (the stub records each start in `uv.calls`); a third run is the control and must take the cached binary. The fix is a marker file `~uv_bin\~unpack.incomplete`, written before the
   unpack and removed only after one that succeeded; the cached-binary branch tests it first, and a marker left with no successful unpack this run vetoes the result like a failed exit code. 259 of 271 shalls named.
   **Red proof (run `44870788075`, `real` lane, read from the pre-harness artifact):** `self.netres.uv.survivor` false for the right reason, the second run logged `uv: cached binary found at ~uv_bin\uv.exe` with `requests` 0 and `uvCallsCount` 1 (the planted file was started) and no earlier-unpack warning, `nextRunUnpacksAgain` and `runAfterTakesCachedUv` false, `firstRunFailsTheUnpack` true; the other 20 `self.netres.*` rows were true, `self.netres.uv.partial` with both of its flags.
+
+### Item 129 (filed 2026-11-27, PR #545; the repair loop's start line dropped the program arguments, found by CodeRabbit on PR #542)
+
+- **Finding.** CodeRabbit on PR #542, valid and older than that PR: the `--hidden-import` repair loop's one start line (`:hidden_import_loop`) never set `$si.Arguments`, so every start of the loop ran the EXE with no
+  arguments, while README REQ-026.1 says every launch of the user's program gets the arguments given to `run_setup.bat`, and the log line says so too ("extra launch argument(s) detected ... forwarded at every launch").
+  A program that needs `--input "data file.csv"` passed the check run (which had them), was repaired by the loop (the module the check run named was added and the EXE rebuilt) and then failed the
+  loop's start for the missing argument, so a repair that worked was reported as not verified. The older note ("the loop's re-run is a diagnostic check, it does not receive `HP_APP_ARGS`") was written for the
+  PyInstaller-build verification of a working build and was never true of a loop that runs after a failed one.
+- **Red first.** PR #545 went up with the red test alone: scenario `args` of `tests/selfapps_repair_consent.ps1` (row `self.repair.args`, tags REQ-026.1 and REQ-018.2) bootstraps `app.py --input "data file.csv"` with a
+  program that records its argv at every start in a ledger at an absolute path, exits 2 unless argv is exactly those two arguments, and loads colorama by a runtime string so the loop has a module to add; the judge
+  `Get-ArgsProblems` needs the check run's start, the post-rebuild start and every other recorded start to have both arguments and the repaired EXE to pass. The unit pins in `tests/test_repair_cap.py` (the clause in
+  the line, three `pwsh` stand-in cases against a program that prints its argv, three mutation cases) were red locally. **Red proof (run `46012728834`, read from the artifacts of all eight lanes):** `real` lane
+  `self.repair.args` false for the right reason, start 1 argv `[--input, data file.csv]` and start 2 (after the rebuild) argv `[]`, `args: start 2 was given [] instead of [--input | data file.csv]`; every other row of
+  every lane green except `self.pytest.unit` (the one pinned unit test, red in all eight lanes, as intended) and conda-full's "Enforce NDJSON failures" step, which fails on that one row alone.
+- **The fix.** One clause in the loop's start line, `if($env:HP_APP_ARGS){$si.Arguments=$env:HP_APP_ARGS};` directly after `$si.FileName=$env:HP_HIR_EXE;`, the clause the optimized build's line already had.
+  PowerShell reads the value from the environment, because it holds one quoted token per argument and cmd must never substitute it into `-Command` text. No other line changed; `HP_APP_ARGS` is never echoed (README
+  REQ-026.5).
+- **Rules and places that change together:** `docs/agent-interconnect.md`, "Argv passthrough (REQ-026, P1)" (the loop's omission was listed there as deliberate and is corrected) and the evidence paragraph of
+  "The failure hints read text a run already printed". The two lines that share the stop text (`:hidden_import_loop`, `:offer_optimized_build`) now share the argument clause too.
+- **README wording (lane 3 owns the README, so it is in the PR body):** the REQ-026 note that says the loop's re-run does not receive the arguments is replaced by a sentence that it does, and REQ-026.1 already covers it
+  (every launch). `self.repair.args` is listed in `tests/expected_rows/real.txt` only after two green runs.
