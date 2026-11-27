@@ -128,6 +128,17 @@ def _quote_of(start_text: str) -> str:
     return start_text[len(start_text.rstrip("\"'")):]
 
 
+def _between(lines: List[str], first: tuple, last: tuple) -> str:
+    """The source text from one (row, column) position up to another, as tokenize reports them; "" when it cannot say."""
+    (row1, col1), (row2, col2) = first, last
+    chunk = lines[row1 - 1:row2]
+    if not chunk:
+        return ""
+    chunk[-1] = chunk[-1][:col2]  # the end first: with one row the start cut that follows then lands on the right text
+    chunk[0] = chunk[0][col1:]
+    return "".join(chunk)
+
+
 def _fstring_problems(source: bytes) -> List[str]:
     """What 3.9 refuses inside an f-string replacement field and PEP 701 (3.12) allows.
 
@@ -135,7 +146,8 @@ def _fstring_problems(source: bytes) -> List[str]:
     so a quote of the same kind ends it early: one `"` in a `"` string, three in a triple-quoted one. A nested f-string is
     fine when its delimiter is another one. A backslash in the expression part, which includes every string and nested f-string
     text inside a field; the literal text and the format spec of an f-string that is not itself inside a field may hold one.
-    A comment.
+    The backslash of a line continuation between two tokens of the expression is in no token, so the text between tokens is
+    read as well. A comment.
 
     Before 3.12 the tokenizer returns an f-string as one STRING token and ast.parse already refuses the source, so this
     only has something to look at on a newer host; the rule is the same either way.
@@ -150,8 +162,15 @@ def _fstring_problems(source: bytes) -> List[str]:
         tokens = list(tokenize.tokenize(io.BytesIO(source).readline))
     except (tokenize.TokenError, SyntaxError, IndentationError):
         return []
+    lines = io.StringIO(source.decode("utf-8-sig", errors="replace")).readlines()  # newline "\n" only, like the tokenizer
     stack: List[list] = []  # one [delimiter, brace depth] per f-string being read, the innermost last
-    for tok in tokens:
+    for index, tok in enumerate(tokens):
+        prev = tokens[index - 1] if index else None
+        # the text between two tokens inside a replacement field; literal text and a format spec are tokens of their own
+        # (FSTRING_MIDDLE) that touch their neighbours, so no continuation sits between them (14040 literal and spec bodies,
+        # with doubled braces and continuations, read the same with and without a test for that token type)
+        if prev is not None and any(f[1] > 0 for f in stack) and "\\" in _between(lines, prev.end, tok.start):
+            out.append("line %d: a backslash inside a replacement field" % prev.end[0])
         fields = [f for f in stack if f[1] > 0]  # the replacement fields this token sits in
         line = tok.start[0]
         if tok.type == start:
@@ -350,6 +369,45 @@ class SyntheticCases(unittest.TestCase):
         problems = self._problems("print(f\"{f'a\\n'}\")\n")
         self.assertTrue(any("backslash" in p for p in problems), problems)
 
+    # tokenize leaves the backslash of a line continuation out of every token, so these are read from the text between tokens
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_line_continuation_in_a_replacement_field_is_named(self) -> None:
+        problems = self._problems('x = 1\nprint(f"{x + \\\n 1}")\n')
+        self.assertTrue(any("backslash" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_line_continuation_in_a_triple_quoted_field_is_named(self) -> None:
+        problems = self._problems('x = 1\nprint(f"""{x + \\\n 1}""")\n')
+        self.assertTrue(any("backslash" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_line_continuation_before_the_closing_brace_is_named(self) -> None:
+        problems = self._problems('x = 1\nprint(f"""{x \\\n}""")\n')
+        self.assertTrue(any("backslash" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_line_continuation_in_a_nested_fstring_inside_a_field_is_named(self) -> None:
+        problems = self._problems("x = 1\nprint(f\"\"\"{f'a\\\nb'}\"\"\")\n")
+        self.assertTrue(any("backslash" in p for p in problems), problems)
+
+    @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
+    def test_a_line_continuation_on_a_middle_row_of_the_gap_is_named(self) -> None:
+        # the gap from `+` to `1` is three rows: a plain newline, a row that is only a continuation, the row of the `1`
+        problems = self._problems('x = 1\nprint(f"""{x +\n \\\n 1}""")\n')
+        self.assertTrue(any("backslash" in p for p in problems), problems)
+
+    def test_a_line_continuation_outside_every_field_passes(self) -> None:
+        self.assertEqual(self._problems('x = 1\ny = f"{x}" + \\\n    "a"\nz = (1 + \\\n     2)\n'), [])
+
+    def test_a_line_continuation_in_the_literal_part_passes(self) -> None:
+        self.assertEqual(self._problems('x = 1\nprint(f"a\\\nb{x}")\n'), [])
+
+    def test_a_line_continuation_in_the_format_spec_passes(self) -> None:
+        self.assertEqual(self._problems('x = 1\nprint(f"{x:5\\\n}")\n'), [])
+
+    def test_a_plain_newline_inside_a_triple_quoted_field_passes(self) -> None:
+        self.assertEqual(self._problems('x = 1\nprint(f"""{x +\n 1}""")\n'), [])
+
     @unittest.skipUnless(hasattr(tokenize, "FSTRING_START"), "before 3.12 ast.parse refuses these f-strings itself")
     def test_a_comment_inside_a_replacement_field_is_named(self) -> None:
         problems = self._problems("x = 1\nprint(f\"{x # note\n}\")\n")
@@ -438,7 +496,7 @@ class SyntheticCases(unittest.TestCase):
 # What a real CPython 3.9 says about each source (compile(), recorded with 3.9 itself): True = it compiles. The guard has to
 # agree on every host, so a rule that rejects what 3.9 accepts (a false alarm that blocks a good helper) and a rule that
 # accepts what 3.9 refuses (the Item 126 gap) are both red here. Item 126 review: CodeRabbit found four false alarms and one
-# gap in the first version of the rules.
+# gap in the first version of the rules, and then a second gap (a line continuation inside a field, which tokenize does not show).
 CPYTHON_39 = [
     ("local annotation", "def f():\n    x: int | None = None\n    return x\nf()\n", True),
     ("nested f-string, other quote", "x = 1\nprint(f\"{f'{x}'}\")\n", True),
@@ -448,6 +506,14 @@ CPYTHON_39 = [
     ("triple outer, nested f-string", "x = 1\nprint(f\"\"\"{ f\"{x}\" }\"\"\")\n", True),
     ("backslash in a string in the field", "print(f\"{'a\\nb'}\")\n", False),
     ("backslash in a nested f-string", "print(f\"{f'a\\n'}\")\n", False),
+    ("line continuation in the field", "x = 1\nprint(f\"{x + \\\n 1}\")\n", False),
+    ("line continuation in a triple-quoted field", "x = 1\nprint(f\"\"\"{x + \\\n 1}\"\"\")\n", False),
+    ("line continuation before the closing brace", "x = 1\nprint(f\"\"\"{x \\\n}\"\"\")\n", False),
+    ("line continuation in a nested f-string in a field", "x = 1\nprint(f\"\"\"{f'a\\\nb'}\"\"\")\n", False),
+    ("line continuation on a middle row of the gap", "x = 1\nprint(f\"\"\"{x +\n \\\n 1}\"\"\")\n", False),
+    ("line continuation in the literal part", "x = 1\nprint(f\"a\\\nb{x}\")\n", True),
+    ("line continuation in the format spec", "x = 1\nprint(f\"{x:5\\\n}\")\n", True),
+    ("plain newline in a triple-quoted field", "x = 1\nprint(f\"\"\"{x +\n 1}\"\"\")\n", True),
     ("backslash in the literal part", "x = 1\nprint(f\"a\\n{x}\")\n", True),
     ("backslash in the format spec", "x = 1\nprint(f\"{x:\\n}\")\n", True),
     ("quote in the format spec, other kind", "x = 1\nprint(f\"{x:'>4}\")\n", True),

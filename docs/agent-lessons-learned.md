@@ -389,7 +389,13 @@ only":
   signature always is. `f"{f'{x}'}"` and `f"""{ "ok" }"""` compile on 3.9 (a nested f-string is fine with another delimiter, and
   one `"` does not end a triple-quoted string); `f"{f"{x}"}"` and a `"""` inside a `"""` string do not. A backslash is refused in
   the expression part, which includes every string and nested f-string text in a field, but allowed in the literal text and the
-  format spec of an f-string that is not itself in a field. `d[(*a,)]` is a tuple display and compiles; `d[*a]`, `d[(1), *a]` and
+  format spec of an f-string that is not itself in a field. **The backslash of a line continuation is in no token** (Python 3.12 and
+  newer `tokenize` drops it), so `f"{x + \<newline> 1}"` shows no backslash to a check that reads token text: the check also reads
+  the source text between two consecutive tokens inside a field (the literal text and format spec of an f-string are tokens of
+  their own that touch their neighbours, so a gap that holds a backslash is always in an expression). 3.9 refuses it in a single or
+  triple-quoted field and before the closing brace, and accepts it in the literal part and the format spec; a plain newline inside
+  a triple-quoted field is fine. The first version of that check also tested for the token type of the neighbours; 14,040 generated
+  literal and spec bodies (doubled braces, continuations) read the same with and without it, so it was removed as dead weight. `d[(*a,)]` is a tuple display and compiles; `d[*a]`, `d[(1), *a]` and
   `d[*a, (1)]` do not, so the test decides "parenthesised" from the tokens of the slice, not from its first or last character.
   `CPYTHON_39` in the test is the table of these answers taken with CPython 3.9's own `compile()`; the guard must agree with
   every row on every host, and a second test re-checks the table against a `python3.9` when one is on PATH (`uv python install
