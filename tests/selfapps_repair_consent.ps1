@@ -28,6 +28,13 @@
 #               Together they show that an extra start follows consent and nothing else: without it the ledger holds one
 #               line. The counts also rest on Item 96 (the failure hint no longer starts the program a third time).
 #
+# Follow-up (a) of Item 97, two more rows. The loop started the program once only to read the error, and README REQ-018.1
+# allows one automatic start per invocation: the check run has already printed that error into ~run.err.txt. The loop must
+# read it there first, ask only when it names an installed package a rebuild can add, and start the program only to check a
+# rebuild. noread.plain bootstraps a program that fails without naming any module (it writes its ledger line and exits 3, the
+# answer is yes): the program must be started exactly once, no question may be shown, nothing may be rebuilt, and the log
+# says why. noread.starts reads the accepted run: the starts are the check run plus one per rebuild, not one more.
+#
 # Tags. Row tags are literals at each call site (the requirement-trace tests read text). The two run rows and the gate rows
 # carry the README shalls this behavior is, REQ-018.1 and REQ-018.2; the known-idempotent row carries REQ-005.13 (the flag is
 # the user's declaration that the script is safe to run more than once). The README does not yet list the repair question
@@ -37,10 +44,11 @@
 # requirement-trace tests scan text, not PowerShell). The skip loop below uses a map on purpose; the real emissions are literal.
 #
 # Lane: real (gating from its first run, AGENTS.md "New tests gate immediately"). Ten driver runs (seconds each, the control
-# run may wait for the 30 second default of choice) and two default bootstraps.
+# run may wait for the 30 second default of choice) and three default bootstraps.
 # Emits: self.repair.gate.noinput, self.repair.gate.nonint, self.repair.gate.cilane, self.repair.gate.control,
 #        self.repair.gate.answers, self.repair.gate.idempotent, self.repair.gate.once,
-#        self.repair.consent.declined, self.repair.consent.accepted
+#        self.repair.consent.declined, self.repair.consent.accepted,
+#        self.repair.noread.plain, self.repair.noread.starts
 param()
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
@@ -62,12 +70,14 @@ function Write-NdjsonRow {
 $allIds = @(
     'self.repair.gate.noinput', 'self.repair.gate.nonint', 'self.repair.gate.cilane', 'self.repair.gate.control',
     'self.repair.gate.answers', 'self.repair.gate.idempotent', 'self.repair.gate.once',
-    'self.repair.consent.declined', 'self.repair.consent.accepted'
+    'self.repair.consent.declined', 'self.repair.consent.accepted',
+    'self.repair.noread.plain', 'self.repair.noread.starts'
 )
 $reqOf = @{
     'self.repair.gate.noinput' = 'REQ-018.2'; 'self.repair.gate.nonint' = 'REQ-018.2'; 'self.repair.gate.cilane' = 'REQ-018.2'
     'self.repair.gate.control' = 'REQ-018.2'; 'self.repair.gate.answers' = 'REQ-018.2'; 'self.repair.gate.idempotent' = 'REQ-005.13'
     'self.repair.gate.once' = 'REQ-018.2'; 'self.repair.consent.declined' = 'REQ-018.1, REQ-018.2'; 'self.repair.consent.accepted' = 'REQ-018.2'
+    'self.repair.noread.plain' = 'REQ-018.1, REQ-018.2'; 'self.repair.noread.starts' = 'REQ-018.1, REQ-018.2'
 }
 function Write-AllRows {
     param([bool]$Pass, [string]$Desc, [hashtable]$Details)
@@ -411,6 +421,24 @@ mod = importlib.import_module('colorama')
 print("repair-ok", mod.__name__)
 '@
 
+# The plain failure of noread.plain: the same ledger line first, then a failure that names no module at all. Nothing a rebuild
+# could add is missing, so the check run's own error already tells the loop there is nothing to repair; any further start of the
+# program is a start that learns nothing.
+$plainCode = @'
+import json
+import os
+import sys
+
+with open(os.environ["REPAIR_LEDGER"], "a") as f:
+    f.write(json.dumps({"scenario": "plain", "frozen": bool(getattr(sys, "frozen", False)), "cwd": os.getcwd()}) + "\n")
+
+sys.stderr.write("plain failure: this program exits with 3 on purpose\n")
+sys.exit(3)
+'@
+
+# What the loop logs when the check run's error names no installed package. tests/test_repair_consent.py pins the text to run_setup.bat.
+$noReadPattern = 'Repair loop: .*names no installed package'
+
 $runTimeoutMs = 15 * 60 * 1000
 
 function Read-Ledger {
@@ -429,7 +457,7 @@ function Read-Ledger {
 # file clears the two variables that would change the answer itself, with cmd's own set, which is reliable where removing a
 # variable from this process is not (gap T12).
 function Invoke-RepairScenario {
-    param([string]$Scenario, [string]$Answer)
+    param([string]$Scenario, [string]$Answer, [string]$Code = $appCode)
     $res = [ordered]@{ Scenario = $Scenario; Finished = $false; ExitCode = -1; Seconds = 0; Dir = ''; Setup = ''; Console = ''; Ledger = @(); Error = '' }
     try {
         $dir = Join-Path $here ('~selftest_repair_' + $Scenario)
@@ -437,7 +465,7 @@ function Invoke-RepairScenario {
         if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
         Copy-Item -LiteralPath $batchPath -Destination $dir -Force
-        Set-Content -LiteralPath (Join-Path $dir 'app.py') -Value $appCode -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $dir 'app.py') -Value $Code -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $dir 'requirements.txt') -Value 'colorama' -Encoding ASCII
         $consoleName = '~repair_' + $Scenario + '.log'
         $launch = @('@echo off', 'set "HP_PVW_KNOWN_IDEMPOTENT="', 'set "HP_TEST_REPAIR_ANSWER="')
@@ -477,6 +505,7 @@ function Get-RunFacts {
         acceptedAt = ([regex]::Match($s, $logPatterns['accepted'])).Index
         autoSeen  = [regex]::IsMatch($s, $logPatterns['auto'])
         acceptedSeen = [regex]::IsMatch($s, $logPatterns['accepted'])
+        noReadSeen = [regex]::IsMatch($s, $noReadPattern)
         loopAnnouncedAt = $s.IndexOf('even if running perfectly')
         addingAt  = $s.IndexOf('[REPAIR][HIDDEN_IMPORT] Adding --hidden-import=colorama')
         verified  = $s.Contains('EXE verified after hidden-import recovery')
@@ -511,6 +540,35 @@ function Get-RunProblems {
     return $out.ToArray()
 }
 
+# noread.plain: a failure that names no module must end the loop where it starts, before any question and any start.
+function Get-PlainProblems {
+    param($Run, $Facts)
+    $out = New-Object System.Collections.ArrayList
+    if (-not $Run.Finished) { [void]$out.Add('plain: the bootstrap did not finish within the time limit'); return $out.ToArray() }
+    $starts = @($Run.Ledger).Count
+    if (-not $Facts.failedRun) { [void]$out.Add('plain: the EXE verification run did not fail, so there was nothing for the loop to judge') }
+    if ($starts -lt 1) { [void]$out.Add('plain: the ledger is empty, so the program never ran') }
+    if ($starts -gt 1) { [void]$out.Add("plain: the program was started ${starts} times; expected exactly the one check run, because its error is already in ~run.err.txt and names no package, so a further start learns nothing") }
+    if ($Facts.headingInConsole) { [void]$out.Add('plain: the repair question was shown although the check run names no installed package, so there is nothing to repair and nothing to ask about') }
+    if ($Facts.acceptedSeen) { [void]$out.Add('plain: the log says the repair was accepted for an error that names no package') }
+    if ($Facts.rebuilds -gt 0) { [void]$out.Add("plain: the EXE was rebuilt $($Facts.rebuilds) time(s) with no package named") }
+    if (-not $Facts.noReadSeen) { [void]$out.Add('plain: the log has no line saying the check run names no installed package, so the user is not told why nothing was tried') }
+    return $out.ToArray()
+}
+
+# noread.starts: with consent, the program is started once for the check run and once to check each rebuild, never once more
+# to find out what the check run already printed.
+function Get-StartCountProblems {
+    param($Run, $Facts)
+    $out = New-Object System.Collections.ArrayList
+    if (-not $Run.Finished) { [void]$out.Add('starts: the bootstrap did not finish within the time limit'); return $out.ToArray() }
+    $starts = @($Run.Ledger).Count
+    if ($Facts.rebuilds -lt 1) { [void]$out.Add('starts: no hidden-import rebuild happened, so the starts cannot be counted against one'); return $out.ToArray() }
+    $expected = 1 + $Facts.rebuilds
+    if ($starts -ne $expected) { [void]$out.Add("starts: the program was started ${starts} time(s) for $($Facts.rebuilds) rebuild(s); expected ${expected}, the check run plus one start to check each rebuild") }
+    return $out.ToArray()
+}
+
 function Get-RunDetails {
     param($Run, $Facts, [string[]]$Problems)
     $details = [ordered]@{
@@ -518,7 +576,7 @@ function Get-RunDetails {
         startsFromDist = @(@($Run.Ledger) | Where-Object { ([string]$_.cwd) -match '[\\/]dist$' }).Count
         failedRun = [bool]$Facts.failedRun; announced = $Facts.announced; rebuilds = $Facts.rebuilds
         headingInConsole = [bool]$Facts.headingInConsole; markerAfterHeading = [bool]$Facts.markerAfterHeading
-        autoSeen = [bool]$Facts.autoSeen; acceptedSeen = [bool]$Facts.acceptedSeen; verified = [bool]$Facts.verified
+        autoSeen = [bool]$Facts.autoSeen; acceptedSeen = [bool]$Facts.acceptedSeen; verified = [bool]$Facts.verified; noReadSeen = [bool]$Facts.noReadSeen
         acceptedAt = $Facts.acceptedAt; loopAnnouncedAt = $Facts.loopAnnouncedAt; addingAt = $Facts.addingAt
     }
     if ($Run.Error) { $details['error'] = $Run.Error }
@@ -551,6 +609,27 @@ Write-NdjsonRow ([ordered]@{
     id = 'self.repair.consent.accepted'; req = 'REQ-018.2'; pass = [bool]($acceptedProblems.Count -eq 0)
     desc = 'REQ-018.2: with consent the repair loop starts the program again and repairs the EXE, and the log says the repair was accepted before the loop announces its first start or adds the first --hidden-import'
     details = (Get-RunDetails -Run $accepted -Facts $acceptedFacts -Problems $acceptedProblems)
+})
+
+# ---------------------------------------------------------------- noread.starts: the accepted run again, counted against its rebuilds
+$startProblems = @(Get-StartCountProblems -Run $accepted -Facts $acceptedFacts)
+if ($startProblems.Count -gt 0) { $allPass = $false }
+Write-NdjsonRow ([ordered]@{
+    id = 'self.repair.noread.starts'; req = 'REQ-018.1, REQ-018.2'; pass = [bool]($startProblems.Count -eq 0)
+    desc = 'REQ-018.1 and REQ-018.2: with consent the program is started once for the check run and once to check each repair rebuild, never once more only to read an error the check run already printed'
+    details = (Get-RunDetails -Run $accepted -Facts $acceptedFacts -Problems $startProblems)
+})
+
+# ---------------------------------------------------------------- plain: a failure that names no module, the test answers yes
+$plain = Invoke-RepairScenario -Scenario 'plain' -Answer 'Y' -Code $plainCode
+$plainFacts = Get-RunFacts $plain
+$plainProblems = @(Get-PlainProblems -Run $plain -Facts $plainFacts)
+Add-Evidence -Title ('run plain (' + $plain.Seconds + ' s, starts ' + @($plain.Ledger).Count + ')') -Text ((Get-Excerpt -Text $plain.Setup -Pattern 'Verifying the built standalone EXE|EXE smokerun|Entry smoke|Repair loop|\[REPAIR\]|\[HINT\]|\[ERROR\]|\[STATUS\]' -Max 60) -join "`n")
+if ($plainProblems.Count -gt 0) { $allPass = $false }
+Write-NdjsonRow ([ordered]@{
+    id = 'self.repair.noread.plain'; req = 'REQ-018.1, REQ-018.2'; pass = [bool]($plainProblems.Count -eq 0)
+    desc = 'REQ-018.1 and REQ-018.2: when the check run fails with an error that names no installed package, the repair loop reads that error from the check run, asks nothing, rebuilds nothing, starts the program no second time and the log says why'
+    details = (Get-RunDetails -Run $plain -Facts $plainFacts -Problems $plainProblems)
 })
 
 if (-not $allPass) { exit 1 }

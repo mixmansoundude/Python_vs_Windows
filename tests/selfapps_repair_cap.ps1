@@ -16,8 +16,8 @@
 # program again, Item 97, and a non-interactive run declines):
 #   requirements.txt = colorama, app.py imports colorama by a runtime string, so PyInstaller does not bundle it
 #   start 1  the EXE verification run: ModuleNotFoundError, exit 1
-#   start 2  the loop's first run: the same failure, the scan names colorama, the loop rebuilds with --hidden-import=colorama
-#   start 3  the run after the rebuild: colorama imports, and the program prints one line a second for 100 seconds
+#            the loop reads that run's saved error (Item 97 follow-up a), the scan names colorama, it rebuilds with --hidden-import=colorama
+#   start 2  the run after the rebuild: colorama imports, and the program prints one line a second for 100 seconds
 # Every start appends JSON lines to a ledger at an absolute path (CAP_LEDGER): start, imported, a tick per second, done. The cap
 # is measured from the program's own clock, not the batch file's: the seconds between its start line and its last tick must be
 # near 30 (more than 10 and at most 45), it must never reach done, and when the bootstrap has returned no process may still run
