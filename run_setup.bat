@@ -411,7 +411,7 @@ goto :disk_space_checked
 :disk_space_have_figure
 if %HP_FREE_GB% LSS 2 (
   echo *** WARNING: Only ~%HP_FREE_GB% GB free disk space detected on this drive.
-  echo *** Downloading Python/Miniconda and building your app can need several GB.
+  echo *** Downloading Python/Miniconda and building your app as a standalone EXE can need several GB.
   echo *** If setup fails partway through, freeing up disk space is a likely fix.
   call :log "[WARN] REQ-025: low disk space detected (~%HP_FREE_GB% GB free); continuing (warn-only)."
 )
@@ -1647,7 +1647,7 @@ if not defined HP_SKIP_PIPREQS if not defined PEP723_ACTIVE (
     "%HP_PY%" -m pip install -q --disable-pip-version-check pipreqs==%HP_PIPREQS_VERSION% >> "%LOG%" 2>&1
   )
   if errorlevel 1 (
-    call :log "[WARN] pipreqs install failed (Python version incompatible with pipreqs). Fallback: warnfix will detect and install missing imports at build time. Consider adding requirements.txt or pyproject.toml [project].dependencies for explicit dependency specification."
+    call :log "[WARN] pipreqs install failed (Python version incompatible with pipreqs). Fallback: warnfix will detect and install missing imports at EXE build time. Consider adding requirements.txt or pyproject.toml [project].dependencies for explicit dependency specification."
     set "HP_SKIP_PIPREQS=1"
     set "HP_PIPREQS_SUMMARY_NOTE=(pipreqs unavailable for this Python version)"
   ) else (
@@ -3802,7 +3802,7 @@ if %HP_PROBE_SEC% LSS 1 set "HP_PROBE_SEC=1"
 set "HP_PROBE_UNIT=seconds"
 if "%HP_PROBE_SEC%"=="1" set "HP_PROBE_UNIT=second"
 if defined HP_PROBE_EXCEEDED (
-  call :log "[INFO] Fail-fast probe: still running after %HP_PROBE_SEC% %HP_PROBE_UNIT%; this is your program's real run, not a rebuild trigger. If it has a GUI it may have opened minimized or on another window; if it is a background/console app with no window, that is expected. The bootstrapper is waiting for it to finish so it can report the final result -- it will not force-stop it."
+  call :log "[INFO] Fail-fast probe: still running after %HP_PROBE_SEC% %HP_PROBE_UNIT%; this is your program's real run, not a reason to rebuild the EXE. If it has a GUI it may have opened minimized or on another window; if it is a background/console app with no window, that is expected. The bootstrapper is waiting for it to finish so it can report the final result -- it will not force-stop it."
 )
 if "%HP_SMOKE_RC%"=="0" (
   call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
@@ -3947,13 +3947,14 @@ rem override is the user's consent (same reasoning as HP_PVW_KNOWN_IDEMPOTENT), 
 rem name, verifies, and swaps only on success, so a verified EXE is never replaced by an unverified one.
 if /I "%HP_BUILDER%"=="pyinstaller" exit /b 0
 if defined HP_NUITKA_FALLBACK_USED exit /b 0
-if /I "%HP_BUILDER%"=="both" if not "%HP_EXE_EXIT%"=="0" call :log "[INFO] PVW_BUILDER=both: the optimized build is skipped because the standard build did not run cleanly."
+if /I "%HP_BUILDER%"=="both" if not "%HP_EXE_EXIT%"=="0" call :log "[INFO] PVW_BUILDER=both: the optimized build is skipped because the standard EXE build did not run cleanly."
 if not "%HP_EXE_EXIT%"=="0" exit /b 0
 if /I "%HP_BUILDER%"=="both" goto :optbuild_both
 echo.
 echo *** Your app is ready. ***
 echo *** Want to build an optimized version too? It takes a bit longer to build right now, ***
 echo *** but it starts up more reliably on Windows and runs faster once it is built. (Optional, safe to skip) ***
+echo *** It is a second standalone EXE, built with Nuitka, and it replaces your current EXE only if it builds and runs. ***
 echo *** Building it starts your program once more for up to 30 seconds to check it works, so say no if running it twice could cause harm. ***
 set "HP_OPTBUILD_RAW="
 if defined HP_TEST_OPTBUILD_ANSWER (
@@ -3969,17 +3970,17 @@ if defined HP_TEST_OPTBUILD_ANSWER (
 )
 set "HP_OPTBUILD_CHOICE=%HP_OPTBUILD_RAW:~0,1%"
 if /I not "%HP_OPTBUILD_CHOICE%"=="Y" (
-  call :log "[INFO] Optimized build: declined."
+  call :log "[INFO] Optimized build: declined. No optimized EXE was built and your current EXE is unchanged."
   set "HP_OPTBUILD_RAW="
   set "HP_OPTBUILD_CHOICE="
   exit /b 0
 )
 set "HP_OPTBUILD_RAW="
 set "HP_OPTBUILD_CHOICE="
-call :log "[INFO] Optimized build: accepted; building now. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+call :log "[INFO] Optimized build: accepted; building the optimized EXE now. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
 goto :optbuild_build
 :optbuild_both
-call :log "[INFO] PVW_BUILDER=both: building the optimized version now without asking. It starts your program once more for up to 30 seconds to check it works. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+call :log "[INFO] PVW_BUILDER=both: building the optimized version now without asking. It starts your program once more for up to 30 seconds to check it works. The result is a second standalone EXE built with Nuitka, and your current EXE is only replaced if it builds and runs. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
 :optbuild_build
 rem Build to a distinct temp filename first -- the already-working dist\%ENVNAME%.exe is never
 rem touched until a build AND a verification run both succeed. HP_OPTBUILD_TMP is set before
@@ -3997,7 +3998,7 @@ if "%HP_ENV_MODE%"=="uv" (
   "%HP_PY%" -m pip install -q nuitka >> "%LOG%" 2>&1
 )
 if errorlevel 1 (
-  call :log "[WARN] Optimized build: could not install the build tool; your app is still ready to use as-is."
+  call :log "[WARN] Optimized build: could not install the build tool; your app is still ready to use as-is. Your current EXE is unchanged."
   goto :optbuild_cleanup
 )
 rem Same --assume-yes-for-downloads rationale as :try_nuitka_tier_a: Nuitka must never prompt
@@ -4005,13 +4006,13 @@ rem interactively here.
 call :nuitka_unsupported_mark
 "%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%HP_OPTBUILD_TMP%" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
-  call :log "[WARN] Optimized build did not complete; your app is still ready to use as-is."
+  call :log "[WARN] Optimized build did not complete; your app is still ready to use as-is. Your current EXE is unchanged."
   call :nuitka_unsupported_check
   if not defined HP_NUI_UNSUPPORTED call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help."
   goto :optbuild_cleanup
 )
 if not exist "dist\%HP_OPTBUILD_TMP%" (
-  call :log "[WARN] Optimized build finished but did not produce output; your app is still ready to use as-is."
+  call :log "[WARN] Optimized build finished but did not produce output; your app is still ready to use as-is. Your current EXE is unchanged."
   goto :optbuild_cleanup
 )
 rem Verify the new build actually runs before touching the already-working original. This is a
@@ -4045,7 +4046,7 @@ for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass
 set "HP_OPTBUILD_EXE="
 if not defined HP_OPTBUILD_VERIFY_EXIT set "HP_OPTBUILD_VERIFY_EXIT=-1"
 if not "%HP_OPTBUILD_VERIFY_EXIT%"=="0" (
-  call :log "[WARN] Optimized build verification did not pass (exit %HP_OPTBUILD_VERIFY_EXIT%); your app is still ready to use as-is."
+  call :log "[WARN] Optimized build verification did not pass (exit %HP_OPTBUILD_VERIFY_EXIT%); your app is still ready to use as-is. Your current EXE is unchanged."
   goto :optbuild_cleanup
 )
 rem Verified good: swap it into place. A same-drive move is a fast rename on NTFS; /y overwrites
@@ -4064,7 +4065,7 @@ rem proxy here (unlike embed's fresh-destination case): the destination is the a
 rem original EXE, so it already exists before this line runs, success or failure alike. The
 rem correct check is whether the SOURCE is now gone.
 if exist "dist\%HP_OPTBUILD_TMP%" (
-  call :log "[WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is."
+  call :log "[WARN] Optimized build verified successfully but could not be swapped into place; your app is still ready to use as-is. Your current EXE is unchanged."
   goto :optbuild_cleanup
 )
 set "HP_NUITKA_FALLBACK_USED=1"
@@ -4193,7 +4194,7 @@ set "HP_FAST_HASH_RC=%ERRORLEVEL%"
 rem derived requirement (CodeRabbit review, PR #460): a write failure here is not fatal -- the
 rem next run's missing-hash default safely forces exactly one rebuild -- but a silent failure
 rem could repeat unnoticed across many runs. Log it explicitly rather than swallowing it.
-if not "%HP_FAST_HASH_RC%"=="0" call :log "[WARN] Fast-path hash write failed; the next run will rebuild."
+if not "%HP_FAST_HASH_RC%"=="0" call :log "[WARN] Fast-path hash write failed; the next run will rebuild the EXE."
 if exist "%HP_FAST_CHECK_PS%" del "%HP_FAST_CHECK_PS%" >nul 2>&1
 set "HP_FAST_HASH_RC="
 exit /b 0
@@ -4268,7 +4269,7 @@ set "HP_EXPAT_DLL="
 for %%I in ("%HP_PY%") do set "HP_PY_DIR=%%~dpI"
 if defined HP_PY_DIR for /f "delims=" %%D in ('dir /b /a-d "%HP_PY_DIR%Library\bin\libexpat*.dll" 2^>nul') do if not defined HP_EXPAT_DLL set "HP_EXPAT_DLL=%HP_PY_DIR%Library\bin\%%D"
 if defined HP_EXPAT_DLL (
-  call :log "[INFO] REQ-007: bundling conda libexpat DLL for pyexpat: %HP_EXPAT_DLL%"
+  call :log "[INFO] REQ-007: bundling conda libexpat DLL for pyexpat into the EXE: %HP_EXPAT_DLL%"
   set "HP_PYI_EXPAT=--add-binary "%HP_EXPAT_DLL%;.""
 )
 rem REQ-005.x: pre-build --collect-submodules for curated packages that load
@@ -4491,7 +4492,7 @@ if not defined HP_BUILD_OK (
       rem ~setup.log -- type ... >> "%LOG%" has no console echo -- so "the list above" was
       rem misleading on the console -- a user watching only the window never saw a list.
       rem Point at ~warnfile.txt, already copied next to the app a few lines up, instead.
-      call :log "[INFO] warnfix: some modules could not be automatically bundled (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically; cStringIO and StringIO (Python-2-only compatibility shims some packages still reference) are filtered out automatically too."
+      call :log "[INFO] warnfix: some modules could not be automatically bundled into the EXE (full list in ~warnfile.txt / ~setup.log); modules such as posix, fcntl, grp, pwd, resource, _scproxy, _posixsubprocess, collections.abc, and _frozen_importlib_external are expected on Windows and are filtered out automatically; cStringIO and StringIO (Python-2-only compatibility shims some packages still reference) are filtered out automatically too."
       if defined HP_NDJSON (
         powershell -NoProfile -ExecutionPolicy Bypass -Command ^
           "$row = @{ id='self.warnfix.platform_filter'; pass=$true; detail='posix_modules_expected_on_windows' } | ConvertTo-Json -Compress -Depth 8;" ^
@@ -4515,7 +4516,7 @@ if not defined HP_BUILD_OK (
     if exist "~warnfix_repair_failed.flag" del "~warnfix_repair_failed.flag" >nul 2>&1
     if defined HP_WARNFIX_NEEDED (
       set "HP_WARNFIX_APPLIED=1"
-      call :log "[REPAIR] missing modules detected; installing and rebuilding."
+      call :log "[REPAIR] missing modules detected; installing and rebuilding. The standalone EXE is rebuilt after the install."
       rem derived requirement, test-first proof self.exe.warnfix.venv_repair and self.cascade.exec:
       rem the conda test used to sit in the else-if chain below as a second nested if. cmd binds an
       rem else to the NEAREST if, so every later else-if branch hung off the inner defined-CONDA_BAT
@@ -4619,7 +4620,7 @@ if not defined HP_BUILD_OK (
         set "HP_BOOTSTRAP_STATE=error"
         set "HP_FRESH_BUILD_OK="
       ) else (
-        call :log "[REPAIR] rebuild complete after warnfix."
+        call :log "[REPAIR] rebuild complete after warnfix. The standalone EXE was rebuilt."
         rem The warnfix rebuild always uses PyInstaller -- if the EXE it just replaced was
         rem previously Nuitka-built, Tier A, it no longer is; clear the flag so
         rem :hidden_import_recover's Nuitka-skip guard doesn't wrongly skip repair on what is
@@ -4688,7 +4689,7 @@ rem immediately (the del/set below would clobber it).
 set "HP_PREFLIGHT_FAILED="
 if defined HP_NO_INTERPRETER (
   echo.
-  echo *** [ERROR] No Python interpreter is available; your program was not run or built. ***
+  echo *** [ERROR] No Python interpreter is available; your program was not run and no EXE was built. ***
   echo *** This is not a syntax error -- the Python interpreter itself could not be used. ***
   echo *** Either every automatic Python-acquisition method -- uv, conda, a fresh download, ***
   echo *** or a local virtual environment -- failed, usually from no internet connection, a ***
@@ -4752,7 +4753,7 @@ if exist "~collect_flags.txt" del "~collect_flags.txt" >nul 2>&1
 if exist "~collect_submodules.py" del "~collect_submodules.py" >nul 2>&1
 for /f "usebackq delims=" %%F in ("~collect_flags.txt") do set "HP_PYI_COLLECT=%%F"
 if exist "~collect_flags.txt" del "~collect_flags.txt" >nul 2>&1
-if defined HP_PYI_COLLECT call :log "[INFO] Pre-build collect-submodules:%HP_PYI_COLLECT%"
+if defined HP_PYI_COLLECT call :log "[INFO] Pre-build collect-submodules:%HP_PYI_COLLECT% -- PyInstaller options for the standalone EXE"
 exit /b 0
 :system_build_consent_gate
 rem REQ-007: consent before installing PyInstaller into the user's system Python to build an EXE.
@@ -5231,7 +5232,7 @@ rem Requirement 3: the actual bundling ACTION only makes sense under the conda p
 rem Library\bin is conda's own shared-DLL convention, meaningless under uv/embed/venv/system
 rem (those install from PyPI wheels, which are expected to vendor their own native deps).
 if not "%HP_ENV_MODE%"=="conda" (
-  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED_SAFE%'; native-DLL bundling repair requires the conda provider (current provider: %HP_ENV_MODE%); skipping."
+  call :log "[INFO][DLL_BUNDLE] Detected native-DLL warning for '%HP_DLL_DETECTED_SAFE%'; native-DLL bundling repair for the EXE requires the conda provider (current provider: %HP_ENV_MODE%); skipping."
   call :emit_dll_bundle_row skipped_non_conda
   exit /b 0
 )
@@ -5659,7 +5660,7 @@ set "HP_HIC_RAW=%HP_TEST_REPAIR_ANSWER%"
 set "HP_HIC_CHOICE=%HP_HIC_RAW:~0,1%"
 goto :hic_gate_resolve
 :hic_gate_auto
-call :log "[INFO] Repair loop: not asked in a non-interactive run, so your program is not started again and nothing is rebuilt."
+call :log "[INFO] Repair loop: not asked in a non-interactive run, so your program is not started again and the EXE is not rebuilt."
 set "HP_HIC_ANSWER=N"
 exit /b 0
 :hic_gate_interactive
@@ -5672,7 +5673,7 @@ set "HP_HIC_CHOICE=Y"
 :hic_gate_resolve
 if /I "%HP_HIC_CHOICE%"=="Y" goto :hic_accepted
 :hic_gate_declined
-call :log "[INFO] Repair loop: declined. Your program was not started again and nothing was rebuilt."
+call :log "[INFO] Repair loop: declined. Your program was not started again and the EXE was not rebuilt."
 set "HP_HIC_ANSWER=N"
 exit /b 0
 :hic_accepted
@@ -5855,7 +5856,7 @@ rem < > | & (parentheses are literal to echo outside if/for blocks).
 if "%HP_EXE_EXIT%"=="0" (
   call :log "[STATUS] Run Status: SUCCESS (Exit Code: 0)"
 ) else if "%HP_EXE_EXIT%"=="-1" (
-  call :log "[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap; force-stopped, not necessarily broken)"
+  call :log "[STATUS] Run Status: TIMED OUT (hit the ~30s verification cap; the EXE was force-stopped, not necessarily broken)"
 ) else (
   call :log "[STATUS] Run Status: FAILED (Exit Code: %HP_EXE_EXIT%)"
   call :warn_runtime_dll
@@ -6210,7 +6211,7 @@ if not exist "dist\%ENVNAME%.exe" set "HP_RTI_REBUILD_FAILED=1"
 if not defined HP_RTI_SPEC_PRE if exist "%ENVNAME%.spec" del "%ENVNAME%.spec" >nul 2>&1
 if exist "build\%ENVNAME%" rd /s /q "build\%ENVNAME%" >nul 2>&1
 set "HP_RTI_SPEC_PRE="
-if not defined HP_RTI_REBUILD_FAILED call :log "[REPAIR] rebuild complete after runtime install."
+if not defined HP_RTI_REBUILD_FAILED call :log "[REPAIR] rebuild complete after runtime install. The standalone EXE was rebuilt."
 exit /b 0
 :rti_add_hidden
 set "HP_PYI_HIDDEN_IMPORTS=%HP_PYI_HIDDEN_IMPORTS% --hidden-import=%~1"
@@ -6843,9 +6844,9 @@ if /I "%HP_BUILDER%"=="pyinstaller" (
   exit /b 1
 )
 if /I "%HP_BUILDER%"=="nuitka" (
-  call :log "[INFO] Building with the fallback build system only. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+  call :log "[INFO] Building the standalone EXE with the fallback build system only. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
 ) else (
-  call :log "[INFO] Standard build did not complete; attempting a fallback build. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
+  call :log "[INFO] The standard EXE build did not complete; attempting a fallback build with Nuitka. This can take a long time, tens of minutes or more for a large app, and the screen stays quiet while it works. Progress is written to ~setup.log."
 )
 if defined HP_TEST_FORCE_NUITKA_FAIL (
   call :log "[TEST] HP_TEST_FORCE_NUITKA_FAIL: simulating fallback build failure."
@@ -6857,7 +6858,7 @@ if "%HP_ENV_MODE%"=="uv" (
   "%HP_PY%" -m pip install -q nuitka >> "%LOG%" 2>&1
 )
 if errorlevel 1 (
-  call :log "[WARN] Fallback build: could not install the fallback build tool; fallback unavailable."
+  call :log "[WARN] Fallback build: could not install the fallback build tool; fallback unavailable. No fallback EXE was built."
   exit /b 1
 )
 rem --assume-yes-for-downloads: Nuitka can otherwise prompt interactively to confirm its own
@@ -6866,7 +6867,7 @@ rem non-interactive double-click user; the Prime Directive tolerates zero prompt
 call :nuitka_unsupported_mark
 "%HP_PY%" -m nuitka --onefile --assume-yes-for-downloads --remove-output --output-dir=dist -o "%ENVNAME%.exe" "%HP_ENTRY%" >> "%LOG%" 2>&1
 if errorlevel 1 (
-  call :log "[WARN] Fallback build did not complete successfully."
+  call :log "[WARN] Fallback build did not complete successfully. No fallback EXE was built."
   call :nuitka_unsupported_check
   if not defined HP_NUI_UNSUPPORTED call :log "[WARN] Hint: if you have Visual Studio 2022 (or newer) with the 'Desktop development with C++' workload installed, this fallback should use it automatically -- no extra setup needed. If not, installing the free Visual Studio Build Tools with that workload can help this fallback succeed."
   exit /b 1
@@ -6897,7 +6898,7 @@ if not defined HP_NUI_BEFORE exit /b 0
 call :nuitka_unsupported_count
 if %HP_NUI_COUNT% LEQ %HP_NUI_BEFORE% exit /b 0
 set "HP_NUI_UNSUPPORTED=1"
-call :log "[WARN] The fallback build system says it does not support this Python version yet, so it cannot build here until a newer release of it does. Installing Visual Studio would not change that."
+call :log "[WARN] The fallback build system says it does not support this Python version yet, so it cannot build the EXE here until a newer release of it does. Installing Visual Studio would not change that."
 exit /b 0
 
 :nuitka_unsupported_count
@@ -7376,20 +7377,20 @@ rem Covers skipped_nuitka / skipped_non_conda / unlocatable: detection happened,
 rem was ever attempted for it -- must NOT claim "we tried to fix it automatically."
 echo.
 echo  NOTE: a missing native library (%HP_DLL_DETECTED_SAFE%) was detected while
-echo  packaging your app, but no automatic repair for it ran during this build.
-echo  This may or may not be related to the caveat above.
+echo  packaging your app as a standalone EXE, but no automatic repair for it ran
+echo  during this build. This may or may not be related to the caveat above.
 goto :pfb_dll_hint_done
 :pfb_dll_hint_failed
 echo.
 echo  NOTE: a missing native library (%HP_DLL_DETECTED_SAFE%) was detected while
-echo  packaging your app, and an automatic repair was attempted but did not fully
-echo  resolve it. This may be related to the caveat above.
+echo  packaging your app as a standalone EXE, and an automatic repair was attempted
+echo  but did not fully resolve it. This may be related to the caveat above.
 goto :pfb_dll_hint_done
 :pfb_dll_hint_repaired
 echo.
 echo  NOTE: a missing native library (%HP_DLL_DETECTED_SAFE%) was detected while
-echo  packaging your app and was automatically repaired; it is likely not the
-echo  cause of the caveat above.
+echo  packaging your app as a standalone EXE and was automatically repaired; it is
+echo  likely not the cause of the caveat above.
 :pfb_dll_hint_done
 exit /b 0
 

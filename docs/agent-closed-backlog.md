@@ -4684,6 +4684,103 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   (real and conda-full) joined `tests/expected_rows/` on 2026-11-16 (lane 1 owns it), read from the push run of #535's merge
   (`43734580455`) and the first run after it (`43763108492`), both green with every one of the six rows true.
 
+### Item 123 (shipped 2026-11-15; REQ-007.17 and REQ-007.20, the two `gap:` entries the Item 122 entry listed as left)
+
+- **The problem.** Two README shalls had no row able to fail for them. REQ-007.17 (when the user agrees to the system-Python build question,
+  the bootstrapper builds the EXE as it does for every other provider) was listed under "Not checked" in the README Tests note of REQ-007:
+  the rows of `tests/selfapps_sysbuild.ps1` answer N or let the CI marker decline, so no scenario ran PyInstaller under the system tier, and
+  a plain "answer Y" scenario would have installed PyInstaller into the runner's own interpreter. REQ-007.20 (every message about the build,
+  the check run of the executable or its failure names the artifact and the tool in plain words) was a `gap:` entry as well, because
+  nothing read the messages. Reading every console message of `run_setup.bat` found 33 that talk about building, bundling, packaging or
+  verifying without saying EXE or naming a tool, for example `[INFO] Optimized build: declined.`, `[INFO] Building with the fallback build
+  system only.`, `[REPAIR] rebuild complete after runtime install.` and the post-flight notes about "packaging your app", so a reader cannot
+  tell that they are about the optional one-file program and not about the environment, which is already installed.
+- **What shipped, in two commits (the first red on purpose, no product text changed).** A ratchet over every console message of
+  `run_setup.bat` (`tools/exe_wording.py`, `tests/exe_wording_exempt.txt`, `tests/test_exe_wording.py`) and one real accept scenario on the
+  `contract-uv` lane (`tests/selfapps_sysbuild_accept.ps1`, rows `self.sysbuild.accept` for REQ-007.17 and `self.sysbuild.wording` for
+  REQ-007.20, gating from the first run; `tests/test_sysbuild_accept.py` pins what it assumes of the batch file and runs its judging functions
+  through a real `pwsh`). The ratchet reads the batch file as text and finds each message the way a person sees it: consecutive line-start
+  `echo` lines of one label are one message, and so are `call :log "..."` lines (a `call :sub "[TAG] ..."` too), the `set /p` and
+  `choice /M` prompts, an inline `if ... echo` and both branches of a one-line if/else. `[DEBUG]`, `[TRACE]` and `[INSTALL]` lines are
+  not messages (`:log` keeps them off the console). A message that holds a word about the build (build, builds, building, built, rebuild,
+  packaging, packaged, bundle, smoke, verification) must also hold a plain word (EXE, `.exe`, executable, PyInstaller, Nuitka, standalone, or
+  the cached EXE path variable), unless its normalized text is in `tests/exe_wording_exempt.txt` under a category (usage, environment,
+  interpreter, provider, embed, exit_code, program, diagnostic, prompt: 34 entries, a cap the unit test holds). A stale, needless or duplicate
+  entry fails too, so the list can only shrink or be re-decided on purpose. Its `console` mode judges the timestamped log lines of a real
+  run by the same rules (an exempt entry with a variable becomes a template) and prints one JSON line. The scenario bootstraps one folder
+  for real: a private virtual environment made from the runner's python is the system Python (its `Scripts` folder first on `PATH`, so
+  PyInstaller is installed into it and not into the runner's own interpreter), the other tiers fail by decree (`HP_OFFLINE_MODE=1`,
+  `HP_TEST_FORCE_CONDA_FAIL=1`, `HP_TEST_FORCE_VENV_FAIL=1`), both questions are answered Y (`HP_TEST_SYSCON_ANSWER`,
+  `HP_TEST_SYSBUILD_ANSWER`), `HP_CI_LANE` makes the elective offers after the build decline without waiting, every `HP_`/`PVW_`/`NOINPUT`
+  variable of the runner is cleared first and standard input is closed. `.accept` requires, each once and in order, the lines of the tried
+  tier, the REQ-014 consent, the private interpreter, the provider, the REQ-007 consent, the start of the build, `PyInstaller produced
+  dist\<exe>`, the check run through the packaged EXE (then exit 0 and success), none of the lines of the declined path, the EXE named
+  under `Your standalone application is ready:`, the program's line in `~run.out.txt`, state `degraded_env` with exit code 0, and the EXE
+  started on its own exiting 0 with the line. `.wording` hands the same console to the judge and requires that it ran, found no violation
+  and read enough (at least 30 log lines, 6 about the build, 4 that name the EXE, 1 exempt), so a console that never reached the build
+  cannot pass.
+- **The rewording (second commit).** Insert or append only, so every substring an existing test pins stays (`Optimized build: declined`,
+  `Pre-build collect-submodules:`, `[REPAIR] rebuild complete after warnfix.`, `attempting a fallback build` and the rest were checked
+  with a scan of the pins before the edit and by the full suite after it). Of the 642 console messages of the file, 130 talk about the
+  build: 61 already named the EXE or a tool, 36 are about something else and are listed (34 exempt entries; with an empty list the rule
+  flags 69) and 33 were reworded, so the file now holds 94 named and 36 exempt. The 33 messages: the disk-space, pipreqs and fail-fast notes
+  that said "building your app" or "rebuild" now say EXE; the optimized-build offer says it is a second standalone EXE built with Nuitka
+  that replaces the current one only if it builds and runs (one echo line added), its decline, accept and the `PVW_BUILDER=both` notice
+  say the optimized EXE, and its five failure warnings end with "Your current EXE is unchanged."; the three `[REPAIR]` notes say "The
+  standalone EXE is rebuilt" or "was rebuilt"; the pyexpat, bundling, build-options and native-DLL notes, the repair-loop decline and the
+  TIMED OUT status name the EXE; the fallback texts name the standalone EXE and Nuitka ("No fallback EXE was built."); the three post-flight
+  DLL notes say "packaging your app as a standalone EXE" (re-wrapped, no test pins them). One fixture of `tests/test_choice_cancel.py`
+  (`DECLINED_LOG["repair"]`) mirrors the repair-loop decline and was updated with it.
+- **The first Windows run, read before the fix (red on purpose), run `43740185058`, contract-uv.** `self.sysbuild.accept` passed on its first
+  run: the private interpreter was the system Python (a venv of the runner's python 3.12.10), PyInstaller was installed into it, the EXE
+  `_selftest_sysbuild_accept.exe` was built and checked, the status was `degraded_env` with exit code 0, and the whole scenario took 18
+  seconds. `self.sysbuild.wording` was red for exactly two real lines of that console, `[INFO] warnfix: some modules could not be
+  automatically bundled (full list in ~warnfile.txt / ~setup.log); ...` and `[INFO] Optimized build: declined.` (judge: 127 lines, 48
+  timestamped, 9 about the build, 5 naming the EXE, 2 exempt, 2 violations). The other seven lanes were red only for `self.pytest.unit`
+  (the ratchet, which named the 33 messages) and the post-harness rows were green everywhere. The same capture judged locally gives the
+  same counts, and judged after the rewording gives 7 naming the EXE and 0 violations, which is where the floors (30, 6, 4, 1: about two
+  thirds of what the run showed) come from. `tests/test_exe_wording.py` keeps the two real lines, as that run printed them with CRLF line
+  ends, as a case of its own.
+- **How it is kept honest.** `tests/test_exe_wording.py` runs the tool on synthetic batch files, a clean one and a mutation for each rule,
+  and on the real files (the list cap, every category says why in a sentence, the real file is clean, a message added to it is caught, the
+  same text as a hidden diagnostic is not). `tests/test_sysbuild_accept.py` pins the script (literal row ids and tags, its launch settings,
+  the floors, its own `exit 1` / `exit 0`), the batch side (each accepted-path text is a live `call :log` or echo line, the declined-path
+  lines it forbids still exist, both consent gates test the answer before the CI marker, the ready line and the EXE under it), the
+  workflow step and the registry, and runs the judging functions through real `pwsh` in strict mode on synthetic consoles with one red case
+  for each comparison, bridged to the real `tools/exe_wording.py`. The two `gap:` entries are gone from `UNTRACED_SHALLS`.
+- **The accept row was not hermetic (found in run `44708489835`, PR #537 review round 3).** The bootstrapper puts
+  `%PUBLIC%\Documents\Miniconda3` and its `condabin`, `Scripts` and `Library\bin` first on `PATH` whether or not it exists, and the system
+  tier takes the first python that `where python` finds. When the uv acquisition had failed in an earlier scenario of the job (`~envsmoke`) and
+  the bootstrapper had installed Miniconda into the runner's shared `C:\Users\Public`, that Miniconda was taken for the system Python and
+  `self.sysbuild.accept` was red for that alone (the interpreter line named `C:\Users\Public\Documents\Miniconda3\python.exe`; the product,
+  the build and the EXE were fine). The script now gives the bootstrapper a `PUBLIC` of its own (`~selftest_sysbuild_accept_public`, an
+  empty folder made fresh before the run), records the value the bootstrapper saw (`~accept_public.txt`) and `Get-IsolationProblems`
+  requires it to be that folder. Two commits, the first red on purpose: the record and the judge without the `set` line (`66891f9`, run
+  `44799268601`: the launch file recorded the runner's own Public folder and not the run's folder, and the interpreter line did not name
+  the private venv), then the `set` line and the folder. `tests/test_sysbuild_accept.py` pins the naming, the order and the judge, with one
+  red case for each comparison. The other cause of the same run's reds, uv missing after a full download on the new runner image, is Item
+  127 (lane 3, PR #536).
+- **Stated limits (also in the script's header and the registry entry).** The interpreter is a venv of the runner's python, so the row does
+  not verify what is specific to a python.org installation: its folder layout, its registry entries and the `py` launcher. It does show
+  that the bootstrapper takes the first interpreter on `PATH` as the system Python, builds with it and runs the EXE. The messages of a
+  failing build (the Nuitka fallback, the repair loops) are held to
+  the rule by the static ratchet and by the rows that reach them, not by this run. Only the timestamped lines of the real run are judged at
+  run time; the `echo` text of the same messages is held by the static ratchet. Nothing of the script ran under cmd.exe before the first
+  Windows run above.
+- **For the README owner (lane 3 owns README.md; the proposed wording is in the PR body).** In the Tests note of REQ-007 name
+  `self.sysbuild.accept` (REQ-007.17) and `self.sysbuild.wording` (REQ-007.20) with `tests/test_exe_wording.py`, and replace the "Not
+  checked" bullet by one that says no row builds an EXE under the embedded Python, that the accepted system-Python build runs under a
+  virtual environment that stands in for the system Python (its layout is not the python.org one), that REQ-007.12 is checked by the unit
+  test of the double gate, and that REQ-007.20 is held for every message by a static test and for one real accepted run by the row. The
+  log contract of that section quotes `[INFO] Pre-build collect-submodules:--collect-submodules=<package>` as a prefix, which still holds;
+  the line now continues with ` -- PyInstaller options for the standalone EXE`.
+- **Left.** Items 124 and later: the unit-only shalls REQ-018.6, .13, .19 and .30 and REQ-008.5, .6 and .12 as rows, REQ-016.8 (read from
+  code: every CI lane carries the CI marker, so no row reaches a `pause`), REQ-007.12 and REQ-002.15 stay `unit:` or `inspection:` entries.
+  `:offer_optimized_build`'s verification line and `tools/exe_smokerun.ps1` still stop the process they started and not the program below
+  it (Item 110 in CLAUDE.md); a wording row does not touch that.
+- **Evidence.** The reading of the rows on the fix run is in the squash commit message. `self.sysbuild.accept` and `self.sysbuild.wording`
+  join `tests/expected_rows/` once they have appeared in two green runs (lane 1 owns it).
+
 ### Item 80 (closed 2026-10-24, PR #510; filed 2026-10-10 from reading PR #476's CI run)
 
 - **The problem.** On 2026-10-09 uv's newest managed CPython became 3.15.0 and Nuitka 4.2.2 answered `FATAL: The Python
