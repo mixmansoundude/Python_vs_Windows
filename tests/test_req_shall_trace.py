@@ -50,8 +50,6 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-002.15": "unit: tests/test_picker_gate.py::PickerWait the prompt of :pick_entry_interactive waits HP_PICK_T seconds, 30 unless the test setting HP_TEST_FORCE_PICKER shortens it to 2; self.entry.picker (default taken, REQ-002.22) and self.entry.picker.number (a typed number) run with the shortened wait, so no row waits the full 30 seconds",
     "REQ-007.12": "unit: tests/test_collect_submodules.py::GatingMatrix a curated package is collected only when the program uses it and the interpreter has it installed, so an unused library never enters the build",
-    "REQ-007.17": "gap: no row answers yes to the system-Python build question; doing so would install PyInstaller into the runner's own system Python (self.sysbuild.decline, .nuitka_prompt and .ci_marker stop at the question)",
-    "REQ-007.20": "gap: no check reads every message of the build step; self.exe.build.xfail reads the PyInstaller failure messages, and the word executable in the other messages is not searched",
     "REQ-008.5": "unit: tests/test_detect_visa.py::VisaDetection a nested folder is scanned (result 2, a match below a subfolder), folders starting with ~ or . and files starting with ~ are skipped, a file that is not .py is skipped",
     "REQ-008.6": "unit: tests/test_detect_visa.py::VisaDetection import pyvista, import vision and import pyviscoelastic are not matches, a dotted submodule import of pyvisa still is",
     "REQ-008.12": "inspection: run_setup.bat :: set \"HP_VISA_T=30\"\nthe wait of the timed choice in :visa_subfolder_gate; self.nivisa.subfolder.timeout shortens it to 2 seconds with a test setting to stay fast, so no row waits the full 30 seconds",
