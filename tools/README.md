@@ -9,7 +9,9 @@ low-stakes without checking which category a given file falls into.
   `check_ndjson_registry.py`, `check_workflows_yaml.py`, `inline_model_fix.py`, `parse_warn.py`,
   `prep_requirements.py`, `diag/ndjson_fail_list.py`, `diag/publish_index.py`) or that gate CI
   decisions even if not directly listed in a workflow step (`iterate_gate.ps1` -- "the active gate
-  used by CI"; `sanitize_iterate_payload.py` -- defines the current NDJSON contract).
+  used by CI"; `sanitize_iterate_payload.py` -- defines the current NDJSON contract;
+  `exe_wording.py` -- the REQ-007.20 rule that `self.pytest.unit` applies to every console message of
+  `run_setup.bat` and `self.sysbuild.wording` applies to the console of a real run).
 - **Canonical sources for `run_setup.bat`'s embedded `HP_*` payloads** (e.g. `pyproj_deps.py`,
   `prep_requirements.py`, `collect_submodules.py`, `hidden_import_scan.py`, `dep_check.py`,
   `env_state.py`, `detect_python.py`, `detect_visa.py`, `find_entry.py`, `embed_extract.ps1`,

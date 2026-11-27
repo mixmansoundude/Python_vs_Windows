@@ -518,7 +518,7 @@ DECLINED_LOG = {
     "cascade": "[INFO] REQ-009: cascade consent: declined.",
     "visa": "[VISA] skipped (subfolder_only)",
     "install": "[INFO] Runtime install: declined. Nothing was changed.",
-    "repair": "[INFO] Repair loop: declined. Your program was not started again and nothing was rebuilt.",
+    "repair": "[INFO] Repair loop: declined. Your program was not started again and the EXE was not rebuilt.",
 }
 RESULT_ACCEPTED = {
     "cascade": ["RC=0"], "visa": ["NEED_VISA=1"],
