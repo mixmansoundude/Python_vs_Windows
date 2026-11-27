@@ -1892,6 +1892,18 @@ toolkit catches an exception raised in a callback and keeps running), so the exi
   next to the script (`rtmsibling.py`), and only `xlsxwriter` may be named, once, on the console, in the closing reminder and in the
   rows. The sibling is not importable by the frozen EXE (its folder is not on the EXE's path) but is found by the helper, whose
   `sys.path[0]` is the app folder; the standard library rule needs Python 3.10 or newer (`sys.stdlib_module_names`).
+  **The scan reads one sentence, the classic `No module named 'X'`, and the interpreter does not always print it.** CPython 3.15 words a
+  missing top-level standard library module differently: `Standard library module 'fcntl' was not found` on Windows (the frozen EXE of run
+  `45973055196`) and `Unsupported platform for Windows-only standard library module 'msvcrt'` on Linux (a 3.15.0b4 probe, the same with
+  site enabled and with `-S`); 3.12 and 3.13 print `No module named` for the same missing module. A package that is not installed and a
+  module file next to the script keep the classic sentence on 3.15 too, with `. Site initialization is disabled, did you forget ...`
+  appended when site is off, as it is in a frozen EXE (the scan's pattern stops at the closing quote, so it reads those lines as before).
+  The scan never reads the 3.15 standard library sentence and that is right (pip advice for a standard library module would be wrong),
+  but a row that needs the classic sentence for a standard library name cannot count on the interpreter to print it: the fixture of
+  `skipped` raises `ModuleNotFoundError("No module named '" + stdlib + "'")` by hand next to the real import, and its precondition
+  requires that line (run `45973055196`, the first run of the row, was red for the 3.15 wording alone). A new fixture that triggers an
+  interpreter-worded error and then judges the scan's reaction to it takes the same two steps, or the half that is meant to be skipped
+  passes vacuously.
 - **State**: `HP_RTM_INIT` (set on the first scan of a bootstrap run, which empties
   `~runtime_missing_modules.txt`), the file itself (one name per line, so each module is reported once per
   run even if the checkpoint run repeats it), and `HP_RTM_FOUND`. `:success` prints

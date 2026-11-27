@@ -1782,3 +1782,28 @@ second was only a text pin: no program of any row needed it. What it took to sho
   run that violates only the "already holds" comparison, which is what the mutation case needs. The realistic run (two problems) is asserted
   as well. The control's own build writes files next to the program (`~control_build.log`, `~control_out.txt`, `~control_err.txt`), so they
   are named, in both slash spellings, in the workflow's upload list like the other scenario files.
+
+## A row whose premise is an error the interpreter prints must not rely on the interpreter's wording (Item 124, REQ-018.13)
+
+`self.runtime.scan.skipped` needed a standard library name in the program's stderr as `ModuleNotFoundError: No module named 'fcntl'`, so
+that the scan's standard library rule had something to skip. It imported the module for real, and its first run (run `45973055196`, `real`
+lane, the only red row of the PR) failed its own precondition with the product right: uv's newest CPython is 3.15, and CPython 3.15 words
+a missing top-level standard library module differently, `Standard library module 'fcntl' was not found` in the frozen EXE of that run (a
+package nobody installed and a module file next to the script kept the classic sentence there). The scan reads the classic sentence only, so
+it skipped the line and named `xlsxwriter` alone, which is the correct outcome, while the row read "the program no longer shows the symptom".
+A premise that holds on the interpreters of the sandbox (3.12 and 3.13 print the classic sentence for a missing standard library module)
+stops holding the day the lane's interpreter moves.
+- **Raise the sentence the contract is about yourself** (`raise ModuleNotFoundError("No module named '" + stdlib + "'")`, caught and
+  printed with `traceback.print_exc()`), next to the real import. The row keeps showing what the product does with the classic
+  sentence and no longer depends on which wording the interpreter picks. Keep the real import too: it is what proves the program really
+  fails the way a user's would, and a later interpreter that goes back to the classic wording changes nothing.
+- **A premise check names the sentence it needs** ("holds no `ModuleNotFoundError: No module named` line for fcntl"), so a red run says
+  which wording it saw. The row records the lines it found (`stdlibLines`).
+- **The unit tests build the stderr of the newest interpreter for the real fixture** (`stderr_python315`, `stderr_of_fixture_python315`,
+  and a fixture program run on the host, `FixtureProgramRunsHere`) and show the vacuous pass without the hand-raised sentence:
+  `test_the_hand_raised_classic_sentence_is_what_gives_the_standard_library_rule_something_to_skip`.
+- **Read what an interpreter prints from a probe run, not from memory.** A probe that imports a missing standard library module, a missing
+  package and a missing submodule, run under 3.12, 3.13 and 3.15.0b4 (`/root/.local/bin/python3.15` in the sandbox) with and without `-S`,
+  showed the three wordings: the classic sentence, the 3.15 standard library sentence (`Unsupported platform for Windows-only standard
+  library module 'msvcrt'` on Linux, the same with and without site) and the classic sentence with the `Site initialization is disabled`
+  hint (3.15 with `-S`, and the frozen EXE). Which of them a frozen EXE prints for a given module is the real run's to say.

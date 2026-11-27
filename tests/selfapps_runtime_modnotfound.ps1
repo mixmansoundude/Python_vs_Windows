@@ -25,12 +25,17 @@
 # Rows self.runtime.scan.skipped and self.runtime.scan.fastpath (Item 124, README REQ-018.13): what the scan must NOT
 # report, and the cached-EXE fast path. The shall has two halves and neither had a row (the helper's own rules were
 # unit tests of the helper, not something a bootstrap showed).
-#   skipped  - one real bootstrap of a program that prints THREE tracebacks to stderr and exits 0: a package nobody
-#              installed (xlsxwriter), a standard library module that Windows does not have (fcntl) and a module that
-#              sits next to the script (rtmsibling.py, which the frozen EXE cannot import because the folder is not on
-#              its path). The console, the closing reminder and the row written to HP_NDJSON must name xlsxwriter, once,
-#              and nothing else. Naming xlsxwriter is also what proves the scan ran, so a scan that was switched off
-#              cannot make the row pass. Names are joined at run time, as above.
+#   skipped  - one real bootstrap of a program that prints tracebacks to stderr and exits 0, for three names: a package
+#              nobody installed (xlsxwriter), a standard library module that Windows does not have (fcntl) and a module
+#              that sits next to the script (rtmsibling.py, which the frozen EXE cannot import because the folder is not
+#              on its path). The console, the closing reminder and the row written to HP_NDJSON must name xlsxwriter,
+#              once, and nothing else. Naming xlsxwriter is also what proves the scan ran, so a scan that was switched
+#              off cannot make the row pass. Names are joined at run time, as above. The program imports each name and
+#              raises the classic sentence for fcntl by hand as well: Python 3.15 words a missing standard library module
+#              "Standard library module 'fcntl' was not found" and not "No module named 'fcntl'" (seen in the frozen EXE of
+#              run 45973055196, the first run of this row), the scan reads only the classic sentence, and without it the
+#              standard library half of the row passes on a stderr that holds nothing to skip. The judge requires the
+#              classic line for each of the three names.
 #   fastpath - the second bootstrap of the same folder with HP_TEST_FORCE_INTERACTIVE_PROBE=1. The cached EXE is reused
 #              and its traceback reaches the console live, but the scan must not run: the console must say that the
 #              cached EXE was launched, show the traceback after that line and hold no [WARN] that names a module, no
@@ -327,7 +332,7 @@ function Get-ScanSkipProblems {
     $problems = New-Object System.Collections.ArrayList
     foreach ($want in @('xlsxwriter', 'fcntl', 'rtmsibling')) {
         if ($StderrText -notmatch ("ModuleNotFoundError: No module named '" + $want + "'")) {
-            [void]$problems.Add("precondition: the run's stderr holds no ModuleNotFoundError for $want, so the program no longer shows the symptom this row needs")
+            [void]$problems.Add("precondition: the run's stderr holds no 'ModuleNotFoundError: No module named' line for $want, so the program no longer shows the symptom this row needs (the scan reads only that sentence)")
         }
     }
     $named = @(Get-NamedModules -ConsoleText $ConsoleText)
@@ -393,6 +398,9 @@ function Get-FastPathScanProblems {
 # One program with three names in stderr. xlsxwriter is a package nobody installed, fcntl is a standard library module that
 # Windows does not have, rtmsibling is the module file written next to it. The names are joined at run time (see above) and the
 # frozen EXE cannot import rtmsibling: the folder it sits in is not on the EXE's path, and nothing in the build names it.
+# The import of fcntl prints whatever the interpreter prints (Python 3.15: "Standard library module 'fcntl' was not found", seen
+# in the frozen EXE of run 45973055196; 3.12 and 3.13 print "No module named" for a missing standard library module), and the
+# last block raises the classic sentence by hand, so the stderr always holds the text the scan has a rule for.
 $skipApp = @'
 import importlib
 import traceback
@@ -400,11 +408,18 @@ import traceback
 
 def on_click():
     # Stand-in for a GUI callback: each exception is caught, its traceback goes to stderr, and the program carries on and exits 0.
-    for name in ("".join(("xlsx", "writer")), "".join(("fc", "ntl")), "".join(("rtm", "sibling"))):
+    package, stdlib, sibling = "".join(("xlsx", "writer")), "".join(("fc", "ntl")), "".join(("rtm", "sibling"))
+    for name in (package, stdlib, sibling):
         try:
             importlib.import_module(name)
         except ImportError:
             traceback.print_exc()
+    # Python 3.15 words a missing standard library module differently (no "No module named" at all); the scan reads the classic
+    # sentence, which older Pythons print for it, so print that one as well.
+    try:
+        raise ModuleNotFoundError("No module named '" + stdlib + "'")
+    except ImportError:
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
@@ -433,6 +448,7 @@ Write-NdjsonRow ([ordered]@{
         namedModules  = @(Get-NamedModules -ConsoleText $k1.Console)
         listedModules = @(Get-HeadsUpModules -ConsoleText $k1.Console)
         rowModules    = @($k1.RowModules)
+        stdlibLines   = @(($k1.ErrText -split "`r?`n") | Where-Object { $_ -match '^(ModuleNotFoundError|ImportError):.*fcntl' } | ForEach-Object { $_.Trim() })
         log           = '~sk_run1.log'
     }
 })

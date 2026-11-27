@@ -4,9 +4,12 @@ REQ-018.13 says the bootstrapper shall not report a standard library module or a
 shall skip the check of REQ-018.10 on the cached-EXE fast path. Until Item 124 the shall was held by unit tests of the helper
 (tests/test_runtime_module_scan.py::WhatIsNotReported) and by the fact that the fast path has no interpreter yet; no bootstrap ever
 showed either half. tests/selfapps_runtime_modnotfound.ps1 now does, in its third scenario:
-  * skipped:  a program that prints three tracebacks (a package nobody installed, a standard library module Windows does not have, and
-              a module file written next to the script) and exits 0. The console, the closing reminder and the rows written to
-              HP_NDJSON must name the package, once, and nothing else; naming it is also what shows the scan ran.
+  * skipped:  a program that prints tracebacks for three names (a package nobody installed, a standard library module Windows does not
+              have, and a module file written next to the script) and exits 0. The console, the closing reminder and the rows written
+              to HP_NDJSON must name the package, once, and nothing else; naming it is also what shows the scan ran. The program
+              imports the standard library name and also raises the classic "No module named" sentence for it by hand: Python 3.15
+              in a frozen EXE words the real failure "Standard library module 'x' was not found" (first run, 45973055196), which the
+              scan never reads, so without the hand-raised line the standard library half of the row would pass on nothing.
   * fastpath: the second bootstrap of the same folder, forced through the probe branch so that the cached EXE's traceback reaches the
               console, must say the cached EXE was launched, show the traceback after that line and report nothing.
 What this file holds, and why:
@@ -22,6 +25,7 @@ What this file holds, and why:
     registry, as text.
 ASCII only.
 """
+import importlib.util
 import os
 import re
 import subprocess
@@ -31,7 +35,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from judge_support import PWSH, case, cut_block, live_bat, lines_of, mutate, norm, registry_ids, run_cases, step_block  # noqa: E402
+from judge_support import PWSH, case, cut_block, live_bat, mutate, norm, registry_ids, run_cases, step_block  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "tests" / "selfapps_runtime_modnotfound.ps1"
@@ -103,8 +107,28 @@ def stderr_of(*modules):
     return "\r\n".join(trace_lines(*modules)) + "\r\n"
 
 
+SITE_HINT = ". Site initialization is disabled, did you forget to add the site-packages directory to sys.path or to enable your virtual environment?"
+
+
+def stderr_python315(package, stdlib, sibling):
+    """The stderr of the first Windows run of the row (run 45973055196): Python 3.15 inside a frozen EXE. A missing package or module
+    keeps the classic sentence, with the site initialization hint behind it (a frozen EXE runs without site); a missing standard
+    library module is worded "Standard library module ... was not found" and holds no "No module named" at all."""
+    out = []
+    for sentence in ("No module named '%s'%s" % (package, SITE_HINT),
+                     "Standard library module '%s' was not found" % stdlib,
+                     "No module named '%s'%s" % (sibling, SITE_HINT)):
+        out.extend([TRACE[0], TRACE[1], "ModuleNotFoundError: " + sentence])
+    return "\r\n".join(out) + "\r\n"
+
+
+def stderr_of_fixture_python315(package, stdlib, sibling):
+    """The same run with the fixture's last block, which raises the classic sentence for the standard library name by hand."""
+    return stderr_python315(package, stdlib, sibling) + stderr_of(stdlib)
+
+
 def first_run(bat, **over):
-    """The console of the first bootstrap: three tracebacks live-tee'd, one warning, the reminder at the end."""
+    """The console of the first bootstrap: the tracebacks live-tee'd, one warning, the reminder at the end."""
     parts = dict(
         stderr_modules=("xlsxwriter", "fcntl", "rtmsibling"),
         warned=("xlsxwriter",),
@@ -149,6 +173,12 @@ def skip_cases(bat):
     ok = dict(StderrText=stderr_of("xlsxwriter", "fcntl", "rtmsibling"), RowModules=["xlsxwriter"])
     c.append(case("skip_good", "Get-ScanSkipProblems", ConsoleText=first_run(bat), **ok))
     c.append(case("skip_good_lf_only", "Get-ScanSkipProblems", ConsoleText=first_run(bat, eol="\n"), **ok))
+    # What Python 3.15 prints inside a frozen EXE: the fixture's hand-raised classic line makes the run good, the run without it is the
+    # first Windows run of the row (45973055196), whose precondition for the standard library name failed.
+    c.append(case("skip_good_python315", "Get-ScanSkipProblems", ConsoleText=first_run(bat),
+                  StderrText=stderr_of_fixture_python315("xlsxwriter", "fcntl", "rtmsibling"), RowModules=["xlsxwriter"]))
+    c.append(case("skip_stderr_python315_sentence_only", "Get-ScanSkipProblems", ConsoleText=first_run(bat),
+                  StderrText=stderr_python315("xlsxwriter", "fcntl", "rtmsibling"), RowModules=["xlsxwriter"]))
     for gone in ("xlsxwriter", "fcntl", "rtmsibling"):
         rest = tuple(m for m in ("xlsxwriter", "fcntl", "rtmsibling") if m != gone)
         c.append(case("skip_stderr_lacks_" + gone, "Get-ScanSkipProblems", ConsoleText=first_run(bat),
@@ -280,15 +310,16 @@ PACKAGE_ABSENT = "zz_item124_absent_package"
 @unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "the standard library rule needs Python 3.10 or newer")
 class HelperOnTheFixtureText(unittest.TestCase):
     """The batch emits the helper into the app folder and starts it there, so the folder is sys.path[0] and a module file next to the
-    script is found. The text is what the fixture's three tracebacks print; the standard library name is one this machine lacks
+    script is found. The text is what the fixture's tracebacks print; the standard library name is one this machine lacks
     (fcntl on Windows, msvcrt elsewhere), which is what fcntl is on the machine of the row."""
 
-    def run_helper(self, helper_source=None):
+    def run_helper(self, helper_source=None, stderr=None):
         with tempfile.TemporaryDirectory() as d:
             app = Path(d) / "app"
             app.mkdir()
             (app / "rtmsibling.py").write_text("VALUE = 1\n", encoding="ascii")
-            (app / "~run.err.txt").write_text(stderr_of(PACKAGE_ABSENT, STDLIB_ABSENT_HERE, "rtmsibling"), encoding="ascii")
+            text = stderr if stderr is not None else stderr_of(PACKAGE_ABSENT, STDLIB_ABSENT_HERE, "rtmsibling")
+            (app / "~run.err.txt").write_text(text, encoding="ascii")
             source = helper_source if helper_source is not None else HELPER.read_text(encoding="utf-8")
             (app / "~runtime_module_scan.py").write_text(source, encoding="utf-8")
             other = Path(d) / "elsewhere"
@@ -309,6 +340,70 @@ class HelperOnTheFixtureText(unittest.TestCase):
         source = mutate(HELPER.read_text(encoding="utf-8"), "return importlib.util.find_spec(top) is not None", "return False")
         self.assertIn("rtmsibling", self.run_helper(source))
 
+    def test_the_python_315_run_of_the_fixture_names_only_the_package(self):
+        # Both shapes: the stderr of the first Windows run (no classic sentence for the standard library name) and the same run with the
+        # fixture's hand-raised classic sentence.
+        for text in (stderr_python315(PACKAGE_ABSENT, STDLIB_ABSENT_HERE, "rtmsibling"),
+                     stderr_of_fixture_python315(PACKAGE_ABSENT, STDLIB_ABSENT_HERE, "rtmsibling")):
+            self.assertEqual(self.run_helper(stderr=text), [PACKAGE_ABSENT], text)
+
+    def test_the_hand_raised_classic_sentence_is_what_gives_the_standard_library_rule_something_to_skip(self):
+        source = mutate(HELPER.read_text(encoding="utf-8"), "top in out or top in stdlib or not _NAME.match(top)", "top in out or not _NAME.match(top)")
+        first_run_text = stderr_python315(PACKAGE_ABSENT, STDLIB_ABSENT_HERE, "rtmsibling")
+        with_the_line = stderr_of_fixture_python315(PACKAGE_ABSENT, STDLIB_ABSENT_HERE, "rtmsibling")
+        # Without the rule the first run's text still names nothing but the package: the rule was never exercised, the row passed on nothing.
+        self.assertNotIn(STDLIB_ABSENT_HERE, self.run_helper(source, first_run_text))
+        # With the classic sentence the same missing rule is visible.
+        self.assertIn(STDLIB_ABSENT_HERE, self.run_helper(source, with_the_line))
+
+
+def fixture_program():
+    """The text of $skipApp, the program of the first bootstrap, cut out of the script."""
+    m = re.search(r"\$skipApp = @'\n(.*?)\n'@", norm(SCRIPT.read_text(encoding="utf-8")), re.S)
+    assert m, "the here-string $skipApp could not be cut out of tests/selfapps_runtime_modnotfound.ps1"
+    return m.group(1) + "\n"
+
+
+@unittest.skipUnless(hasattr(sys, "stdlib_module_names"), "the standard library rule needs Python 3.10 or newer")
+class FixtureProgramRunsHere(unittest.TestCase):
+    """The program of the first bootstrap run with this interpreter, in a folder that does not hold rtmsibling.py (the frozen EXE cannot
+    import it either). Whatever this Python prints for the real imports, its stderr must hold the classic sentence for the standard
+    library name, and the helper, run in a folder that does hold the sibling, must name nothing but the package."""
+
+    def run_program(self):
+        with tempfile.TemporaryDirectory() as d:
+            work = Path(d)
+            (work / "app.py").write_text(fixture_program(), encoding="ascii")
+            return subprocess.run([sys.executable, str(work / "app.py")], cwd=str(work), capture_output=True, text=True, timeout=60)
+
+    def test_the_program_exits_0_and_prints_the_classic_sentence_for_the_names_it_cannot_import(self):
+        proc = self.run_program()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("runtime app ok", proc.stdout)
+        self.assertIn("ModuleNotFoundError: No module named 'fcntl'", proc.stderr)
+        self.assertIn("ModuleNotFoundError: No module named 'rtmsibling'", proc.stderr)
+        if importlib.util.find_spec("xlsxwriter") is None:
+            self.assertIn("ModuleNotFoundError: No module named 'xlsxwriter'", proc.stderr)
+
+    def test_the_helper_names_only_the_package_on_that_stderr(self):
+        proc = self.run_program()
+        with tempfile.TemporaryDirectory() as d:
+            app = Path(d) / "app"
+            app.mkdir()
+            (app / "rtmsibling.py").write_text("VALUE = 1\n", encoding="ascii")
+            (app / "~run.err.txt").write_text(proc.stderr, encoding="utf-8")
+            (app / "~runtime_module_scan.py").write_text(HELPER.read_text(encoding="utf-8"), encoding="utf-8")
+            other = Path(d) / "elsewhere"
+            other.mkdir()
+            out = subprocess.run([sys.executable, str(app / "~runtime_module_scan.py"), str(app / "~run.err.txt")],
+                                 cwd=str(other), capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        named = out.stdout.split()
+        self.assertNotIn("fcntl", named)
+        self.assertNotIn("rtmsibling", named)
+        if importlib.util.find_spec("xlsxwriter") is None:
+            self.assertEqual(named, ["xlsxwriter"])
+
 
 # --- the script as text ------------------------------------------------------------------------------------------------------------
 
@@ -323,6 +418,9 @@ def script_problems(text):
     for needle in ('"".join(("xlsx", "writer"))', '"".join(("fc", "ntl"))', '"".join(("rtm", "sibling"))'):
         if t.count(needle) < 1:
             found.append("the fixture of scenario 3 must join the module name %s at run time" % needle)
+    if t.count("raise ModuleNotFoundError(\"No module named '\" + stdlib + \"'\")") != 1:
+        found.append("the fixture of scenario 3 must raise the classic 'No module named' sentence for the standard library name by hand: "
+                      "Python 3.15 words the real failure differently and the scan reads only the classic sentence")
     if t.count("'rtmsibling.py' = 'VALUE = 1'") != 1:
         found.append("scenario 3 must write rtmsibling.py next to the program")
     first = re.search(r"\$skipFirst = @\{(.*?)\}\n", t)
@@ -383,6 +481,11 @@ class ScriptAsText(unittest.TestCase):
         bad = mutate(norm(self.text), '"".join(("fc", "ntl"))', '"fcntl"')
         self.assertTrue(any("join the module name" in f for f in script_problems(bad)))
 
+    def test_a_fixture_without_the_hand_raised_classic_sentence_is_reported(self):
+        bad = mutate(norm(self.text), "raise ModuleNotFoundError(\"No module named '\" + stdlib + \"'\")",
+                     "raise ModuleNotFoundError(\"Standard library module '\" + stdlib + \"' was not found\")")
+        self.assertTrue(any("raise the classic" in f for f in script_problems(bad)))
+
     def test_a_missing_sibling_file_is_reported(self):
         bad = mutate(norm(self.text), "ExtraFiles = @{ 'rtmsibling.py' = 'VALUE = 1' }; ", "")
         self.assertTrue(any("rtmsibling.py next to the program" in f for f in script_problems(bad)))
@@ -438,12 +541,17 @@ class JudgesOnSyntheticConsoles(unittest.TestCase):
             self.assertIn(needle, found[0], (name, found))
 
     def test_a_console_built_from_the_real_echo_lines_is_clean(self):
-        for name in ("skip_good", "skip_good_lf_only", "fast_good", "fast_good_lf_only"):
+        for name in ("skip_good", "skip_good_lf_only", "skip_good_python315", "fast_good", "fast_good_lf_only"):
             self.assertEqual(self.r[name], [], name)
 
     def test_the_skip_judge_names_a_missing_traceback_as_a_broken_precondition(self):
         for gone in ("xlsxwriter", "fcntl", "rtmsibling"):
             self.only("skip_stderr_lacks_" + gone, "precondition", gone)
+
+    def test_the_skip_judge_does_not_take_the_python_315_sentence_for_the_classic_one(self):
+        # The stderr of the first Windows run of the row: the standard library name is only in Python 3.15's own sentence, so there is
+        # nothing for the scan's standard library rule to skip and the row would pass on nothing.
+        self.only("skip_stderr_python315_sentence_only", "precondition", "fcntl", "No module named")
 
     def test_the_skip_judge_names_a_reported_standard_library_module(self):
         self.only("skip_console_reports_fcntl", "fcntl", "standard library")
@@ -538,6 +646,12 @@ class JudgesCanFail(unittest.TestCase):
 
     def test_a_judge_that_ignores_the_precondition_is_caught(self):
         got = self.run_mutated("if ($StderrText -notmatch (\"ModuleNotFoundError: No module named '\" + $want + \"'\")) {", "if ($false) {", "skip_stderr_lacks_fcntl")
+        self.assertEqual(got, [])
+
+    def test_a_judge_that_takes_the_python_315_sentence_for_the_classic_one_is_caught(self):
+        got = self.run_mutated("if ($StderrText -notmatch (\"ModuleNotFoundError: No module named '\" + $want + \"'\")) {",
+                               "if ($StderrText -notmatch (\"ModuleNotFoundError: (No module named|Standard library module) '\" + $want + \"'\")) {",
+                               "skip_stderr_python315_sentence_only")
         self.assertEqual(got, [])
 
     def test_a_fast_path_judge_that_does_not_need_the_launch_line_is_caught(self):

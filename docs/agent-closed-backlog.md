@@ -4777,11 +4777,22 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
     `Entry smoke exit=0` and `Run Status: SUCCESS` with no TIMED OUT line. Whether the program below the bootloader ends after the stop is
     recorded (`programSurvivedStop`) and not judged, because no shall names it (Item 110 is the work that would).
   - *REQ-018.13, two rows in `tests/selfapps_runtime_modnotfound.ps1` (real lane).* `self.runtime.scan.skipped` bootstraps one program that
-    prints three tracebacks to stderr and exits 0: a package nobody installed (`xlsxwriter`), a standard library module Windows does not have
-    (`fcntl`) and a module file next to the script (`rtmsibling.py`, which the frozen EXE cannot import because the folder is not on its path);
-    every name is joined at run time. Passing needs all three `ModuleNotFoundError` lines in `~run.err.txt` (the premise), the console `[WARN]`
-    line for `xlsxwriter` exactly once and for nothing else, the closing reminder to list only `xlsxwriter`, and the
-    `self.runtime.module_missing` rows to name only it; naming `xlsxwriter` is also what proves the scan ran. `self.runtime.scan.fastpath`
+    prints tracebacks to stderr for three names and exits 0: a package nobody installed (`xlsxwriter`), a standard library module Windows does
+    not have (`fcntl`) and a module file next to the script (`rtmsibling.py`, which the frozen EXE cannot import because the folder is not on its
+    path); every name is joined at run time. Passing needs a `ModuleNotFoundError: No module named` line for each of the three names in
+    `~run.err.txt` (the premise), the console `[WARN]` line for `xlsxwriter` exactly once and for nothing else, the closing reminder to list
+    only `xlsxwriter`, and the `self.runtime.module_missing` rows to name only it; naming `xlsxwriter` is also what proves the scan ran.
+    **The first run (run `45973055196`, head `9df9b27`) had this row red for its own premise, not for the product**: the uv lane builds with
+    Python 3.15, and the frozen EXE printed `ModuleNotFoundError: Standard library module 'fcntl' was not found` for the standard library
+    module, not `No module named 'fcntl'` (the package and the sibling module kept the classic sentence, with `Site initialization is
+    disabled, ...` appended). The scan reads only the classic sentence and rightly skips the new one
+    (pip advice for a standard library module would be wrong), so the console named `xlsxwriter` alone, which is the right outcome, and the
+    precondition judged the run as no longer showing the symptom. The fixture now imports each name for real and also raises the classic
+    sentence for the standard library name by hand (`raise ModuleNotFoundError("No module named '" + stdlib + "'")`, caught and printed with
+    `traceback.print_exc()`), so the stderr holds the text the scan has a rule for on every interpreter, and the row keeps proving that the
+    rule skips it. The judge's precondition message and `tests/test_scan_skip_rows.py` say the same; the unit tests build the stderr of
+    Python 3.15 for the real program (`stderr_python315`, `stderr_of_fixture_python315`) and show that without the hand-raised sentence the
+    standard library half of the row would pass vacuously (`test_the_hand_raised_classic_sentence_is_what_gives_the_standard_library_rule_something_to_skip`). `self.runtime.scan.fastpath`
     bootstraps the same folder again with `HP_TEST_FORCE_INTERACTIVE_PROBE=1`, which makes the cached-EXE fast path launch the EXE through
     the probe, so the program's traceback reaches the console live (the plain fast path redirects it to files); the premise is exactly one
     `Launching your program now via the cached standalone EXE` line, no rebuild and the `xlsxwriter` traceback on the console after it, and

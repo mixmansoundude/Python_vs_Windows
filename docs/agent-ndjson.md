@@ -1867,14 +1867,18 @@ requires exactly one report per module (console and row), not at least one. Expe
 adds the pyproject scenario and green once the advice names the active source.
 
 Two more rows of the same script (Item 124, README REQ-018.13) show the halves of "what the scan does not report".
-`self.runtime.scan.skipped` bootstraps one program that prints THREE tracebacks to stderr and exits 0: a package
-nobody installed (`xlsxwriter`), a standard library module Windows does not have (`fcntl`) and a module file next to
-the script (`rtmsibling.py`, which the frozen EXE cannot import because the folder is not on its path); the names are
-joined at run time. The pure judge `Get-ScanSkipProblems` requires the precondition (all three `ModuleNotFoundError`
-lines in `~run.err.txt`), the console `[WARN]` line for `xlsxwriter` exactly once and for nothing else, the closing
-reminder to list only `xlsxwriter` and the `self.runtime.module_missing` rows to name only it (`problems`,
-`namedModules`, `listedModules`, `rowModules`). Naming `xlsxwriter` is also what proves the scan ran, so a scan
-that was switched off cannot pass. `self.runtime.scan.fastpath` bootstraps the same folder a second time with
+`self.runtime.scan.skipped` bootstraps one program that prints tracebacks to stderr for three names and exits 0: a
+package nobody installed (`xlsxwriter`), a standard library module Windows does not have (`fcntl`) and a module file
+next to the script (`rtmsibling.py`, which the frozen EXE cannot import because the folder is not on its path); the
+names are joined at run time. The program imports each name for real and also raises the classic sentence for the
+standard library name by hand (`ModuleNotFoundError: No module named 'fcntl'`), because Python 3.15 in a frozen EXE
+words the real failure `Standard library module 'fcntl' was not found`, which the scan never reads (run
+`45973055196`, the first run of this row, was red for exactly that: the precondition did not find the classic line).
+The pure judge `Get-ScanSkipProblems` requires the precondition (a `ModuleNotFoundError: No module named` line for each
+of the three names in `~run.err.txt`), the console `[WARN]` line for `xlsxwriter` exactly once and for nothing else, the
+closing reminder to list only `xlsxwriter` and the `self.runtime.module_missing` rows to name only it (`problems`,
+`namedModules`, `listedModules`, `rowModules`, and `stdlibLines`, the classic lines the stderr held for `fcntl`).
+Naming `xlsxwriter` is also what proves the scan ran, so a scan that was switched off cannot pass. `self.runtime.scan.fastpath` bootstraps the same folder a second time with
 `HP_TEST_FORCE_INTERACTIVE_PROBE=1`, which makes the cached-EXE fast path launch the EXE through the probe, so the
 program's traceback reaches the console live (the plain fast path redirects it to files). `Get-FastPathScanProblems`
 requires the precondition (exactly one `Launching your program now via the cached standalone EXE` line, no
