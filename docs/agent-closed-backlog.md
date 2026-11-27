@@ -4197,6 +4197,9 @@ updated `self.exe.smokerun.exedata.xfail` scenarios both pass for real.
   in both stages, `self.repair.noread.plain` 1 start and `.starts` 2 starts (1 + 1 rebuild) on `real`, `self.workdir.repair` 2 starts,
   `self.repair.consent.accepted` 2 starts and `.declined` 1, `self.repair.cap` 2 starts, and the `self.launch.count.*` and
   `self.hint.*` rows unchanged. The two new ids are listed in `tests/expected_rows/real.txt` from runs `44917930968` and `44944966964`.
+  Merging main (Item 123, `53c0fcd`) brought the ratchet `tests/test_exe_wording.py` (README REQ-007.20: a console line about building or
+  verifying names the EXE or the tool), which refused the new no-package line; it now ends "and the EXE is not rebuilt." (the log text the
+  rows match, `names no installed package`, is unchanged).
 - **README wording proposed** in the PR body for the README owner: the mechanism note of REQ-007.13 says the loop starts the
   program to read its error; it reads the check run's error instead.
 

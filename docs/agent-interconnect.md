@@ -2064,7 +2064,7 @@ therefore asks ONE question before its first extra start (maintainer decision 20
   `tools/exe_smokerun.ps1` at the app root) into `dist\~exe_out.txt`, runs the loop's own scanner (`~hidden_import_scan.py`, strict:
   `ModuleNotFoundError` and installed in the build interpreter; no tried list yet) over it and deletes the evidence file. No
   output file, or an error that names no installed package: one `[INFO] Repair loop: the error of the check run names no
-  installed package, so your program is not started again and nothing is rebuilt.` line and `exit /b 0` BEFORE the question, any
+  installed package, so your program is not started again and the EXE is not rebuilt.` line and `exit /b 0` BEFORE the question, any
   start or any rebuild, so a failure that cannot be repaired never asks. A package: `HP_NEXT_HIDDEN` holds it, the question is
   asked, and a yes jumps to `:hidden_import_found` (the rebuild step, which also serves the loop's own scan), so the invocation's
   starts are the check run plus one to check each rebuild (`starts = 1 + rebuilds`; rows `self.repair.noread.plain` and

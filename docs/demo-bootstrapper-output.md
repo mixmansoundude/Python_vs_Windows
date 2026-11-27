@@ -2987,7 +2987,7 @@ before the usual failure hint, and `starts = 1` holds for the whole run:
 
 ```
 [WARN] EXE smokerun: exited 3 (non-zero)
-[INFO] Repair loop: the error of the check run names no installed package, so your program is not started again and nothing is rebuilt.
+[INFO] Repair loop: the error of the check run names no installed package, so your program is not started again and the EXE is not rebuilt.
 ```
 
 The heading and the question appear only for an error that names an installed package, as above, and the starts that follow are one to

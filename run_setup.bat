@@ -5461,7 +5461,7 @@ if exist "~next_hidden.txt" del "~next_hidden.txt" >nul 2>&1
 if exist "dist\~exe_out.txt" del "dist\~exe_out.txt" >nul 2>&1
 if defined HP_NEXT_HIDDEN goto :hidden_import_ask
 :hidden_import_noread
-call :log "[INFO] Repair loop: the error of the check run names no installed package, so your program is not started again and nothing is rebuilt."
+call :log "[INFO] Repair loop: the error of the check run names no installed package, so your program is not started again and the EXE is not rebuilt."
 exit /b 0
 rem CLAUDE.md Item 97 (README REQ-018.1 and REQ-018.2): every start of the program below repeats whatever the program does,
 rem and the README allows one automatic start per invocation, so the user is asked before the first extra start. A yes, or
