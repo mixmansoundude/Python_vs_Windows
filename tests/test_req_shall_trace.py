@@ -48,7 +48,6 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 
 # Shall id -> reason it has no tagged row. Delete an entry when a row is tagged with the shall's id.
 UNTRACED_SHALLS: Dict[str, str] = {
-    "REQ-002.15": "unit: tests/test_picker_gate.py::PickerWait the prompt of :pick_entry_interactive waits HP_PICK_T seconds, 30 unless the test setting HP_TEST_FORCE_PICKER shortens it to 2; self.entry.picker (default taken, REQ-002.22) and self.entry.picker.number (a typed number) run with the shortened wait, so no row waits the full 30 seconds",
     "REQ-007.12": "unit: tests/test_collect_submodules.py::GatingMatrix a curated package is collected only when the program uses it and the interpreter has it installed, so an unused library never enters the build",
     "REQ-008.5": "unit: tests/test_detect_visa.py::VisaDetection a nested folder is scanned (result 2, a match below a subfolder), folders starting with ~ or . and files starting with ~ are skipped, a file that is not .py is skipped",
     "REQ-008.6": "unit: tests/test_detect_visa.py::VisaDetection import pyvista, import vision and import pyviscoelastic are not matches, a dotted submodule import of pyvisa still is",
