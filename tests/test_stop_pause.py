@@ -4,8 +4,9 @@ REQ-016.8 says that at the end of a run, whether it succeeded or failed, the ter
 key, except in a run that carries the CI marker. :die and :success each have `if not defined HP_CI_LANE ( pause )` before their
 `exit /b`, but every CI lane carries HP_CI_LANE, so no row ever reached a pause and tests/test_req_shall_trace.py listed the shall as
 read from the code. Reading the code found stops that end with `exit /b 1` and no pause (the system-folder guard, the stop for a
-dragged file from another folder of REQ-011, and the second `Workspace path invalid` exit, which a double-click on a script on a
-network share reaches). tests/selfapps_stop_pause.ps1 (seven rows, self.stoppause.success, .die, .usage, .req011, .sysdir, .unc and
+dragged file from another folder of REQ-011, and both `Workspace path invalid` exits, the second of which a double-click on a script
+on a network share reaches; the two `errorlevel 11` returns of :determine_entry's callers are unreachable after that pre-flight and
+got the same pause for consistency). tests/selfapps_stop_pause.ps1 (seven rows, self.stoppause.success, .die, .usage, .req011, .sysdir, .unc and
 .marker; contract-uv lane, gating) runs run_setup.bat for real without HP_CI_LANE and with standard input held open, and judges what
 the console log and the process did.
 
@@ -63,6 +64,19 @@ CONTROL_SITES = (
     ("the usage stop for a first argument that names no file (row usage)", ":entry_arg_usage", "exit /b 1"),
 )
 
+# The stops that had no pause until Item 130: (what it is, the live line that starts the search, the exit line the pause must stand
+# directly in front of, how many such anchors the file holds). Each occurrence is checked.
+FIXED_SITES = (
+    ("the Workspace path invalid stops (a missing folder, then a folder that cmd cannot enter, row unc)",
+     "echo [ERROR] Workspace path invalid: %~dp0", "exit /b 1", 2),
+    ("the system-folder guard (row sysdir)",
+     'call :log "[ERROR] System-directory guard: script root is under a Windows system folder; aborting."', "exit /b 1"),
+    ("the REQ-011 pre-flight stop for a dragged file from another folder (row req011)",
+     'if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (', "exit /b 1"),
+    ("the two returns of an entry check that reports REQ-011 (errorlevel 11, unreachable after the pre-flight)",
+     "if errorlevel 11 (", "exit /b 1", 2),
+)
+
 
 def norm(text):
     return text.replace("\r\n", "\n")
@@ -100,22 +114,25 @@ def pause_site_problems(batch, sites):
     three live lines in front of it end with a pause that the CI marker switches off."""
     found = []
     live = [ln.strip() for ln in live_bat(lines_of(batch))]
-    for what, anchor, exit_line in sites:
+    for site in sites:
+        what, anchor, exit_line = site[:3]
+        wanted = site[3] if len(site) > 3 else 1
         starts = [i for i, ln in enumerate(live) if ln == anchor]
-        if len(starts) != 1:
-            found.append("%s: expected exactly one live line %r, found %d" % (what, anchor, len(starts)))
+        if len(starts) != wanted:
+            found.append("%s: expected exactly %d live line(s) %r, found %d" % (what, wanted, anchor, len(starts)))
             continue
-        at = next((j for j in range(starts[0] + 1, len(live)) if live[j].lower().startswith("exit /b")), None)
-        if at is None:
-            found.append("%s: no exit line follows %r" % (what, anchor))
-            continue
-        if live[at] != exit_line:
-            found.append("%s: the first exit after %r is %r, expected %r" % (what, anchor, live[at], exit_line))
-            continue
-        window = " ".join(live[max(0, at - 3):at])
-        if not PAUSE_TAIL.search(window):
-            found.append("%s: the window can close before the message is read, because no `if not defined HP_CI_LANE pause` stands directly "
-                         "in front of %r" % (what, exit_line))
+        for start in starts:
+            at = next((j for j in range(start + 1, len(live)) if live[j].lower().startswith("exit /b")), None)
+            if at is None:
+                found.append("%s: no exit line follows %r" % (what, anchor))
+                continue
+            if live[at] != exit_line:
+                found.append("%s: the first exit after %r is %r, expected %r" % (what, anchor, live[at], exit_line))
+                continue
+            window = " ".join(live[max(0, at - 3):at])
+            if not PAUSE_TAIL.search(window):
+                found.append("%s: the window can close before the message is read, because no `if not defined HP_CI_LANE pause` stands "
+                             "directly in front of %r" % (what, exit_line))
     return found
 
 
@@ -213,6 +230,10 @@ def script_problems(text):
         found.append("the marker row no longer runs every scenario with HP_CI_LANE set")
     if "$pass = [bool]($markerProblems.Count -eq 0)" not in flat:
         found.append("the marker row is no longer judged by its list of problems")
+    for need in ("$markerSkipped = @($markerRuns | Where-Object { $_.Skipped })", "$markerDetails['skip'] = $true",
+                 "$markerDetails['reason'] = [string]$markerSkipped[0].Details.reason"):
+        if need not in flat:
+            found.append("the marker row no longer records a skipped run on the row itself (skip and reason): %s" % need)
     if flat.count("pass = $pass") < 7:
         found.append("the seven rows no longer write pass = $pass")
     for name in JUDGES:
@@ -489,9 +510,16 @@ class RealFiles(unittest.TestCase):
     def test_the_rows_are_registered(self):
         self.assertEqual(registry_problems(REGISTRY.read_text(encoding="utf-8")), [])
 
+    def test_every_stop_that_ends_a_run_early_pauses_unless_the_marker_is_set(self):
+        self.assertEqual(pause_site_problems(self.batch, FIXED_SITES), [])
+
+    def test_the_shall_is_no_longer_listed_as_a_gap(self):
+        self.assertEqual(shall_list_problems(SHALL_TRACE.read_text(encoding="utf-8")), [])
+
     def test_the_checks_are_not_vacuous_on_the_real_files(self):
         self.assertEqual(len(judge_cases()), 16)
         self.assertEqual(len(scenario_patterns(self.script)), 6)
+        self.assertEqual(sum(site[3] if len(site) > 3 else 1 for site in FIXED_SITES), 6)
         self.assertEqual(len(registry_ids(REGISTRY.read_text(encoding="utf-8")) & set(ROW_IDS)), 7)
         self.assertGreater(len(live_bat(lines_of(self.batch))), 1000)
 
@@ -553,7 +581,7 @@ class BatchRulesCanFail(unittest.TestCase):
 
     def test_a_site_that_is_missing_or_that_has_a_different_exit_is_reported(self):
         gone = norm(self.batch).replace("\n:entry_arg_usage\n", "\n:entry_arg_usagex\n")
-        self.assertTrue(any("expected exactly one live line" in f for f in self.problems(gone)), self.problems(gone))
+        self.assertTrue(any("expected exactly 1 live line" in f for f in self.problems(gone)), self.problems(gone))
         other = mutate(norm(self.batch), "if not defined HP_CI_LANE pause\nexit /b 1\n:entry_arg_checked", "if not defined HP_CI_LANE pause\nexit /b 2\n:entry_arg_checked")
         self.assertTrue(any("the first exit after" in f for f in self.problems(other)), self.problems(other))
 
@@ -569,6 +597,45 @@ class BatchRulesCanFail(unittest.TestCase):
 
     def test_a_pause_that_follows_the_exit_is_not_a_pause(self):
         self.assertTrue(pause_site_problems("a\n:s\nexit /b 1\nif not defined HP_CI_LANE pause\n", (("x", ":s", "exit /b 1"),)))
+
+    def fixed_problems(self, batch):
+        return pause_site_problems(batch, FIXED_SITES)
+
+    def lose(self, old, new):
+        """The real file with one stop's pause taken out; the anchor holds the neighbouring lines so it occurs exactly once."""
+        return mutate(norm(self.batch), old, new)
+
+    def test_each_stop_that_lost_its_pause_is_reported_by_name(self):
+        PAUSE = "  if not defined HP_CI_LANE pause\n"
+        cases = (
+            ("Workspace path invalid stops", 'if not exist "%~dp0" (\n  echo [ERROR] Workspace path invalid: %~dp0\n' + PAUSE,
+             'if not exist "%~dp0" (\n  echo [ERROR] Workspace path invalid: %~dp0\n'),
+            ("Workspace path invalid stops", 'if errorlevel 1 (\n  echo [ERROR] Workspace path invalid: %~dp0\n' + PAUSE,
+             'if errorlevel 1 (\n  echo [ERROR] Workspace path invalid: %~dp0\n'),
+            ("system-folder guard", 'aborting."\n' + PAUSE + "  exit /b 1\n", 'aborting."\n  exit /b 1\n'),
+            ("REQ-011 pre-flight", "  call :release_lock\n" + PAUSE + "  exit /b 1\n)\nrem derived requirement: CLAUDE.md Item 67",
+             "  call :release_lock\n  exit /b 1\n)\nrem derived requirement: CLAUDE.md Item 67"),
+            ("errorlevel 11", '  call :write_status "error" 1 %PYCOUNT%\n' + PAUSE + "  exit /b 1\n)\nif errorlevel 1 (\n",
+             '  call :write_status "error" 1 %PYCOUNT%\n  exit /b 1\n)\nif errorlevel 1 (\n'),
+            ("errorlevel 11", '  call :write_status "error" 1 %PYCOUNT%\n' + PAUSE + "  exit /b 1\n)\nif errorlevel 1 call :die",
+             '  call :write_status "error" 1 %PYCOUNT%\n  exit /b 1\n)\nif errorlevel 1 call :die'),
+        )
+        for name, old, new in cases:
+            with self.subTest(name=name, old=old[:50]):
+                bad = self.fixed_problems(self.lose(old, new))
+                self.assertEqual(len(bad), 1, bad)
+                self.assertIn(name, bad[0])
+                self.assertIn("can close before the message is read", bad[0])
+
+    def test_a_stop_that_pauses_without_asking_for_the_marker_is_reported(self):
+        bad = self.fixed_problems(self.lose('aborting."\n  if not defined HP_CI_LANE pause\n', 'aborting."\n  pause\n'))
+        self.assertTrue(any("system-folder guard" in f for f in bad), bad)
+
+    def test_a_stop_that_moved_or_that_has_a_new_twin_is_reported(self):
+        gone = norm(self.batch).replace("Workspace path invalid:", "Workspace folder invalid:")
+        self.assertTrue(any("expected exactly 2 live line(s)" in f for f in self.fixed_problems(gone)), self.fixed_problems(gone))
+        twin = norm(self.batch) + "\nif errorlevel 11 (\n  exit /b 1\n)\n"
+        self.assertTrue(any("expected exactly 2 live line(s)" in f for f in self.fixed_problems(twin)), self.fixed_problems(twin))
 
 
 class ScriptRulesCanFail(unittest.TestCase):
@@ -633,6 +700,10 @@ class ScriptRulesCanFail(unittest.TestCase):
         self.assertTrue(any("unc route" in f for f in self.problems(bad)))
         bad = mutate(self.script, "$res.SkipReason = 'unc-share-unavailable'", "$res.SkipReason = ''")
         self.assertTrue(any("unc route" in f for f in self.problems(bad)))
+
+    def test_a_marker_row_that_stops_recording_a_skipped_run_is_caught(self):
+        bad = mutate(self.script, "$markerDetails['skip'] = $true", "$markerDetails['skipped'] = $true")
+        self.assertTrue(any("skipped run on the row itself" in f for f in self.problems(bad)))
 
     def test_a_verdict_that_stops_handing_the_judge_what_it_needs_is_caught(self):
         bad = mutate(self.script, "-AliveAfterPause ([bool]$run.AliveAfterPause)", "-AliveAfterPause $true")
@@ -752,6 +823,85 @@ class JudgesCanFail(unittest.TestCase):
     def test_a_judge_that_judges_the_exit_code_of_a_run_that_did_not_end_is_caught(self):
         got = self.run_mutated("\n    if ($Finished) {\n        if (([string]$ExitCode)", "\n    if ($true) {\n        if (([string]$ExitCode)", ["pause_never_ended"])
         self.assertTrue(self.says(got, "pause_never_ended", "the exit code is"))
+
+
+MARKER_BLOCK_FIRST = "$markerProblems = @()"
+MARKER_BLOCK_LAST = "if ($markerProblems.Count -gt 0) { $markerDetails['problems'] = @($markerProblems) }"
+
+MARKER_DRIVER = r"""
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 1.0
+function New-Run($name, $skipped, [bool]$bad) {
+    if ($skipped) {
+        return [pscustomobject]@{ Problems = @(); Skipped = $true
+            Details = [ordered]@{ scenario = $name; marker = $true; skip = $true; reason = 'unc-share-unavailable'; uncPath = '' } }
+    }
+    $list = @()
+    if ($bad) { $list = @("${name}: a prompt") }
+    return [pscustomobject]@{ Problems = $list; Skipped = $false
+        Details = [ordered]@{ scenario = $name; marker = $true; finished = $true; pauseSeen = $false; exitCode = 1; laneSeen = 'defined' } }
+}
+$markerRuns = @()
+foreach ($n in @('success', 'die', 'usage', 'req011', 'sysdir')) { $markerRuns += , (New-Run $n $false ($env:MB_BAD -eq $n)) }
+$markerRuns += , (New-Run 'unc' ($env:MB_SKIP -eq '1') $false)
+__BLOCK__
+ConvertTo-Json -InputObject $markerDetails -Compress -Depth 6
+"""
+
+
+def marker_block(text):
+    """The lines of the script that turn the six marker runs into the details of the marker row."""
+    t = norm(text)
+    start = t.index(MARKER_BLOCK_FIRST)
+    end = t.index(MARKER_BLOCK_LAST) + len(MARKER_BLOCK_LAST)
+    return t[start:end]
+
+
+def run_marker_block(block, skip, bad=""):
+    with tempfile.TemporaryDirectory() as d:
+        driver = Path(d) / "marker_driver.ps1"
+        driver.write_text(MARKER_DRIVER.replace("__BLOCK__", block), encoding="ascii")
+        env = dict(os.environ)
+        env["MB_SKIP"] = "1" if skip else "0"
+        env["MB_BAD"] = bad
+        proc = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(driver)], env=env,
+                              capture_output=True, text=True, timeout=HARD_TIMEOUT)
+    if proc.returncode != 0:
+        raise AssertionError("pwsh failed (%s): %s %s" % (proc.returncode, proc.stdout[-400:], proc.stderr[-400:]))
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class MarkerRowRecordsASkip(unittest.TestCase):
+    """CodeRabbit, PR #546: when the administrative share is unavailable the marker run of the unc scenario is skipped, and the registry
+    promises that the marker row itself says so (skip and reason). The real aggregation lines run here on synthetic runs."""
+
+    def setUp(self):
+        self.block = marker_block(SCRIPT.read_text(encoding="utf-8"))
+
+    def test_a_skipped_unc_run_is_recorded_on_the_row_itself(self):
+        d = run_marker_block(self.block, skip=True)
+        self.assertIs(d.get("skip"), True, d)
+        self.assertEqual(d.get("reason"), "unc-share-unavailable", d)
+        self.assertEqual(d.get("skippedScenarios"), ["unc"], d)
+        self.assertNotIn("problems", d)
+        self.assertEqual(len(d["runs"]), 6)
+
+    def test_a_run_that_did_not_skip_records_no_skip(self):
+        d = run_marker_block(self.block, skip=False)
+        self.assertNotIn("skip", d)
+        self.assertNotIn("reason", d)
+        self.assertNotIn("problems", d)
+
+    def test_a_skip_does_not_hide_the_failure_of_another_marker_run(self):
+        d = run_marker_block(self.block, skip=True, bad="die")
+        self.assertIs(d.get("skip"), True, d)
+        self.assertEqual(d.get("problems"), ["die: a prompt"], d)
+
+    def test_without_the_recording_lines_the_skip_is_not_on_the_row(self):
+        bad = mutate(self.block, "    $markerDetails['skip'] = $true\n", "")
+        d = run_marker_block(bad, skip=True)
+        self.assertNotIn("skip", d)
 
 
 if __name__ == "__main__":

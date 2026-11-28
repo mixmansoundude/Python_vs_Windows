@@ -1025,6 +1025,11 @@ variant without the "for environment cleanliness" clause -- a real, source-confi
 not a typo, confirmed via real CI capture: `[ERROR] REQ-011: Dragged files must reside in the
 bootstrapper root folder.`)
 
+Since Item 130 (README REQ-016.8) the window stays open after that message: the next line a person sees is
+`Press any key to continue . . .` (`cmd.exe`'s own `pause`), and the run ends when a key is pressed. With the CI marker
+`HP_CI_LANE` set there is no prompt. `self.stoppause.req011` (`tests/selfapps_stop_pause.ps1`) removes the marker and
+reads this stop on a real run.
+
 A same-directory file succeeds and prints the filename (a historical bug that once printed this
 line with an EMPTY filename -- see `docs/agent-lessons-learned.md`'s "Provider-cascade dispatch is
 goto-based on purpose" entry -- is long fixed; the current, correct text is shown below):
@@ -1525,6 +1530,21 @@ cited directly from source):
 *** next to itself to work.
 *** Please move this script (and your .py files) to a normal folder -- your Desktop
 *** or Documents folder both work well -- then run it again from there.
+Press any key to continue . . .
+```
+
+The last line is `cmd.exe`'s own `pause`, added by Item 130 (README REQ-016.8): before it, a double-click on a script in a
+system folder closed the window before the message could be read. It does not appear with the CI marker `HP_CI_LANE`.
+`self.stoppause.sysdir` reads this stop on a real run without the marker.
+
+**Workspace path invalid** (a hard stop at the very top of the file, before the lock, the log or any write; the second form is what a
+person who double-clicks the script on a network share sees, because `cmd.exe` cannot make a `\\server\share` folder its current
+folder, and the `*** WARNING: UNC/network paths detected` banner comes first): `[Extrapolated Branch]`, cited from source, the
+UNC form read on a real run by `self.stoppause.unc`:
+
+```
+[ERROR] Workspace path invalid: \\server\share\folder\
+Press any key to continue . . .
 ```
 
 **Path-length guard**: this one is genuinely hard to exercise in CI, for a structural reason worth

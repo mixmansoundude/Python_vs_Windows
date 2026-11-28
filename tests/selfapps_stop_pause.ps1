@@ -361,6 +361,13 @@ foreach ($m in $markerRuns) {
     }
 }
 $markerDetails = [ordered]@{ runs = $markerList.ToArray() }
+# A skipped marker run (the share is unavailable) is recorded on the row itself, next to the other runs' result: the row still judges the others.
+$markerSkipped = @($markerRuns | Where-Object { $_.Skipped })
+if ($markerSkipped.Count -gt 0) {
+    $markerDetails['skip'] = $true
+    $markerDetails['reason'] = [string]$markerSkipped[0].Details.reason
+    $markerDetails['skippedScenarios'] = @($markerSkipped | ForEach-Object { [string]$_.Details.scenario })
+}
 if ($markerProblems.Count -gt 0) { $markerDetails['problems'] = @($markerProblems) }
 
 $pass = [bool](@($success.Problems).Count -eq 0)

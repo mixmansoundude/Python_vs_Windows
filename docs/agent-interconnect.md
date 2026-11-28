@@ -395,6 +395,27 @@ exit-path audit, not a final answer.
 AND is a routine exit a real user could hit often (not a crash), add `call :release_lock` before
 it -- same as `:die`/`:success` -- so a repeated-decline pattern doesn't leave stale locks.
 
+**The same sites need the pause (Item 130, README REQ-016.8): a top-level `exit /b` that a person can reach ends with
+`if not defined HP_CI_LANE pause` directly in front of it.** `:die` and `:success` always had one (the block form
+`if not defined HP_CI_LANE ( pause )`), the usage stop of Item 67 has the one-line form, and until Item 130 four ends of a run had none: the
+system-folder guard, the REQ-011 pre-flight stop and both `Workspace path invalid` exits (the second is what a double-click on a script on a
+network share reaches, because cmd.exe cannot make a UNC folder its current folder); a person saw the window close before the message
+could be read. Every CI lane carries `HP_CI_LANE`, so no earlier row could tell: `tests/selfapps_stop_pause.ps1`
+(`self.stoppause.*`, contract-uv lane, gating) removes the marker from a scrubbed environment, holds standard input open and waits for
+`Press any key to continue`, and the seventh row (`.marker`) sets the marker and requires that no prompt appears and the run ends by itself.
+- **A new stop gets the pause in the same change**, one line in front of the `exit /b`, after `call :release_lock` and the status
+  write where the stop has them (the pause is the last thing a person waits for; a lock released first is never held by a window that waits).
+  `tests/test_stop_pause.py` (`FIXED_SITES`, `CONTROL_SITES`) names each stop by a unique live line and the first `exit /b` after it, so a
+  new stop needs an entry there and, for a stop a scenario can reach, a scenario of the script.
+- **Which stops are reached by which scenario**: `success` = no `.py` file (`No Python files detected`), `die` = `PVW_PROVIDER=zzz` (a
+  `:die` before any work), `usage` = a first argument that names no file, `req011` = a dragged file from another folder, `sysdir` = the
+  script copied under `%WINDIR%\Temp`, `unc` = the script started through `\\localhost\<drive>$\...` (an admin share the runner has;
+  skipped with a recorded reason when the probe cannot read a token file through it). The two `if errorlevel 11` returns after
+  `:determine_entry` cannot be reached any more (the pre-flight stops first); they carry the pause for consistency and are pinned as text only.
+- **`cmd.exe`'s `pause` with redirected input**: with standard input closed it prints the prompt and returns at once, with an open pipe it
+  waits for a byte. The rows hold the input open, wait for the prompt, check the process is still alive five seconds later, send one
+  line and require the run to end; a stop with no pause ends at once, which is the red case.
+
 ---
 
 ## `:emit_from_base64`'s test-injection hook covers every future payload automatically
