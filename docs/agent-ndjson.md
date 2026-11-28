@@ -386,7 +386,7 @@ figure (`waitSec`) is the wait plus at most half a second; the program is then s
 claim. `.control` runs with the test setting and must measure 1 to 10 seconds and read `wait 2s` in the prompt, which shows the measurement follows
 the batch file's own setting; the row itself runs with no setting, must read `wait 30s`, measure 29 to 38 seconds with nothing typed and select
 `a_app.py`. Both also require the numbered list was printed, the environment listing was written and the flags seen were exactly the expected ones
-(`HP_TEST_FORCE_PICKER` for the control, none for the row). What the row does not show: the keyboard is never typed into, so a typed number is
+(`HP_TEST_FORCE_PICKER` for the control, none for the row). A script that stops before it writes a row (an unexpected error in the main block) writes a failing row with the reason for each id it has not written, because the ids are listed in `tests/expected_rows/contract-uv.txt` only after two green runs. What the row does not show: the keyboard is never typed into, so a typed number is
 `self.entry.picker.number`'s job; whether a hidden console and an open pipe behave like a person's console on a Windows desktop is what the calibration
 shows for the runner and not more; the console tail (`consoleTail`) and the calibration figures are in the details of a red row. The wiring is
 `tests/test_picker_wait.py` (the batch lines the clock reads in their order, the one `choice` line that holds the wait, the three signal lines the real

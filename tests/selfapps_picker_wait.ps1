@@ -351,6 +351,11 @@ function Get-RunResult {
 }
 
 $allPass = $true
+# derived requirement: a script that stops before it writes a row leaves nothing for the gate to read, and an absent row cannot be red
+# (the expected-row lists only protect an id after green runs have listed it), so every id this script has not written by the time the
+# main block ends, normally or by an unexpected error, is written as a failing row below.
+$rowsWritten = @{}
+$crashMessage = ''
 try {
     # ------------------------------------------------------------ the harness: which method holds a timed choice open?
     $cals = @()
@@ -381,6 +386,7 @@ try {
         desc = 'REQ-002.15 control: the harness keeps a timed choice open for its full time, and with the test setting that shortens the wait the picker is measured at about 2 seconds, so the 30 seconds of the next row are the product setting and not the harness'
         details = $details
     })
+    $rowsWritten['self.entry.picker.wait.control'] = $true
 
     # ------------------------------------------------------------ the row: no signal, no test setting, nothing typed
     $real = $null
@@ -400,8 +406,20 @@ try {
         desc = 'REQ-002.15 and REQ-002.22: with none of the three non-interactivity signals and no test setting, the entry picker keeps its question open for about 30 seconds with nothing typed and then selects the alphabetical default'
         details = $details
     })
+    $rowsWritten['self.entry.picker.wait'] = $true
+} catch {
+    $crashMessage = ('{0} (script line {1})' -f $_.Exception.Message, $_.InvocationInfo.ScriptLineNumber)
+    $allPass = $false
 } finally {
     foreach ($name in @($scrubbed.Keys)) { [Environment]::SetEnvironmentVariable($name, $scrubbed[$name]) }
+}
+
+# Every id that was not written above is written now as a red row that says why, so a stop before the rows is never silent.
+foreach ($rowId in $allIds) {
+    if (-not $rowsWritten.ContainsKey($rowId)) {
+        $allPass = $false
+        Write-NdjsonRow ([ordered]@{ id = $rowId; req = 'REQ-002.15'; pass = $false; desc = 'Entry picker wait: the script stopped before this row was written'; details = [ordered]@{ error = 'the script stopped before this row was written'; crash = $crashMessage } })
+    }
 }
 
 if (-not $allPass) { exit 1 }

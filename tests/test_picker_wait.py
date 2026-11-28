@@ -283,6 +283,19 @@ def script_problems(text):
         found.append("the rows no longer skip off Windows with skip = $true")
     if "if (-not $allPass) { exit 1 }" not in flat:
         found.append("the script no longer exits 1 for a red row")
+    # a stop before the rows must never be silent (CodeRabbit, PR #548): every id not written is written red after the main block
+    for rid in ROW_IDS:
+        if "$rowsWritten['%s'] = $true" % rid not in flat:
+            found.append("the row %s is no longer recorded as written" % rid)
+    if not re.search(r"\} catch \{\s*\$crashMessage = [^\n]*\n\s*\$allPass = \$false\s*\} finally \{", flat):
+        found.append("an unexpected stop in the main block is no longer caught and counted as a red run")
+    after = flat.rsplit("} finally {", 1)[-1]  # the main block's finally is the last one; two functions have their own
+    if not re.search(r"foreach \(\$rowId in \$allIds\) \{\s*if \(-not \$rowsWritten\.ContainsKey\(\$rowId\)\) \{\s*\$allPass = \$false\s*Write-NdjsonRow", after):
+        found.append("an id the script has not written is no longer written as a failing row after the main block")
+    if after.find("pass = $false; desc = 'Entry picker wait: the script stopped before this row was written'") < 0:
+        found.append("the row for a script that stopped early is no longer red with its reason")
+    if after.find("foreach ($rowId in $allIds)") > after.find("if (-not $allPass) { exit 1 }") or after.find("foreach ($rowId in $allIds)") < 0:
+        found.append("the rows for a script that stopped early must be written before the exit code is decided")
     if not live or live[-1] != "exit 0":
         found.append("the script does not end with exit 0")
     if any(ord(ch) > 127 for ch in text):
@@ -705,6 +718,105 @@ class ScriptRulesCanFail(unittest.TestCase):
         bad = mutate(self.script, '$appB = "print(\'entry-b\')`n"', '$appB = "if __name__ == \'__main__\': print(\'entry-b\')`n"')
         found = premise_problems(bad)
         self.assertTrue(any("find_entry chose" in f for f in found), found)
+
+
+FALLBACK_START = "# Every id that was not written above"
+FALLBACK_END = "if (-not $allPass) { exit 1 }"
+
+
+def fallback_block(text):
+    t = norm(text)
+    a = t.find(FALLBACK_START)
+    b = t.find(FALLBACK_END)
+    if a < 0 or b < a:
+        raise AssertionError("the block that writes the rows of a script that stopped early was not found")
+    return t[a:b]
+
+
+def run_fallback(text, written, crash):
+    """Run the real fallback block under pwsh with a recording Write-NdjsonRow; returns (allPass, rows)."""
+    keys = "".join("$rowsWritten['%s'] = $true\n" % w for w in written)
+    driver = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$allIds = @('self.entry.picker.wait.control', 'self.entry.picker.wait')\n"
+        "$rowsWritten = @{}\n" + keys +
+        "$crashMessage = '%s'\n$allPass = $true\n$script:rows = @()\n"
+        "function Write-NdjsonRow { param([hashtable]$Row) $script:rows += ,$Row }\n" % crash
+        + fallback_block(text) + "\n"
+        "$out = [ordered]@{ allPass = $allPass; rows = @($script:rows | ForEach-Object { [ordered]@{ id = $_['id']; pass = $_['pass']; req = $_['req']; "
+        "crash = $_['details']['crash'] } }) }\n"
+        "$out | ConvertTo-Json -Depth 5 -Compress\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "fallback.ps1"
+        f.write_text(driver, encoding="ascii")
+        proc = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(f)], capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        raise AssertionError("pwsh failed (%s): %s %s" % (proc.returncode, proc.stdout[-400:], proc.stderr[-400:]))
+    import json
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    rows = out["rows"]
+    if isinstance(rows, dict):
+        rows = [rows]
+    return out["allPass"], rows
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ARowThatWasNotWrittenIsWrittenRed(unittest.TestCase):
+    """CodeRabbit, PR #548: an absent row cannot be red, and the expected-row list only protects an id after green runs listed it."""
+
+    def setUp(self):
+        self.script = SCRIPT.read_text(encoding="utf-8")
+
+    def test_both_rows_written_adds_nothing(self):
+        all_pass, rows = run_fallback(self.script, list(ROW_IDS), "")
+        self.assertTrue(all_pass)
+        self.assertEqual(rows, [])
+
+    def test_one_row_written_adds_a_red_row_for_the_other(self):
+        all_pass, rows = run_fallback(self.script, ["self.entry.picker.wait.control"], "boom (script line 7)")
+        self.assertFalse(all_pass)
+        self.assertEqual([(r["id"], r["pass"]) for r in rows], [("self.entry.picker.wait", False)])
+        self.assertEqual(rows[0]["crash"], "boom (script line 7)")
+
+    def test_no_row_written_adds_a_red_row_for_each(self):
+        all_pass, rows = run_fallback(self.script, [], "boom")
+        self.assertFalse(all_pass)
+        self.assertEqual([(r["id"], r["pass"]) for r in rows], [(i, False) for i in ROW_IDS])
+        self.assertTrue(all(r["req"] == "REQ-002.15" for r in rows))
+
+    def test_a_fallback_that_stops_marking_the_run_red_is_shown(self):
+        bad = mutate(self.script, "        $allPass = $false\n        Write-NdjsonRow", "        Write-NdjsonRow")
+        all_pass, _ = run_fallback(bad, [], "boom")
+        self.assertTrue(all_pass, "the mutated block must show the defect: rows written but the run not red")
+        self.assertTrue(any("is no longer written as a failing row" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_a_fallback_that_writes_a_green_row_is_shown(self):
+        bad = mutate(self.script, "pass = $false; desc = 'Entry picker wait: the script stopped before this row was written'",
+                     "pass = $true; desc = 'Entry picker wait: the script stopped before this row was written'")
+        _, rows = run_fallback(bad, [], "boom")
+        self.assertTrue(all(r["pass"] for r in rows))
+        self.assertTrue(any("is no longer red with its reason" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_a_fallback_that_rewrites_a_written_row_is_shown(self):
+        bad = mutate(self.script, "if (-not $rowsWritten.ContainsKey($rowId)) {", "if ($true) {")
+        _, rows = run_fallback(bad, list(ROW_IDS), "")
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(any("no longer written as a failing row" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_a_script_that_stops_recording_its_rows_is_reported(self):
+        bad = mutate(self.script, "    $rowsWritten['self.entry.picker.wait.control'] = $true\n", "")
+        self.assertTrue(any("is no longer recorded as written" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_a_script_that_no_longer_catches_an_unexpected_stop_is_reported(self):
+        bad = mutate(self.script, "} catch {\n    $crashMessage =", "} catch {\n    $crashMessageX =")
+        self.assertTrue(any("is no longer caught and counted" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_rows_written_after_the_exit_are_reported(self):
+        a = self.script.find(FALLBACK_START)
+        b = self.script.find(FALLBACK_END)
+        block = self.script[a:b]
+        bad = self.script[:a] + self.script[b:].replace(FALLBACK_END, FALLBACK_END + "\n" + block, 1)
+        self.assertTrue(any("before the exit code is decided" in f for f in script_problems(bad)), script_problems(bad))
 
 
 class WorkflowAndListsCanFail(unittest.TestCase):
