@@ -48,7 +48,6 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 
 # Shall id -> reason it has no tagged row. Delete an entry when a row is tagged with the shall's id.
 UNTRACED_SHALLS: Dict[str, str] = {
-    "REQ-002.15": "unit: tests/test_picker_gate.py::PickerWait the prompt of :pick_entry_interactive waits HP_PICK_T seconds, 30 unless the test setting HP_TEST_FORCE_PICKER shortens it to 2; self.entry.picker (default taken, REQ-002.22) and self.entry.picker.number (a typed number) run with the shortened wait, so no row waits the full 30 seconds",
     "REQ-007.12": "unit: tests/test_collect_submodules.py::GatingMatrix a curated package is collected only when the program uses it and the interpreter has it installed, so an unused library never enters the build",
     "REQ-016.8": "inspection: run_setup.bat :: rem REQ-016: retain terminal window on success so user can read the output.\nthe pause that ends :success, and the one in :die (rem REQ-016: retain terminal window on error), each behind if not defined HP_CI_LANE; every CI lane carries the marker, so no row reaches a pause and the shall is read from the code",
 }

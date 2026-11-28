@@ -1,9 +1,9 @@
 """REQ-002.13, REQ-002.15, REQ-002.18, REQ-002.19 and REQ-002.22: the entry picker waits 30 seconds and defaults, a non-interactive
 run is never asked, the question is asked once per run, and its list holds no tilde or ._ file.
 
-No row can wait the full 30 seconds (self.entry.picker shortens the wait to 2 seconds with HP_TEST_FORCE_PICKER) and the
-rows that run the picker set the CI marker, so the other two non-interactive signals, NOINPUT and HP_NONINTERACTIVE, are
-read here from the batch file. These checks are static reads of :pick_entry_interactive; the rows
+The rows self.entry.picker and self.entry.picker.number shorten the wait to 2 seconds with HP_TEST_FORCE_PICKER and set the
+CI marker; only self.entry.picker.wait (Item 133, tests/selfapps_picker_wait.ps1) waits the full 30 seconds. The other two
+non-interactive signals, NOINPUT and HP_NONINTERACTIVE, are read here from the batch file. These checks are static reads of :pick_entry_interactive; the rows
 self.entry.picker, self.entry.picker.number, self.entry.picker.metafile and self.entry.fallback show the behavior around
 them (self.entry.picker.number is the row that found the second question, Item 109; self.entry.picker.metafile is the
 row that found the ._ file in the list, Item 108).
