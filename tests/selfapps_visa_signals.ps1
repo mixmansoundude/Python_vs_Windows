@@ -21,6 +21,10 @@
 # Y is honored, so a signal row cannot pass because the block never asked in any case. A stub that answered N would make a block
 # that waits and a block that does not wait end in the same decline.
 #
+# The control row names REQ-008.12 too (Item 124): that shall is the length of the wait, at most 30 seconds, and the arguments of the
+# one recorded choice line (/T 30 and /D N) are where the real block says so. Before, the shall was an inspection entry of the
+# shall-level ratchet, and no row waited for it, because the scenario that shortens the wait for speed cannot show the value.
+#
 # Two kinds of evidence per run, so that one cannot vouch for the other: what the driver recorded from the block's own result
 # (NEED_VISA and HP_VISA_DECISION after the call, and how many times the console was read) and the line the block wrote to its log.
 #
@@ -57,7 +61,7 @@ function Write-AllRows {
     param([bool]$Pass, [string]$Desc, [hashtable]$Details)
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.noinput'; req = 'REQ-008.14'; pass = $Pass; desc = $Desc; details = $Details })
     Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.nonint'; req = 'REQ-008.14'; pass = $Pass; desc = $Desc; details = $Details })
-    Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.control'; req = 'REQ-008.14'; pass = $Pass; desc = $Desc; details = $Details })
+    Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.control'; req = 'REQ-008.12, REQ-008.14'; pass = $Pass; desc = $Desc; details = $Details })
 }
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -320,7 +324,7 @@ Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.nonint'; req = 'REQ-008.1
 
 $pass = [bool](@($control.Problems).Count -eq 0)
 if (-not $pass) { $allPass = $false }
-Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.control'; req = 'REQ-008.14'; pass = $pass
+Write-NdjsonRow ([ordered]@{ id = 'self.nivisa.signals.control'; req = 'REQ-008.12, REQ-008.14'; pass = $pass
     desc = 'With no signal the NI-VISA subfolder question reads the console once, for 30 seconds at most, and honors Y (the control)'; details = $control.Details })
 
 if (-not $allPass) { exit 1 }

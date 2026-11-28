@@ -94,7 +94,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-005 | 18 | 18 | 0 | 32 |
 | REQ-006 | 2 | 2 | 0 | 5 |
 | REQ-007 | 20 | 19 | 1 | 13 |
-| REQ-008 | 23 | 20 | 3 | 10 |
+| REQ-008 | 23 | 23 | 0 | 10 |
 | REQ-009 | 17 | 17 | 0 | 23 |
 | REQ-010 | 3 | 3 | 0 | 0 |
 | REQ-011 | 4 | 4 | 0 | 1 |
@@ -102,9 +102,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-013 | 19 | 19 | 0 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
 | REQ-015 | 9 | 9 | 0 | 1 |
-| REQ-016 | 9 | 8 | 1 | 4 |
+| REQ-016 | 9 | 9 | 0 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
-| REQ-018 | 37 | 33 | 4 | 16 |
+| REQ-018 | 37 | 37 | 0 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
 | REQ-020 | 9 | 9 | 0 | 6 |
 | REQ-021 | 6 | 6 | 0 | 0 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-262 of 271 numbered shalls are named by at least one row tag.
+270 of 271 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-007.12, REQ-008.5, REQ-008.6, REQ-008.12, REQ-016.8, REQ-018.6, REQ-018.13, REQ-018.19, REQ-018.30.
+Shalls no row names: REQ-007.12.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -171,7 +171,17 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    question is declined without waiting under `NOINPUT` or `HP_NONINTERACTIVE`, and a run with no signal reaches it),
    all three scripts in the contract-uv lane. REQ-003.1 (the Windows floor, the programs Windows ships) is
    `self.netres.shipped.tools` (Item 116) and REQ-003.2 (the Miniconda folder) is `self.env.smoke.minicondafolder` (Item 115).
-   REQ-018.6, .13, .19 and .30 are `unit:` entries: a unit test shows the response, so a row is optional.
+   Done 2026-11-21 (Item 124, test only): REQ-018.6 (`self.launch.cap.silent`, `.output`, `tests/selfapps_launch_cap.ps1`, contract-uv
+   lane, two default bootstraps with the production 30 second wait: the EXE the runner started for a program that prints nothing
+   lives about 30 seconds and the console says exit -1 and TIMED OUT, and for a program that prints a prompt and waits it lives
+   until its answer, 46 seconds after the start, and the run ends with exit 0 and SUCCESS), REQ-018.13 (`self.runtime.scan.skipped`,
+   `.fastpath`, `tests/selfapps_runtime_modnotfound.ps1`, real lane: of three missing-module tracebacks only the package nobody
+   installed is reported, not a standard library name or a file next to the script, and the cached-EXE fast path scans nothing),
+   REQ-018.19 (`self.runtime.install.submodules`, `tests/selfapps_runtime_install.ps1`, real lane: the rebuilt EXE holds a
+   submodule of the installed package that `--hidden-import` alone leaves out, shown by a control build), REQ-018.30 (the three
+   lines of the window question, judged in `self.lastchance.window_yes`, uv lane), REQ-008.5 and .6 (`self.nivisa.scan.skips`,
+   `.lookalike`, `tests/selfapps_pyvisa_subfolder.ps1`, real and conda-full lanes, with the driver install switched off) and
+   REQ-008.12 (the tag on `self.nivisa.signals.control`). What stays in `UNTRACED_SHALLS` is REQ-007.12 (REQ-002.15 got `self.entry.picker.wait` from Item 133 and REQ-016.8 got `self.stoppause.*` from Item 130, both merged first).
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.
@@ -237,7 +247,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 005.12, .13 | autopep723 merge, execute-mode discovery | `self.autopep_discovery.merge`, `self.pvw_idempotent.discovery` (u) | Medium: one row each, non-gating | Item 35 |
 | 006 | conda channel policy | `reqspec.conda.dryrun.req006`, `.channelpin.req006` (all), `pandas_excel.conda.install.req006` (F) | Strong | |
 | 007 | Executable build | `self.exe.*` (all), `self.exe.build.xfail`, `self.exe.warnfix.*`, `self.exe.fastpath.graceful` (R,F), `self.parse_warn.table*` (all); `self.exe.smokerun` (c) **red** | Strong | |
-| 008 | NI-VISA optional | `pyvisa.detect/.nivisa.*` x5 (R,F); subfolder case Item 78; `self.nivisa.present.noinstall/.subfolder/.control` (k, Item 122, REQ-008.2: a driver already on the machine is never installed again, with the import in the top folder or in a subfolder, and the control run with the driver absent installs it); `self.nivisa.pyvisa.installed` (R,F, REQ-008.15: the Python pyvisa package is in the environment after a declined and after an accepted subfolder question) | Strong for the flow | REQ-008.5, .6 and .12 are `unit:` and `inspection:` entries (Item 124) |
+| 008 | NI-VISA optional | `pyvisa.detect/.nivisa.*` x5 (R,F); subfolder case Item 78; `self.nivisa.present.noinstall/.subfolder/.control` (k, Item 122, REQ-008.2: a driver already on the machine is never installed again, with the import in the top folder or in a subfolder, and the control run with the driver absent installs it); `self.nivisa.pyvisa.installed` (R,F, REQ-008.15: the Python pyvisa package is in the environment after a declined and after an accepted subfolder question); `self.nivisa.scan.skips` and `.lookalike` (R,F, Item 124, REQ-008.5 and .6: the scan skips `~` files and `~` and dot folders, reads every subfolder and does not take `pyvista` or `vision` for `visa`; the driver install is switched off for these two rows); `self.nivisa.signals.control` also carries REQ-008.12 (with no signal the question reads the console once, `/T 30 /D N`) | Strong for the flow | Item 124 |
 | 009 | Provider chain and cascade | `self.venv.fallback`, `self.embed.fallback.*`, `self.embed.dl.retry` (all), `self.cascade.detect/.consent` (R,F), `self.cascade.timed` (F); `self.cascade.exec` (u) **red**, `.conda_create_fail` (u), `self.layered_e2e.chain` (c); `self.netres.uv.acquire` and `.unpackfail` (R, Item 127, `.22` and `.23`: the uv archive is unpacked to `uv.exe`, `uvx.exe` and `uvw.exe` through the real chain, and a failed unpack logs its reason and falls back) | Medium: execution only in non-gating lanes | T4, Item 127 |
 | 010 | Session isolation | `self.isolation.req010.pythonpath` (all); runs under `HP_CI_SKIP_ENV=1` with system Python | Weak: `PYTHONPATH` only | T1 |
 | 011 | Directory integrity | `self.entry.req011.crossdir/.sameDir` (all) | Strong | |
@@ -247,7 +257,7 @@ aggregate row `self.pytest.unit` in every lane.
 | 015 | Git config merge | `self.ux.gitignore.*`, `self.ux.gitattributes.*` x6 (all) | Strong | |
 | 016 | Post-flight briefing | `self.ux.postflight` (all), `self.exe.hidden_import*` (R,F), `self.postflight.runline.*` (j,u) | Strong | |
 | 017 | Size limit | `self.size.tripwire` (all, tagged `REQ-017.1`); README section REQ-017 (one shall) | Strong | |
-| 018 | Controlled execution of user code | `self.exe.smokerun.cwd_consistency`, `self.failfast.probe.*`, `self.checkpoint.*` (R,F), `self.fastpath.hash.backdated_mtime`, `self.interactive.stdin.roundtrip` (u) | Medium: no run counter | T1 |
+| 018 | Controlled execution of user code | `self.exe.smokerun.cwd_consistency`, `self.failfast.probe.*`, `self.checkpoint.*` (R,F), `self.fastpath.hash.backdated_mtime`, `self.interactive.stdin.roundtrip` (u); `self.launch.cap.silent` and `.output` (k, Item 124, REQ-018.6: the 30 second stop of a silent run and no stop of a run that printed a prompt, on the life of the process the runner started); `self.runtime.scan.skipped` and `.fastpath` (R, Item 124, REQ-018.13); `self.runtime.install.submodules` (R, Item 124, REQ-018.19); the window question's text in `self.lastchance.window_yes` (u, REQ-018.30) | Medium: no run counter | T1, Item 124 |
 | 019 | Flags are scaffolding | none; a manual standing directive in `docs/agent-lessons-learned.md` | None | T6 |
 | 020 | Cache corruption | `self.corrupt.conda.real_detect/.real_ci/.real_ask/.real_decline/.real_locked/.real_override` and `self.corrupt.uv.real_probe` (all, tagged `REQ-020.1` to `.4`, `.6`, `.7`, `.8`; a private `PUBLIC` folder with a stub `conda.bat` makes the real health check fail, no Miniconda or network needed); the hook-based `self.corrupt.conda.detect/.heal.decline/.heal.accept/.override_exit` and `self.corrupt.uv.detect` (tagged `REQ-020`); `self.corrupt.conda.evict.install` and `.evict.installfail` (k, Item 122, tagged `REQ-020.5` and `REQ-020.9`: the real eviction block run under cmd.exe against stubs for the download and the install, plus one offline bootstrap of a damaged conda that ends with exit code 4); README section REQ-020 (nine shalls) | Strong for all nine; the 150 MB Miniconda download itself is never made (stubs), only the code that deletes, installs and continues is run | |
 | 021 | Static pre-flight | `self.preflight.*` (R,F), `batch.preflight.compile` | Strong | |

@@ -49,13 +49,6 @@ PREFIXES = ("gap:", "unit:", "inspection:")
 # Shall id -> reason it has no tagged row. Delete an entry when a row is tagged with the shall's id.
 UNTRACED_SHALLS: Dict[str, str] = {
     "REQ-007.12": "unit: tests/test_collect_submodules.py::GatingMatrix a curated package is collected only when the program uses it and the interpreter has it installed, so an unused library never enters the build",
-    "REQ-008.5": "unit: tests/test_detect_visa.py::VisaDetection a nested folder is scanned (result 2, a match below a subfolder), folders starting with ~ or . and files starting with ~ are skipped, a file that is not .py is skipped",
-    "REQ-008.6": "unit: tests/test_detect_visa.py::VisaDetection import pyvista, import vision and import pyviscoelastic are not matches, a dotted submodule import of pyvisa still is",
-    "REQ-008.12": "inspection: run_setup.bat :: set \"HP_VISA_T=30\"\nthe wait of the timed choice in :visa_subfolder_gate; self.nivisa.subfolder.timeout shortens it to 2 seconds with a test setting to stay fast, so no row waits the full 30 seconds",
-    "REQ-018.6": "unit: tests/test_exe_smokerun.py::ActivityAwareStop output before the deadline keeps the run going past 30 seconds, with or without a trailing newline; KillTimeout in the same file shows a silent hang is stopped and 30000 ms is the default",
-    "REQ-018.13": "unit: tests/test_runtime_module_scan.py::WhatIsNotReported standard library names and a module next to the script are not reported; the cached-EXE skip is the scan's no-interpreter return",
-    "REQ-018.19": "unit: tests/test_runtime_module_scan.py::BatchCallSites the rebuild adds --hidden-import and --collect-submodules for each installed module and puts both on the PyInstaller command line; self.runtime.install.accept shows the first flag by behavior (the check run is clean only if the EXE holds the package), nothing runs the second flag",
-    "REQ-018.30": "unit: tests/test_window_confirm.py::WindowQuestionWiring the question says the check stops the program after about 30 seconds (static wording pin)",
 }
 
 

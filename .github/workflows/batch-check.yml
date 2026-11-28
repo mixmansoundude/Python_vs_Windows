@@ -901,7 +901,9 @@ jobs:
       # package a program asked for at run time. A yes installs, adds it to requirements.txt (or, for a
       # pyproject.toml / PEP 723 source, leaves that file alone and says so), rebuilds with
       # --hidden-import and runs the program once more; a no changes nothing. Gating on purpose, real
-      # lane only (uv provider). HP_TEST_RTM_ANSWER supplies the answer.
+      # lane only (uv provider). HP_TEST_RTM_ANSWER supplies the answer. Item 124 (REQ-018.19) added a
+      # fifth bootstrap, self.runtime.install.submodules: the rebuilt EXE must also hold a submodule
+      # that only --collect-submodules brings, shown by a control build made with --hidden-import alone.
       - name: "Self-test: runtime package install is consent-gated (real only)"
         if: ${{ !cancelled() && matrix.mode == 'real' }}
         shell: pwsh
@@ -1634,6 +1636,20 @@ jobs:
         shell: pwsh
         run: |
           & tests\selfapps_optbuild_cap.ps1
+
+      # Item 124 (README REQ-018.6): the verification run of a new build is stopped only when the program has printed nothing 30 seconds
+      # after it started, and never while it has printed something, a prompt that waits for an answer included. The smoke runner's own
+      # unit tests cut the wait to a fraction of a second; no row ran the wait production uses, an EXE the bootstrapper built, and the
+      # console the user reads. Two default bootstraps of one-file programs, each in its own folder: one that prints nothing for 75
+      # seconds (the EXE the runner started must be stopped about 30 seconds after it started and the console must say exit -1 and
+      # TIMED OUT), and one that prints a prompt and is answered 46 seconds after it started through a standard input this script holds
+      # open (the run must end by itself with exit 0 and SUCCESS, the EXE alive past the 30 second mark). contract-uv only, gating from
+      # its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the verification run's 30 second cap (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_launch_cap.ps1
 
       # Item 111 (README REQ-003.3, REQ-015.7 and REQ-015.8): where the bootstrapper works, what it calls the files a person keeps and
       # what deleting its ~ files costs. One program in a folder whose own name starts with ~ (so a name taken from the folder would
@@ -3044,6 +3060,9 @@ jobs:
             tests/~optbuild_cap_evidence.txt
             tests/~selftest_optbuildcap/*/~driver*
             tests/~selftest_optbuildcap/*/~optcap_ledger.txt
+            tests/~selftest_launchcap_*/~lc_*
+            tests/~selftest_launchcap_*/~setup.log
+            tests/~selftest_launchcap_*/~bootstrap.status.json
             tests/~tilde_files_evidence.txt
             tests/~selftest_tilde_root/~tilde_work/~tl_console2.log
             tests/~selftest_tilde_root/~tilde_work/~setup.log
@@ -3174,6 +3193,18 @@ jobs:
             tests\~selftest_runtime_modnotfound_pyproject\~run.err.txt
             tests/~selftest_runtime_modnotfound_pyproject/~sub.ndjson
             tests\~selftest_runtime_modnotfound_pyproject\~sub.ndjson
+            tests/~selftest_runtime_scan_skips/~sk_run1.log
+            tests\~selftest_runtime_scan_skips\~sk_run1.log
+            tests/~selftest_runtime_scan_skips/~sk_run2.log
+            tests\~selftest_runtime_scan_skips\~sk_run2.log
+            tests/~selftest_runtime_scan_skips/~setup.log
+            tests\~selftest_runtime_scan_skips\~setup.log
+            tests/~selftest_runtime_scan_skips/~run.err.txt
+            tests\~selftest_runtime_scan_skips\~run.err.txt
+            tests/~selftest_runtime_scan_skips/~sub.ndjson
+            tests\~selftest_runtime_scan_skips\~sub.ndjson
+            tests/~selftest_runtime_scan_skips/~sub2.ndjson
+            tests\~selftest_runtime_scan_skips\~sub2.ndjson
             tests/~selftest_runtime_install_accept/~install_accept_bootstrap.log
             tests\~selftest_runtime_install_accept\~install_accept_bootstrap.log
             tests/~selftest_runtime_install_accept/~setup.log
@@ -3210,6 +3241,24 @@ jobs:
             tests\~selftest_runtime_install_pyproject\~sub.ndjson
             tests/~selftest_runtime_install_pyproject/requirements.txt
             tests\~selftest_runtime_install_pyproject\requirements.txt
+            tests/~selftest_runtime_install_submodules/~install_submodules_bootstrap.log
+            tests\~selftest_runtime_install_submodules\~install_submodules_bootstrap.log
+            tests/~selftest_runtime_install_submodules/~setup.log
+            tests\~selftest_runtime_install_submodules\~setup.log
+            tests/~selftest_runtime_install_submodules/~run.err.txt
+            tests\~selftest_runtime_install_submodules\~run.err.txt
+            tests/~selftest_runtime_install_submodules/~run.out.txt
+            tests\~selftest_runtime_install_submodules\~run.out.txt
+            tests/~selftest_runtime_install_submodules/~sub.ndjson
+            tests\~selftest_runtime_install_submodules\~sub.ndjson
+            tests/~selftest_runtime_install_submodules/requirements.txt
+            tests\~selftest_runtime_install_submodules\requirements.txt
+            tests/~selftest_runtime_install_submodules/~control_build.log
+            tests\~selftest_runtime_install_submodules\~control_build.log
+            tests/~selftest_runtime_install_submodules/~control_out.txt
+            tests\~selftest_runtime_install_submodules\~control_out.txt
+            tests/~selftest_runtime_install_submodules/~control_err.txt
+            tests\~selftest_runtime_install_submodules\~control_err.txt
             tests/~selftest_lastchance_worked/~lc_worked_bootstrap.log
             tests\~selftest_lastchance_worked\~lc_worked_bootstrap.log
             tests/~selftest_lastchance_worked/~setup.log
@@ -3504,6 +3553,14 @@ jobs:
             tests\~selftest_pyvisa_sub_timeout\~pyvisa_sub_timeout.log
             tests/~selftest_pyvisa_sub_timeout/~setup.log
             tests\~selftest_pyvisa_sub_timeout\~setup.log
+            tests/~selftest_pyvisa_sub_scanskips/~pyvisa_sub_scanskips.log
+            tests\~selftest_pyvisa_sub_scanskips\~pyvisa_sub_scanskips.log
+            tests/~selftest_pyvisa_sub_scanskips/~setup.log
+            tests\~selftest_pyvisa_sub_scanskips\~setup.log
+            tests/~selftest_pyvisa_sub_lookalike/~pyvisa_sub_lookalike.log
+            tests\~selftest_pyvisa_sub_lookalike\~pyvisa_sub_lookalike.log
+            tests/~selftest_pyvisa_sub_lookalike/~setup.log
+            tests\~selftest_pyvisa_sub_lookalike\~setup.log
             tests/~selftest_pyvisa_sub_declined/~dependency_installed.txt
             tests/~selftest_pyvisa_sub_accepted/~dependency_installed.txt
             tests/~pyproject_prec/~pyproject_prec_bootstrap.log
