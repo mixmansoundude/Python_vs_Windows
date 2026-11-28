@@ -8382,7 +8382,7 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
 - **Rules and places that change together:** `docs/agent-interconnect.md` (the REQ-024 lock section: a new top-level `exit /b` that a person can reach gets the pause in the same change), `docs/agent-lessons-learned.md` (a shall that the CI marker switches off needs a row that removes
   the marker, scrubs the environment and holds input open), `docs/demo-bootstrapper-output.md` (the three stops now end with the prompt), the registry section of `docs/agent-ndjson.md`.
 - **README wording (lane 3 owns the README, so it is in the PR body):** the closing note of the REQ-016 tests paragraph says REQ-016.8 is read from the code; it is replaced by `self.stoppause.*` (`tests/selfapps_stop_pause.ps1`, contract-uv lane): six real runs without the CI marker
-  must print `Press any key to continue` after the stop's own message and wait for a key, and the same six runs with the marker must show no prompt. `self.stoppause.*` ids are listed in `tests/expected_rows/contract-uv.txt` only after two green runs.
+  must print `Press any key to continue` after the stop's own message and wait for a key, and the same six runs with the marker must show no prompt. `self.stoppause.*` ids are listed in `tests/expected_rows/contract-uv.txt` only after two green runs, and they are: all seven were true in run `46086886716` (head `06024cf`) and run `46110709421` (head `369a250`), each a full green matrix with a gate report of 0 missing (`.unc` ran, no skip, both times), so the PR lists them.
 
 ### Item 133 (filed 2026-11-28; REQ-002.15, the picker's real 30 second wait, the first of the last three untraced shalls lane 3 took)
 
