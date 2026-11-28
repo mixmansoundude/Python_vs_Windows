@@ -1662,6 +1662,24 @@ never taken for something the bootstrapper created; (2) the keep list is read fr
 the heading, up to `SAFE TO DELETE`), and every name on it must exist, otherwise a keep line for a file the bootstrapper never writes is
 invisible to a row that only checks the files it already knows.
 
+## A shall that the CI marker switches off needs a row that removes the marker, scrubs the environment and holds input open (Item 130)
+
+README REQ-016.8 says the window stays open at the end of a run unless the run carries the CI marker `HP_CI_LANE`. Every CI lane sets that marker,
+so no row ever reached a pause and the shall was listed in `UNTRACED_SHALLS` as read from the code. Reading it that way missed four stops
+(the system-folder guard, the REQ-011 pre-flight stop and both `Workspace path invalid` exits) that end with `exit /b 1` and no pause: a
+person double-clicking the script on a network share saw the window close before the message could be read. **Rule: when a shall is
+about behavior that a variable every CI lane sets suppresses, the proof is a row that starts the real run WITHOUT the variable, and
+the runner's own environment must not be able to put it (or its relatives) back**: the script clears every `HP_`/`PVW_`/`NOINPUT`
+variable of the runner first, sets what the scenario needs after, and records what the launched shell saw (`STOP_LANE` defined or
+undefined) so the judge can say the run was not the one the row means. A prompt is shown by holding standard input open, waiting for
+`Press any key to continue`, checking five seconds later that the process is still alive (closed input makes `pause` return at once, which
+looks like a pause that worked), then sending one line and requiring the run to end; the opposite row sets the marker and requires no prompt and a run
+that ends by itself. The controls (the ends that already pause) must be green on the first run, or the harness is wrong and gets fixed
+before anything else is read. Two reaches worth knowing: a UNC folder is reachable on a Windows runner as `\\localhost\<drive>$\...`
+(the admin share), where `cd /d` fails ("CMD does not support UNC paths as current directories"), which is the second
+`Workspace path invalid` stop; the row probes the share with a token file first and records a skip with the reason when it cannot read
+it, so a runner without admin shares is told apart from a product defect.
+
 ## A text judge that lets negated wording off must tie the negation to the word it negates (Item 111 review)
 
 `Get-CaveatSentenceProblems` rejected a sentence that names the dependencies or their installation together with a verification

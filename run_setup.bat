@@ -160,11 +160,13 @@ if "%HP_SCRIPT_LAUNCH_DIR:~0,2%"=="\\" (
 )
 if not exist "%~dp0" (
   echo [ERROR] Workspace path invalid: %~dp0
+  if not defined HP_CI_LANE pause
   exit /b 1
 )
 cd /d "%~dp0"
 if errorlevel 1 (
   echo [ERROR] Workspace path invalid: %~dp0
+  if not defined HP_CI_LANE pause
   exit /b 1
 )
 rem derived requirement: writable-CWD preflight (CLAUDE.md Item 48) -- this is the first
@@ -382,6 +384,7 @@ if defined HP_SYSDIR_HIT (
   echo *** Please move this script ^(and your .py files^) to a normal folder -- your Desktop
   echo *** or Documents folder both work well -- then run it again from there.
   call :log "[ERROR] System-directory guard: script root is under a Windows system folder; aborting."
+  if not defined HP_CI_LANE pause
   exit /b 1
 )
 set "HP_SYSDIR_HIT="
@@ -715,6 +718,7 @@ if not "%~1"=="" if /i not "%~dp1"=="%~dp0" (
   call :log "[ERROR] REQ-011: Dragged files must reside in the bootstrapper root folder."
   call :write_status "error" 1 %PYCOUNT%
   call :release_lock
+  if not defined HP_CI_LANE pause
   exit /b 1
 )
 rem derived requirement: CLAUDE.md Item 67 -- the first argument, when given, must be an existing
@@ -1563,6 +1567,7 @@ if exist "%PEP723_REQ%" del "%PEP723_REQ%" >nul 2>&1
 call :determine_entry "%HP_ENTRY_FILE_ARG%"
 if errorlevel 11 (
   call :write_status "error" 1 %PYCOUNT%
+  if not defined HP_CI_LANE pause
   exit /b 1
 )
 if errorlevel 1 (
@@ -2420,6 +2425,7 @@ if defined HP_CI_SKIP_ENV goto :after_env_skip
 call :determine_entry "%HP_ENTRY_FILE_ARG%"
 if errorlevel 11 (
   call :write_status "error" 1 %PYCOUNT%
+  if not defined HP_CI_LANE pause
   exit /b 1
 )
 if errorlevel 1 call :die "[ERROR] Could not determine entry point"

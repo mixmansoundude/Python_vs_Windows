@@ -102,7 +102,7 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-013 | 19 | 19 | 0 | 4 |
 | REQ-014 | 5 | 5 | 0 | 7 |
 | REQ-015 | 9 | 9 | 0 | 1 |
-| REQ-016 | 9 | 8 | 1 | 4 |
+| REQ-016 | 9 | 9 | 0 | 4 |
 | REQ-017 | 1 | 1 | 0 | 0 |
 | REQ-018 | 37 | 37 | 0 | 16 |
 | REQ-019 | 3 | 3 | 0 | 0 |
@@ -116,9 +116,9 @@ row names" below is exactly that list; a shall named by a row is proven only to 
 | REQ-027 | 3 | 3 | 0 | 0 |
 | REQ-028 | 2 | 2 | 0 | 0 |
 
-269 of 271 numbered shalls are named by at least one row tag.
+270 of 271 numbered shalls are named by at least one row tag.
 
-Shalls no row names: REQ-007.12, REQ-016.8.
+Shalls no row names: REQ-007.12.
 
 Requirement numbers the README mentions that have no numbered shall yet: none.
 
@@ -181,7 +181,7 @@ Requirement numbers the README mentions that have no numbered shall yet: none.
    submodule of the installed package that `--hidden-import` alone leaves out, shown by a control build), REQ-018.30 (the three
    lines of the window question, judged in `self.lastchance.window_yes`, uv lane), REQ-008.5 and .6 (`self.nivisa.scan.skips`,
    `.lookalike`, `tests/selfapps_pyvisa_subfolder.ps1`, real and conda-full lanes, with the driver install switched off) and
-   REQ-008.12 (the tag on `self.nivisa.signals.control`). What stays in `UNTRACED_SHALLS` is REQ-007.12 and REQ-016.8 (REQ-002.15 got `self.entry.picker.wait` from Item 133, merged first).
+   REQ-008.12 (the tag on `self.nivisa.signals.control`). What stays in `UNTRACED_SHALLS` is REQ-007.12 (REQ-002.15 got `self.entry.picker.wait` from Item 133 and REQ-016.8 got `self.stoppause.*` from Item 130, both merged first).
 3. **Done: `HP_TEST_DISABLE_LOCK` removed.** The hook in `:acquire_lock` was set by no test and no workflow
    step; the line and the `UNTESTED_HOOKS` entry are deleted (the docs-and-tags change after #511), so the
    exemption list is empty.

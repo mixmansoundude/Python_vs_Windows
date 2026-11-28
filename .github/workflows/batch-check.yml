@@ -1688,6 +1688,21 @@ jobs:
         run: |
           & tests\selfapps_visa_signals.ps1
 
+      # Item 130 (README REQ-016.8): the window stays open at the end of a run, whether it succeeded or failed, until the user presses a
+      # key, except in a run that carries the CI marker. Every CI lane carries the marker, so no row ever reached a pause and the shall
+      # was listed as read from the code; reading the code found three stops (the system-folder guard, the dragged-file stop of
+      # REQ-011 and the second Workspace-invalid exit) that exit with no pause at all. Six real runs of run_setup.bat WITHOUT HP_CI_LANE
+      # and with standard input held open (a run through :success, one through :die, the usage stop as the control that already paused,
+      # the REQ-011 stop, the guard and a start through the runner's own admin share, the way a double-click on a network share starts
+      # it): each must print its message, then the key prompt, still be running five seconds later and end after a key. A seventh row
+      # runs the same six with the marker and must see no prompt. contract-uv only, gating from its first run (AGENTS.md, "New tests
+      # gate immediately").
+      - name: "Self-test: the window stays open at the end of a run unless the CI marker is set (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_stop_pause.ps1
+
       # Item 122 (README REQ-020.5 and REQ-020.9): a damaged conda installation is deleted and a fresh Miniconda is installed in its
       # place after the user answers Y, and a fresh install that leaves no conda stops the run with exit code 4. Until now the rows
       # reached the answer Y only through the test flag that skips the deletion and the download, so the deletion followed by the
@@ -3058,6 +3073,7 @@ jobs:
             tests/~visa_signals_evidence.txt
             tests/~selftest_visasignals/*/~driver*
             tests/~selftest_visasignals/*/~choice_args.txt
+            tests/~stop_pause_evidence.txt
             tests/~conda_evict_evidence.txt
             tests/~selftest_condaevict/*/~driver*
             tests/~selftest_condaevict/offline/~setup.log

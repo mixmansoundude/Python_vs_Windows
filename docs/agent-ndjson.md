@@ -2250,6 +2250,41 @@ self.nivisa.signals.nonint
 self.nivisa.signals.control
 ```
 
+## selfapps-stop-pause NDJSON rows (selfapps_stop_pause.ps1, contract-uv lane only, GATING)
+
+Item 130, README REQ-016.8: the terminal window stays open at the end of a run, whether the run succeeded or failed, until the user
+presses a key, except in a run that carries the CI marker `HP_CI_LANE`. Every CI lane carries the marker, so no row ever reached a
+`pause` and `tests/test_req_shall_trace.py` listed the shall as read from the code; reading the code found three stops that ended with
+`exit /b 1` and no pause (the system-folder guard, the stop for a dragged file from another folder, REQ-011, and the second
+`Workspace path invalid` exit, which a double-click on a script that sits on a network share reaches). Fourteen real runs of
+`run_setup.bat`, each in a folder of its own, started by a launch file that records whether `HP_CI_LANE` was defined as the run saw it
+(`~stop_lane.txt`) and redirects the console to `~stop_console.txt`; every `HP_`, `PVW_` and `NOINPUT` variable of the runner is removed
+from the child's environment first. Without the marker standard input is held open (a double-click window): the script polls the
+console log for `Press any key to continue`, requires the run to still be running five seconds later, sends a key and requires the run
+to end with the exit code of its stop. `self.stoppause.success` (an empty folder, the run ends through `:success`, exit 0),
+`self.stoppause.die` (`PVW_PROVIDER=zzz`, the run ends through `:die`, exit 1), `self.stoppause.usage` (the first argument names no
+file; this stop paused before Item 130, so it is the control that shows the technique sees a real pause), `self.stoppause.req011` (a
+file from another folder is dragged on), `self.stoppause.sysdir` (the script sits under `%WINDIR%\Temp`) and `self.stoppause.unc` (the
+script is started through the runner's own administrative share, `\\localhost\<drive>$\...`, the way a double-click on a network
+share starts it) each need the stop's own message first and the prompt after it. `self.stoppause.marker` runs the same six folders
+with `HP_CI_LANE` set and standard input closed: no prompt may appear and each run must end by itself with the same exit code, which is
+what stops the six rows above from passing because a pause is printed whatever the marker says. The share is probed first (a marker
+file written locally and read back through the UNC path); a runner without it records `skip=true` with `reason='unc-share-unavailable'`
+on the `unc` row and the marker row, and the other rows are unaffected. Not covered by a row: the first `Workspace path invalid` exit
+and the two exits that follow `errorlevel 11` (a vanished script folder and an unreachable branch cannot be made on a runner), pinned
+as text by `tests/test_stop_pause.py`, which also runs the judging function through real `pwsh` on synthetic runs. The rows skip with
+`skip=true` off Windows. Evidence (`tests/~stop_pause_evidence.txt`) is in the `test-logs` artifact.
+
+```
+self.stoppause.success
+self.stoppause.die
+self.stoppause.usage
+self.stoppause.req011
+self.stoppause.sysdir
+self.stoppause.unc
+self.stoppause.marker
+```
+
 ## selfapps-visa-present NDJSON rows (selfapps_visa_present.ps1, contract-uv lane only, GATING)
 
 Item 122, README REQ-008.2: an NI-VISA driver that is already installed is neither downloaded nor installed again. `run_setup.bat`
