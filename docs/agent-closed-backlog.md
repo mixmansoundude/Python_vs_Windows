@@ -8362,7 +8362,7 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
 - **Rules and places that change together:** `docs/agent-interconnect.md`, "Argv passthrough (REQ-026, P1)" (the loop's omission was listed there as deliberate and is corrected) and the evidence paragraph of
   "The failure hints read text a run already printed". The two lines that share the stop text (`:hidden_import_loop`, `:offer_optimized_build`) now share the argument clause too.
 - **README wording (lane 3 owns the README, so it is in the PR body):** the REQ-026 note that says the loop's re-run does not receive the arguments is replaced by a sentence that it does, and REQ-026.1 already covers it
-  (every launch). `self.repair.args` is listed in `tests/expected_rows/real.txt` only after two green runs.
+  (every launch). `self.repair.args` is listed in `tests/expected_rows/real.txt` only after two green runs. The README sentence is in (lane 3, with the wording of Item 123 for REQ-007.17 and .20, after PR #543).
 
 ### Item 130 (filed 2026-11-27, PR #546; README REQ-016.8, four ends of a run closed the window before the message could be read)
 
