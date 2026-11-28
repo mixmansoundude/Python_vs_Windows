@@ -182,16 +182,11 @@ if (-not (Test-Path $batchPath)) {
 # One bootstrap has to reach the picker (uv and Python come first), wait 30 seconds and be stopped; the limit only catches a hang.
 $timeLimitSec = 900
 $workRoot = Join-Path $here '~selftest_picker_wait'
-if (Test-Path -LiteralPath $workRoot) { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue }
-New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
-
-# --- scrub every flag; remember and restore them afterwards (see tests/selfapps_offers_noninteractive.ps1 for why this is done twice) ---
+# The work folder and the scrub of the runner's flags are done inside the guarded block at the end of this file, so a stop in them is
+# a red row for each id with the reason, never a silent absence (CodeRabbit, PR #548). The variables the rows and the restore read
+# are declared here, empty.
 $scrubbed = @{}
-foreach ($item in @(Get-ChildItem Env:)) {
-    if ($item.Name -match '^(HP_|PVW_)' -or $item.Name -ieq 'NOINPUT') { $scrubbed[$item.Name] = $item.Value }
-}
-foreach ($name in @($scrubbed.Keys)) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
-$parentStillSet = @($scrubbed.Keys | Where-Object { $null -ne [Environment]::GetEnvironmentVariable($_) } | Sort-Object)
+$parentStillSet = @()
 
 # Starts cmd.exe on a batch file in a folder. console: a new hidden console window, so standard input is the console's own
 # input buffer. pipe: standard input is a pipe that this process keeps open and never writes to. The object returned holds the
@@ -357,6 +352,17 @@ $allPass = $true
 $rowsWritten = @{}
 $crashMessage = ''
 try {
+    # ------------------------------------------------------------ the work folder
+    if (Test-Path -LiteralPath $workRoot) { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path $workRoot -ErrorAction Stop | Out-Null
+
+    # --- scrub every flag; remember and restore them afterwards (see tests/selfapps_offers_noninteractive.ps1 for why this is done twice) ---
+    foreach ($item in @(Get-ChildItem Env:)) {
+        if ($item.Name -match '^(HP_|PVW_)' -or $item.Name -ieq 'NOINPUT') { $scrubbed[$item.Name] = $item.Value }
+    }
+    foreach ($name in @($scrubbed.Keys)) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }
+    $parentStillSet = @($scrubbed.Keys | Where-Object { $null -ne [Environment]::GetEnvironmentVariable($_) } | Sort-Object)
+
     # ------------------------------------------------------------ the harness: which method holds a timed choice open?
     $cals = @()
     foreach ($m in @('console', 'pipe')) { $cals += Invoke-Calibration -Method $m }
@@ -411,7 +417,9 @@ try {
     $crashMessage = ('{0} (script line {1})' -f $_.Exception.Message, $_.InvocationInfo.ScriptLineNumber)
     $allPass = $false
 } finally {
-    foreach ($name in @($scrubbed.Keys)) { [Environment]::SetEnvironmentVariable($name, $scrubbed[$name]) }
+    foreach ($name in @($scrubbed.Keys)) {
+        try { [Environment]::SetEnvironmentVariable($name, $scrubbed[$name]) } catch { }
+    }
 }
 
 # Every id that was not written above is written now as a red row that says why, so a stop before the rows is never silent.

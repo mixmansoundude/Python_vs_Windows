@@ -289,6 +289,14 @@ def script_problems(text):
             found.append("the row %s is no longer recorded as written" % rid)
     if not re.search(r"\} catch \{\s*\$crashMessage = [^\n]*\n\s*\$allPass = \$false\s*\} finally \{", flat):
         found.append("an unexpected stop in the main block is no longer caught and counted as a red run")
+    # the work folder and the flag scrub sit INSIDE the guarded block, so a stop in them is a red row per id and never an absence
+    guard_open = flat.find("$crashMessage = ''\ntry {")
+    guard_close = flat.find("} catch {\n$crashMessage =")
+    for need in ("New-Item -ItemType Directory -Force -Path $workRoot -ErrorAction Stop", "Remove-Item -LiteralPath ('Env:' + $name)",
+                 "$parentStillSet = @($scrubbed.Keys"):
+        at = flat.find(need)
+        if guard_open < 0 or guard_close < 0 or not (guard_open < at < guard_close):
+            found.append("the setup line %s is not inside the guarded block, so a stop in it would leave no row" % need)
     after = flat.rsplit("} finally {", 1)[-1]  # the main block's finally is the last one; two functions have their own
     if not re.search(r"foreach \(\$rowId in \$allIds\) \{\s*if \(-not \$rowsWritten\.ContainsKey\(\$rowId\)\) \{\s*\$allPass = \$false\s*Write-NdjsonRow", after):
         found.append("an id the script has not written is no longer written as a failing row after the main block")
@@ -817,6 +825,75 @@ class ARowThatWasNotWrittenIsWrittenRed(unittest.TestCase):
         block = self.script[a:b]
         bad = self.script[:a] + self.script[b:].replace(FALLBACK_END, FALLBACK_END + "\n" + block, 1)
         self.assertTrue(any("before the exit code is decided" in f for f in script_problems(bad)), script_problems(bad))
+
+
+GUARD_START = "$allPass = $true"
+
+
+def run_guarded(text, workroot):
+    """Run the real guarded block and the fallback under pwsh; its first statements are the setup, which is made to fail."""
+    t = norm(text)
+    a = t.find(GUARD_START)
+    b = t.find(FALLBACK_END)
+    if a < 0 or b < a:
+        raise AssertionError("the guarded block was not found")
+    driver = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$allIds = @('self.entry.picker.wait.control', 'self.entry.picker.wait')\n"
+        "$here = '/nowhere'\n$timeLimitSec = 900\n$scrubbed = @{}\n$parentStillSet = @()\n"
+        "$workRoot = '%s'\n$script:rows = @()\n"
+        "function Write-NdjsonRow { param([hashtable]$Row) $script:rows += ,$Row }\n"
+        "function Invoke-Calibration { param([string]$Method) throw 'the setup must have stopped the run before any calibration' }\n" % workroot
+        + t[a:b] + "\n"
+        "$out = [ordered]@{ allPass = $allPass; rows = @($script:rows | ForEach-Object { [ordered]@{ id = $_['id']; pass = $_['pass']; "
+        "crash = $_['details']['crash'] } }) }\n"
+        "$out | ConvertTo-Json -Depth 5 -Compress\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "guarded.ps1"
+        f.write_text(driver, encoding="ascii")
+        proc = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(f)], capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        raise AssertionError("pwsh failed (%s): %s %s" % (proc.returncode, proc.stdout[-400:], proc.stderr[-400:]))
+    import json
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    rows = out["rows"]
+    if isinstance(rows, dict):
+        rows = [rows]
+    return out["allPass"], rows
+
+
+@unittest.skipUnless(PWSH, "pwsh not available")
+class ASetupThatStopsBeforeTheRowsIsWrittenRed(unittest.TestCase):
+    """CodeRabbit, PR #548 (second round): the work folder and the flag scrub used to run before the guarded block."""
+
+    def setUp(self):
+        self.script = SCRIPT.read_text(encoding="utf-8")
+        # an empty path: Test-Path -LiteralPath refuses it with a terminating binding error on every host (New-Item -Force below a
+        # plain file did not fail under pwsh on Linux), and it is the first statement of the setup
+        self.bad_root = ""
+
+    def test_a_setup_that_stops_gives_two_red_rows_with_the_reason(self):
+        all_pass, rows = run_guarded(self.script, self.bad_root)
+        self.assertFalse(all_pass)
+        self.assertEqual([(r["id"], r["pass"]) for r in rows], [(i, False) for i in ROW_IDS])
+        self.assertTrue(all(r["crash"] for r in rows), rows)
+        self.assertTrue(all("calibration" not in r["crash"] for r in rows), rows)
+
+    def test_the_old_shape_with_the_setup_before_the_guard_is_shown(self):
+        line = "    New-Item -ItemType Directory -Force -Path $workRoot -ErrorAction Stop | Out-Null\n"
+        bad = mutate(self.script, line, "")
+        bad = mutate(bad, "$crashMessage = ''\ntry {", "New-Item -ItemType Directory -Force -Path $workRoot -ErrorAction Stop | Out-Null\n$crashMessage = ''\ntry {")
+        self.assertTrue(any("is not inside the guarded block" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_a_scrub_before_the_guard_is_shown(self):
+        line = "    foreach ($name in @($scrubbed.Keys)) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }\n"
+        bad = mutate(self.script, line, "")
+        bad = mutate(bad, "$crashMessage = ''\ntry {", "foreach ($name in @($scrubbed.Keys)) { Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue }\n$crashMessage = ''\ntry {")
+        self.assertTrue(any("is not inside the guarded block" in f for f in script_problems(bad)), script_problems(bad))
+
+    def test_the_restore_in_finally_cannot_end_the_script_before_the_fallback(self):
+        flat = norm(self.script)
+        self.assertIn("try { [Environment]::SetEnvironmentVariable($name, $scrubbed[$name]) } catch { }", flat)
 
 
 class WorkflowAndListsCanFail(unittest.TestCase):
