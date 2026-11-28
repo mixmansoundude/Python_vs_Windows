@@ -443,3 +443,27 @@ its own named trigger genuinely fires -- do not speculatively build any of these
   hash input in `fast_check.ps1` (both modes) and clear `HP_FASTPATH_USED` when it differs. **Trigger to thaw**: a user report
   of a stale EXE after a changed entry (rule, argument or picker answer), or the next change that alters which file is picked
   for existing folders.
+
+- **Check that the uv unpack's marker file was really written before the archive is unpacked.** Raised by CodeRabbit on
+  PR #540 (Item 128, README REQ-009.25): `run_setup.bat` writes `~uv_bin\~unpack.incomplete` with
+  `echo unpack started> ...` right before the unpack line and does not test that the write worked. If it failed, a failed
+  unpack could leave a `uv.exe` with no marker, and a later run would take it as the cached binary. Traced 2026-11-21: every
+  way the write can fail while something exists at that path is already covered, because the two tests of the marker (the
+  cached-binary test before the unpack and the veto after it) use `if exist`, which is true for a file held open, a
+  read-only file and a folder of that name. What is left is a write that fails with nothing at the path while the unpack
+  writes `uv.exe` and `uvx.exe` into the same folder. Two ways to get there. (1) A program that denies the creation of one
+  file name only: no row can produce that on a Windows runner. (2) **The folder is gone** (CodeRabbit again, on PR #543):
+  `~uv_bin` is made before the download and the unpack's own `CreateDirectory` makes it again, so if something removes the
+  empty folder while the download runs (a cleanup tool, the user), the marker write fails, the unpack recreates the folder
+  and writes `uv.exe`, and an unpack that is then cut short, or that fails with its by-name delete failing too, leaves a
+  `uv.exe` nothing marks. A row CAN make this state: the zip is in `%TEMP%`, not in the folder, so the driver's stub `curl`
+  can write the zip and then remove `~uv_bin`. It would show the guard (a good archive must still end `acquire_failed`,
+  because the marker was never written), not the harm, which needs a second fault in the unpack. **Why it waits**: the
+  harm needs two faults at once and a guard line is code the repository carries for ever, and the maintainer's coordinator
+  decided on 2026-11-21 to merge PR #540 without it and to keep this entry as the home of the finding. **Cheapest shape when
+  thawed**: row first (the stub-curl scenario above, red against today's code), then, after the marker line, `if not exist
+  "%HP_UV_BIN%\~unpack.incomplete" set "HP_UV_UNPACK_BAD=1"` and guard the unpack line with `if not defined
+  HP_UV_UNPACK_BAD` (the two exit-code tests directly after it then read a stale code, which is harmless because the flag
+  is already set; `uv_unpack_problems` in `tests/test_net_resilience.py` pins that line's shape, so it changes with it).
+  **Trigger to thaw**: a field report of a blocked marker file or of a uv that was used after a failed unpack, or a way
+  found to make the marker write fail in a row.

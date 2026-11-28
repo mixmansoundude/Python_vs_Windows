@@ -372,6 +372,45 @@ only":
   at parse/compile time, BEFORE any `try/except` runs, producing a hard crash. No bare
   `match`/`case` (3.10+), no `X | Y` runtime type unions in evaluated positions, no other grammar
   an older CPython would reject while tokenizing.
+- **One test holds every Python payload to 3.9 grammar (Item 126, `tests/test_helper_grammar.py`).** Six helpers had their
+  own `ast.parse(..., feature_version=(3, 9))` test and sixteen had none, so a `match` statement in one of them would have
+  reached a user on the venv or system tier as a hard `SyntaxError`. The test reads every payload line of `run_setup.bat`, takes
+  each one's kind from its emit site (`call :emit_from_base64 "<file>" HP_NAME`: a `.py` target is Python, `.ps1` is PowerShell,
+  `~condarc` is neither; an unknown file kind or a payload nothing emits fails, so a new kind is a decision and not a silent skip)
+  and parses each Python payload, so a payload added tomorrow is covered the day it is added. `feature_version` is not a complete guard
+  on a newer host, which is why the test adds rules: the delimiter of an enclosing f-string, a backslash or a comment inside a
+  replacement field (PEP 701, 3.12), an unparenthesised `a[*b]` (PEP 646, 3.11) and `X | Y` in an annotation that runs when the
+  def runs (a `TypeError` on 3.9 unless `from __future__ import annotations`). A library call that an old interpreter lacks
+  (`zip(strict=True)`, a `tomllib` import with no fallback) is not grammar and is not judged. The f-string rules need a 3.12 or
+  newer `tokenize`, so they are skipped on an older host; the grammar parse itself runs everywhere.
+  **A guard of this kind is wrong in two directions, and only a real 3.9 shows which** (CodeRabbit on PR #543: four false alarms
+  and one gap in the first version of the rules, none of them reachable by a helper today). Variable annotations inside a def are
+  never evaluated (PEP 526), so `x: int | None = None` runs on 3.9, while a class body inside a def is evaluated and a def's own
+  signature always is. `f"{f'{x}'}"` and `f"""{ "ok" }"""` compile on 3.9 (a nested f-string is fine with another delimiter, and
+  one `"` does not end a triple-quoted string); `f"{f"{x}"}"` and a `"""` inside a `"""` string do not. A backslash is refused in
+  the expression part, which includes every string and nested f-string text in a field, but allowed in the literal text and the
+  format spec of an f-string that is not itself in a field. **The backslash of a line continuation is in no token** (Python 3.12 and
+  newer `tokenize` drops it), so `f"{x + \<newline> 1}"` shows no backslash to a check that reads token text: the check also reads
+  the source text between two consecutive tokens inside a field (the literal text and format spec of an f-string are tokens of
+  their own that touch their neighbours, so a gap that holds a backslash is always in an expression). 3.9 refuses it in a single or
+  triple-quoted field and before the closing brace, and accepts it in the literal part and the format spec; a plain newline inside
+  a triple-quoted field is fine. The first version of that check also tested for the token type of the neighbours; 14,040 generated
+  literal and spec bodies (doubled braces, continuations) read the same with and without it, so it was removed as dead weight. `d[(*a,)]` is a tuple display and compiles; `d[*a]`, `d[(1), *a]` and
+  `d[*a, (1)]` do not, so the test decides "parenthesised" from the tokens of the slice, not from its first or last character.
+  `CPYTHON_39` in the test is the table of these answers taken with CPython 3.9's own `compile()`; the guard must agree with
+  every row on every host, and a second test re-checks the table against a `python3.9` when one is on PATH (`uv python install
+  3.9` gives one locally), so a recorded answer cannot drift from the interpreter it claims to describe.
+  **Three more facts from a third review round, each checked on a real 3.9.** A single-quoted f-string is ONE string token to 3.9, so an
+  unescaped line break anywhere in it, a replacement field included, is a `SyntaxError` (3.12 and newer accept it in a field); a backslash-newline
+  continuation in the literal part or the format spec is legal, so the rule reads the whole span of the string for a newline with an even number of
+  backslashes in front and does not count rows between tokens (a format-spec token can span rows). Format specs may nest two deep (`f"{x:{y}}"`);
+  the third level is `f-string: expressions nested too deeply`, and the fourth is refused by every parser, so only the third needs a rule. `X | Y` is a type
+  union only in a type position: the arguments of `Literal[...]` and the metadata of `Annotated[...]` are values (integer OR, runs on 3.9), while the first
+  argument of `Annotated`, a union around a `Literal` and a union inside another generic still fail when the def runs; the rule goes by the name `Literal` or `Annotated` and
+  cannot see an alias. What 3.9 does when the source RUNS is not a `compile()` answer, so `RUNS_ON_39` is a second table beside `CPYTHON_39`. When a mutation of a rule
+  `ast.parse` stops at the grammar: `return`, `break` or `await` in the wrong place parse and are refused by the compiler, so the guard also compiles the parsed tree
+  (`compile(tree, ...)`, version independent). When a mutation of a rule
+  cannot be caught by any input on any host, the code is dead: remove it (the nested-field exclusion of the depth rule was) instead of keeping a test that only looks like it covers it.
 
 ---
 
