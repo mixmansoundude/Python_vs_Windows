@@ -365,6 +365,34 @@ fallback, the repair loops) are held to the wording rule by the static test and 
 (`tests/~sysbuild_accept_evidence.txt`, the run's console log, `~setup.log`, `~bootstrap.status.json` and the judge's error output) is in the
 `test-logs` artifact.
 
+```
+self.entry.picker.wait.control, self.entry.picker.wait
+```
+
+The two `self.entry.picker.wait*` rows of `tests/selfapps_picker_wait.ps1` (`contract-uv` lane, gating, Item 133) cover REQ-002.15 (`req` tag
+`REQ-002.15` on `.control`, `REQ-002.15, REQ-002.22` on the row itself): the picker's question stays open for 30 seconds and then takes the
+alphabetical default. Every other picker row sets `HP_TEST_FORCE_PICKER`, which shortens the wait to 2 seconds and is the only way past the CI
+marker, so until this script the 30 seconds were read from the batch file by `tests/test_picker_gate.py` only. The script bootstraps a folder of two
+programs (`a_app.py`, `b_app.py`, no guard in either, so the picker is offered) with every `HP_`/`PVW_`/`NOINPUT` variable of the runner removed
+from its own process and cleared again inside the launched shell (the listing the shell writes before and after is the verdict, details
+`flagsSeen`), so the picker is reached with none of the three signals of REQ-018.9. Standard input is left open and silent, because a closed one
+ends a timed `choice` at once: method `console` starts `cmd.exe` in a hidden console window of its own (the shape of a double-click), method `pipe`
+starts it with standard input redirected to a pipe the harness holds open. Each method is first calibrated with a bare `choice /T 5 /D 1`, which must
+still be waiting after 4 seconds and return the default 1 (details `calibrations`, one entry per method with `seconds` and `answer`); the first
+that passes is used for both bootstraps, and when neither does both rows are red with the calibration sentences, never skipped. The clock starts
+when the console log first holds `If you do nothing, the alphabetically-first file is used: a_app.py` (the line directly before the one that reads
+the answer) and stops when `~setup.log` first holds `Picker entry selected: a_app.py` (the line directly after it), polled every 200 ms, so the
+figure (`waitSec`) is the wait plus at most half a second; the program is then stopped with `taskkill /F /T` because the rest of the run is not the
+claim. `.control` runs with the test setting and must measure 1 to 10 seconds and read `wait 2s` in the prompt, which shows the measurement follows
+the batch file's own setting; the row itself runs with no setting, must read `wait 30s`, measure 29 to 38 seconds with nothing typed and select
+`a_app.py`. Both also require the numbered list was printed, the environment listing was written and the flags seen were exactly the expected ones
+(`HP_TEST_FORCE_PICKER` for the control, none for the row). A script that stops before it writes a row (an unexpected error in the main block) writes a failing row with the reason for each id it has not written, because the ids are listed in `tests/expected_rows/contract-uv.txt` only after two green runs. What the row does not show: the keyboard is never typed into, so a typed number is
+`self.entry.picker.number`'s job; whether a hidden console and an open pipe behave like a person's console on a Windows desktop is what the calibration
+shows for the runner and not more; the console tail (`consoleTail`) and the calibration figures are in the details of a red row. The wiring is
+`tests/test_picker_wait.py` (the batch lines the clock reads in their order, the one `choice` line that holds the wait, the three signal lines the real
+run leaves unset, the call site, the harness's launch settings and judges run through a real `pwsh` on synthetic runs, the step and its uploads
+`tests/~selftest_picker_wait/*/~pw_console.log`, `~setup.log`, `~pw_env*.txt` and `~cal.*` in the `test-logs` artifact).
+
 `self.dll_bundle.recover` (`:emit_dll_bundle_row`, all 7 outcome points inside
 `:dll_bundle_recover`) is the machine-readable record of the conda native-DLL bundling repair
 loop -- see `docs/agent-interconnect.md`'s "Conda native-DLL bundling repair loop" section for the
