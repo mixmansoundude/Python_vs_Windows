@@ -1713,6 +1713,19 @@ jobs:
         run: |
           & tests\selfapps_sysbuild_accept.ps1
 
+      # Item 133 (README REQ-002.15 and REQ-002.22): the picker's question waits the full 30 seconds when nothing is typed and then takes
+      # the default. Every row of the picker until now ran with the test setting that shortens the wait to 2 seconds, so no row waited
+      # the full time and the unit test read the number from the batch file. Two real bootstraps of a folder with two programs, each
+      # started with no HP_/PVW_/NOINPUT variable of the runner in its environment, standard input left open and silent (a hidden
+      # console, or an open pipe: a bare choice call decides which of the two holds a timed question open on this runner): the control
+      # with the test setting must wait about 2 seconds, the real run with no setting about 30, measured from the picker's first
+      # console line to the setup log's choice line. contract-uv only, gating from its first run (AGENTS.md, "New tests gate immediately").
+      - name: "Self-test: the entry picker waits the full 30 seconds with nothing typed (contract-uv only)"
+        if: ${{ !cancelled() && matrix.mode == 'contract-uv' }}
+        shell: pwsh
+        run: |
+          & tests\selfapps_picker_wait.ps1
+
       - name: "Self-test: fast-path broken-EXE graceful fallback (real/conda-full only)"
         if: ${{ !cancelled() && (matrix.mode == 'real' || (matrix.mode == 'conda-full' && steps.conda_avail.outputs.available == 'true')) }}
         shell: pwsh
@@ -3037,6 +3050,10 @@ jobs:
             tests/~selftest_sysbuild_accept/~setup.log
             tests/~selftest_sysbuild_accept/~bootstrap.status.json
             tests/~selftest_sysbuild_accept/~wording_judge.err.txt
+            tests/~selftest_picker_wait/*/~pw_console.log
+            tests/~selftest_picker_wait/*/~setup.log
+            tests/~selftest_picker_wait/*/~pw_env*.txt
+            tests/~selftest_picker_wait/*/~cal.*
             tests/~selftest_depsrc_*/~depsrc_*.log
             tests/~selftest_depsrc_*/~dependency_installed.txt
             tests/~selftest_depsrc_*/~dependency_source.txt

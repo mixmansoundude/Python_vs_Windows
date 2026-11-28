@@ -8363,3 +8363,22 @@ the `rem`-generalization pass had already found), all fixed by rewording with no
   "The failure hints read text a run already printed". The two lines that share the stop text (`:hidden_import_loop`, `:offer_optimized_build`) now share the argument clause too.
 - **README wording (lane 3 owns the README, so it is in the PR body):** the REQ-026 note that says the loop's re-run does not receive the arguments is replaced by a sentence that it does, and REQ-026.1 already covers it
   (every launch). `self.repair.args` is listed in `tests/expected_rows/real.txt` only after two green runs. The README sentence is in (lane 3, with the wording of Item 123 for REQ-007.17 and .20, after PR #543).
+
+### Item 133 (filed 2026-11-28; REQ-002.15, the picker's real 30 second wait, the first of the last three untraced shalls lane 3 took)
+
+- **The gap.** REQ-002.15 (after the numbered list the bootstrapper waits 30 seconds for a number) had only a unit entry: `tests/test_picker_gate.py::PickerWait` reads `set "HP_PICK_T=30"` and the one `choice` line from the batch file.
+  Every row that runs the picker sets `HP_TEST_FORCE_PICKER`, which shortens the wait to 2 seconds and is also the only way past the CI marker, so no row ever held the question open for the real time, and nothing showed that
+  the 30 is what a person without a test setting gets (a `HP_PICK_T` that the test setting also overwrote would have passed every row).
+- **The row.** `tests/selfapps_picker_wait.ps1` (contract-uv lane, gating from its first run) bootstraps a folder of two programs with none of the three non-interactivity signals of REQ-018.9 and no test setting, types nothing, and
+  measures from the console line `If you do nothing, the alphabetically-first file is used: a_app.py` (echoed directly before the `choice` line) to the first `Picker entry selected: a_app.py` in `~setup.log` (written directly
+  after it), polled every 200 ms. `self.entry.picker.wait` needs `wait 30s` in the prompt, 29 to 38 seconds and `a_app.py` selected (REQ-002.22); `self.entry.picker.wait.control` runs the same folder with `HP_TEST_FORCE_PICKER` and
+  needs about 2 seconds, which shows the measurement follows the batch file's own setting and the 30 of the other row is the product's.
+- **The open unknown, settled by the first run.** `choice.exe` reads the keyboard, and nothing in the repository had measured what it does with standard input that is a pipe nobody writes to (`selfapps_cascade_timed.ps1` only says
+  it "degrades to its default"). The script therefore has two ways to give the bootstrapper an input that stays open and silent, a hidden console window (`console`) and a redirected pipe the harness holds open (`pipe`), and
+  calibrates each with a bare `choice /T 5 /D 1` that must still be waiting after 4 seconds and return the default 1; the first that passes runs both bootstraps and both calibrations are in the details. If neither holds the wait both
+  rows are red with the calibration sentences, never skipped and never green. A closed standard input (`< nul`) is excluded on purpose: it ends the question at once, which is what the non-interactive rows rely on.
+- **Rules that changed together.** `tests/test_picker_wait.py` (53 tests: the batch lines the clock reads in their order, the launch settings of the script, the three judges through real `pwsh` on 36 synthetic runs with the edge of every bound,
+  the step and its four upload patterns, the registry, the README note and the shall list); the README note of REQ-002.15 no longer says no row waits the full time; the `UNTRACED_SHALLS` entry is removed; `tests/test_picker_gate.py`'s
+  header names the new row; `docs/agent-ndjson.md`, CLAUDE.md and `docs/plan-test-suite-gaps.md` (262 of 271 shalls named, REQ-002 28 of 28).
+- **Not covered, stated.** The keyboard is never typed into (a typed number is `self.entry.picker.number`'s job), and a hidden console and an open pipe stand in for a person's console on a desktop; the calibration shows what the runner's
+  `choice.exe` does with each, not what every Windows desktop does. Result of the first run and the two ids' listing in `tests/expected_rows/contract-uv.txt`: see the PR.

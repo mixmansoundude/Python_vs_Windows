@@ -200,7 +200,11 @@ choice should never come out empty. A person who names a file should get that fi
 > - `find_entry` exits with code 3 when it uses the alphabetical default; the batch file reads that code to decide
 >   whether to offer the list of REQ-002.14.
 > - The 30 seconds of REQ-002.15 are the `HP_PICK_T` setting of `:pick_entry_interactive`; the test setting
->   `HP_TEST_FORCE_PICKER` shortens it to 2 seconds, so no row waits the full time.
+>   `HP_TEST_FORCE_PICKER` shortens it to 2 seconds, which is what the rows of the picker use to stay fast. One row,
+>   `self.entry.picker.wait` (backlog Item 133), runs a bootstrap with none of the three non-interactivity signals of
+>   REQ-018.9 and no test setting, types nothing, and measures the time from the picker's first line to the logged
+>   choice, which must be the full 30 seconds; its control, `self.entry.picker.wait.control`, runs the same folder with
+>   the test setting and must see the 2 seconds.
 >   The bootstrapper chooses the entry file twice in one run (before the dependency phase and again before the
 >   build); `:pick_entry_interactive` keeps the answer in `HP_PICKED_ENTRY` so that the second choice does not ask
 >   again (backlog Item 109).
